@@ -31,6 +31,14 @@
     }
   }
 
+  async function clearAccountSession() {
+    await chrome.storage.local.remove([ACCOUNT_TOKEN_KEY, ACCOUNT_EXP_KEY]);
+    const box = $('#accountAccessBox');
+    box?.classList.remove('account-connected');
+    const status = $('#accountConnectStatus');
+    if (status) status.textContent = 'Sessão da conta expirada. Gere um novo código no portal ATS.';
+  }
+
   async function saveSession(r) {
     await chrome.storage.local.set({
       [LICENSE_KEY]: String(r.licenseKey || ''),
@@ -67,7 +75,11 @@
   async function refresh() {
     const x = await chrome.storage.local.get([ACCOUNT_TOKEN_KEY, ACCOUNT_EXP_KEY]);
     const token = String(x[ACCOUNT_TOKEN_KEY] || '');
-    if (!token || Number(x[ACCOUNT_EXP_KEY] || 0) <= Date.now()) return false;
+    if (!token) return false;
+    if (Number(x[ACCOUNT_EXP_KEY] || 0) <= Date.now()) {
+      await clearAccountSession();
+      return false;
+    }
     const url = base();
     try {
       const r = await fetch(`${url}/v1/customer/extension/refresh`, {
@@ -82,7 +94,12 @@
         })
       });
       const d = await r.json().catch(() => ({}));
-      if (!r.ok) return false;
+      if (!r.ok) {
+        if (r.status === 401 || d?.error === 'account_token_invalid') await clearAccountSession();
+        const status = $('#accountConnectStatus');
+        if (status && (d?.error === 'license_expired' || d?.error === 'license_inactive')) status.textContent = 'Seu acesso está inativo ou vencido. Entre no portal para renovar.';
+        return false;
+      }
       await saveSession({
         ...d,
         accountToken: d.accountToken || token,
@@ -90,6 +107,8 @@
       });
       return true;
     } catch {
+      const status = $('#accountConnectStatus');
+      if (status) status.textContent = 'Sem comunicação com o servidor ATS. Tentaremos sincronizar novamente.';
       return false;
     }
   }
@@ -140,9 +159,6 @@
       activation.dataset.accountManaged = '1';
       activation.dataset.manualOpen = '0';
       activation.hidden = true;
-
-      // app.js re-renderiza a licença periodicamente. Este observer mantém a chave manual
-      // escondida até o próprio usuário pedir explicitamente o modo de suporte.
       new MutationObserver(() => {
         if (activation.dataset.manualOpen !== '1' && !activation.hidden) activation.hidden = true;
       }).observe(activation, { attributes: true, attributeFilter: ['hidden'] });
@@ -194,13 +210,17 @@
       } else {
         status.textContent = r?.error === 'connect_code_invalid'
           ? 'Código inválido ou expirado.'
-          : r?.error === 'trial_device_already_used'
-            ? 'Este aparelho já utilizou um Trial em outra conta.'
-            : r?.error === 'device_locked' || r?.error === 'device_limit_reached'
-              ? 'Este acesso já está vinculado ao limite de aparelhos do plano.'
-              : r?.error === 'permission_denied'
-                ? 'Permissão para conectar ao servidor ATS não foi concedida.'
-                : 'Não foi possível conectar. Verifique o portal e tente novamente.';
+          : r?.error === 'access_inactive'
+            ? 'Seu acesso está inativo. Renove ou escolha um plano no portal.'
+            : r?.error === 'trial_device_already_used'
+              ? 'Este aparelho já utilizou um Trial em outra conta.'
+              : r?.error === 'device_locked' || r?.error === 'device_limit_reached'
+                ? 'Este acesso já está vinculado ao limite de aparelhos do plano.'
+                : r?.error === 'permission_denied'
+                  ? 'Permissão para conectar ao servidor ATS não foi concedida.'
+                  : r?.error === 'backend_unreachable'
+                    ? 'Servidor ATS indisponível. Tente novamente em alguns instantes.'
+                    : 'Não foi possível conectar. Verifique o portal e tente novamente.';
       }
     };
   }
