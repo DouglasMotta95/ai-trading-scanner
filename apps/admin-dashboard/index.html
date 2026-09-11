@@ -1,1 +1,196 @@
-<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AI Trading Scanner — Admin Central</title><link rel="stylesheet" href="styles.css"></head><body><aside><div class="brand"><div class="logo">A</div><div>AI TRADING<small>CONTROL CENTER</small></div></div><nav><button class="active" data-page="overview">◫ <span>Visão geral</span></button><button data-page="licenses">◇ <span>Licenças</span></button><button data-page="clients">◎ <span>Clientes online</span></button><button data-page="system">⌁ <span>Sistema</span></button></nav><div class="aside-foot"><span>ADMIN CENTRAL</span><b>v0.4.0</b></div></aside><main><header><div><span class="eyebrow">AI TRADING SCANNER</span><h1 id="pageTitle">Visão geral</h1><p id="pageSub">Licenças, clientes, scanners e saúde da operação.</p></div><span id="live" class="live off">● DESCONECTADO</span></header><section class="connect"><label><span>BACKEND</span><input id="apiBase" placeholder="http://localhost:8787"></label><label><span>CHAVE ADMIN</span><input id="adminKey" type="password" placeholder="ATS_ADMIN_KEY"></label><button id="connect">CONECTAR</button><small id="connectMsg">O painel não exibe dados fictícios. Conecte ao backend para carregar dados reais.</small></section><section class="page active" data-view="overview"><div class="kpis" id="kpis"></div><div class="grid"><article><div class="title"><div><small>OPERAÇÃO</small><h2>Plataformas</h2></div><span class="chip">LIVE</span></div><div id="platforms" class="list"><div class="empty">Aguardando backend.</div></div></article><article><div class="title"><div><small>LICENCIAMENTO</small><h2>Visão dos planos</h2></div></div><div id="planSummary" class="plan-summary"><div class="empty">Aguardando backend.</div></div></article></div><article><div class="title"><div><small>ATIVIDADE</small><h2>Operação em tempo real</h2></div></div><div id="overviewActivity" class="empty">Conecte ao backend para visualizar atividade real.</div></article></section><section class="page" data-view="licenses"><div class="split"><article class="generator"><div class="title"><div><small>GERAR ACESSO</small><h2>Nova licença</h2></div><span class="chip green">NEW</span></div><label>Cliente<input id="customerName" placeholder="Nome do cliente"></label><label>E-mail<input id="customerEmail" type="email" placeholder="cliente@email.com"></label><div class="form-row"><label>Plano<select id="licensePlan"></select></label><label>Dias<input id="licenseDays" type="number" min="1" value="30"></label></div><button id="generateLicense" class="primary">GERAR LICENÇA</button><div id="generated" class="generated">Nenhuma licença gerada nesta sessão.</div></article><article class="license-info"><div class="title"><div><small>REGRAS</small><h2>Limites por plano</h2></div></div><div id="planCards" class="plan-cards"></div></article></div><article><div class="title"><div><small>BASE DE ACESSOS</small><h2>Licenças emitidas</h2></div><button id="refreshLicenses" class="ghost">ATUALIZAR</button></div><div id="licensesTable" class="table"><div class="empty">Aguardando backend.</div></div></article></section><section class="page" data-view="clients"><article><div class="title"><div><small>PRESENÇA</small><h2>Clientes e dispositivos</h2></div><span id="onlineCount" class="chip green">0 ONLINE</span></div><div id="clientsTable" class="table"><div class="empty">Aguardando backend.</div></div></article></section><section class="page" data-view="system"><div class="grid"><article><div class="title"><div><small>BACKEND</small><h2>Saúde do sistema</h2></div></div><div id="systemHealth" class="health"><div><span>API</span><b>AGUARDANDO</b></div><div><span>Autenticação admin</span><b>AGUARDANDO</b></div><div><span>Persistência de licença</span><b>ARQUIVO LOCAL</b></div><div><span>Feed CasaTrade</span><b>BETA</b></div></div></article><article><div class="title"><div><small>VERSÃO</small><h2>Build ativa</h2></div></div><div class="version-card"><strong id="version">—</strong><span>Manifest V3 • Multi-platform</span></div></article></div></section></main><script src="app.js"></script></body></html>
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#07101d">
+  <title>AI Trading Scanner • Control Center</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-logo">ATS</div>
+        <div><strong>AI TRADING</strong><small>CONTROL CENTER</small></div>
+      </div>
+      <div class="workspace"><span>WORKSPACE</span><b>Administração</b></div>
+      <nav class="nav">
+        <button class="active" data-page="overview"><i>⌂</i><span>Visão geral</span></button>
+        <button data-page="licenses"><i>◆</i><span>Licenças</span><em id="navLicenseCount">0</em></button>
+        <button data-page="clients"><i>◉</i><span>Clientes</span><em id="navOnlineCount">0</em></button>
+        <button data-page="messages"><i>✦</i><span>Mensagens</span></button>
+        <button data-page="system"><i>⌁</i><span>Sistema</span></button>
+      </nav>
+      <div class="sidebar-status">
+        <span class="pulse"></span>
+        <div><small>BACKEND</small><b id="sideBackend">DESCONECTADO</b></div>
+      </div>
+      <div class="sidebar-foot"><span>ATS ADMIN</span><b>v0.4.1</b></div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <span class="eyebrow">AI TRADING SCANNER</span>
+          <h1 id="pageTitle">Visão geral</h1>
+          <p id="pageSub">Controle de licenças, clientes e operação em um só lugar.</p>
+        </div>
+        <div class="top-actions">
+          <span id="live" class="live off"><i></i><b>OFFLINE</b></span>
+          <button class="icon-btn" id="refreshAll" title="Atualizar">↻</button>
+          <button class="accent-btn" data-open="license">+ Nova licença</button>
+        </div>
+      </header>
+
+      <section class="connection-panel" id="connectionPanel">
+        <div class="connection-copy">
+          <span class="eyebrow">CONEXÃO SEGURA</span>
+          <b>Conectar ao backend</b>
+          <small>As credenciais ficam somente nesta sessão do navegador.</small>
+        </div>
+        <label><span>Backend</span><input id="apiBase" autocomplete="off" placeholder="https://seu-backend.app"></label>
+        <label><span>Chave Admin</span><input id="adminKey" type="password" autocomplete="off" placeholder="••••••••••••"></label>
+        <button id="connect" class="accent-btn">CONECTAR</button>
+        <small id="connectMsg" class="connection-msg">Informe os dados para carregar informações reais.</small>
+      </section>
+
+      <section class="page active" data-view="overview">
+        <div class="hero-card">
+          <div class="hero-copy">
+            <span class="eyebrow">CENTRAL DE OPERAÇÃO</span>
+            <h2>Gerencie tudo sem perder tempo.</h2>
+            <p>Gere teste grátis, emita licenças, resete clientes e copie mensagens prontas em poucos toques.</p>
+          </div>
+          <div class="hero-actions">
+            <button class="quick primary" data-open="trial"><span>🎁</span><div><b>Teste grátis</b><small>3 dias • 3 sinais/dia</small></div></button>
+            <button class="quick" data-open="license"><span>🔑</span><div><b>Nova licença</b><small>Escolher plano e validade</small></div></button>
+            <button class="quick" data-open="reset"><span>♻</span><div><b>Resetar cliente</b><small>Dispositivo + uso diário</small></div></button>
+            <button class="quick" data-page-jump="messages"><span>✦</span><div><b>Mensagens</b><small>Modelos prontos para envio</small></div></button>
+          </div>
+        </div>
+
+        <div class="kpi-grid" id="kpis">
+          <article class="kpi skeleton"></article><article class="kpi skeleton"></article><article class="kpi skeleton"></article><article class="kpi skeleton"></article>
+        </div>
+
+        <div class="dashboard-grid">
+          <article class="panel wide-panel">
+            <div class="panel-head"><div><span class="eyebrow">OPERAÇÃO</span><h3>Atividade em tempo real</h3></div><span class="badge green">LIVE</span></div>
+            <div id="overviewActivity" class="empty-state">Conecte o painel para visualizar os dados.</div>
+          </article>
+          <article class="panel">
+            <div class="panel-head"><div><span class="eyebrow">PLATAFORMAS</span><h3>Conexões observadas</h3></div></div>
+            <div id="platforms" class="stack-list"><div class="empty-state compact">Nenhuma sessão ativa.</div></div>
+          </article>
+          <article class="panel">
+            <div class="panel-head"><div><span class="eyebrow">PLANOS</span><h3>Resumo comercial</h3></div></div>
+            <div id="planSummary" class="stack-list"><div class="empty-state compact">Aguardando backend.</div></div>
+          </article>
+        </div>
+      </section>
+
+      <section class="page" data-view="licenses">
+        <div class="section-toolbar">
+          <div><span class="eyebrow">ACESSOS</span><h2>Licenças emitidas</h2><p>Crie, reative, revogue ou resete uma licença.</p></div>
+          <div class="toolbar-actions"><button class="ghost-btn" data-open="trial">🎁 Teste grátis</button><button class="accent-btn" data-open="license">+ Nova licença</button></div>
+        </div>
+        <article class="panel">
+          <div class="table-tools">
+            <label class="search"><span>⌕</span><input id="licenseSearch" placeholder="Buscar cliente, e-mail ou licença"></label>
+            <button id="refreshLicenses" class="ghost-btn">↻ Atualizar</button>
+          </div>
+          <div id="licensesTable" class="data-list"><div class="empty-state">Aguardando backend.</div></div>
+        </article>
+      </section>
+
+      <section class="page" data-view="clients">
+        <div class="section-toolbar">
+          <div><span class="eyebrow">PRESENÇA</span><h2>Clientes e dispositivos</h2><p>Veja quem está online e resete o vínculo da extensão quando necessário.</p></div>
+          <span id="onlineCount" class="badge green">0 ONLINE</span>
+        </div>
+        <article class="panel">
+          <div class="table-tools"><label class="search"><span>⌕</span><input id="clientSearch" placeholder="Buscar cliente ou licença"></label></div>
+          <div id="clientsTable" class="data-list"><div class="empty-state">Aguardando backend.</div></div>
+        </article>
+      </section>
+
+      <section class="page" data-view="messages">
+        <div class="section-toolbar">
+          <div><span class="eyebrow">COMUNICAÇÃO</span><h2>Mensagens prontas</h2><p>Escolha um modelo, personalize e copie para enviar ao cliente.</p></div>
+        </div>
+        <div class="message-layout">
+          <article class="panel template-list">
+            <button class="template active" data-template="trial"><span>🎁</span><div><b>Teste grátis</b><small>Liberação de acesso trial</small></div></button>
+            <button class="template" data-template="license"><span>🔑</span><div><b>Licença liberada</b><small>Plano pago ativado</small></div></button>
+            <button class="template" data-template="renew"><span>↻</span><div><b>Renovação</b><small>Acesso renovado</small></div></button>
+            <button class="template" data-template="reset"><span>♻</span><div><b>Extensão resetada</b><small>Novo vínculo liberado</small></div></button>
+          </article>
+          <article class="panel composer">
+            <div class="panel-head"><div><span class="eyebrow">EDITOR</span><h3>Mensagem para o cliente</h3></div><span class="badge">EDITÁVEL</span></div>
+            <textarea id="messageEditor"></textarea>
+            <div class="composer-actions"><button id="copyMessage" class="accent-btn">COPIAR MENSAGEM</button><button id="shareMessage" class="ghost-btn">COMPARTILHAR</button></div>
+          </article>
+        </div>
+      </section>
+
+      <section class="page" data-view="system">
+        <div class="section-toolbar"><div><span class="eyebrow">INFRAESTRUTURA</span><h2>Sistema</h2><p>Saúde do backend e informações da build.</p></div></div>
+        <div class="dashboard-grid">
+          <article class="panel"><div class="panel-head"><div><span class="eyebrow">BACKEND</span><h3>Saúde do sistema</h3></div></div><div id="systemHealth" class="health-list"></div></article>
+          <article class="panel"><div class="panel-head"><div><span class="eyebrow">BUILD</span><h3>Versão ativa</h3></div></div><div class="version-card"><strong id="version">—</strong><span>Manifest V3 • Multi-platform</span></div></article>
+          <article class="panel"><div class="panel-head"><div><span class="eyebrow">REGRAS</span><h3>Planos configurados</h3></div></div><div id="planCards" class="stack-list"></div></article>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <nav class="mobile-nav">
+    <button class="active" data-page="overview">⌂<span>Início</span></button>
+    <button data-page="licenses">◆<span>Licenças</span></button>
+    <button data-open="trial" class="fab">＋</button>
+    <button data-page="clients">◉<span>Clientes</span></button>
+    <button data-page="messages">✦<span>Mensagens</span></button>
+  </nav>
+
+  <div class="modal" id="actionModal" hidden>
+    <div class="modal-backdrop" data-close-modal></div>
+    <section class="modal-card">
+      <button class="modal-close" data-close-modal>×</button>
+      <div id="modalIcon" class="modal-icon">🔑</div>
+      <span id="modalKicker" class="eyebrow">GERAR ACESSO</span>
+      <h2 id="modalTitle">Nova licença</h2>
+      <p id="modalSub">Preencha os dados abaixo.</p>
+      <form id="actionForm">
+        <div id="commonFields">
+          <label>Nome do cliente<input id="customerName" placeholder="Ex.: João Silva"></label>
+          <label>E-mail <small>(opcional)</small><input id="customerEmail" type="email" placeholder="cliente@email.com"></label>
+        </div>
+        <div id="licenseFields" class="form-grid">
+          <label>Plano<select id="licensePlan"></select></label>
+          <label>Validade em dias<input id="licenseDays" type="number" min="1" value="30"></label>
+        </div>
+        <div id="trialFields" class="form-grid" hidden>
+          <label>Duração do teste<select id="trialDays"><option value="1">1 dia</option><option value="3" selected>3 dias</option><option value="7">7 dias</option></select></label>
+          <div class="info-box">O plano Trial usa o limite diário configurado no backend.</div>
+        </div>
+        <div id="resetFields" hidden>
+          <label>Licença do cliente<select id="resetLicense"></select></label>
+          <div class="reset-options"><span>O reset completo:</span><b>✓ remove dispositivos vinculados</b><b>✓ zera o consumo do dia</b><b>✓ reativa a licença</b></div>
+        </div>
+        <button id="submitAction" class="accent-btn full" type="submit">CONFIRMAR</button>
+      </form>
+    </section>
+  </div>
+
+  <aside class="result-drawer" id="resultDrawer" hidden>
+    <div class="drawer-head"><div><span class="eyebrow">PRONTO PARA ENVIAR</span><h3 id="resultTitle">Acesso gerado</h3></div><button id="closeDrawer">×</button></div>
+    <div class="license-result" id="licenseResult"></div>
+    <label class="message-preview"><span>Mensagem automática</span><textarea id="resultMessage"></textarea></label>
+    <div class="drawer-actions"><button id="copyResult" class="accent-btn">COPIAR TUDO</button><button id="shareResult" class="ghost-btn">COMPARTILHAR</button></div>
+  </aside>
+
+  <div class="toast" id="toast"></div>
+  <script src="app.js"></script>
+</body>
+</html>
