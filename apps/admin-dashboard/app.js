@@ -50,6 +50,7 @@ function pageMeta(name) {
     licenses:['Licenças','Busque, filtre e gerencie cada acesso em poucos toques.'],
     clients:['Clientes','Dispositivos conectados e presença em tempo real.'],
     messages:['Mensagens','Modelos automáticos para enviar ao cliente.'],
+    operations:['Operação ao vivo','Extensões online, scanners, heartbeat, sinais e resultados observados.'],
     system:['Sistema','Sessão administrativa, backend e versão ativa.']
   })[name] || ['Central de controle',''];
 }
@@ -57,6 +58,7 @@ function setPage(name) {
   $$('[data-page]').forEach(b => b.classList.toggle('active', b.dataset.page === name));
   $$('[data-view]').forEach(v => v.classList.toggle('active', v.dataset.view === name));
   const [title, sub] = pageMeta(name); $('#pageTitle').textContent = title; $('#pageSub').textContent = sub;
+  if (name === 'operations') loadOperations(true);
   if (innerWidth < 900) scrollTo({top:0, behavior:'smooth'});
 }
 $$('[data-page]').forEach(b => b.onclick = () => setPage(b.dataset.page));
@@ -255,6 +257,96 @@ $('#shareMessageBtn').onclick = () => shareText($('#messageEditor').value);
 $('#refreshBtn').onclick = () => refreshData().then(() => toast('Painel atualizado'));
 $('#licenseSearch').addEventListener('input', renderLicenses); $('#clientSearch').addEventListener('input', renderClients);
 $$('[data-license-filter]').forEach(b => b.onclick = () => { licenseFilter = b.dataset.licenseFilter; $$('[data-license-filter]').forEach(x => x.classList.toggle('active', x === b)); selectedLicenseKey = ''; renderLicenses(); renderInspector(); });
+
+const operationState = {summary:{}, sessions:[], signals:[], events:[]};
+let operationBusy = false;
+let operationFilter = 'all';
+function operationStateLabel(s) {
+  const state = String(s.signalState || '').toUpperCase();
+  if (state === 'CONFIRM') return 'ENTRADA CONFIRMADA';
+  if (state === 'WATCH') return 'ACOMPANHANDO';
+  if (state === 'SEARCHING') return 'ANALISANDO';
+  if (state === 'NO_TRADE') return 'NÃO ENTRAR';
+  if (state === 'WAIT') return 'AGUARDANDO';
+  return state || 'SEM ESTADO';
+}
+function operationTone(s) {
+  const state = String(s.signalState || '').toUpperCase();
+  if (state === 'CONFIRM') return s.direction === 'SELL' ? 'sell' : 'buy';
+  if (state === 'WATCH') return 'watch';
+  if (state === 'NO_TRADE') return 'blocked';
+  return 'neutral';
+}
+const outcomeLabel = v => ({win:'WIN',loss:'LOSS',draw:'EMPATE',pending:'PENDENTE',unknown:'INDEFINIDO'})[v] || String(v || 'PENDENTE').toUpperCase();
+function renderOperations() {
+  const summary = operationState.summary || {};
+  const accuracy = summary.observedAccuracy == null ? '—' : `${summary.observedAccuracy}%`;
+  const summaryRoot = $('#liveSummary');
+  if (summaryRoot) summaryRoot.innerHTML = [
+    ['●','CLIENTES ONLINE',summary.onlineClients ?? 0,'heartbeat nos últimos 20s','green'],
+    ['◉','SCANNERS ATIVOS',summary.scanningClients ?? 0,'leitura em execução','blue'],
+    ['↗','SINAIS CONFIRMADOS',summary.confirmedSignals ?? 0,`${summary.pendingSignals ?? 0} aguardando resultado`,'violet'],
+    ['✓','ACERTO OBSERVADO',accuracy,`${summary.wins ?? 0} win • ${summary.losses ?? 0} loss`,'gold']
+  ].map(([icon,label,value,hint,tone]) => `<article class="live-kpi ${tone}"><span>${icon}</span><small>${label}</small><strong>${esc(value)}</strong><em>${esc(hint)}</em></article>`).join('');
+
+  const sessions = operationState.sessions || [];
+  if ($('#liveClientCount')) $('#liveClientCount').textContent = `${sessions.filter(x => x.online).length} ONLINE`;
+  if ($('#liveSessions')) $('#liveSessions').innerHTML = sessions.length ? sessions.map(s => `<article class="live-session ${s.online ? 'online' : 'offline'}">
+    <div class="live-session-main"><span class="presence"><i></i>${s.online ? 'ONLINE' : `OFFLINE • ${esc(ago(s.lastSeen))}`}</span><div><b>${esc(s.customerName || 'Cliente')}</b><small>${esc(s.platformName || s.platformId || 'Plataforma')} • ${esc(s.asset || 'sem ativo')}</small></div></div>
+    <div class="live-session-signal"><span class="live-state ${operationTone(s)}">${esc(operationStateLabel(s))}</span><strong>${s.direction ? esc(s.direction) : '—'}${s.score == null ? '' : ` • ${Math.round(Number(s.score))}`}</strong><small>${esc(s.timeframe || 'AUTO')} • ${esc(s.expiration || 'AUTO')}</small></div>
+    <div class="live-session-feed"><span>FEED</span><b>${s.feedQuality == null ? '—' : `${Math.round(Number(s.feedQuality))}%`}</b><small>${s.structured ? 'ESTRUTURADO' : 'PROVISÓRIO'} • heartbeat ${esc(ago(s.lastSeen))}</small></div>
+    <button class="live-client-open" data-live-license="${esc(s.licenseKey || '')}">VER CLIENTE</button>
+  </article>`).join('') : '<div class="attention-empty">Nenhuma extensão enviou heartbeat ainda.</div>';
+  $$('[data-live-license]').forEach(btn => btn.onclick = () => { selectedLicenseKey = btn.dataset.liveLicense; setPage('licenses'); renderLicenses(); renderInspector(); });
+
+  const allSignals = operationState.signals || [];
+  const signals = operationFilter === 'all' ? allSignals : allSignals.filter(x => x.outcome === operationFilter);
+  if ($('#liveSignals')) $('#liveSignals').innerHTML = signals.length ? signals.map(s => `<article class="live-signal-row">
+    <div class="signal-identity"><span class="direction ${s.direction === 'SELL' ? 'sell' : 'buy'}">${esc(s.direction || '—')}</span><div><b>${esc(s.asset || '—')}</b><small>${esc(s.customerName || 'Cliente')} • ${esc(s.platformName || s.platformId || 'Plataforma')}</small></div></div>
+    <div><span>ENTRADA</span><b>${esc(s.entryPrice ?? '—')}</b><small>${fmtTime(s.entryAt)}</small></div>
+    <div><span>EXPIRAÇÃO</span><b>${esc(s.expiration || s.timeframe || '—')}</b><small>${fmtTime(s.expiresAt)}</small></div>
+    <div><span>SCORE</span><b>${Math.round(Number(s.score || 0))}</b><small>${esc(s.confirmations || s.grade || '—')}</small></div>
+    <div><span>SAÍDA</span><b>${s.exitPrice == null ? '—' : esc(s.exitPrice)}</b><small>${s.resolvedAt ? fmtTime(s.resolvedAt) : 'aguardando'}</small></div>
+    <em class="outcome ${esc(s.outcome || 'pending')}">${esc(outcomeLabel(s.outcome))}</em>
+  </article>`).join('') : '<div class="attention-empty">Nenhum sinal neste filtro.</div>';
+
+  const events = operationState.events || [];
+  if ($('#liveEventCount')) $('#liveEventCount').textContent = events.length;
+  if ($('#liveEvents')) $('#liveEvents').innerHTML = events.length ? events.slice(0,30).map(e => {
+    const d = e.data || {};
+    const labels = {scanner_started:'Scanner iniciado',scanner_stopped:'Scanner pausado',platform_connected:'Plataforma conectada',signal_confirmed:'Entrada confirmada',signal_state:'Estado do sinal alterado',license_activated:'Licença ativada'};
+    return `<div class="live-event"><i></i><div><b>${esc(labels[e.type] || e.type)}</b><small>${esc(e.customerName || 'Cliente')}${d.asset ? ` • ${esc(d.asset)}` : ''}${d.direction ? ` • ${esc(d.direction)}` : ''}</small></div><time>${fmtTime(e.at)}</time></div>`;
+  }).join('') : '<div class="attention-empty">Os eventos da extensão aparecerão aqui.</div>';
+  if ($('#liveSync')) $('#liveSync').textContent = `ATUALIZADO ${new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}`;
+}
+async function loadOperations(force = false) {
+  if (operationBusy && !force) return;
+  operationBusy = true;
+  try {
+    const data = await api('/v1/admin/operations');
+    operationState.summary = data.summary || {};
+    operationState.sessions = data.sessions || [];
+    operationState.signals = data.signals || [];
+    operationState.events = data.events || [];
+    renderOperations();
+  } catch (e) {
+    if (e.status === 401) return showLogin();
+    if ($('#liveSync')) $('#liveSync').textContent = 'FALHA NA ATUALIZAÇÃO';
+    toast(`Operação ao vivo: ${e.message}`);
+  } finally {
+    operationBusy = false;
+  }
+}
+$('#liveRefresh')?.addEventListener('click', () => loadOperations(true));
+$$('[data-live-filter]').forEach(btn => btn.onclick = () => {
+  operationFilter = btn.dataset.liveFilter;
+  $$('[data-live-filter]').forEach(x => x.classList.toggle('active', x === btn));
+  renderOperations();
+});
+setInterval(() => {
+  if (document.hidden || $('#authGate')?.hidden === false || !$('[data-view="operations"]')?.classList.contains('active')) return;
+  loadOperations();
+}, 5000);
 
 setInterval(() => { $('#heroClock').textContent = new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}); }, 1000);
 renderTemplate('trial');
