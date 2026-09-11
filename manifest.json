@@ -1,18 +1,19 @@
 {
   "manifest_version": 3,
   "name": "AI Trading Scanner",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "description": "Scanner inteligente multi-plataforma com conta do cliente, análise quantitativa, licenciamento invisível, telemetria segura e operação em tempo real.",
   "permissions": ["storage", "activeTab", "scripting", "sidePanel"],
   "optional_host_permissions": ["http://*/*", "https://*/*"],
   "host_permissions": [
     "https://*.casatrade.com/*",
-    "https://*.casatrade.io/*"
+    "https://*.casatrade.io/*",
+    "https://ats-control-center-v07-production.up.railway.app/*"
   ],
   "background": { "service_worker": "src/background-entry.js", "type": "module" },
   "action": {
     "default_title": "AI Trading Scanner",
-    "default_popup": "src/sidepanel/index.html"
+    "default_popup": "src/popup/index.html"
   },
   "options_page": "src/admin/index.html",
   "side_panel": { "default_path": "src/sidepanel/index.html" },
