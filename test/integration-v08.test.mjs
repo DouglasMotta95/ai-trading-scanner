@@ -4,7 +4,9 @@ import { spawn } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 async function waitFor(url, timeout = 12000) {
@@ -27,7 +29,7 @@ test('v0.8 secure telemetry flows from license activation to resolved live opera
   const adminKey = 'integration-admin-key';
   const apiKey = 'integration-api-key';
   const child = spawn(process.execPath, ['backend/src/server-v08.js'], {
-    cwd: process.cwd(), detached: true, stdio: 'ignore',
+    cwd: repoRoot, detached: true, stdio: 'ignore',
     env: { ...process.env, NODE_ENV: 'test', PORT: String(publicPort), ATS_INTERNAL_PORT: String(internalPort), ATS_DATA_DIR: dataDir, ATS_ADMIN_KEY: adminKey, ATS_API_KEY: apiKey, CORS_ORIGINS: '*' }
   });
 
