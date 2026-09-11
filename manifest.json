@@ -9,7 +9,7 @@
     "https://*.casatrade.com/*",
     "https://*.casatrade.io/*"
   ],
-  "background": { "service_worker": "src/background.js", "type": "module" },
+  "background": { "service_worker": "src/background-entry.js", "type": "module" },
   "action": {
     "default_title": "AI Trading Scanner",
     "default_popup": "src/sidepanel/index.html"
