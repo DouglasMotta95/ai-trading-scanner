@@ -22,7 +22,7 @@
       return { value: null, error: String(e?.message || 'invalid selector') };
     }
   };
-  const text = () => (document.body?.innerText || '').replace(/\s+/g, ' ').slice(0, 160000);
+  const text = () => (document.body?.innerText || '').replace(/\s+/g, ' ').slice(0, 80000);
   const normTf = v => {
     const x = String(v || '').trim();
     if (!x) return null;
@@ -74,6 +74,7 @@
   function structuredNetworkQuote(domAsset) {
     const age = Date.now() - Number(networkState?.lastSeen || 0);
     if (!Number.isFinite(age) || age < 0 || age > 6000) return null;
+    const allowedTransports = new Set(['ws', 'fetch', 'xhr']);
     const candidates = (Array.isArray(networkState?.candidates) ? networkState.candidates : []).map(c => {
       const bid = num(c?.bid);
       const ask = num(c?.ask);
@@ -88,14 +89,13 @@
         timeframe: normTf(c?.timeframe),
         expiration: c?.expiration ? String(c.expiration).trim() : null
       };
-    }).filter(c => c.asset && c.price != null && c.price > 0);
+    }).filter(c => c.asset && c.price != null && c.price > 0 && allowedTransports.has(c.transport) && Number(c.seenCount || 0) >= 2 && Date.now() - Number(c.observedAt || 0) <= 6000);
 
     if (!candidates.length) return null;
     const wanted = normAsset(domAsset);
     if (wanted) {
       const exact = candidates.find(c => c.asset === wanted);
-      if (exact) return exact;
-      return null;
+      return exact || null;
     }
     return candidates.length === 1 ? candidates[0] : null;
   }
@@ -122,8 +122,9 @@
       let domPrice = pSel.value && patterns.price ? patterns.price.exec(pSel.value)?.[0] : pSel.value || null;
       const fallbackPrices = [];
       if (!domPrice && patterns.price) {
-        for (const node of document.querySelectorAll('span,div,strong,b,p')) {
-          const v = (node.textContent || '').trim();
+        const nodes = document.querySelectorAll('span,strong,b,p,[class*="price" i],[class*="quote" i]');
+        for (let i = 0; i < Math.min(nodes.length, 1500); i++) {
+          const v = (nodes[i].textContent || '').trim();
           const m = patterns.price.exec(v);
           if (m && v.length < 40) fallbackPrices.push(m[0]);
           if (fallbackPrices.length >= 8) break;
@@ -186,8 +187,9 @@
         },
         diagnostics: {
           capture: structured ? 'network-structured+dom-context' : Object.values(overrides).some(Boolean) ? 'platform-selectors+fallback' : 'registry-defaults+fallback',
-          structuredSource: structured ? 'network' : null,
+          structuredSource: structured ? networkQuote?.transport || 'network' : null,
           networkQuoteMatched: structured,
+          networkQuoteSeenCount: Number(networkQuote?.seenCount || 0),
           missing,
           invalidSelectors,
           selectorConfig: { price: !!sel.price, asset: !!sel.asset, timeframe: !!sel.timeframe },
@@ -211,7 +213,7 @@
 
   const schedule = () => {
     clearTimeout(timer);
-    timer = setTimeout(inspect, 350);
+    timer = setTimeout(inspect, 500);
   };
 
   async function init() {
@@ -247,7 +249,7 @@
         if (!document.documentElement) return setTimeout(start, 50);
         new MutationObserver(schedule).observe(document.documentElement, { subtree: true, childList: true, characterData: true });
         inspect();
-        setInterval(inspect, 2500);
+        setInterval(inspect, 3000);
       };
       start();
       window.addEventListener('load', inspect, { once: true });
