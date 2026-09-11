@@ -1,17 +1,13 @@
 import { PLATFORM_ADAPTERS } from '../platforms/registry.js';
 
 const PUBLIC_API = 'https://ats-control-center-v07-production.up.railway.app';
+const PROFILE_SCORE = { conservative: 85, balanced: 78, aggressive: 70 };
 const DEFAULTS = {
   profile: 'balanced',
   minScore: 78,
-  sound: true,
   onlyA: false,
   timeframe: 'M1',
   staleBlock: true,
-  volatility: true,
-  mtf: true,
-  quant: true,
-  ai: false,
   apiBase: PUBLIC_API,
   backendApiKey: '',
   supportUrl: '',
@@ -34,9 +30,7 @@ function renderPlatforms(settings = {}) {
   const root = $('platformSelectors');
   if (!root) return;
   const byPlatform = { ...(settings.selectorsByPlatform || {}) };
-  if (settings.casatradeSelectors && !byPlatform.casatrade) {
-    byPlatform.casatrade = { ...settings.casatradeSelectors };
-  }
+  if (settings.casatradeSelectors && !byPlatform.casatrade) byPlatform.casatrade = { ...settings.casatradeSelectors };
   root.innerHTML = PLATFORM_ADAPTERS.map(p => {
     const s = { ...p.defaultSelectors, ...(byPlatform[p.id] || {}) };
     const hosts = p.hosts.length ? p.hosts.join(', ') : 'sem host configurado';
@@ -60,7 +54,9 @@ async function lockCommercialSettings(settings = {}) {
     apiBase: PUBLIC_API,
     backendApiKey: '',
     licenseRequired: true,
-    forceLicense: true
+    forceLicense: true,
+    quant: true,
+    ai: false
   };
   await chrome.storage.local.set({ settings: locked });
   return locked;
@@ -70,7 +66,15 @@ async function load() {
   const { settings = {} } = await chrome.storage.local.get('settings');
   const migrated = await lockCommercialSettings(settings);
   loadedSettings = migrated;
-  const s = { ...DEFAULTS, ...migrated, apiBase: PUBLIC_API, backendApiKey: '', licenseRequired: true, forceLicense: true };
+  const s = {
+    ...DEFAULTS,
+    ...migrated,
+    timeframe: migrated.scanPreferences?.timeframe || migrated.timeframe || DEFAULTS.timeframe,
+    apiBase: PUBLIC_API,
+    backendApiKey: '',
+    licenseRequired: true,
+    forceLicense: true
+  };
   ids.forEach(id => {
     const el = $(id);
     if (!el) return;
@@ -94,7 +98,7 @@ async function renderDiag() {
   diag.innerHTML = `<b>${escapeHtml(platform)}</b>
     <span>Ativo: ${escapeHtml(scannerState.asset || '—')}</span>
     <span>Timeframe: ${escapeHtml(scannerState.analysisTimeframe || scannerState.timeframe || '—')}</span>
-    <span>Captura: ${escapeHtml(d.capture || '—')}</span>
+    <span>Captura: ${escapeHtml(d.capture || d.structuredSource || '—')}</span>
     <span>Ativos DOM: ${Number(d.domCatalog?.assetCount) || 0} • Feed: ${Number(d.network?.candidateCount) || 0}</span>
     <span>Licença: ${escapeHtml(l.status || '—')} ${escapeHtml(l.planLabel || l.plan || '')}</span>
     <span>Qualidade: ${escapeHtml(t.feedQuality ?? '—')} • Última leitura: ${scannerState.lastSeen ? new Date(scannerState.lastSeen).toLocaleTimeString() : '—'}</span>`;
@@ -111,6 +115,19 @@ function collect() {
   s.backendApiKey = '';
   s.licenseRequired = true;
   s.forceLicense = true;
+  s.quant = true;
+  s.ai = false;
+  s.scanPreferences = {
+    ...(s.scanPreferences || {}),
+    timeframe: s.timeframe || 'M1'
+  };
+  s.risk = {
+    ...(s.risk || {}),
+    profile: s.profile,
+    minScore: Number(s.minScore) || PROFILE_SCORE.balanced,
+    onlyA: !!s.onlyA,
+    staleBlock: s.staleBlock !== false
+  };
   s.selectorsByPlatform = {};
   document.querySelectorAll('[data-platform][data-field]').forEach(el => {
     const id = el.dataset.platform;
@@ -122,6 +139,14 @@ function collect() {
   return s;
 }
 
+$('profile')?.addEventListener('change', e => {
+  const suggested = PROFILE_SCORE[e.target.value];
+  if (suggested && $('minScore')) {
+    $('minScore').value = suggested;
+    $('scoreValue').textContent = suggested;
+  }
+});
+
 $('minScore')?.addEventListener('input', e => {
   if ($('scoreValue')) $('scoreValue').textContent = e.target.value;
 });
@@ -132,7 +157,7 @@ $('save')?.addEventListener('click', async () => {
   await chrome.storage.local.set({ settings });
   renderAdminUrl();
   if ($('saved')) {
-    $('saved').textContent = '✓ Alterações salvas';
+    $('saved').textContent = '✓ Alterações salvas e aplicadas';
     setTimeout(() => $('saved').textContent = 'Configurações locais', 1800);
   }
 });
@@ -175,9 +200,7 @@ $('openCustomerPortalFromSettings')?.addEventListener('click', () => chrome.tabs
 
 chrome.storage.onChanged.addListener(c => {
   if (c.scannerState) renderDiag();
-  if (c.settings?.newValue?.apiBase && c.settings.newValue.apiBase !== PUBLIC_API) {
-    lockCommercialSettings(c.settings.newValue).catch(() => {});
-  }
+  if (c.settings?.newValue?.apiBase && c.settings.newValue.apiBase !== PUBLIC_API) lockCommercialSettings(c.settings.newValue).catch(() => {});
 });
 
 load();
