@@ -1,0 +1,72 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const root = path.resolve(__dirname, '..');
+const read = file => fs.readFileSync(path.join(root, file), 'utf8');
+
+test('public portal exposes verification recovery, code copy and risk disclosure', () => {
+  const html = read('apps/customer-portal/index.html');
+  const app = read('apps/customer-portal/app.js');
+  assert.match(html, /id="resendVerification"/);
+  assert.match(html, /id="copyConnectCode"/);
+  assert.match(html, /resultados de mercado não são garantidos/i);
+  assert.match(app, /\/v1\/customer\/resend-verification/);
+  assert.match(app, /usedTotal/);
+  assert.match(app, /totalLimit/);
+  assert.match(app, /paymentsConfigured/);
+  assert.match(app, /Pagamento aprovado\. Sincronizando seu acesso/);
+});
+
+test('paid entitlement upgrade does not leave an old trial active', () => {
+  const server = read('backend/src/server-v09.js');
+  assert.match(server, /async function grantPaidEntitlement/);
+  assert.match(server, /previousKey/);
+  assert.match(server, /\/revoke/);
+  assert.match(server, /PAYMENTS_CONFIGURED\s*=\s*!!\(MP_ACCESS_TOKEN\s*&&\s*MP_WEBHOOK_SECRET\)/);
+  assert.match(server, /pruneConnectCodes/);
+  assert.match(server, /access_inactive/);
+});
+
+test('admin ops does not inject CRM twice and does not fake a successful sync', () => {
+  const ops = read('apps/admin-dashboard/ops.js');
+  assert.match(ops, /__ATS_OPS__/);
+  assert.doesNotMatch(ops, /script\.src=['"]crm\.js/);
+  assert.match(ops, /falha na atualização/);
+  assert.match(ops, /const before=metrics/);
+  assert.match(ops, /metrics!==before/);
+  assert.match(ops, /\/v1\/public\/config/);
+});
+
+test('extension sync indicator is based on a confirmed heartbeat response', () => {
+  const telemetry = read('src/services/telemetry.js');
+  const panel = read('src/sidepanel/app.js');
+  assert.match(telemetry, /lastSyncAttempt/);
+  assert.match(telemetry, /lastSyncSuccess/);
+  assert.match(telemetry, /lastSyncError/);
+  assert.match(telemetry, /acceptedAt/);
+  assert.match(panel, /lastSyncSuccess/);
+  assert.match(panel, /atsTelemetryStatus/);
+  assert.match(panel, /telemetryError\?'ERRO'/);
+});
+
+test('structured feed requires repeated recent network observations', () => {
+  const probe = read('src/content/network-probe.js');
+  const adapter = read('src/content/generic-adapter.js');
+  assert.match(probe, /seenCount/);
+  assert.match(probe, /transport/);
+  assert.match(probe, /trimSet\(stats\.endpoints, 100\)/);
+  assert.match(adapter, /seenCount \|\| 0\) >= 2/);
+  assert.match(adapter, /allowedTransports/);
+  assert.match(adapter, /Date\.now\(\) - Number\(c\.observedAt \|\| 0\) <= 6000/);
+});
+
+test('extension account refresh clears expired account tokens instead of showing stale connected state', () => {
+  const account = read('src/sidepanel/account-login.js');
+  assert.match(account, /clearAccountSession/);
+  assert.match(account, /account_token_invalid/);
+  assert.match(account, /Sessão da conta expirada/);
+});
