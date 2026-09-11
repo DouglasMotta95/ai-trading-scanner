@@ -1,6 +1,7 @@
 const INSTALL_KEY = 'atsInstallationId';
 const CLIENT_TOKEN_KEY = 'atsClientToken';
 const CLIENT_TOKEN_EXP_KEY = 'atsClientTokenExpiresAt';
+const TELEMETRY_STATUS_KEY = 'atsTelemetryStatus';
 const PUBLIC_API = 'https://ats-control-center-v07-production.up.railway.app';
 
 // Telemetry follows the same fixed commercial backend used by licensing.
@@ -38,9 +39,27 @@ export async function clearClientToken() {
   await chrome.storage.local.remove([CLIENT_TOKEN_KEY, CLIENT_TOKEN_EXP_KEY]);
 }
 
+async function updateTelemetryStatus(patch = {}) {
+  try {
+    const x = await chrome.storage.local.get(TELEMETRY_STATUS_KEY);
+    const previous = x[TELEMETRY_STATUS_KEY] || {};
+    await chrome.storage.local.set({
+      [TELEMETRY_STATUS_KEY]: { ...previous, ...patch }
+    });
+  } catch {}
+}
+
 async function post(path, payload, _settings = {}) {
+  const heartbeatRequest = path === '/v1/client/heartbeat';
+  const attemptAt = Date.now();
+  if (heartbeatRequest) await updateTelemetryStatus({ lastSyncAttempt: attemptAt });
+
   const token = await clientToken();
-  if (!token) return { ok: false, error: 'client_token_missing' };
+  if (!token) {
+    if (heartbeatRequest) await updateTelemetryStatus({ lastSyncError: 'client_token_missing' });
+    return { ok: false, error: 'client_token_missing' };
+  }
+
   try {
     const r = await fetch(`${apiBase()}${path}`, {
       method: 'POST',
@@ -51,8 +70,20 @@ async function post(path, payload, _settings = {}) {
       body: JSON.stringify(payload || {})
     });
     const data = await r.json().catch(() => ({}));
-    return { ok: r.ok, status: r.status, ...data };
+    const result = { ok: r.ok, status: r.status, ...data };
+    if (heartbeatRequest) {
+      if (r.ok && data?.ok !== false) {
+        await updateTelemetryStatus({
+          lastSyncSuccess: Number(data.acceptedAt) || Date.now(),
+          lastSyncError: null
+        });
+      } else {
+        await updateTelemetryStatus({ lastSyncError: data?.error || `http_${r.status}` });
+      }
+    }
+    return result;
   } catch {
+    if (heartbeatRequest) await updateTelemetryStatus({ lastSyncError: 'telemetry_unreachable' });
     return { ok: false, error: 'telemetry_unreachable' };
   }
 }
