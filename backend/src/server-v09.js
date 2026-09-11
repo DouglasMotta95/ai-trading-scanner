@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const VERSION = '0.9.1';
 const PUBLIC_PORT = Number(process.env.PORT || 8787);
 const ATS_CHILD_PORT = Number(process.env.ATS_V08_PORT || 8791);
 const ATS_CORE_PORT = Number(process.env.ATS_INTERNAL_PORT || 8792);
@@ -21,6 +22,7 @@ const RESEND_API_KEY = String(process.env.RESEND_API_KEY || '').trim();
 const EMAIL_FROM = String(process.env.EMAIL_FROM || '').trim();
 const MP_ACCESS_TOKEN = String(process.env.MERCADOPAGO_ACCESS_TOKEN || '').trim();
 const MP_WEBHOOK_SECRET = String(process.env.MERCADOPAGO_WEBHOOK_SECRET || '').trim();
+const PAYMENTS_CONFIGURED = !!(MP_ACCESS_TOKEN && MP_WEBHOOK_SECRET);
 const PUBLIC_BASE_URL = String(process.env.PUBLIC_BASE_URL || '').replace(/\/$/, '');
 const CASA_TRADE_URL = String(process.env.CASA_TRADE_URL || '').trim();
 const SUPPORT_WHATSAPP = String(process.env.SUPPORT_WHATSAPP || '5535991429262').replace(/\D/g,'');
@@ -156,6 +158,19 @@ async function ensureTrial(a){
   if(a.trialClaimedAt)throw new Error('trial_already_claimed');
   return createEntitlement(a,'trial',3);
 }
+async function grantPaidEntitlement(a,plan,days=30){
+  const current=await licenseProfile(a);
+  if(current?.key&&current.plan===plan&&current.plan!=='trial'){
+    const renewed=await child(`/v1/admin/licenses/${encodeURIComponent(current.key)}/renew`,{method:'POST',headers:{'x-admin-key':ADMIN_KEY},body:{days}});
+    if(renewed.status<300&&renewed.data?.license){a.currentLicenseKey=current.key;a.updatedAt=now();saveState();return renewed.data.license}
+  }
+  const previousKey=a.currentLicenseKey||null;
+  const created=await createEntitlement(a,plan,days);
+  if(previousKey&&previousKey!==created.key){
+    await child(`/v1/admin/licenses/${encodeURIComponent(previousKey)}/revoke`,{method:'POST',headers:{'x-admin-key':ADMIN_KEY}}).catch(()=>{});
+  }
+  return created;
+}
 async function sendVerification(req,a){
   const token=issueToken('email-verify',{uid:a.id,email:a.email},24*3600000);
   const url=`${baseUrl(req)}/?verify=${encodeURIComponent(token)}`;
@@ -173,7 +188,8 @@ function verifyGoogleCredential(credential){
     return{sub:d.sub,email:cleanEmail(d.email),name:cleanName(d.name||d.given_name||'')};
   });
 }
-function connectCode(){let code;do{code=String(crypto.randomInt(100000,1000000))}while(connectCodes.has(code));return code;}
+function pruneConnectCodes(){const t=now();for(const[code,c]of connectCodes)if(c.used||c.expiresAt<t)connectCodes.delete(code)}
+function connectCode(){pruneConnectCodes();let code;do{code=String(crypto.randomInt(100000,1000000))}while(connectCodes.has(code));return code;}
 function issueAccountToken(a){return issueToken('extension-account',{uid:a.id},ACCOUNT_TOKEN_DAYS*86400000)}
 function accountFromBearer(req){
   const h=String(req.headers.authorization||'');if(!h.toLowerCase().startsWith('bearer '))return null;
@@ -195,7 +211,7 @@ async function publicPlans(){
   });
 }
 async function checkoutPreference(req,a,planId){
-  if(!MP_ACCESS_TOKEN)throw Object.assign(new Error('payment_not_configured'),{status:503});
+  if(!PAYMENTS_CONFIGURED)throw Object.assign(new Error('payment_not_configured'),{status:503});
   const plans=await publicPlans(), plan=plans.find(p=>p.id===planId&&p.id!=='trial');
   if(!plan)throw Object.assign(new Error('invalid_plan'),{status:422});
   const order={id:crypto.randomUUID(),accountId:a.id,plan:plan.id,amount:Number(plan.price),currency:'BRL',status:'created',createdAt:now(),updatedAt:now(),paymentId:null,preferenceId:null};
@@ -223,7 +239,7 @@ function mpSignatureValid(req,url){
   return safeEq(expected,v1);
 }
 async function processPayment(paymentId){
-  if(!MP_ACCESS_TOKEN)return;
+  if(!PAYMENTS_CONFIGURED)return;
   const r=await fetch(`https://api.mercadopago.com/v1/payments/${encodeURIComponent(paymentId)}`,{headers:{authorization:`Bearer ${MP_ACCESS_TOKEN}`}});
   if(!r.ok)return;
   const p=await r.json(),order=state.orders.find(o=>o.id===p.external_reference);
@@ -231,7 +247,7 @@ async function processPayment(paymentId){
   order.paymentId=String(p.id);order.paymentStatus=p.status;order.updatedAt=now();
   if(p.status==='approved'&&order.status!=='approved'){
     const a=state.accounts.find(x=>x.id===order.accountId);if(!a)return;
-    const lic=await createEntitlement(a,order.plan,30);
+    const lic=await grantPaidEntitlement(a,order.plan,30);
     order.status='approved';order.licenseKey=lic.key;order.approvedAt=now();
   } else if(p.status!=='approved') order.status=p.status||'pending';
   saveState();
@@ -261,7 +277,7 @@ const server=http.createServer(async(req,res)=>{
     if(pathname==='/customer.js')return serve(res,'app.js','text/javascript; charset=utf-8')||response(res,404,{error:'not_found'});
 
     if(pathname==='/v1/public/config'&&req.method==='GET'){
-      const plans=await publicPlans();return response(res,200,{product:'AI Trading Scanner',version:'0.9.0',plans,googleClientId:GOOGLE_CLIENT_ID||null,emailDeliveryConfigured:!!(RESEND_API_KEY&&EMAIL_FROM),paymentsConfigured:!!MP_ACCESS_TOKEN,supportWhatsapp:SUPPORT_WHATSAPP,casaTradeUrl:CASA_TRADE_URL||null});
+      const plans=await publicPlans();return response(res,200,{product:'AI Trading Scanner',version:VERSION,plans,googleClientId:GOOGLE_CLIENT_ID||null,emailDeliveryConfigured:!!(RESEND_API_KEY&&EMAIL_FROM),paymentsConfigured:PAYMENTS_CONFIGURED,supportWhatsapp:SUPPORT_WHATSAPP,casaTradeUrl:CASA_TRADE_URL||null});
     }
     if(pathname==='/v1/customer/signup'&&req.method==='POST'){
       if(!rate(req,'signup',5,3600000))return response(res,429,{error:'too_many_attempts'});
@@ -307,17 +323,20 @@ const server=http.createServer(async(req,res)=>{
     if(pathname==='/v1/customer/connect-code'&&req.method==='POST'){
       const a=accountFromReq(req);if(!a)return response(res,401,{error:'unauthorized'});
       if(!a.emailVerified)return response(res,403,{error:'email_not_verified'});
+      const lic=await licenseProfile(a);
+      if(!lic||lic.status!=='active'||(lic.expiresAt&&Date.parse(lic.expiresAt)<=now()))return response(res,409,{error:'access_inactive'});
       const code=connectCode();connectCodes.set(code,{accountId:a.id,expiresAt:now()+10*60000,used:false});
       return response(res,201,{ok:true,code,expiresAt:now()+10*60000});
     }
     if(pathname==='/v1/customer/extension/exchange'&&req.method==='POST'){
       if(!rate(req,'exchange',20,60000))return response(res,429,{error:'too_many_attempts'});
+      pruneConnectCodes();
       const b=await readBody(req),code=String(b.code||'').replace(/\D/g,''),installationId=String(b.installationId||'').trim().slice(0,128),version=String(b.version||'').slice(0,32),c=connectCodes.get(code);
       if(!c||c.used||c.expiresAt<now()||!installationId)return response(res,400,{error:'connect_code_invalid'});
       const a=state.accounts.find(x=>x.id===c.accountId);if(!a||!a.emailVerified)return response(res,403,{error:'account_not_verified'});
       const lic=await licenseProfile(a);
       if((lic?.plan==='trial'||(!lic&&a.trialClaimedAt))&&state.trialDevices[installationId]&&state.trialDevices[installationId]!==a.id)return response(res,403,{error:'trial_device_already_used'});
-      const result=await activateForAccount(a,installationId,version);c.used=true;
+      const result=await activateForAccount(a,installationId,version);c.used=true;connectCodes.delete(code);
       if(result.license?.plan==='trial'){state.trialDevices[installationId]=a.id;saveState()}
       return response(res,200,{ok:true,...result,account:{name:a.name,email:a.email}});
     }
@@ -332,9 +351,10 @@ const server=http.createServer(async(req,res)=>{
       const b=await readBody(req),out=await checkoutPreference(req,a,String(b.plan||''));return response(res,201,{ok:true,...out});
     }
     if(pathname==='/v1/payments/mercadopago/webhook'&&req.method==='POST'){
+      if(!PAYMENTS_CONFIGURED)return response(res,503,{error:'payment_not_configured'});
       const b=await readBody(req).catch(()=>({}));
       const paymentId=String(url.searchParams.get('data.id')||b?.data?.id||'');
-      if(MP_WEBHOOK_SECRET&&!mpSignatureValid(req,url))return response(res,401,{error:'invalid_signature'});
+      if(!mpSignatureValid(req,url))return response(res,401,{error:'invalid_signature'});
       const eventKey=String(b?.id||`${paymentId}:${b?.action||''}`);if(eventKey&&state.paymentEvents.includes(eventKey))return response(res,200,{ok:true,duplicate:true});
       if(eventKey){state.paymentEvents.unshift(eventKey);state.paymentEvents=state.paymentEvents.slice(0,1000);saveState()}
       if(paymentId)processPayment(paymentId).catch(e=>console.error('payment webhook',e?.message||e));
@@ -344,10 +364,11 @@ const server=http.createServer(async(req,res)=>{
       const r=await child('/v1/admin/auth/status',{headers:{cookie:req.headers.cookie||'','x-admin-key':req.headers['x-admin-key']||''}});
       if(r.status!==200)return response(res,401,{error:'unauthorized'});
       const rows=await Promise.all(state.accounts.map(async a=>({...publicAccount(a,await licenseProfile(a)),orders:state.orders.filter(o=>o.accountId===a.id).length})));
-      return response(res,200,{accounts:rows,summary:{accounts:rows.length,verified:rows.filter(x=>x.emailVerified).length,trials:rows.filter(x=>x.license?.plan==='trial').length,paid:rows.filter(x=>x.license&&x.license.plan!=='trial').length,approvedOrders:state.orders.filter(x=>x.status==='approved').length}});
+      const active=x=>x.license?.status==='active'&&(!x.license.expiresAt||Date.parse(x.license.expiresAt)>now());
+      return response(res,200,{accounts:rows,summary:{accounts:rows.length,verified:rows.filter(x=>x.emailVerified).length,trials:rows.filter(x=>active(x)&&x.license?.plan==='trial').length,paid:rows.filter(x=>active(x)&&x.license?.plan!=='trial').length,approvedOrders:state.orders.filter(x=>x.status==='approved').length}});
     }
     if(pathname==='/health'){
-      const r=await child('/health');return response(res,r.status,{...(r.data||{}),version:'0.9.0',sales:true,customerAccounts:true,paymentsConfigured:!!MP_ACCESS_TOKEN,emailDeliveryConfigured:!!(RESEND_API_KEY&&EMAIL_FROM),googleConfigured:!!GOOGLE_CLIENT_ID});
+      const r=await child('/health');return response(res,r.status,{...(r.data||{}),version:VERSION,sales:true,customerAccounts:true,paymentsConfigured:PAYMENTS_CONFIGURED,emailDeliveryConfigured:!!(RESEND_API_KEY&&EMAIL_FROM),googleConfigured:!!GOOGLE_CLIENT_ID});
     }
     return proxy(req,res);
   }catch(e){
@@ -355,4 +376,4 @@ const server=http.createServer(async(req,res)=>{
     return response(res,status,{error:e.message||'bad_request'});
   }
 });
-server.listen(PUBLIC_PORT,()=>console.log(`ATS v0.9.0 sales gateway :${PUBLIC_PORT} -> v08 :${ATS_CHILD_PORT} -> core :${ATS_CORE_PORT}`));
+server.listen(PUBLIC_PORT,()=>console.log(`ATS v${VERSION} sales gateway :${PUBLIC_PORT} -> v08 :${ATS_CHILD_PORT} -> core :${ATS_CORE_PORT}`));
