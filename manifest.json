@@ -12,8 +12,7 @@
   ],
   "background": { "service_worker": "src/background-entry.js", "type": "module" },
   "action": {
-    "default_title": "AI Trading Scanner",
-    "default_popup": "src/popup/index.html"
+    "default_title": "AI Trading Scanner"
   },
   "options_page": "src/admin/index.html",
   "side_panel": { "default_path": "src/sidepanel/index.html" },
