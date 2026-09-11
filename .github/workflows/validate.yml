@@ -1,0 +1,19 @@
+name: Validate extension
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Validate manifest
+        run: node -e "JSON.parse(require('fs').readFileSync('manifest.json','utf8')); console.log('manifest ok')"
+      - name: Syntax check extension
+        run: find src -name '*.js' -print0 | xargs -0 -n1 node --check
+      - name: Syntax check backend
+        run: find backend -name '*.js' -print0 | xargs -0 -n1 node --check
