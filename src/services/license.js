@@ -14,14 +14,16 @@ export async function activateLicense(settings={},key=''){
   return acceptSession(r,licenseKey)
 }
 export async function validateLicense(settings={}){
-  if(!licenseRequired(settings))return{ok:true,license:{status:'active',plan:'developer',planLabel:'Developer',dailyLimit:null,usedToday:0,remainingToday:null,totalLimit:null,usedTotal:0,remainingTotal:null,development:true}};
-  const licenseKey=await savedLicenseKey();if(!licenseKey)return{ok:false,error:'license_required'};
+  const licenseKey=await savedLicenseKey();
+  if(!licenseKey&&!licenseRequired(settings))return{ok:true,license:{status:'active',plan:'developer',planLabel:'Developer',dailyLimit:null,usedToday:0,remainingToday:null,totalLimit:null,usedTotal:0,remainingTotal:null,development:true,linked:false}};
+  if(!licenseKey)return{ok:false,error:'license_required'};
   const r=await call(settings,'/v1/license/validate',{licenseKey,installationId:await installationId(),version:chrome.runtime.getManifest().version});
   return acceptSession(r,licenseKey)
 }
 export async function consumeSignal(settings={}){
-  if(!licenseRequired(settings))return{ok:true,usage:{dailyLimit:null,usedToday:0,remainingToday:null,totalLimit:null,usedTotal:0,remainingTotal:null},development:true};
-  const licenseKey=await savedLicenseKey();if(!licenseKey)return{ok:false,error:'license_required'};
+  const licenseKey=await savedLicenseKey();
+  if(!licenseKey&&!licenseRequired(settings))return{ok:true,usage:{dailyLimit:null,usedToday:0,remainingToday:null,totalLimit:null,usedTotal:0,remainingTotal:null},development:true};
+  if(!licenseKey)return{ok:false,error:'license_required'};
   return call(settings,'/v1/license/consume',{licenseKey,installationId:await installationId(),type:'signal',version:chrome.runtime.getManifest().version})
 }
 export async function clearLicense(){await saveLicenseKey('');await clearClientToken()}
