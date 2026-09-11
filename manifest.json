@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AI Trading Scanner",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Scanner inteligente multi-plataforma com análise quantitativa, diagnóstico e sinais em tempo real.",
   "permissions": ["storage", "activeTab", "scripting", "sidePanel"],
   "host_permissions": [
