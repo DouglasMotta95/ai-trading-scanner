@@ -4,8 +4,15 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#050914">
+  <meta name="description" content="AI Trading Scanner: scanner de mercado com análise por confluência, controle de acesso, extensão Chrome/Edge e acompanhamento operacional em tempo real.">
+  <meta property="og:title" content="AI Trading Scanner">
+  <meta property="og:description" content="Conecte sua conta, use a extensão e acompanhe setups com critérios técnicos e qualidade de feed.">
+  <meta property="og:type" content="website">
   <title>AI Trading Scanner</title>
   <link rel="stylesheet" href="/customer.css">
+  <style>
+    .service-notice{max-width:1180px;margin:-24px auto 40px;padding:14px 18px;border:1px solid #574a26;border-radius:14px;background:#1c180d;color:#f8dfa1;display:flex;gap:10px;align-items:flex-start}.service-notice b{display:block;color:#ffe9af;margin-bottom:3px}.service-notice small{color:#cdbb8b;line-height:1.45}.plans-availability{margin:14px auto 0;max-width:720px;text-align:center;color:#8ea6bb;font-size:12px}.faq-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.faq-grid article{padding:22px;border:1px solid #18324a;border-radius:18px;background:#091522}.faq-grid h3{margin:0 0 8px;font-size:16px}.faq-grid p{margin:0;color:#88a2b9;line-height:1.55}.copy-code-row{display:flex;justify-content:center;margin-top:10px}.copy-code-row button{min-width:180px}.verify-actions{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:18px}.site-footer{max-width:1180px;margin:0 auto;padding:34px 20px 48px;border-top:1px solid #132a3d;display:grid;grid-template-columns:1fr auto;gap:28px;color:#7892a9}.site-footer b{color:#dcebf6}.site-footer p{max-width:760px;margin:7px 0 0;line-height:1.55;font-size:12px}.site-footer-links{display:flex;gap:16px;align-items:start;flex-wrap:wrap}.site-footer a{color:#86d9c1;text-decoration:none}.risk-note{display:inline-flex;margin-top:10px;padding:7px 10px;border:1px solid #1b3c4e;border-radius:999px;color:#8fb7c8;font-size:10px;letter-spacing:.04em}.auth-msg[aria-live],.toast[aria-live]{min-height:18px}@media(max-width:800px){.faq-grid{grid-template-columns:1fr}.site-footer{grid-template-columns:1fr}.service-notice{margin:-10px 16px 30px}.site-footer-links{gap:12px}}
+  </style>
 </head>
 <body>
 <div class="bg-grid"></div>
@@ -23,6 +30,7 @@
       <p>Crie sua conta, conecte a extensão e acompanhe setups em tempo real. A confirmação só é liberada quando os critérios técnicos e a qualidade do feed forem suficientes.</p>
       <div class="hero-actions"><button class="primary xl" data-open-auth="signup">TESTAR GRÁTIS</button><a class="secondary xl" href="#planos">VER PLANOS</a></div>
       <div class="hero-notes"><span>✓ Trial controlado</span><span>✓ 1 aparelho por acesso</span><span>✓ Entrada com confirmação manual</span></div>
+      <span class="risk-note">Ferramenta de apoio à análise • resultados de mercado não são garantidos</span>
     </div>
     <div class="terminal-card">
       <div class="terminal-head"><span><i></i> ATS LIVE</span><small>DEMONSTRAÇÃO</small></div>
@@ -33,6 +41,8 @@
     </div>
   </section>
 
+  <section id="serviceNotice" class="service-notice" hidden><span>⚙</span><div><b>Alguns recursos comerciais ainda estão em configuração.</b><small id="serviceNoticeText">Você ainda pode conhecer a plataforma e falar com o suporte.</small></div></section>
+
   <section id="como" class="section">
     <div class="section-title"><span class="eyebrow">FLUXO SIMPLES</span><h2>Comece sem pedir chave no WhatsApp.</h2></div>
     <div class="steps"><article><b>01</b><h3>Crie sua conta</h3><p>Use e-mail e senha ou Google quando configurado.</p></article><article><b>02</b><h3>Confirme o e-mail</h3><p>O Trial é liberado automaticamente após a confirmação.</p></article><article><b>03</b><h3>Conecte a extensão</h3><p>Use um código de 6 dígitos. A licença fica invisível.</p></article><article><b>04</b><h3>Assine quando quiser</h3><p>Pagamento aprovado atualiza o acesso da conta.</p></article></div>
@@ -41,11 +51,21 @@
   <section id="planos" class="section plans-section">
     <div class="section-title"><span class="eyebrow">PLANOS</span><h2>Escolha o nível de uso ideal.</h2><p>Preços e limites são controlados pelo administrador.</p></div>
     <div id="plansGrid" class="plans-grid"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>
+    <p id="paymentNotice" class="plans-availability" hidden>Pagamento online ainda está sendo configurado. O suporte pode orientar a ativação enquanto isso.</p>
   </section>
 
   <section id="plataformas" class="section platform-section">
     <div class="platform-copy"><span class="eyebrow">MULTIPLATAFORMA</span><h2>CasaTrade primeiro. Arquitetura pronta para outras plataformas.</h2><p>A CasaTrade é a integração inicial recomendada, mas o motor usa adapters independentes.</p><div class="platform-actions"><a id="casaTradeBtn" class="primary" target="_blank" rel="noopener" hidden>ABRIR CASATRADE</a><button class="secondary" data-open-auth="signup">CRIAR CONTA ATS</button></div></div>
     <div class="platform-stack"><div class="platform-card featured"><b>★ CasaTrade</b><span>Integração inicial</span></div><div class="platform-card"><b>+ Novas plataformas</b><span>Adapters independentes</span></div></div>
+  </section>
+
+  <section class="section">
+    <div class="section-title"><span class="eyebrow">DÚVIDAS RÁPIDAS</span><h2>Antes de começar.</h2></div>
+    <div class="faq-grid">
+      <article><h3>O scanner executa a operação sozinho?</h3><p>Não. O ATS analisa, sinaliza e pode destacar a direção. A confirmação financeira final continua manual na plataforma.</p></article>
+      <article><h3>O Trial renova todo dia?</h3><p>Não. O teste possui limite total de sinais e fica associado ao aparelho para evitar reutilização indevida.</p></article>
+      <article><h3>Existe garantia de resultado?</h3><p>Não. O mercado envolve risco. Scores e resultados observados servem para análise e acompanhamento, não como promessa de lucro.</p></article>
+    </div>
   </section>
 </main>
 
@@ -55,17 +75,23 @@
     <header class="account-top"><div><span class="eyebrow">AI TRADING SCANNER</span><h1 id="helloTitle">Minha conta</h1><p id="accountEmail">—</p></div><span id="accountStatus" class="status-pill">ATIVO</span></header>
     <section class="account-page active" data-account-view="home">
       <div class="account-hero"><div><span class="eyebrow">SEU ACESSO</span><h2 id="planTitle">Carregando...</h2><p id="planText">Sincronizando assinatura e dispositivo.</p></div><button class="primary" data-account-page="device">CONECTAR EXTENSÃO</button></div>
-      <div class="kpi-grid"><article><span>PLANO</span><b id="kpiPlan">—</b><small id="kpiExpiry">—</small></article><article><span>USO HOJE</span><b id="kpiUsage">—</b><small>sinais confirmados</small></article><article><span>APARELHO</span><b id="kpiDevice">—</b><small>1 acesso por dispositivo</small></article><article><span>STATUS</span><b id="kpiStatus">—</b><small>sincronizado com o scanner</small></article></div>
-      <section class="account-card"><div><span class="eyebrow">PRÓXIMO PASSO</span><h3 id="nextTitle">Conecte sua extensão</h3><p id="nextText">Use um código temporário para entrar na extensão sem enxergar uma chave de licença.</p></div><button class="secondary" data-account-page="device">GERAR CÓDIGO</button></section>
+      <div class="kpi-grid"><article><span>PLANO</span><b id="kpiPlan">—</b><small id="kpiExpiry">—</small></article><article><span id="kpiUsageLabel">USO HOJE</span><b id="kpiUsage">—</b><small>sinais confirmados</small></article><article><span>APARELHO</span><b id="kpiDevice">—</b><small>1 acesso por dispositivo</small></article><article><span>STATUS</span><b id="kpiStatus">—</b><small>sincronizado com o scanner</small></article></div>
+      <section class="account-card"><div><span class="eyebrow">PRÓXIMO PASSO</span><h3 id="nextTitle">Conecte sua extensão</h3><p id="nextText">Use um código temporário para entrar na extensão sem enxergar uma chave de licença.</p></div><button id="nextAction" class="secondary" data-account-page="device">GERAR CÓDIGO</button></section>
     </section>
     <section class="account-page" data-account-view="plans"><div class="section-title left"><span class="eyebrow">UPGRADE</span><h2>Planos disponíveis</h2><p>O pagamento aprovado atualiza o acesso automaticamente.</p></div><div id="accountPlans" class="plans-grid compact"></div></section>
-    <section class="account-page" data-account-view="device"><div class="device-connect"><span class="eyebrow">CONEXÃO SEGURA</span><h2>Entrar na extensão</h2><p>Abra a extensão no computador que será usado e digite o código temporário abaixo. Ele expira em 10 minutos e só pode ser usado uma vez.</p><button id="generateCode" class="primary xl">GERAR CÓDIGO DE CONEXÃO</button><div id="connectCodeBox" class="connect-code" hidden><small>CÓDIGO</small><strong id="connectCode">------</strong><span id="connectExpiry">expira em 10:00</span></div><aside>🔒 O Trial é limitado por conta e por instalação. Outro e-mail no mesmo aparelho não libera outro Trial.</aside></div></section>
+    <section class="account-page" data-account-view="device"><div class="device-connect"><span class="eyebrow">CONEXÃO SEGURA</span><h2>Entrar na extensão</h2><p>Abra a extensão no computador que será usado e digite o código temporário abaixo. Ele expira em 10 minutos e só pode ser usado uma vez.</p><button id="generateCode" class="primary xl">GERAR CÓDIGO DE CONEXÃO</button><div id="connectCodeBox" class="connect-code" hidden><small>CÓDIGO</small><strong id="connectCode">------</strong><span id="connectExpiry">expira em 10:00</span><div class="copy-code-row"><button id="copyConnectCode" class="secondary" type="button">COPIAR CÓDIGO</button></div></div><aside>🔒 O Trial é limitado por conta e por instalação. Outro e-mail no mesmo aparelho não libera outro Trial.</aside></div></section>
   </section>
 </main>
 
-<div id="authModal" class="modal" hidden><div class="modal-backdrop" data-close-auth></div><section class="auth-card"><button class="modal-close" data-close-auth>×</button><div class="auth-logo">ATS</div><span class="eyebrow">ACESSO À PLATAFORMA</span><h2 id="authTitle">Criar sua conta</h2><p id="authSub">Confirme seu e-mail para liberar o teste.</p><div id="googleWrap" hidden><div id="googleButton"></div><div class="divider"><span>ou</span></div></div><form id="signupForm"><label>Nome<input name="name" autocomplete="name" required minlength="2" placeholder="Seu nome"></label><label>E-mail<input name="email" type="email" autocomplete="email" required placeholder="voce@email.com"></label><label>Senha<input name="password" type="password" autocomplete="new-password" required minlength="8" placeholder="Mínimo 8 caracteres"></label><button class="primary full">CRIAR CONTA E LIBERAR TESTE</button></form><form id="loginForm" hidden><label>E-mail<input name="email" type="email" autocomplete="email" required></label><label>Senha<input name="password" type="password" autocomplete="current-password" required></label><button class="primary full">ENTRAR NA MINHA CONTA</button></form><p id="authMsg" class="auth-msg"></p><button id="authSwitch" class="text-btn">Já tenho conta • Entrar</button></section></div>
-<div id="verifyView" class="verify-screen" hidden><section><div class="auth-logo">✓</div><h2>Confirme seu e-mail</h2><p id="verifyText">Enviamos um link para seu e-mail. Depois da confirmação, seu Trial é liberado automaticamente.</p><button id="backLogin" class="primary">IR PARA ENTRAR</button></section></div>
-<div id="toast" class="toast"></div>
+<div id="authModal" class="modal" hidden><div class="modal-backdrop" data-close-auth></div><section class="auth-card" role="dialog" aria-modal="true" aria-labelledby="authTitle"><button class="modal-close" data-close-auth aria-label="Fechar">×</button><div class="auth-logo">ATS</div><span class="eyebrow">ACESSO À PLATAFORMA</span><h2 id="authTitle">Criar sua conta</h2><p id="authSub">Confirme seu e-mail para liberar o teste.</p><div id="googleWrap" hidden><div id="googleButton"></div><div class="divider"><span>ou</span></div></div><form id="signupForm"><label>Nome<input name="name" autocomplete="name" required minlength="2" placeholder="Seu nome"></label><label>E-mail<input name="email" type="email" autocomplete="email" required placeholder="voce@email.com"></label><label>Senha<input name="password" type="password" autocomplete="new-password" required minlength="8" placeholder="Mínimo 8 caracteres"></label><button class="primary full">CRIAR CONTA E LIBERAR TESTE</button></form><form id="loginForm" hidden><label>E-mail<input name="email" type="email" autocomplete="email" required></label><label>Senha<input name="password" type="password" autocomplete="current-password" required></label><button class="primary full">ENTRAR NA MINHA CONTA</button></form><p id="authMsg" class="auth-msg" aria-live="polite"></p><button id="authSwitch" class="text-btn">Já tenho conta • Entrar</button></section></div>
+<div id="verifyView" class="verify-screen" hidden><section><div class="auth-logo">✓</div><h2>Confirme seu e-mail</h2><p id="verifyText">Enviamos um link para seu e-mail. Depois da confirmação, seu Trial é liberado automaticamente.</p><div class="verify-actions"><button id="resendVerification" class="secondary" type="button">REENVIAR E-MAIL</button><button id="backLogin" class="primary">IR PARA ENTRAR</button></div></section></div>
+<div id="toast" class="toast" aria-live="polite"></div>
+
+<footer class="site-footer">
+  <div><b>AI Trading Scanner</b><p>Software de apoio à análise de mercado. Não há garantia de lucro, taxa mínima de acerto ou resultado futuro. Valide a ferramenta em ambiente Demo antes de qualquer uso com capital real.</p></div>
+  <div class="site-footer-links"><a id="supportFooter" target="_blank" rel="noopener">Suporte</a><a href="#como">Como funciona</a><a href="#planos">Planos</a></div>
+</footer>
+
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script src="/customer.js"></script>
 </body>
