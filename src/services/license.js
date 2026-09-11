@@ -1,6 +1,7 @@
 import { installationId, saveClientToken, clearClientToken } from './telemetry.js';
 
 const LICENSE_KEY = 'atsLicenseKey';
+const REQUEST_TIMEOUT_MS = 8000;
 export const PUBLIC_LICENSE_API = 'https://ats-control-center-v07-production.up.railway.app';
 
 // Commercial builds must never trust an endpoint supplied by local settings.
@@ -25,16 +26,21 @@ export async function saveLicenseKey(key = '') {
 }
 
 async function call(_settings, path, payload) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
     const r = await fetch(`${base()}${path}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
+      signal: controller.signal
     });
     const data = await r.json().catch(() => ({}));
     return { ok: r.ok, status: r.status, ...data };
   } catch {
     return { ok: false, error: 'backend_unreachable' };
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
