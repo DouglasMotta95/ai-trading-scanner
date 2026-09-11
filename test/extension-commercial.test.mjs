@@ -10,16 +10,20 @@ const read = file => fs.readFileSync(path.join(root, file), 'utf8');
 
 const PUBLIC_API = 'https://ats-control-center-v07-production.up.railway.app';
 
-test('manifest exposes the expected extension entry points and CasaTrade hosts', () => {
+test('manifest exposes popup fallback, side panel and CasaTrade hosts', () => {
   const manifest = JSON.parse(read('manifest.json'));
   assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.background?.service_worker, 'src/background.js');
+  assert.equal(manifest.background?.service_worker, 'src/background-entry.js');
+  assert.equal(manifest.action?.default_popup, 'src/sidepanel/index.html');
   assert.equal(manifest.side_panel?.default_path, 'src/sidepanel/index.html');
   assert.equal(manifest.options_page, 'src/admin/index.html');
   assert.ok(manifest.host_permissions.includes('https://*.casatrade.com/*'));
   assert.ok(manifest.host_permissions.includes('https://*.casatrade.io/*'));
   assert.ok(manifest.permissions.includes('sidePanel'));
   assert.ok(manifest.permissions.includes('scripting'));
+  const entry = read('src/background-entry.js');
+  assert.match(entry, /background-augment\.js/);
+  assert.match(entry, /background\.js/);
 });
 
 test('sidepanel primary controls exist and are wired', () => {
@@ -46,10 +50,11 @@ test('sidepanel primary controls exist and are wired', () => {
   assert.ok(app.includes("expSelect.addEventListener('change'"));
 });
 
-test('account-code login is present and uses one-time exchange plus refresh', () => {
+test('account-code login is present and manual license activation remains available', () => {
   const loader = read('src/sidepanel/license-copy.js');
   const account = read('src/sidepanel/account-login.js');
   assert.ok(loader.includes('account-login.js'));
+  assert.ok(loader.includes('preflight.js'));
   assert.ok(account.includes('/v1/customer/extension/exchange'));
   assert.ok(account.includes('/v1/customer/extension/refresh'));
   assert.ok(account.includes('accountConnectBtn'));
@@ -58,7 +63,28 @@ test('account-code login is present and uses one-time exchange plus refresh', ()
   assert.ok(account.includes("replace(/\\D/g, '')"));
   assert.ok(account.includes('maxlength="6"'));
   assert.ok(account.includes(PUBLIC_API));
-  assert.ok(account.includes("activation.dataset.manualOpen = '0'"));
+  assert.match(account, /activation\.hidden = false/);
+});
+
+test('preflight blocks unsafe starts until stake timeframe and expiration are aligned', () => {
+  const preflight = read('src/sidepanel/preflight.js');
+  assert.match(preflight, /VALOR PLANEJADO/);
+  assert.match(preflight, /TODOS OS ATIVOS DETECTADOS/);
+  assert.match(preflight, /expiração .* é menor que a vela/);
+  assert.match(preflight, /CasaTrade está com expiração/);
+  assert.match(preflight, /stopImmediatePropagation/);
+  assert.match(preflight, /ATS_SET_SCANNER/);
+});
+
+test('multi-asset radar analyzes structured candidates without auto-clicking a trade', () => {
+  const augment = read('src/background-augment.js');
+  assert.match(augment, /ATS_NETWORK_DIAGNOSTIC/);
+  assert.match(augment, /seenCount/);
+  assert.match(augment, /allowedTransports/);
+  assert.match(augment, /processSnapshot/);
+  assert.match(augment, /universeAnalysis/);
+  assert.match(augment, /requiresFocus/);
+  assert.doesNotMatch(augment, /\.click\s*\(/);
 });
 
 test('commercial licensing cannot be bypassed by an unpacked build or custom backend', () => {
