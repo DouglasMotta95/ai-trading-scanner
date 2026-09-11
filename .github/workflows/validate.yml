@@ -14,10 +14,12 @@ jobs:
       - name: Validate manifest
         run: node -e "const m=JSON.parse(require('fs').readFileSync('manifest.json','utf8')); if(m.manifest_version!==3) process.exit(1); console.log('manifest',m.version,'ok')"
       - name: Check required extension files
-        run: test -f src/background.js && test -f src/content/casatrade.js && test -f src/sidepanel/index.html && test -f src/sidepanel/app.js && test -f src/admin/index.html
+        run: test -f src/background.js && test -f src/core/orchestrator.js && test -f src/content/casatrade.js && test -f src/sidepanel/index.html && test -f src/sidepanel/app.js && test -f src/admin/index.html
       - name: Syntax check extension
         run: find src -name '*.js' -print0 | xargs -0 -n1 node --check
       - name: Syntax check backend
         run: find backend -name '*.js' -print0 | xargs -0 -n1 node --check
       - name: Syntax check admin dashboard
         run: find apps/admin-dashboard -name '*.js' -print0 | xargs -0 -n1 node --check
+      - name: Core unit tests
+        run: cd backend && npm test
