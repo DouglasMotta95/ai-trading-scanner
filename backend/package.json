@@ -1,1 +1,1 @@
-{"name":"ai-trading-scanner-backend","version":"0.7.0","private":true,"type":"module","scripts":{"start":"node src/server.js","test":"node --test ../test/*.test.mjs"},"engines":{"node":">=20"}}
+{"name":"ai-trading-scanner-backend","version":"0.8.0","private":true,"type":"module","scripts":{"start":"node src/server-v08.js","test":"node --test ../test/*.test.mjs"},"engines":{"node":">=20"}}
