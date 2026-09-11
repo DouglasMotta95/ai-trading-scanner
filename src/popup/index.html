@@ -10,17 +10,13 @@
 <body>
   <main class="shell">
     <header class="topbar">
-      <div class="brand"><span>ATS</span><div><b>AI TRADING SCANNER</b><small id="version">CARREGANDO...</small></div></div>
+      <div class="brand"><span>ATS</span><div><b>AI TRADING SCANNER</b><small id="version">PRONTO PARA ATIVAR</small></div></div>
       <i id="statusDot" class="dot"></i>
     </header>
 
-    <section id="loadingView" class="card loading">
-      <div class="spinner"></div>
-      <b>VERIFICANDO ACESSO</b>
-      <small>Aguarde um instante.</small>
-    </section>
-
-    <section id="activationView" class="card" hidden>
+    <!-- Fallback seguro: o primeiro acesso já nasce visível. Mesmo se o service worker demorar,
+         o cliente nunca fica preso em uma tela branca ou em "verificando". -->
+    <section id="activationView" class="card">
       <span class="eyebrow">PRIMEIRO ACESSO</span>
       <h1>Ative sua extensão</h1>
       <p id="activationText">Cole sua chave de licença para liberar o scanner neste aparelho.</p>
@@ -44,6 +40,23 @@
       <a id="supportActivation" class="support" href="https://wa.me/5535991429262" target="_blank" rel="noopener noreferrer">💬 SUPORTE • (35) 99142-9262</a>
     </section>
 
+    <section id="tutorialView" class="card tutorial-card" hidden>
+      <div class="row between tutorial-head">
+        <div><span class="eyebrow">GUIA RÁPIDO</span><h1>Como usar sem errar o tempo</h1></div>
+        <span id="tutorialProgress" class="badge">1 / 5</span>
+      </div>
+      <div class="tutorial-step">
+        <div id="tutorialIcon" class="tutorial-icon">1</div>
+        <div><h2 id="tutorialTitle">Abra a CasaTrade</h2><p id="tutorialText">Entre na conta Demo ou real antes de abrir o scanner.</p></div>
+      </div>
+      <div id="tutorialHint" class="notice ok">O scanner não envia ordem automaticamente.</div>
+      <div class="tutorial-actions">
+        <button id="tutorialBack" class="btn secondary">VOLTAR</button>
+        <button id="tutorialNext" class="btn primary">PRÓXIMO</button>
+      </div>
+      <button id="tutorialSkip" class="link-btn">PULAR AGORA • POSSO VER DEPOIS</button>
+    </section>
+
     <section id="customerView" hidden>
       <section class="card account-card">
         <div class="row between"><div><span class="eyebrow">MINHA EXTENSÃO</span><h1 id="planTitle">Acesso ativo</h1></div><span id="planBadge" class="badge">ATIVO</span></div>
@@ -59,9 +72,10 @@
       <section class="card start-card">
         <span class="eyebrow">SCANNER</span>
         <h2>Pronto para operar</h2>
-        <p>Abra a CasaTrade, depois abra o scanner completo para configurar valor, vela e expiração antes de iniciar.</p>
+        <p>Abra a CasaTrade e depois o scanner. Antes do START, confirme valor planejado, vela e expiração iguais às da plataforma.</p>
         <button id="openScannerBtn" class="btn primary">ABRIR SCANNER</button>
         <button id="connectPlatformBtn" class="btn secondary">ABRIR / FOCAR CASATRADE</button>
+        <button id="tutorialBtn" class="link-btn">VER TUTORIAL PASSO A PASSO</button>
       </section>
 
       <section class="card actions-card">
@@ -72,7 +86,7 @@
           <button id="validateBtn" class="mini-btn">SINCRONIZAR ACESSO</button>
           <a id="supportBtn" class="mini-btn anchor" href="https://wa.me/5535991429262" target="_blank" rel="noopener noreferrer">PEDIR RENOVAÇÃO</a>
         </div>
-        <div id="customerStatus" class="notice ok">Acesso sincronizado.</div>
+        <div id="customerStatus" class="notice ok">Acesso pronto.</div>
       </section>
     </section>
   </main>
