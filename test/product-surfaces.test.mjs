@@ -8,12 +8,17 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
 const read = file => fs.readFileSync(path.join(root, file), 'utf8');
 
-test('public portal exposes verification recovery, code copy and risk disclosure', () => {
+test('public portal exposes verification recovery, code copy, extension onboarding and risk disclosure', () => {
   const html = read('apps/customer-portal/index.html');
   const app = read('apps/customer-portal/app.js');
   const css = read('apps/customer-portal/styles.css');
   assert.match(html, /id="resendVerification"/);
   assert.match(html, /id="copyConnectCode"/);
+  assert.match(html, /id="extensionDownload"/);
+  assert.match(html, /ai-trading-scanner\/archive\/refs\/heads\/main\.zip/);
+  assert.match(html, /01[\s\S]*Baixe a extensão/);
+  assert.match(html, /02[\s\S]*Instale no Chrome ou Edge/);
+  assert.match(html, /03[\s\S]*Conecte sua conta/);
   assert.match(html, /resultados de mercado não são garantidos/i);
   assert.match(app, /\/v1\/customer\/resend-verification/);
   assert.match(app, /usedTotal/);
