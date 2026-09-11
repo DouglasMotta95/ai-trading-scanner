@@ -1,0 +1,1 @@
+(()=>{if(globalThis.__ATS_NETWORK_BRIDGE__)return;globalThis.__ATS_NETWORK_BRIDGE__=true;window.addEventListener('message',e=>{if(e.source!==window||e.data?.source!=='ATS_NETWORK_PROBE'||e.data?.type!=='summary')return;chrome.runtime.sendMessage({type:'ATS_NETWORK_DIAGNOSTIC',payload:e.data.payload||{}}).catch(()=>{})})})();
