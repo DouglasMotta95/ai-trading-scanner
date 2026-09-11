@@ -7,6 +7,7 @@
   const ACCOUNT_TOKEN_KEY = 'atsAccountToken';
   const ACCOUNT_EXP_KEY = 'atsAccountTokenExpiresAt';
   const LICENSE_KEY = 'atsLicenseKey';
+  const LAST_VALID_LICENSE_KEY = 'atsLastValidLicense';
   const CLIENT_TOKEN_KEY = 'atsClientToken';
   const CLIENT_EXP_KEY = 'atsClientTokenExpiresAt';
   const $ = s => document.querySelector(s);
@@ -40,13 +41,22 @@
   }
 
   async function saveSession(r) {
-    await chrome.storage.local.set({
+    const values = {
       [LICENSE_KEY]: String(r.licenseKey || ''),
       [CLIENT_TOKEN_KEY]: String(r.clientToken || ''),
       [CLIENT_EXP_KEY]: Number(r.clientTokenExpiresAt) || 0,
       [ACCOUNT_TOKEN_KEY]: String(r.accountToken || ''),
       [ACCOUNT_EXP_KEY]: Number(r.accountTokenExpiresAt) || 0
-    });
+    };
+    if (r.license?.status === 'active') {
+      values[LAST_VALID_LICENSE_KEY] = {
+        license: { ...r.license, error: null, syncPending: false },
+        licenseKey: String(r.licenseKey || r.license?.key || ''),
+        clientTokenExpiresAt: Number(r.clientTokenExpiresAt) || 0,
+        validatedAt: Date.now()
+      };
+    }
+    await chrome.storage.local.set(values);
     await chrome.runtime.sendMessage({ type: 'ATS_VALIDATE_LICENSE' }).catch(() => {});
     return r;
   }
