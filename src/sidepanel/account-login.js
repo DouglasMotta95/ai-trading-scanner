@@ -148,20 +148,21 @@
       </div>
       <div class="account-links">
         <button id="openCustomerPortal">ABRIR PORTAL DO CLIENTE</button>
-        <button id="manualKeyToggle">USAR CHAVE MANUAL</button>
+        <button id="manualKeyToggle">OCULTAR CHAVE MANUAL</button>
       </div>
-      <small id="accountConnectStatus" class="account-status">A licença será vinculada automaticamente à sua conta.</small>
+      <small id="accountConnectStatus" class="account-status">Você também pode colar uma chave manual logo abaixo.</small>
     `;
 
     const activation = $('#activationBox');
     activation?.before(box);
     if (activation) {
       activation.dataset.accountManaged = '1';
-      activation.dataset.manualOpen = '0';
-      activation.hidden = true;
-      new MutationObserver(() => {
-        if (activation.dataset.manualOpen !== '1' && !activation.hidden) activation.hidden = true;
-      }).observe(activation, { attributes: true, attributeFilter: ['hidden'] });
+      activation.dataset.manualOpen = activation.hidden ? '0' : '1';
+      if (!card.classList.contains('active')) {
+        activation.dataset.manualOpen = '1';
+        activation.hidden = false;
+      }
+      $('#manualKeyToggle').textContent = activation.hidden ? 'USAR CHAVE MANUAL' : 'OCULTAR CHAVE MANUAL';
     }
 
     const codeInput = $('#accountConnectCode');
@@ -174,10 +175,11 @@
 
     $('#manualKeyToggle').onclick = () => {
       if (!activation) return;
-      const open = activation.dataset.manualOpen !== '1';
+      const open = activation.hidden;
       activation.dataset.manualOpen = open ? '1' : '0';
       activation.hidden = !open;
       $('#manualKeyToggle').textContent = open ? 'OCULTAR CHAVE MANUAL' : 'USAR CHAVE MANUAL';
+      if (open) $('#licenseKey')?.focus();
     };
 
     $('#openCustomerPortal').onclick = () => chrome.tabs.create({ url: `${base()}/` });
@@ -206,6 +208,7 @@
         if (activation) {
           activation.dataset.manualOpen = '0';
           activation.hidden = true;
+          $('#manualKeyToggle').textContent = 'USAR CHAVE MANUAL';
         }
       } else {
         status.textContent = r?.error === 'connect_code_invalid'
@@ -230,6 +233,12 @@
     if (ok && $('#accountAccessBox')) {
       $('#accountAccessBox').classList.add('account-connected');
       $('#accountConnectStatus').textContent = 'Conta conectada • sincronização automática ativa.';
+      const activation = $('#activationBox');
+      if (activation) {
+        activation.dataset.manualOpen = '0';
+        activation.hidden = true;
+        $('#manualKeyToggle').textContent = 'USAR CHAVE MANUAL';
+      }
     }
   });
   setInterval(refresh, 60000);
