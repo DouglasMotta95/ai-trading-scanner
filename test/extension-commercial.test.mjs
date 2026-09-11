@@ -98,11 +98,12 @@ test('network probe intentionally excludes authentication/session fields', () =>
 test('network candidates can promote a matching quote into the structured feed', () => {
   const adapter = read('src/content/generic-adapter.js');
   assert.ok(adapter.includes('structuredNetworkQuote'));
-  assert.ok(adapter.includes("structuredQuotes: structured"));
-  assert.ok(adapter.includes("structuredSource: structured ? 'network' : null"));
+  assert.ok(adapter.includes('structuredQuotes: structured'));
+  assert.ok(adapter.includes("structuredSource: structured ? networkQuote?.transport || 'network' : null"));
   assert.ok(adapter.includes('networkQuoteMatched: structured'));
   assert.ok(adapter.includes('age > 6000'));
   assert.ok(adapter.includes('const exact = candidates.find(c => c.asset === wanted)'));
+  assert.ok(adapter.includes('seenCount || 0) >= 2'));
 });
 
 test('options page hides commercial bypass controls and wires the remaining actions', () => {
