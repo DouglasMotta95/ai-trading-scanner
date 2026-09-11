@@ -36,6 +36,28 @@ test('paid entitlement upgrade does not leave an old trial active', () => {
   assert.match(server, /access_inactive/);
 });
 
+test('lifetime plan is a one-time commercial plan with unlimited entitlement', () => {
+  const server = read('backend/src/server-v09.js');
+  const portal = read('apps/customer-portal/app.js');
+  assert.match(server, /SALES_LIFETIME_PRICE/);
+  assert.match(server, /LIFETIME_DAYS\s*=\s*36500/);
+  assert.match(server, /id:'lifetime'/);
+  assert.match(server, /commercialPlan='lifetime'/);
+  assert.match(server, /billing:'one_time'/);
+  assert.match(portal, /COMPRAR VITALÍCIO/);
+  assert.match(portal, /pagamento único/i);
+  assert.match(portal, /sem vencimento/i);
+});
+
+test('preflight continuously protects candle and expiration alignment', () => {
+  const preflight = read('src/sidepanel/preflight.js');
+  assert.match(preflight, /enforceRuntimeAlignment/);
+  assert.match(preflight, /SCANNER PAUSADO/);
+  assert.match(preflight, /ATS_SET_SCANNER/);
+  assert.match(preflight, /expiração .* é menor que a vela/);
+  assert.match(preflight, /CasaTrade está com expiração/);
+});
+
 test('admin ops does not inject CRM twice and does not fake a successful sync', () => {
   const ops = read('apps/admin-dashboard/ops.js');
   assert.match(ops, /__ATS_OPS__/);
