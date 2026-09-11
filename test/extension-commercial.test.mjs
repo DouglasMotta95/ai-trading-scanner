@@ -41,7 +41,9 @@ test('sidepanel primary controls exist and are wired', () => {
   assert.match(app, /sellBtn\.addEventListener\(['"]click['"]/);
   assert.match(app, /toggleBtn\.addEventListener\(['"]click['"]/);
   assert.match(app, /connectBtn\.addEventListener\(['"]click['"]/);
-  assert.match(app, /settingsBtn['"]?\)?\.addEventListener|\$\(['"]settingsBtn['"]\)\.addEventListener/);
+  assert.ok(app.includes("$('settingsBtn').addEventListener('click'"));
+  assert.ok(app.includes("tfSelect.addEventListener('change'"));
+  assert.ok(app.includes("expSelect.addEventListener('change'"));
 });
 
 test('account-code login is present and uses one-time exchange plus refresh', () => {
@@ -56,6 +58,7 @@ test('account-code login is present and uses one-time exchange plus refresh', ()
   assert.ok(account.includes("replace(/\\D/g, '')"));
   assert.ok(account.includes('maxlength="6"'));
   assert.ok(account.includes(PUBLIC_API));
+  assert.ok(account.includes("activation.dataset.manualOpen = '0'"));
 });
 
 test('commercial licensing cannot be bypassed by an unpacked build or custom backend', () => {
@@ -92,11 +95,24 @@ test('network probe intentionally excludes authentication/session fields', () =>
   assert.ok(probe.includes('auth/session fields'));
 });
 
-test('options page no longer exposes backend or license bypass controls to customers', () => {
+test('network candidates can promote a matching quote into the structured feed', () => {
+  const adapter = read('src/content/generic-adapter.js');
+  assert.ok(adapter.includes('structuredNetworkQuote'));
+  assert.ok(adapter.includes("structuredQuotes: structured"));
+  assert.ok(adapter.includes("structuredSource: structured ? 'network' : null"));
+  assert.ok(adapter.includes('networkQuoteMatched: structured'));
+  assert.ok(adapter.includes('age > 6000'));
+  assert.ok(adapter.includes('const exact = candidates.find(c => c.asset === wanted)'));
+});
+
+test('options page hides commercial bypass controls and wires the remaining actions', () => {
   const html = read('src/admin/index.html');
+  const admin = read('src/admin/admin.js');
   assert.doesNotMatch(html, /id=["']apiBase["']/);
   assert.doesNotMatch(html, /id=["']licenseRequired["']/);
   assert.doesNotMatch(html, /id=["']forceLicense["']/);
-  assert.match(html, /id=["']openAdminCentral["']/);
-  assert.match(html, /id=["']openCustomerPortalFromSettings["']/);
+  for (const id of ['save', 'copyDiag', 'openAdminCentral', 'openCustomerPortalFromSettings']) {
+    assert.match(html, new RegExp(`id=["']${id}["']`));
+    assert.ok(admin.includes(`$('${id}')`), `settings action #${id} has no handler reference`);
+  }
 });
