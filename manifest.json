@@ -5,7 +5,7 @@
   "description": "Scanner inteligente multi-plataforma com análise quantitativa, diagnóstico e sinais em tempo real.",
   "permissions": ["storage", "activeTab", "scripting", "sidePanel"],
   "host_permissions": ["https://*.casatrade.com/*", "https://*.casatrade.io/*"],
-  "background": { "service_worker": "src/background.js" },
+  "background": { "service_worker": "src/background.js", "type": "module" },
   "action": { "default_title": "AI Trading Scanner" },
   "options_page": "src/admin/index.html",
   "side_panel": { "default_path": "src/sidepanel/index.html" },
