@@ -8,12 +8,15 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8787);
 const API_KEY = process.env.ATS_API_KEY || '';
 const ADMIN_KEY = process.env.ATS_ADMIN_KEY || API_KEY;
+const ADMIN_SESSION_DAYS = Math.max(1, Number(process.env.ADMIN_SESSION_DAYS || 30));
 const ALLOWED_ORIGINS = (process.env.CORS_ORIGINS || '').split(',').map(x => x.trim()).filter(Boolean);
 const DATA_DIR = path.resolve(__dirname, '../data');
 const LICENSE_FILE = path.join(DATA_DIR, 'licenses.json');
 const ADMIN_DIR = path.resolve(__dirname, '../../apps/admin-dashboard');
+const SESSION_COOKIE = 'ats_admin_session';
 const sessions = new Map();
 const events = [];
+const adminAudit = [];
 const licenses = new Map();
 
 const PLANS = {
@@ -41,11 +44,14 @@ const baseHeaders = req => {
     'access-control-allow-methods': 'GET,POST,OPTIONS',
     'vary': 'Origin'
   };
-  if (allowed) h['access-control-allow-origin'] = allowed;
+  if (allowed) {
+    h['access-control-allow-origin'] = allowed;
+    h['access-control-allow-credentials'] = 'true';
+  }
   return h;
 };
-const json = (req, res, status, data) => {
-  res.writeHead(status, baseHeaders(req));
+const json = (req, res, status, data, extraHeaders = {}) => {
+  res.writeHead(status, { ...baseHeaders(req), ...extraHeaders });
   res.end(status === 204 ? '' : JSON.stringify(data));
 };
 const body = req => new Promise((resolve, reject) => {
@@ -68,8 +74,39 @@ const safeEq = (raw, key) => {
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 };
 const auth = req => safeEq(req.headers['x-api-key'], API_KEY);
-const adminAuth = req => safeEq(req.headers['x-admin-key'], ADMIN_KEY);
 const only = (o, keys) => Object.keys(o).every(k => keys.includes(k));
+const b64 = value => Buffer.from(value).toString('base64url');
+const unb64 = value => Buffer.from(value, 'base64url').toString('utf8');
+const adminSessionSecret = () => crypto.createHash('sha256').update(`ats-admin-session:${ADMIN_KEY}`).digest();
+const sign = value => crypto.createHmac('sha256', adminSessionSecret()).update(value).digest('base64url');
+const parseCookies = req => Object.fromEntries(String(req.headers.cookie || '').split(';').map(v => v.trim()).filter(Boolean).map(v => {
+  const i = v.indexOf('=');
+  return i < 0 ? [v, ''] : [v.slice(0, i), decodeURIComponent(v.slice(i + 1))];
+}));
+function createAdminSessionToken() {
+  const payload = b64(JSON.stringify({ iat: now(), exp: now() + ADMIN_SESSION_DAYS * 86400000, nonce: crypto.randomBytes(8).toString('hex') }));
+  return `${payload}.${sign(payload)}`;
+}
+function validAdminSession(req) {
+  if (!ADMIN_KEY) return false;
+  const token = parseCookies(req)[SESSION_COOKIE];
+  if (!token) return false;
+  const [payload, signature] = token.split('.');
+  if (!payload || !signature || !safeEq(signature, sign(payload))) return false;
+  try {
+    const data = JSON.parse(unb64(payload));
+    return Number(data.exp) > now();
+  } catch { return false; }
+}
+const adminAuth = req => safeEq(req.headers['x-admin-key'], ADMIN_KEY) || validAdminSession(req);
+const secureCookie = req => String(req.headers['x-forwarded-proto'] || '').toLowerCase() === 'https' || !!req.socket.encrypted;
+const sessionCookie = req => `${SESSION_COOKIE}=${encodeURIComponent(createAdminSessionToken())}; Path=/; Max-Age=${ADMIN_SESSION_DAYS * 86400}; HttpOnly; SameSite=Lax${secureCookie(req) ? '; Secure' : ''}`;
+const clearSessionCookie = req => `${SESSION_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax${secureCookie(req) ? '; Secure' : ''}`;
+
+function audit(action, data = {}) {
+  adminAudit.unshift({ id: crypto.randomUUID(), action, at: now(), ...data });
+  if (adminAudit.length > 200) adminAudit.length = 200;
+}
 
 function publicLicense(l) {
   const plan = PLANS[l.plan] || PLANS.starter;
@@ -93,7 +130,6 @@ function publicLicense(l) {
     isTrial: l.plan === 'trial'
   };
 }
-
 function loadLicenses() {
   try {
     const rows = JSON.parse(fs.readFileSync(LICENSE_FILE, 'utf8'));
@@ -161,19 +197,15 @@ function createLicense({ customerName = '', email = '', plan = 'starter', days =
   const createdAt = now();
   const validDays = Number(days);
   const l = {
-    key: newLicenseKey(),
-    plan,
-    status: 'active',
-    customerName: String(customerName).slice(0, 120),
-    email: String(email).slice(0, 160),
-    createdAt,
-    updatedAt: createdAt,
+    key: newLicenseKey(), plan, status: 'active',
+    customerName: String(customerName).slice(0, 120), email: String(email).slice(0, 160),
+    createdAt, updatedAt: createdAt,
     expiresAt: Number.isFinite(validDays) && validDays > 0 ? new Date(createdAt + validDays * 86400000).toISOString() : null,
-    devices: [],
-    usage: {}
+    devices: [], usage: {}
   };
   licenses.set(l.key, l);
   saveLicenses();
+  audit(plan === 'trial' ? 'trial_created' : 'license_created', { licenseKey: l.key, customerName: l.customerName, plan });
   return publicLicense(l);
 }
 function resetLicense(l, mode = 'full') {
@@ -184,12 +216,24 @@ function resetLicense(l, mode = 'full') {
   if (mode === 'full') l.status = 'active';
   l.updatedAt = now();
   saveLicenses();
+  audit(`license_reset_${mode}`, { licenseKey: l.key, customerName: l.customerName });
+  return publicLicense(l);
+}
+function renewLicense(l, days = 30) {
+  const amount = Math.max(1, Number(days) || 30);
+  const current = l.expiresAt ? Date.parse(l.expiresAt) : NaN;
+  const base = Number.isFinite(current) && current > now() ? current : now();
+  l.expiresAt = new Date(base + amount * 86400000).toISOString();
+  l.status = 'active';
+  l.updatedAt = now();
+  saveLicenses();
+  audit('license_renewed', { licenseKey: l.key, customerName: l.customerName, days: amount });
   return publicLicense(l);
 }
 function serveAdmin(res, file, type) {
   try {
     const data = fs.readFileSync(path.join(ADMIN_DIR, file));
-    res.writeHead(200, { 'content-type': type, 'cache-control': 'no-store' });
+    res.writeHead(200, { 'content-type': type, 'cache-control': 'no-store, max-age=0' });
     res.end(data);
     return true;
   } catch { return false; }
@@ -200,23 +244,31 @@ loadLicenses();
 const server = http.createServer(async (req, res) => {
   if (req.headers.origin && origin(req) === null) return json(req, res, 403, { error: 'origin_not_allowed' });
   if (req.method === 'OPTIONS') return json(req, res, 204, {});
-
   try {
     const url = new URL(req.url, 'http://localhost');
     const pathname = url.pathname;
 
-    if (pathname === '/') {
-      res.writeHead(302, { location: '/admin/' });
-      return res.end();
-    }
-    if (pathname === '/admin') {
-      res.writeHead(302, { location: '/admin/' });
-      return res.end();
-    }
+    if (pathname === '/') { res.writeHead(302, { location: '/admin/' }); return res.end(); }
+    if (pathname === '/admin') { res.writeHead(302, { location: '/admin/' }); return res.end(); }
     if (pathname === '/admin/') return serveAdmin(res, 'index.html', 'text/html; charset=utf-8') || json(req, res, 404, { error: 'admin_not_found' });
     if (pathname === '/admin/app.js') return serveAdmin(res, 'app.js', 'text/javascript; charset=utf-8') || json(req, res, 404, { error: 'admin_asset_not_found' });
     if (pathname === '/admin/styles.css') return serveAdmin(res, 'styles.css', 'text/css; charset=utf-8') || json(req, res, 404, { error: 'admin_asset_not_found' });
-    if (pathname === '/health') return json(req, res, 200, { ok: true, service: 'ats-api', time: now(), authConfigured: !!API_KEY, adminAuthConfigured: !!ADMIN_KEY, licenses: licenses.size });
+    if (pathname === '/health') return json(req, res, 200, { ok: true, service: 'ats-api', time: now(), authConfigured: !!API_KEY, adminAuthConfigured: !!ADMIN_KEY, licenses: licenses.size, version: '0.5.0' });
+
+    if (pathname === '/v1/admin/auth/login' && req.method === 'POST') {
+      if (!ADMIN_KEY) return json(req, res, 503, { error: 'admin_key_not_configured' });
+      const b = await body(req);
+      if (!safeEq(b.adminKey, ADMIN_KEY)) return json(req, res, 401, { error: 'unauthorized' });
+      audit('admin_login');
+      return json(req, res, 200, { ok: true, expiresInDays: ADMIN_SESSION_DAYS }, { 'set-cookie': sessionCookie(req) });
+    }
+    if (pathname === '/v1/admin/auth/logout' && req.method === 'POST') {
+      return json(req, res, 200, { ok: true }, { 'set-cookie': clearSessionCookie(req) });
+    }
+    if (pathname === '/v1/admin/auth/status' && req.method === 'GET') {
+      if (!adminAuth(req)) return json(req, res, ADMIN_KEY ? 401 : 503, { authenticated: false, error: ADMIN_KEY ? 'unauthorized' : 'admin_key_not_configured' });
+      return json(req, res, 200, { authenticated: true, sessionDays: ADMIN_SESSION_DAYS });
+    }
 
     const protectedRoute = (pathname === '/v1/session' && req.method === 'POST') || (pathname === '/v1/events' && req.method === 'POST');
     if (protectedRoute && !auth(req)) return json(req, res, API_KEY ? 401 : 503, { error: API_KEY ? 'unauthorized' : 'api_key_not_configured' });
@@ -268,6 +320,15 @@ const server = http.createServer(async (req, res) => {
       return json(req, res, 201, { ok: true, license });
     }
 
+    const renew = pathname.match(/^\/v1\/admin\/licenses\/([^/]+)\/renew$/);
+    if (renew && req.method === 'POST') {
+      const key = decodeURIComponent(renew[1]).toUpperCase();
+      const l = licenses.get(key);
+      if (!l) return json(req, res, 404, { error: 'license_not_found' });
+      const b = await body(req);
+      return json(req, res, 200, { ok: true, license: renewLicense(l, b.days) });
+    }
+
     const action = pathname.match(/^\/v1\/admin\/licenses\/([^/]+)\/(revoke|activate|reset|reset-devices|reset-usage)$/);
     if (action && req.method === 'POST') {
       const key = decodeURIComponent(action[1]).toUpperCase();
@@ -279,6 +340,7 @@ const server = http.createServer(async (req, res) => {
         l.status = op === 'activate' ? 'active' : 'revoked';
         l.updatedAt = now();
         saveLicenses();
+        audit(op === 'activate' ? 'license_activated' : 'license_revoked', { licenseKey: l.key, customerName: l.customerName });
         license = publicLicense(l);
       } else {
         license = resetLicense(l, op === 'reset-devices' ? 'devices' : op === 'reset-usage' ? 'usage' : 'full');
@@ -288,48 +350,38 @@ const server = http.createServer(async (req, res) => {
 
     if (pathname === '/v1/admin/clients' && req.method === 'GET') {
       const clients = [];
-      for (const l of licenses.values()) {
-        for (const d of l.devices || []) {
-          clients.push({
-            licenseKey: l.key,
-            plan: l.plan,
-            planLabel: PLANS[l.plan]?.label || l.plan,
-            customerName: l.customerName || '',
-            email: l.email || '',
-            installationId: d.installationId,
-            lastSeen: d.lastSeen || 0,
-            online: now() - (d.lastSeen || 0) < 60000,
-            version: d.version || null
-          });
-        }
-      }
+      for (const l of licenses.values()) for (const d of l.devices || []) clients.push({
+        licenseKey: l.key, plan: l.plan, planLabel: PLANS[l.plan]?.label || l.plan,
+        customerName: l.customerName || '', email: l.email || '', installationId: d.installationId,
+        lastSeen: d.lastSeen || 0, online: now() - (d.lastSeen || 0) < 60000, version: d.version || null
+      });
       return json(req, res, 200, { clients: clients.sort((a, b) => b.lastSeen - a.lastSeen) });
     }
+    if (pathname === '/v1/admin/audit' && req.method === 'GET') return json(req, res, 200, { events: adminAudit.slice(0, 50) });
 
     if (pathname === '/v1/admin/metrics' && req.method === 'GET') {
       const ts = now();
       const active = [...sessions.values()].filter(s => ts - s.lastSeen < 60000);
       const groups = {};
-      for (const s of active) {
-        const key = s.platform || 'unknown';
-        groups[key] = (groups[key] || 0) + 1;
-      }
+      for (const s of active) { const key = s.platform || 'unknown'; groups[key] = (groups[key] || 0) + 1; }
       const lic = [...licenses.values()].map(publicLicense);
-      const clients = [];
-      for (const l of licenses.values()) for (const d of l.devices || []) clients.push(d);
+      const devices = [];
+      for (const l of licenses.values()) for (const d of l.devices || []) devices.push(d);
       return json(req, res, 200, {
         installations: sessions.size,
         online: active.length,
-        licensedOnline: clients.filter(d => ts - (d.lastSeen || 0) < 60000).length,
+        licensedOnline: devices.filter(d => ts - (d.lastSeen || 0) < 60000).length,
         scanners: active.filter(s => s.scanning).length,
         events: events.length,
         licenses: lic.length,
         activeLicenses: lic.filter(x => x.status === 'active' && (!x.expiresAt || Date.parse(x.expiresAt) > ts)).length,
         activeTrials: lic.filter(x => x.plan === 'trial' && x.status === 'active' && (!x.expiresAt || Date.parse(x.expiresAt) > ts)).length,
         revokedLicenses: lic.filter(x => x.status === 'revoked').length,
+        expiredLicenses: lic.filter(x => x.expiresAt && Date.parse(x.expiresAt) <= ts).length,
+        expiringSoon: lic.filter(x => x.status === 'active' && x.expiresAt && Date.parse(x.expiresAt) > ts && Date.parse(x.expiresAt) <= ts + 3 * 86400000).length,
         signalsToday: lic.reduce((n, x) => n + x.usedToday, 0),
         platforms: Object.entries(groups).map(([name, online]) => ({ name, online })),
-        version: '0.4.1'
+        version: '0.5.0'
       });
     }
 
