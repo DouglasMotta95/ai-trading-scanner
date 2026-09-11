@@ -5,232 +5,59 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#07111c">
   <title>ATS Control Center</title>
-  <link rel="stylesheet" href="styles.css?v=0.5.1">
+  <link rel="stylesheet" href="styles.css?v=0.6.0">
+  <link rel="stylesheet" href="ops.css?v=0.6.0">
 </head>
 <body>
   <div id="authGate" class="auth-gate" hidden>
     <div class="auth-card">
-      <div class="auth-logo">ATS</div>
-      <span class="eyebrow">ADMINISTRAÇÃO SEGURA</span>
-      <h1>Control Center</h1>
+      <div class="auth-logo">ATS</div><span class="eyebrow">ADMINISTRAÇÃO SEGURA</span><h1>Control Center</h1>
       <p>Entre uma vez neste dispositivo. O painel mantém uma sessão segura para os próximos acessos.</p>
       <label>Chave administrativa<input id="loginKey" type="password" autocomplete="current-password" placeholder="Cole sua chave admin"></label>
-      <button id="loginBtn" class="btn primary full">ENTRAR E LEMBRAR ESTE DISPOSITIVO</button>
-      <small id="loginMsg">Sessão persistente por até 30 dias.</small>
+      <button id="loginBtn" class="btn primary full">ENTRAR E LEMBRAR ESTE DISPOSITIVO</button><small id="loginMsg">Sessão persistente por até 30 dias.</small>
     </div>
   </div>
-
   <div class="app-shell" id="appShell">
     <aside class="rail">
-      <div class="brand-block">
-        <div class="brand-mark">ATS</div>
-        <div><b>AI TRADING</b><span>CONTROL CENTER</span></div>
-      </div>
-      <nav class="rail-nav">
-        <button class="active" data-page="dashboard"><span>⌂</span><b>Painel</b></button>
-        <button data-page="licenses"><span>◆</span><b>Licenças</b></button>
-        <button data-page="clients"><span>◉</span><b>Clientes</b></button>
-        <button data-page="messages"><span>✦</span><b>Mensagens</b></button>
-        <button data-page="system"><span>⌁</span><b>Sistema</b></button>
-      </nav>
-      <div class="rail-bottom">
-        <div class="backend-pill"><i></i><span>BACKEND</span><b id="railBackend">ONLINE</b></div>
-        <button id="logoutBtn" class="logout-btn">Sair deste dispositivo</button>
-      </div>
+      <div class="brand-block"><div class="brand-mark">ATS</div><div><b>AI TRADING</b><span>CONTROL CENTER</span></div></div>
+      <nav class="rail-nav"><button class="active" data-page="dashboard"><span>⌂</span><b>Painel</b></button><button data-page="licenses"><span>◆</span><b>Licenças</b></button><button data-page="clients"><span>◉</span><b>Clientes</b></button><button data-page="messages"><span>✦</span><b>Mensagens</b></button><button data-page="system"><span>⌁</span><b>Sistema</b></button></nav>
+      <div class="rail-bottom"><div class="backend-pill"><i></i><span>BACKEND</span><b id="railBackend">ONLINE</b></div><button id="logoutBtn" class="logout-btn">Sair deste dispositivo</button></div>
     </aside>
-
     <main class="workspace">
-      <header class="appbar">
-        <div>
-          <span class="eyebrow">ATS ADMIN • LIVE CONTROL</span>
-          <h1 id="pageTitle">Central de controle</h1>
-          <p id="pageSub">Ações rápidas, licenças e clientes em um único painel.</p>
-        </div>
-        <div class="appbar-actions">
-          <span id="syncChip" class="sync-chip">↻ automático • 15s</span>
-          <span class="status-live"><i></i>ONLINE</span>
-          <button id="refreshBtn" class="icon-button" title="Atualizar agora">↻</button>
-          <button class="btn primary desktop-only" data-action-open="license">+ NOVA LICENÇA</button>
+      <header class="appbar ops-appbar">
+        <div class="appbar-title"><span class="eyebrow">ATS ADMIN • LIVE CONTROL</span><h1 id="pageTitle">Central de controle</h1><p id="pageSub">Ações rápidas, licenças e clientes em um único painel.</p></div>
+        <div class="ops-top-tools">
+          <label class="global-search"><span>⌕</span><input id="globalSearch" placeholder="Buscar cliente, licença ou e-mail"><kbd>⌘ K</kbd></label>
+          <div class="notify-wrap"><button id="notifyBtn" class="notify-btn" title="Pendências">🔔<em id="notifyCount">0</em></button><div id="notifyPanel" class="notify-panel" hidden><div class="notify-head"><b>Atenção hoje</b><span id="notifyPanelCount">0 itens</span></div><div id="notifyList"></div></div></div>
+          <span id="syncChip" class="sync-chip">↻ automático • 15s</span><span class="status-live"><i></i>ONLINE</span><button id="refreshBtn" class="icon-button" title="Atualizar agora">↻</button><button class="btn primary desktop-only" data-action-open="license">+ NOVA LICENÇA</button>
         </div>
       </header>
-
       <section class="view active" data-view="dashboard">
-        <section class="command-hero">
-          <div class="hero-text">
-            <span class="eyebrow">CENTRAL DE OPERAÇÃO</span>
-            <h2>Gerencie clientes e acessos sem perder tempo.</h2>
-            <p>Crie teste grátis, emita licença, resete extensão, renove acesso e já receba a mensagem pronta para enviar ao cliente. O painel atualiza os dados automaticamente.</p>
-          </div>
-          <div class="hero-badge"><span id="heroClock">--:--</span><small>PAINEL ATIVO</small></div>
-        </section>
-
+        <section class="command-hero ops-hero"><div class="hero-text"><span class="eyebrow">CENTRAL DE OPERAÇÃO</span><h2 id="greetingTitle">Seu negócio em um único painel.</h2><p id="heroSummary">Veja o que precisa de atenção, resolva pendências e gerencie acessos sem perder tempo.</p><div class="hero-chips"><span>🔒 1 licença = 1 aparelho</span><span>⚡ atualização automática</span><span>🛡️ trial controlado</span></div></div><div class="hero-badge"><span id="heroClock">--:--</span><small>PAINEL ATIVO</small><em id="lastSync">sincronizando...</em></div></section>
         <section class="metric-grid" id="metricGrid"></section>
-
-        <section class="section-card action-center">
-          <div class="section-head">
-            <div><span class="eyebrow">COMANDOS PRINCIPAIS</span><h3>Ações rápidas</h3></div>
-            <span class="mini-tag">1 TOQUE</span>
-          </div>
-          <div class="quick-grid">
-            <button class="quick-card trial" data-action-open="trial"><span class="quick-icon">🎁</span><b>Teste grátis</b><small>Gera Trial + mensagem automática</small></button>
-            <button class="quick-card license" data-action-open="license"><span class="quick-icon">🔑</span><b>Nova licença</b><small>Escolha plano e validade</small></button>
-            <button class="quick-card reset" data-action-open="reset"><span class="quick-icon">♻</span><b>Resetar cliente</b><small>Libera dispositivo + consumo</small></button>
-            <button class="quick-card renew" data-action-open="renew"><span class="quick-icon">↻</span><b>Renovar acesso</b><small>Adiciona validade e gera mensagem</small></button>
-            <button class="quick-card clients" data-page-jump="clients"><span class="quick-icon">◉</span><b>Clientes online</b><small>Veja quem está conectado agora</small></button>
-            <button class="quick-card messages" data-page-jump="messages"><span class="quick-icon">✦</span><b>Mensagens</b><small>Modelos prontos e editáveis</small></button>
-          </div>
-        </section>
-
-        <div class="dashboard-columns">
-          <section class="section-card">
-            <div class="section-head"><div><span class="eyebrow">RECENTES</span><h3>Últimas licenças</h3></div><button class="link-button" data-page-jump="licenses">Ver todas</button></div>
-            <div id="recentLicenses" class="compact-list"></div>
-          </section>
-          <section class="section-card">
-            <div class="section-head"><div><span class="eyebrow">ATIVIDADE</span><h3>Histórico administrativo</h3></div></div>
-            <div id="auditList" class="timeline"></div>
-          </section>
-        </div>
-
-        <section class="section-card">
-          <div class="section-head"><div><span class="eyebrow">PLANOS</span><h3>Mapa comercial</h3></div></div>
-          <div id="planStrip" class="plan-strip"></div>
-        </section>
+        <section class="ops-attention section-card"><div class="section-head"><div><span class="eyebrow">PRIORIDADE</span><h3>⚠ Atenção hoje</h3><p>O que merece ação agora.</p></div><span id="attentionCount" class="attention-count">0 PENDÊNCIAS</span></div><div id="attentionList" class="attention-list"></div></section>
+        <section class="section-card action-center"><div class="section-head"><div><span class="eyebrow">COMANDOS PRINCIPAIS</span><h3>⚡ Ações rápidas</h3></div><span class="mini-tag">1 TOQUE</span></div><div class="quick-grid">
+          <button class="quick-card trial" data-action-open="trial"><span class="quick-icon">🎁</span><b>Teste controlado</b><small>Até 2 sinais totais • 1 aparelho</small></button>
+          <button class="quick-card license" data-action-open="license"><span class="quick-icon">🔑</span><b>Nova licença</b><small>Escolha plano e validade</small></button>
+          <button class="quick-card reset" data-action-open="reset"><span class="quick-icon">♻</span><b>Trocar aparelho</b><small>Libera novo vínculo manual</small></button>
+          <button class="quick-card renew" data-action-open="renew"><span class="quick-icon">↻</span><b>Renovar acesso</b><small>+7, +15, +30 ou +90 dias</small></button>
+          <button class="quick-card clients" data-page-jump="clients"><span class="quick-icon">◉</span><b>Clientes online</b><small>Veja quem está conectado agora</small></button>
+          <button class="quick-card messages" data-page-jump="messages"><span class="quick-icon">✦</span><b>Mensagens</b><small>Modelos prontos e editáveis</small></button>
+        </div></section>
+        <section class="commercial-strip section-card"><div class="section-head"><div><span class="eyebrow">COMERCIAL</span><h3>Resumo da operação</h3></div><span class="mini-tag">TEMPO REAL</span></div><div id="commercialStats" class="commercial-grid"></div></section>
+        <div class="dashboard-columns"><section class="section-card"><div class="section-head"><div><span class="eyebrow">RECENTES</span><h3>Últimas licenças</h3></div><button class="link-button" data-page-jump="licenses">Ver todas</button></div><div id="recentLicenses" class="compact-list"></div></section><section class="section-card"><div class="section-head"><div><span class="eyebrow">ATIVIDADE</span><h3>Histórico administrativo</h3></div></div><div id="auditList" class="timeline"></div></section></div>
+        <section class="section-card"><div class="section-head"><div><span class="eyebrow">PLANOS</span><h3>Mapa comercial</h3></div></div><div id="planStrip" class="plan-strip"></div></section>
       </section>
-
-      <section class="view" data-view="licenses">
-        <div class="page-tools">
-          <div class="search-box"><span>⌕</span><input id="licenseSearch" placeholder="Buscar cliente, licença ou e-mail"></div>
-          <div class="filter-row" id="licenseFilters">
-            <button class="active" data-license-filter="all">Todas</button>
-            <button data-license-filter="active">Ativas</button>
-            <button data-license-filter="trial">Trial</button>
-            <button data-license-filter="expired">Expiradas</button>
-            <button data-license-filter="blocked">Bloqueadas</button>
-          </div>
-        </div>
-        <div class="license-layout">
-          <section class="section-card license-list-card">
-            <div class="section-head"><div><span class="eyebrow">BASE DE ACESSOS</span><h3>Licenças</h3></div><span id="licenseCount" class="count-badge">0</span></div>
-            <div id="licensesList" class="license-list"></div>
-          </section>
-          <aside class="section-card license-inspector" id="licenseInspector">
-            <div class="empty-panel">Selecione uma licença para ver detalhes e ações.</div>
-          </aside>
-        </div>
-      </section>
-
-      <section class="view" data-view="clients">
-        <div class="page-tools single-line">
-          <div class="search-box"><span>⌕</span><input id="clientSearch" placeholder="Buscar cliente ou licença"></div>
-          <span id="onlineBadge" class="count-badge green">0 ONLINE</span>
-        </div>
-        <div id="clientsGrid" class="client-grid"></div>
-      </section>
-
-      <section class="view" data-view="messages">
-        <div class="message-workbench">
-          <aside class="section-card template-menu">
-            <div class="section-head"><div><span class="eyebrow">MODELOS</span><h3>Mensagens prontas</h3></div></div>
-            <button class="template-btn active" data-template="trial"><span>🎁</span><div><b>Teste grátis</b><small>Boas-vindas ao Trial</small></div></button>
-            <button class="template-btn" data-template="license"><span>🔑</span><div><b>Licença liberada</b><small>Acesso pago criado</small></div></button>
-            <button class="template-btn" data-template="renew"><span>↻</span><div><b>Renovação</b><small>Acesso renovado</small></div></button>
-            <button class="template-btn" data-template="reset"><span>♻</span><div><b>Reset concluído</b><small>Extensão liberada</small></div></button>
-            <button class="template-btn" data-template="blocked"><span>⛔</span><div><b>Acesso bloqueado</b><small>Informação de bloqueio</small></div></button>
-          </aside>
-          <section class="section-card composer-card">
-            <div class="section-head"><div><span class="eyebrow">EDITOR</span><h3>Mensagem ao cliente</h3></div><span class="mini-tag">EDITÁVEL</span></div>
-            <div class="message-vars"><input id="msgName" placeholder="Nome do cliente"><input id="msgKey" placeholder="Licença"><input id="msgPlan" placeholder="Plano"></div>
-            <textarea id="messageEditor"></textarea>
-            <div class="composer-actions"><button id="copyMessageBtn" class="btn primary">COPIAR MENSAGEM</button><button id="shareMessageBtn" class="btn secondary">COMPARTILHAR</button></div>
-          </section>
-        </div>
-      </section>
-
-      <section class="view" data-view="system">
-        <div class="system-grid">
-          <section class="section-card">
-            <div class="section-head"><div><span class="eyebrow">SERVIÇO</span><h3>Saúde do backend</h3></div><span class="status-live"><i></i>ONLINE</span></div>
-            <div id="systemHealth" class="system-list"></div>
-          </section>
-          <section class="section-card">
-            <div class="section-head"><div><span class="eyebrow">SESSÃO ADMIN</span><h3>Acesso automático</h3></div></div>
-            <div class="session-card"><span class="session-icon">✓</span><div><b>Este dispositivo está lembrado</b><small id="sessionInfo">Sessão segura ativa.</small></div></div>
-            <button id="logoutBtn2" class="btn secondary full">SAIR DESTE DISPOSITIVO</button>
-          </section>
-          <section class="section-card">
-            <div class="section-head"><div><span class="eyebrow">VERSÃO</span><h3>Build ativa</h3></div></div>
-            <div class="build-card"><strong id="buildVersion">—</strong><span>Control Center</span><small>AI Trading Scanner</small></div>
-          </section>
-        </div>
-      </section>
+      <section class="view" data-view="licenses"><div class="page-tools"><div class="search-box"><span>⌕</span><input id="licenseSearch" placeholder="Buscar cliente, licença ou e-mail"></div><div class="filter-row" id="licenseFilters"><button class="active" data-license-filter="all">Todas</button><button data-license-filter="active">Ativas</button><button data-license-filter="trial">Trial</button><button data-license-filter="expired">Expiradas</button><button data-license-filter="blocked">Bloqueadas</button></div></div><div class="license-layout"><section class="section-card license-list-card"><div class="section-head"><div><span class="eyebrow">BASE DE ACESSOS</span><h3>Licenças</h3></div><span id="licenseCount" class="count-badge">0</span></div><div id="licensesList" class="license-list"></div></section><aside class="section-card license-inspector" id="licenseInspector"><div class="empty-panel">Selecione uma licença para ver detalhes e ações.</div></aside></div></section>
+      <section class="view" data-view="clients"><div class="page-tools single-line"><div class="search-box"><span>⌕</span><input id="clientSearch" placeholder="Buscar cliente ou licença"></div><span id="onlineBadge" class="count-badge green">0 ONLINE</span></div><div id="clientsGrid" class="client-grid"></div></section>
+      <section class="view" data-view="messages"><div class="message-workbench"><aside class="section-card template-menu"><div class="section-head"><div><span class="eyebrow">MODELOS</span><h3>Mensagens prontas</h3></div></div><button class="template-btn active" data-template="trial"><span>🎁</span><div><b>Teste controlado</b><small>Até 2 sinais totais</small></div></button><button class="template-btn" data-template="license"><span>🔑</span><div><b>Licença liberada</b><small>Acesso pago criado</small></div></button><button class="template-btn" data-template="renew"><span>↻</span><div><b>Renovação</b><small>Acesso renovado</small></div></button><button class="template-btn" data-template="reset"><span>♻</span><div><b>Novo aparelho</b><small>Vínculo anterior liberado</small></div></button><button class="template-btn" data-template="blocked"><span>⛔</span><div><b>Acesso bloqueado</b><small>Informação de bloqueio</small></div></button></aside><section class="section-card composer-card"><div class="section-head"><div><span class="eyebrow">EDITOR</span><h3>Mensagem ao cliente</h3></div><span class="mini-tag">EDITÁVEL</span></div><div class="message-vars"><input id="msgName" placeholder="Nome do cliente"><input id="msgKey" placeholder="Licença"><input id="msgPlan" placeholder="Plano"></div><textarea id="messageEditor"></textarea><div class="composer-actions"><button id="copyMessageBtn" class="btn primary">COPIAR MENSAGEM</button><button id="shareMessageBtn" class="btn secondary">COMPARTILHAR</button></div></section></div></section>
+      <section class="view" data-view="system"><div class="system-grid"><section class="section-card"><div class="section-head"><div><span class="eyebrow">SERVIÇO</span><h3>Saúde do backend</h3></div><span class="status-live"><i></i>ONLINE</span></div><div id="systemHealth" class="system-list"></div></section><section class="section-card"><div class="section-head"><div><span class="eyebrow">SESSÃO ADMIN</span><h3>Acesso automático</h3></div></div><div class="session-card"><span class="session-icon">✓</span><div><b>Este dispositivo está lembrado</b><small id="sessionInfo">Sessão segura ativa.</small></div></div><button id="logoutBtn2" class="btn secondary full">SAIR DESTE DISPOSITIVO</button></section><section class="section-card"><div class="section-head"><div><span class="eyebrow">VERSÃO</span><h3>Build ativa</h3></div></div><div class="build-card"><strong id="buildVersion">—</strong><span>Control Center</span><small>AI Trading Scanner</small></div></section></div></section>
     </main>
-
-    <nav class="mobile-bar">
-      <button class="active" data-page="dashboard"><span>⌂</span><b>Início</b></button>
-      <button data-page="licenses"><span>◆</span><b>Licenças</b></button>
-      <button class="mobile-main-action" data-action-open="trial">＋</button>
-      <button data-page="clients"><span>◉</span><b>Clientes</b></button>
-      <button data-page="messages"><span>✦</span><b>Mensagens</b></button>
-    </nav>
+    <nav class="mobile-bar"><button class="active" data-page="dashboard"><span>⌂</span><b>Início</b></button><button data-page="licenses"><span>◆</span><b>Licenças</b></button><button class="mobile-main-action" data-action-open="license">＋</button><button data-page="clients"><span>◉</span><b>Clientes</b></button><button data-page="messages"><span>✦</span><b>Mensagens</b></button></nav>
   </div>
-
-  <div id="actionModal" class="modal" hidden>
-    <div class="modal-overlay" data-close-modal></div>
-    <section class="modal-panel">
-      <button class="modal-x" data-close-modal>×</button>
-      <div class="modal-hero"><span id="modalIcon">🎁</span><div><small id="modalKicker">AÇÃO RÁPIDA</small><h2 id="modalTitle">Teste grátis</h2><p id="modalDescription">Preencha os dados e confirme.</p></div></div>
-      <form id="actionForm" class="form-stack">
-        <div id="customerFields" class="form-stack">
-          <label>Nome do cliente<input id="customerName" placeholder="Ex.: João Silva"></label>
-          <label>E-mail <small>(opcional)</small><input id="customerEmail" type="email" placeholder="cliente@email.com"></label>
-        </div>
-        <div id="trialFields" class="form-grid" hidden>
-          <label>Duração<select id="trialDays"><option value="1">1 dia</option><option value="3" selected>3 dias</option><option value="7">7 dias</option></select></label>
-          <div class="helper-card"><b>Trial</b><small>Usa o limite diário do plano de teste.</small></div>
-        </div>
-        <div id="licenseFields" class="form-grid" hidden>
-          <label>Plano<select id="licensePlan"></select></label>
-          <label>Validade<input id="licenseDays" type="number" min="1" value="30"><small>dias</small></label>
-        </div>
-        <div id="resetFields" class="form-stack" hidden>
-          <label>Cliente / licença<select id="resetLicense"></select></label>
-          <div class="reset-summary"><b>Reset completo</b><span>✓ remove dispositivos vinculados</span><span>✓ zera o consumo de hoje</span><span>✓ reativa a licença</span></div>
-        </div>
-        <div id="renewFields" class="form-grid" hidden>
-          <label>Cliente / licença<select id="renewLicense"></select></label>
-          <label>Adicionar<input id="renewDays" type="number" min="1" value="30"><small>dias</small></label>
-        </div>
-        <button id="submitActionBtn" class="btn primary full" type="submit">CONFIRMAR</button>
-      </form>
-    </section>
-  </div>
-
-  <aside id="resultSheet" class="result-sheet" hidden>
-    <div class="result-head"><div><span class="eyebrow">PRONTO PARA ENVIAR</span><h3 id="resultTitle">Acesso gerado</h3></div><button id="closeResult">×</button></div>
-    <div id="resultLicense" class="result-license"></div>
-    <label class="result-message"><span>Mensagem automática para o cliente</span><textarea id="resultMessage"></textarea></label>
-    <div class="result-actions"><button id="copyResultBtn" class="btn primary">COPIAR TUDO</button><button id="shareResultBtn" class="btn secondary">COMPARTILHAR</button></div>
-  </aside>
-
+  <div id="actionModal" class="modal" hidden><div class="modal-overlay" data-close-modal></div><section class="modal-panel"><button class="modal-x" data-close-modal>×</button><div class="modal-hero"><span id="modalIcon">🎁</span><div><small id="modalKicker">AÇÃO RÁPIDA</small><h2 id="modalTitle">Teste controlado</h2><p id="modalDescription">Preencha os dados e confirme.</p></div></div><form id="actionForm" class="form-stack"><div id="customerFields" class="form-stack"><label>Nome do cliente<input id="customerName" placeholder="Ex.: João Silva"></label><label>E-mail <small>(opcional)</small><input id="customerEmail" type="email" placeholder="cliente@email.com"></label></div><div id="trialFields" class="form-grid" hidden><label>Duração<select id="trialDays"><option value="1">1 dia</option><option value="3" selected>3 dias</option></select></label><div class="helper-card"><b>Trial protegido</b><small>Máximo de 2 sinais no total e somente 1 aparelho.</small></div></div><div id="licenseFields" class="form-grid" hidden><label>Plano<select id="licensePlan"></select></label><label>Validade<input id="licenseDays" type="number" min="1" value="30"><small>dias</small></label></div><div id="resetFields" class="form-stack" hidden><label>Cliente / licença<select id="resetLicense"></select></label><div class="reset-summary"><b>Troca de aparelho</b><span>✓ remove o vínculo atual</span><span>✓ mantém o consumo já realizado</span><span>✓ reativa a licença</span></div></div><div id="renewFields" class="form-stack" hidden><label>Cliente / licença<select id="renewLicense"></select></label><div class="renew-presets"><button type="button" data-renew-days="7">+7 dias</button><button type="button" data-renew-days="15">+15 dias</button><button type="button" data-renew-days="30" class="active">+30 dias</button><button type="button" data-renew-days="90">+90 dias</button></div><label>Adicionar<input id="renewDays" type="number" min="1" value="30"><small>dias</small></label></div><button id="submitActionBtn" class="btn primary full" type="submit">CONFIRMAR</button></form></section></div>
+  <aside id="resultSheet" class="result-sheet" hidden><div class="result-head"><div><span class="eyebrow">PRONTO PARA ENVIAR</span><h3 id="resultTitle">Acesso gerado</h3></div><button id="closeResult">×</button></div><div id="resultLicense" class="result-license"></div><label class="result-message"><span>Mensagem automática para o cliente</span><textarea id="resultMessage"></textarea></label><div class="result-actions"><button id="copyResultBtn" class="btn primary">COPIAR TUDO</button><button id="shareResultBtn" class="btn secondary">COMPARTILHAR</button></div></aside>
   <div id="toast" class="toast"></div>
-  <script src="app.js?v=0.5.1"></script>
-  <script>
-  (()=>{
-    const previous=new Map();
-    const stamp=()=>{const el=document.getElementById('syncChip');if(el)el.textContent='✓ atualizado '+new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})};
-    const reveal=()=>document.querySelectorAll('.metric,.quick-card,.section-card,.client-card,.license-item,.plan-card').forEach((el,i)=>{if(!el.dataset.motion){el.dataset.motion='1';el.classList.add('reveal');el.style.animationDelay=Math.min(i*22,180)+'ms'}});
-    const animateNumbers=()=>document.querySelectorAll('.metric').forEach(card=>{const label=card.querySelector('small')?.textContent||'';const strong=card.querySelector('strong');if(!strong)return;const target=Number(String(strong.textContent).replace(/[^0-9.-]/g,''));if(!Number.isFinite(target))return;const start=previous.has(label)?previous.get(label):0;if(start===target){previous.set(label,target);return}const t0=performance.now(),dur=480;const step=t=>{const p=Math.min(1,(t-t0)/dur),e=1-Math.pow(1-p,3);strong.textContent=Math.round(start+(target-start)*e);if(p<1)requestAnimationFrame(step);else previous.set(label,target)};requestAnimationFrame(step)});
-    const observer=new MutationObserver(()=>{reveal();animateNumbers()});
-    const grid=document.getElementById('metricGrid');if(grid)observer.observe(grid,{childList:true,subtree:true});
-    ['recentLicenses','licensesList','clientsGrid','planStrip','auditList'].forEach(id=>{const el=document.getElementById(id);if(el)observer.observe(el,{childList:true,subtree:true})});
-    document.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;const r=document.createElement('span');r.className='ripple';const box=b.getBoundingClientRect(),size=Math.max(box.width,box.height);r.style.width=r.style.height=size+'px';r.style.left=(e.clientX-box.left-size/2)+'px';r.style.top=(e.clientY-box.top-size/2)+'px';if(getComputedStyle(b).position==='static')b.style.position='relative';b.style.overflow='hidden';b.appendChild(r);setTimeout(()=>r.remove(),600)});
-    const tick=()=>{const c=document.getElementById('heroClock');if(c)c.textContent=new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})};tick();setInterval(tick,1000);
-    const auto=()=>{if(document.visibilityState!=='visible')return;const gate=document.getElementById('authGate');if(gate&&!gate.hidden)return;const b=document.getElementById('refreshBtn');if(b){b.classList.add('flash-update');b.click();stamp();setTimeout(()=>b.classList.remove('flash-update'),700)}};
-    setTimeout(()=>{reveal();animateNumbers();stamp()},900);
-    setInterval(auto,15000);
-    document.getElementById('refreshBtn')?.addEventListener('click',()=>setTimeout(stamp,500));
-  })();
-  </script>
+  <script src="app.js?v=0.6.0"></script><script src="ops.js?v=0.6.0"></script>
 </body>
 </html>
