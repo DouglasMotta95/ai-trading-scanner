@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "AI Trading Scanner",
+  "version": "0.1.0",
+  "description": "Scanner inteligente de mercado com diagnóstico da plataforma e análise em tempo real.",
+  "permissions": ["storage", "activeTab", "scripting", "sidePanel"],
+  "host_permissions": ["https://*.casatrade.com/*", "https://*.casatrade.io/*"],
+  "background": { "service_worker": "src/background.js" },
+  "action": { "default_title": "AI Trading Scanner" },
+  "side_panel": { "default_path": "src/sidepanel/index.html" },
+  "content_scripts": [{
+    "matches": ["https://*.casatrade.com/*", "https://*.casatrade.io/*"],
+    "js": ["src/content/casatrade.js"],
+    "run_at": "document_start"
+  }]
+}
