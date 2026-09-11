@@ -1,32 +1,33 @@
 # AI Trading Scanner
 
-Extensão Chrome/Edge Manifest V3 com arquitetura multi-plataforma para captura, normalização e análise de mercado. A CasaTrade é o primeiro adapter; o core não deve depender dela.
+Extensão Chrome/Edge Manifest V3 com arquitetura multi-plataforma para captura, normalização e análise de mercado. A CasaTrade é a primeira integração real; o core não depende dela.
 
 ## Estado atual — v0.3.0
 
-O projeto já possui:
+O projeto possui:
 
 - Side Panel com conexão, mercado atual, score, grade, estado do scanner e diagnóstico.
 - Service worker em modo ES module.
-- Pipeline integrado em `src/core/orchestrator.js`: snapshot → CandleBuilder → análise → confluência → quality gate → risk guard/dedupe → state machine → `scannerState.signal`.
-- Indicadores centralizados em `src/core/indicators.js` (SMA, EMA, RSI, MACD, ATR e Bollinger). `analysis.js` reutiliza essa implementação e não mantém fórmulas duplicadas.
-- CandleBuilder local com candles fechados imutáveis.
-- Market regime, confluence, risk controls, signal state machine, replay, histórico, feature flags e demais módulos de core.
-- Adapter CasaTrade com fallback por DOM e suporte a seletores CSS configuráveis em `chrome.storage.local.settings.casatradeSelectors`.
-- Configurações locais para scanner, backend e seletores CasaTrade.
-- Backend Node sem framework em `backend/` com `/health`, `/v1/session`, `/v1/events` e `/v1/admin/metrics`.
-- Validação de payload, limite de corpo, `x-api-key` e CORS por allowlist no backend.
+- Pipeline em `src/core/orchestrator.js`: snapshot → CandleBuilder → análise → confluência → quality gate → risk guard/dedupe → state machine → `scannerState.signal`.
+- Indicadores centralizados em `src/core/indicators.js` (SMA, EMA, RSI, MACD, ATR e Bollinger).
+- `src/platforms/registry.js` como fonte de configuração das plataformas suportadas.
+- `src/platforms/base-adapter.js` como contrato/base comum de adapter.
+- Um único content script genérico em `src/content/generic-adapter.js`, reutilizado por todas as casas registradas.
+- Configurações de seletores por plataforma em `settings.selectorsByPlatform[platformId]`.
+- Backend Node com validação de payload, limite de corpo, `x-api-key` e CORS por allowlist.
 - Admin Dashboard separado em `apps/admin-dashboard/`.
 - Testes unitários com `node:test` e CI no GitHub Actions.
 
-> Importante: `capabilities.structuredQuotes` continua `false` no adapter CasaTrade. Os preços capturados por regex/DOM podem alimentar candles locais para diagnóstico, mas o orquestrador os marca como provisórios e bloqueia confirmação operacional até existir uma fonte estruturada e validada. Não trate esses candles como feed real da corretora.
+> Importante: a CasaTrade continua com `capabilities.structuredQuotes=false`. Enquanto a captura vier de DOM/regex, os candles locais são apenas provisórios e não devem ser tratados como feed estruturado da corretora.
 
 ## Arquitetura
 
 ```text
 Plataforma
   ↓
-Platform Adapter
+Platform Registry
+  ↓
+Generic Content Adapter
   ↓
 Snapshot normalizado
   ↓
@@ -49,32 +50,103 @@ Pastas principais:
 
 ```text
 src/core/       lógica pura e orquestração
-src/platforms/  adapters e registry
+src/platforms/  registry e base adapter
 src/services/   telemetria / providers
-src/content/    captura dentro das plataformas
+src/content/    content adapter genérico
 src/sidepanel/  interface principal
 src/admin/      configurações locais da extensão
 backend/        API Node
 apps/admin-dashboard/ dashboard central
 ```
 
-## CasaTrade: captura e seletores
+## Como cadastrar uma nova plataforma
 
-O adapter tenta primeiro os seletores configurados e mantém regex/DOM apenas como fallback. Os seletores podem ser salvos pelo painel de configurações ou diretamente em `chrome.storage.local`:
+A extensão foi estruturada para que uma nova casa não exija um novo content script.
+
+### 1. Adicione a plataforma em `src/platforms/registry.js`
+
+Inclua uma nova entrada no array `PLATFORM_ADAPTERS`:
 
 ```js
 {
-  settings: {
-    casatradeSelectors: {
-      price: '.price-value',
-      asset: '.asset-name',
-      timeframe: '.timeframe'
-    }
+  id: 'nova-casa',
+  name: 'Nova Casa',
+  hosts: ['novacasa.com'],
+  status: 'beta',
+  defaultSelectors: {
+    price: '',
+    asset: '',
+    timeframe: ''
+  },
+  patterns: {
+    price: '...',
+    asset: '...',
+    timeframe: '...'
+  },
+  patternFlags: {
+    price: '',
+    asset: 'i',
+    timeframe: 'i'
+  },
+  capabilities: {
+    structuredQuotes: false,
+    candles: false,
+    expiration: false,
+    multiAsset: false
   }
 }
 ```
 
-Quando preço, ativo ou timeframe não são encontrados, o adapter registra o problema no diagnóstico e em `console.debug`. Nenhuma senha, cookie, token de sessão ou saldo é coletado.
+`generic` existe apenas como stub de exemplo e possui `hosts: []`; ele nunca é escolhido automaticamente por `detectPlatform()`.
+
+### 2. Libere o host no `manifest.json`
+
+Adicione o domínio novo em três pontos:
+
+- `host_permissions`
+- `content_scripts[0].matches`
+- `web_accessible_resources[0].matches`
+
+Exemplo:
+
+```json
+"https://*.novacasa.com/*"
+```
+
+Não use `<all_urls>` só para simplificar: mantenha as permissões restritas às plataformas realmente suportadas.
+
+### 3. Configure seletores opcionais no painel da extensão
+
+O painel administrativo lista automaticamente todas as entradas do registry e grava overrides assim:
+
+```js
+settings.selectorsByPlatform = {
+  casatrade: {
+    price: '.price-value',
+    asset: '.asset-name',
+    timeframe: '.timeframe'
+  },
+  'nova-casa': {
+    price: '.quote',
+    asset: '.symbol',
+    timeframe: '.interval'
+  }
+}
+```
+
+Se os seletores estiverem vazios, o adapter usa os defaults e depois os regex/fallbacks do registry.
+
+## Isolamento entre plataformas
+
+O `orchestrator` separa CandleBuilders pela chave:
+
+```text
+platformId:asset:timeframe
+```
+
+Assim, por exemplo, `casatrade:EUR/USD:M1` e `outra-casa:EUR/USD:M1` mantêm históricos independentes e não misturam candles, mesmo que as duas plataformas sejam usadas no mesmo navegador.
+
+Esse comportamento possui teste unitário em `test/core.test.mjs`.
 
 ## Backend
 
@@ -88,14 +160,15 @@ CORS_ORIGINS=chrome-extension://SEU_EXTENSION_ID,http://localhost:5500
 
 Exemplo disponível em `backend/.env.example`.
 
-Inicie definindo as variáveis no ambiente e depois:
+Rotas protegidas por `x-api-key`:
 
-```bash
-cd backend
-npm start
-```
+- `POST /v1/session`
+- `POST /v1/events`
+- `GET /v1/admin/metrics`
 
-A extensão envia o header `x-api-key` quando `settings.backendApiKey` estiver configurado. Esse token simples é adequado para desenvolvimento/controle básico de acesso, mas não é um segredo forte em uma extensão distribuída; produção deve usar autenticação de usuário e tokens curtos emitidos pelo backend.
+`GET /health` continua público para health check. Se `ATS_API_KEY` não estiver configurada, rotas protegidas retornam `503`; com chave configurada e header incorreto/ausente, retornam `401`.
+
+> Um segredo embutido em extensão distribuída não é autenticação forte. Em produção, use autenticação de usuário/licença e tokens curtos emitidos pelo backend.
 
 ## Testes
 
@@ -112,8 +185,12 @@ Cobertura inicial:
 - confluence
 - nextSignalState
 - CandleBuilder.push
+- `detectPlatform()` / registry
+- isolamento de candles por `platformId`
 
-O GitHub Actions também valida Manifest V3, sintaxe do código, arquivos obrigatórios e executa os testes.
+Existe apenas um arquivo principal de testes do core: `test/core.test.mjs`.
+
+O GitHub Actions também valida Manifest V3, sintaxe, arquivos obrigatórios e executa os testes.
 
 ## Instalação para teste
 
@@ -122,10 +199,11 @@ O GitHub Actions também valida Manifest V3, sintaxe do código, arquivos obriga
 3. Ative **Modo do desenvolvedor**.
 4. Clique em **Carregar sem compactação**.
 5. Selecione a pasta que contém `manifest.json`.
-6. Abra a CasaTrade e faça login normalmente.
-7. Abra o Side Panel pelo ícone da extensão.
-8. Em **Configurações**, informe seletores CasaTrade caso já tenha identificado os seletores reais.
-9. Ative o scanner.
+6. Abra uma plataforma cujo host esteja cadastrado no registry + manifest.
+7. Faça login normalmente.
+8. Abra o Side Panel pelo ícone da extensão.
+9. Ajuste seletores específicos da plataforma, se necessário.
+10. Ative o scanner.
 
 ## Próximas etapas
 
@@ -138,7 +216,7 @@ O GitHub Actions também valida Manifest V3, sintaxe do código, arquivos obriga
 7. Executar replay e forward-test/demo por período suficiente antes de qualquer uso real.
 8. Calibrar scores somente com amostra observada; não tratar score como probabilidade de acerto.
 9. Integrar camada de IA e notícias somente depois do motor determinístico e do feed estarem validados.
-10. Adicionar novas plataformas por adapters independentes, sem alterar o core.
+10. Adicionar novas plataformas exclusivamente por configuração/adapter, sem acoplar o core a uma casa específica.
 
 ## Limitações atuais
 
