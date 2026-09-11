@@ -31,5 +31,5 @@ test('activated customer popup exposes scanner, renewal, support and revalidatio
   for(const id of ['openScannerBtn','renewBtn','changeKeyBtn','validateBtn','supportBtn','planName','expiry','usage','device']) assert.match(html,new RegExp(`id="${id}"`));
   assert.match(js,/chrome\.sidePanel\?\.open/);
   assert.match(js,/chrome\.runtime\.getURL\('src\/sidepanel\/index\.html'\)/);
-  assert.match(js,/PEDIR RENOVAÇÃO/);
+  assert.match(html,/PEDIR RENOVAÇÃO/);
 });
