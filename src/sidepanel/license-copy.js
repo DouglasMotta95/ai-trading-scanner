@@ -1,0 +1,1 @@
+(()=>{const el=document.getElementById('licenseText');if(!el)return;const clean=()=>{const t=el.textContent||'';if(/fale com o atendimento/i.test(t))el.textContent=t.replace(/\s*fale com o atendimento\.?/gi,'').trim()};clean();new MutationObserver(clean).observe(el,{childList:true,characterData:true,subtree:true})})();
