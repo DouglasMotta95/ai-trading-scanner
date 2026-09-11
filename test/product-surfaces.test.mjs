@@ -27,23 +27,23 @@ test('public portal exposes verification recovery, code copy and risk disclosure
 });
 
 test('paid entitlement upgrade does not leave an old trial active', () => {
-  const server = read('backend/src/server-v09.js');
-  assert.match(server, /async function grantPaidEntitlement/);
+  const server = read('backend/src/server.js');
+  assert.match(server, /function grantPaidEntitlement/);
   assert.match(server, /previousKey/);
-  assert.match(server, /\/revoke/);
+  assert.match(server, /revokeLicenseByKey/);
   assert.match(server, /PAYMENTS_CONFIGURED\s*=\s*!!\(MP_ACCESS_TOKEN\s*&&\s*MP_WEBHOOK_SECRET\)/);
   assert.match(server, /pruneConnectCodes/);
   assert.match(server, /access_inactive/);
 });
 
 test('lifetime plan is a one-time commercial plan with unlimited entitlement', () => {
-  const server = read('backend/src/server-v09.js');
+  const server = read('backend/src/server.js');
   const portal = read('apps/customer-portal/app.js');
   assert.match(server, /SALES_LIFETIME_PRICE/);
   assert.match(server, /LIFETIME_DAYS\s*=\s*36500/);
-  assert.match(server, /id:'lifetime'/);
-  assert.match(server, /commercialPlan='lifetime'/);
-  assert.match(server, /billing:'one_time'/);
+  assert.match(server, /id:\s*'lifetime'/);
+  assert.match(server, /commercialPlan\s*=\s*'lifetime'/);
+  assert.match(server, /billing:\s*'one_time'/);
   assert.match(portal, /COMPRAR VITALÍCIO/);
   assert.match(portal, /pagamento único/i);
   assert.match(portal, /sem vencimento/i);
@@ -96,4 +96,15 @@ test('extension account refresh clears expired account tokens instead of showing
   assert.match(account, /clearAccountSession/);
   assert.match(account, /account_token_invalid/);
   assert.match(account, /Sessão da conta expirada/);
+});
+
+test('backend is consolidated into server.js without versioned child servers', () => {
+  const server = read('backend/src/server.js');
+  const rootPackage = JSON.parse(read('package.json'));
+  const backendPackage = JSON.parse(read('backend/package.json'));
+  assert.equal(rootPackage.scripts.start, 'node backend/src/server.js');
+  assert.equal(backendPackage.scripts.start, 'node src/server.js');
+  assert.doesNotMatch(server, /spawn\s*\(/);
+  assert.equal(fs.existsSync(path.join(root, 'backend/src/server-v08.js')), false);
+  assert.equal(fs.existsSync(path.join(root, 'backend/src/server-v09.js')), false);
 });
