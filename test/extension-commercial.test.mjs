@@ -88,6 +88,24 @@ test('commercial licensing cannot be bypassed by an unpacked build or custom bac
   assert.doesNotMatch(telemetry, /settings\?\.apiBase|settings\.apiBase/);
 });
 
+test('valid license is cached locally and survives temporary backend unavailability', () => {
+  const license = read('src/services/license.js');
+  const panel = read('src/sidepanel/app.js');
+  const account = read('src/sidepanel/account-login.js');
+  assert.match(license, /atsLastValidLicense/);
+  assert.match(license, /cachedLicenseSession/);
+  assert.match(license, /offlineFallback:\s*true/);
+  assert.match(license, /AUTHORITATIVE_LICENSE_ERRORS/);
+  assert.match(license, /syncPending:\s*true/);
+  assert.match(license, /chrome\.storage\.local\.remove\(LAST_VALID_LICENSE_KEY\)/);
+  assert.match(panel, /atsLastValidLicense/);
+  assert.match(panel, /effectiveLicense/);
+  assert.match(panel, /Licença ativa • aguardando sincronização/);
+  assert.match(panel, /await getState\(\);\s*chrome\.runtime\.sendMessage\(\{type:'ATS_VALIDATE_LICENSE'\}\)/s);
+  assert.match(account, /atsLastValidLicense/);
+  assert.match(account, /validatedAt:\s*Date\.now\(\)/);
+});
+
 test('trade handoff highlights controls but never performs the financial click', () => {
   const handoff = read('src/content/trade-handoff.js');
   assert.ok(handoff.includes('ATS_HIGHLIGHT_TRADE'));
