@@ -27,19 +27,8 @@ test('v0.8 secure telemetry flows from license activation to resolved live opera
   const adminKey = 'integration-admin-key';
   const apiKey = 'integration-api-key';
   const child = spawn(process.execPath, ['backend/src/server-v08.js'], {
-    cwd: process.cwd(),
-    detached: true,
-    stdio: 'ignore',
-    env: {
-      ...process.env,
-      NODE_ENV: 'test',
-      PORT: String(publicPort),
-      ATS_INTERNAL_PORT: String(internalPort),
-      ATS_DATA_DIR: dataDir,
-      ATS_ADMIN_KEY: adminKey,
-      ATS_API_KEY: apiKey,
-      CORS_ORIGINS: '*'
-    }
+    cwd: process.cwd(), detached: true, stdio: 'ignore',
+    env: { ...process.env, NODE_ENV: 'test', PORT: String(publicPort), ATS_INTERNAL_PORT: String(internalPort), ATS_DATA_DIR: dataDir, ATS_ADMIN_KEY: adminKey, ATS_API_KEY: apiKey, CORS_ORIGINS: '*' }
   });
 
   try {
@@ -49,9 +38,18 @@ test('v0.8 secure telemetry flows from license activation to resolved live opera
     assert.equal(healthJson.version, '0.8.0');
     assert.equal(healthJson.gateway, 'secure-client-telemetry');
 
+    const adminPage = await fetch(`${base}/admin/`);
+    assert.equal(adminPage.status, 200);
+    const adminHtml = await adminPage.text();
+    assert.match(adminHtml, /\/admin\/live\.js\?v=0\.8\.0/);
+    assert.match(adminHtml, /\/admin\/live\.css\?v=0\.8\.0/);
+    assert.match(adminHtml, /\/admin\/crm\.js\?v=0\.8\.0/);
+
+    const unauthorizedOps = await fetch(`${base}/v1/admin/operations`);
+    assert.equal(unauthorizedOps.status, 401);
+
     const create = await fetch(`${base}/v1/admin/licenses`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-admin-key': adminKey },
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-admin-key': adminKey },
       body: JSON.stringify({ customerName: 'Integration Client', plan: 'starter', days: 30 })
     });
     assert.equal(create.status, 201);
@@ -60,8 +58,7 @@ test('v0.8 secure telemetry flows from license activation to resolved live opera
 
     const installationId = 'integration-installation';
     const activate = await fetch(`${base}/v1/license/activate`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ licenseKey: created.license.key, installationId, version: '0.8.0' })
     });
     assert.equal(activate.status, 200);
@@ -69,6 +66,14 @@ test('v0.8 secure telemetry flows from license activation to resolved live opera
     assert.equal(activation.ok, true);
     assert.ok(activation.clientToken);
     assert.equal(activation.license.devices, 1);
+
+    const secondDevice = await fetch(`${base}/v1/license/activate`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ licenseKey: created.license.key, installationId: 'second-installation', version: '0.8.0' })
+    });
+    assert.equal(secondDevice.status, 403);
+    const blocked = await secondDevice.json();
+    assert.equal(blocked.error, 'device_locked');
 
     const auth = { 'content-type': 'application/json', authorization: `Bearer ${activation.clientToken}` };
     const heartbeat = await fetch(`${base}/v1/client/heartbeat`, {
