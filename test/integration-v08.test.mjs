@@ -52,9 +52,10 @@ test('consolidated backend flows from license activation to resolved live operat
     const adminPage = await fetch(`${base}/admin/`);
     assert.equal(adminPage.status, 200);
     const adminHtml = await adminPage.text();
-    assert.match(adminHtml, /\/admin\/live\.js\?v=0\.9\.4/);
-    assert.match(adminHtml, /\/admin\/live\.css\?v=0\.9\.4/);
-    assert.match(adminHtml, /\/admin\/crm\.js\?v=0\.9\.4/);
+    assert.match(adminHtml, /live\.css\?v=0\.9\.4/);
+    assert.match(adminHtml, /data-view="operations"/);
+    assert.doesNotMatch(adminHtml, /live\.js/);
+    assert.doesNotMatch(adminHtml, /crm\.js/);
 
     const unauthorizedOps = await fetch(`${base}/v1/admin/operations`);
     assert.equal(unauthorizedOps.status, 401);
