@@ -5,6 +5,7 @@
   const $ = id => document.getElementById(id);
   let cachedState = {};
   let cachedPrefs = {};
+  let pauseInFlight = false;
 
   const tfMs = raw => {
     const s = String(raw || '').toUpperCase();
@@ -96,6 +97,20 @@
     return { ok: true, text: `Pronto • ${money(stake)} • ${prefs.timeframe} • expiração ${prefs.expiration} • ${prefs.scanScope === 'current' ? 'ativo atual' : 'todos os ativos'}` };
   }
 
+  async function enforceRuntimeAlignment() {
+    const check = validate(cachedPrefs, cachedState);
+    if (cachedState?.scanner !== 'scanning' || check.ok || pauseInFlight) return check;
+    pauseInFlight = true;
+    try {
+      await chrome.runtime.sendMessage({ type: 'ATS_SET_SCANNER', enabled: false }).catch(() => null);
+      if ($('atsPreflightStatus')) $('atsPreflightStatus').textContent = `SCANNER PAUSADO • ${check.text}`;
+      if ($('atsPreflightBadge')) $('atsPreflightBadge').textContent = 'PAUSADO';
+    } finally {
+      setTimeout(() => { pauseInFlight = false; }, 500);
+    }
+    return check;
+  }
+
   async function save() {
     const stake = Number(String($('atsStake').value || '').replace(',', '.'));
     const next = {
@@ -121,7 +136,7 @@
     if (!$('atsPreflight')) return;
     const check = validate(cachedPrefs, cachedState);
     $('atsPreflight').classList.toggle('ready', check.ok);
-    $('atsPreflightBadge').textContent = check.ok ? 'PRONTO' : 'CONFIGURAR';
+    $('atsPreflightBadge').textContent = check.ok ? 'PRONTO' : cachedState?.scanner === 'scanning' ? 'PAUSANDO' : 'CONFIGURAR';
     $('atsPreflightStatus').textContent = check.text;
     const manual = $('manualStatus');
     if (manual && cachedPrefs.stake && cachedState?.tradeIntent?.status !== 'prepared') {
@@ -139,7 +154,7 @@
     }
     $('atsUniverseList').innerHTML = list.slice(0, 6).map(x => {
       const s = x.signal || {}, dir = s.direction || '—', cls = dir === 'BUY' ? 'buy' : dir === 'SELL' ? 'sell' : 'watch';
-      const status = s.state === 'CONFIRM' ? 'PRONTO P/ CONFIRMAR' : s.state === 'WATCH' ? 'OBSERVAR' : s.state === 'SEARCHING' ? 'AQUECENDO' : s.state || 'AGUARDAR';
+      const status = s.state === 'CONFIRM' ? (x.requiresFocus ? 'ABRIR ATIVO P/ CONFIRMAR' : 'PRONTO P/ CONFIRMAR') : s.state === 'WATCH' ? 'OBSERVAR' : s.state === 'SEARCHING' ? 'AQUECENDO' : s.state || 'AGUARDAR';
       return `<div class="ats-universe-row"><div><strong>${String(x.asset || '—')}</strong><small>${String(x.timeframe || '—')} • exp. ${String(x.expiration || '—')} • ${Math.min(Number(s.warmup?.current || 0), 21)}/21 candles</small></div><em class="${cls}">${dir}</em><em class="${cls}">${status} • ${Math.round(Number(s.score || 0))}</em></div>`;
     }).join('');
   }
@@ -154,6 +169,7 @@
       cachedPrefs = stored.settings?.scanPreferences || cachedPrefs || {};
       renderPreflight();
       renderUniverse();
+      await enforceRuntimeAlignment();
     } catch {}
   }
 
@@ -183,6 +199,7 @@
       cachedState = changes.scannerState.newValue || {};
       renderPreflight();
       renderUniverse();
+      enforceRuntimeAlignment();
     }
   });
   setInterval(refresh, 1500);
