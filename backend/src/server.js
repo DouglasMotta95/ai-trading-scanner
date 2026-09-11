@@ -10,7 +10,7 @@ const API_KEY = process.env.ATS_API_KEY || '';
 const ADMIN_KEY = process.env.ATS_ADMIN_KEY || API_KEY;
 const ADMIN_SESSION_DAYS = Math.max(1, Number(process.env.ADMIN_SESSION_DAYS || 30));
 const ALLOWED_ORIGINS = (process.env.CORS_ORIGINS || '').split(',').map(x => x.trim()).filter(Boolean);
-const DATA_DIR = path.resolve(__dirname, '../data');
+const DATA_DIR = path.resolve(process.env.ATS_DATA_DIR || path.resolve(__dirname, '../data'));
 const LICENSE_FILE = path.join(DATA_DIR, 'licenses.json');
 const ADMIN_DIR = path.resolve(__dirname, '../../apps/admin-dashboard');
 const SESSION_COOKIE = 'ats_admin_session';
@@ -20,16 +20,37 @@ const adminAudit = [];
 const licenses = new Map();
 
 const PLANS = {
-  trial: { id: 'trial', label: 'Trial', dailySignals: Number(process.env.PLAN_TRIAL_SIGNALS || 3), deviceLimit: 1 },
-  starter: { id: 'starter', label: 'Starter', dailySignals: Number(process.env.PLAN_STARTER_SIGNALS || 6), deviceLimit: 1 },
-  pro: { id: 'pro', label: 'Pro', dailySignals: Number(process.env.PLAN_PRO_SIGNALS || 20), deviceLimit: Number(process.env.PLAN_PRO_DEVICES || 2) },
-  unlimited: { id: 'unlimited', label: 'Unlimited', dailySignals: null, deviceLimit: Number(process.env.PLAN_UNLIMITED_DEVICES || 5) }
+  trial: {
+    id: 'trial', label: 'Trial',
+    dailySignals: Number(process.env.PLAN_TRIAL_SIGNALS || 2),
+    totalSignals: Number(process.env.PLAN_TRIAL_TOTAL_SIGNALS || 2),
+    deviceLimit: 1
+  },
+  starter: {
+    id: 'starter', label: 'Starter',
+    dailySignals: Number(process.env.PLAN_STARTER_SIGNALS || 10),
+    totalSignals: null,
+    deviceLimit: 1
+  },
+  pro: {
+    id: 'pro', label: 'Pro',
+    dailySignals: Number(process.env.PLAN_PRO_SIGNALS || 30),
+    totalSignals: null,
+    deviceLimit: 1
+  },
+  unlimited: {
+    id: 'unlimited', label: 'Unlimited',
+    dailySignals: null,
+    totalSignals: null,
+    deviceLimit: 1
+  }
 };
 
 const isObj = v => v && typeof v === 'object' && !Array.isArray(v);
 const str = (v, n = 128) => typeof v === 'string' && v.length > 0 && v.length <= n;
 const today = () => new Date().toISOString().slice(0, 10);
 const now = () => Date.now();
+const totalUsage = l => Object.values(l?.usage || {}).reduce((sum, value) => sum + Math.max(0, Number(value) || 0), 0);
 const origin = req => {
   const value = req.headers.origin;
   if (!value) return '';
@@ -112,6 +133,8 @@ function publicLicense(l) {
   const plan = PLANS[l.plan] || PLANS.starter;
   const used = Number(l.usage?.[today()] || 0);
   const limit = plan.dailySignals;
+  const usedTotal = totalUsage(l);
+  const totalLimit = plan.totalSignals;
   return {
     key: l.key,
     status: l.status,
@@ -120,11 +143,15 @@ function publicLicense(l) {
     dailyLimit: limit,
     usedToday: used,
     remainingToday: limit == null ? null : Math.max(0, limit - used),
+    totalLimit,
+    usedTotal,
+    remainingTotal: totalLimit == null ? null : Math.max(0, totalLimit - usedTotal),
     expiresAt: l.expiresAt || null,
     customerName: l.customerName || '',
     email: l.email || '',
-    deviceLimit: plan.deviceLimit,
+    deviceLimit: 1,
     devices: (l.devices || []).length,
+    deviceLocked: (l.devices || []).length > 0,
     createdAt: l.createdAt,
     updatedAt: l.updatedAt || l.createdAt,
     isTrial: l.plan === 'trial'
@@ -172,16 +199,19 @@ function licenseCheck(p, { consume = false } = {}) {
   l.devices ??= [];
   let device = l.devices.find(x => x.installationId === p.installationId);
   if (!device) {
-    if (l.devices.length >= plan.deviceLimit) return { status: 403, error: 'device_limit_reached' };
+    if (l.devices.length >= 1) return { status: 403, error: 'device_locked', license: publicLicense(l) };
     device = { installationId: p.installationId, createdAt: now(), lastSeen: now(), version: p.version || null };
     l.devices.push(device);
+    audit('device_bound', { licenseKey: l.key, customerName: l.customerName, plan: l.plan });
   } else {
     device.lastSeen = now();
     if (p.version) device.version = p.version;
   }
   l.usage ??= {};
   const day = today(), used = Number(l.usage[day] || 0), limit = plan.dailySignals;
+  const usedTotal = totalUsage(l), totalLimit = plan.totalSignals;
   if (consume && p.type === 'signal') {
+    if (totalLimit != null && usedTotal >= totalLimit) return { status: 429, error: 'trial_limit_reached', license: publicLicense(l) };
     if (limit != null && used >= limit) return { status: 429, error: 'daily_limit_reached', license: publicLicense(l) };
     l.usage[day] = used + 1;
   }
@@ -212,11 +242,11 @@ function resetLicense(l, mode = 'full') {
   l.devices ??= [];
   l.usage ??= {};
   if (mode === 'full' || mode === 'devices') l.devices = [];
-  if (mode === 'full' || mode === 'usage') l.usage[today()] = 0;
+  if (mode === 'usage' && l.plan !== 'trial') l.usage[today()] = 0;
   if (mode === 'full') l.status = 'active';
   l.updatedAt = now();
   saveLicenses();
-  audit(`license_reset_${mode}`, { licenseKey: l.key, customerName: l.customerName });
+  audit(`license_reset_${mode}`, { licenseKey: l.key, customerName: l.customerName, plan: l.plan });
   return publicLicense(l);
 }
 function renewLicense(l, days = 30) {
@@ -252,8 +282,10 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/admin') { res.writeHead(302, { location: '/admin/' }); return res.end(); }
     if (pathname === '/admin/') return serveAdmin(res, 'index.html', 'text/html; charset=utf-8') || json(req, res, 404, { error: 'admin_not_found' });
     if (pathname === '/admin/app.js') return serveAdmin(res, 'app.js', 'text/javascript; charset=utf-8') || json(req, res, 404, { error: 'admin_asset_not_found' });
+    if (pathname === '/admin/ops.js') return serveAdmin(res, 'ops.js', 'text/javascript; charset=utf-8') || json(req, res, 404, { error: 'admin_asset_not_found' });
     if (pathname === '/admin/styles.css') return serveAdmin(res, 'styles.css', 'text/css; charset=utf-8') || json(req, res, 404, { error: 'admin_asset_not_found' });
-    if (pathname === '/health') return json(req, res, 200, { ok: true, service: 'ats-api', time: now(), authConfigured: !!API_KEY, adminAuthConfigured: !!ADMIN_KEY, licenses: licenses.size, version: '0.5.0' });
+    if (pathname === '/admin/ops.css') return serveAdmin(res, 'ops.css', 'text/css; charset=utf-8') || json(req, res, 404, { error: 'admin_asset_not_found' });
+    if (pathname === '/health') return json(req, res, 200, { ok: true, service: 'ats-api', time: now(), authConfigured: !!API_KEY, adminAuthConfigured: !!ADMIN_KEY, licenses: licenses.size, version: '0.6.0' });
 
     if (pathname === '/v1/admin/auth/login' && req.method === 'POST') {
       if (!ADMIN_KEY) return json(req, res, 503, { error: 'admin_key_not_configured' });
@@ -290,7 +322,18 @@ const server = http.createServer(async (req, res) => {
       const p = licenseInput(await body(req));
       if (!p || p.type !== 'signal') return json(req, res, 422, { error: 'invalid_usage_request' });
       const r = licenseCheck(p, { consume: true });
-      return json(req, res, r.status, r.error ? { ok: false, error: r.error, license: r.license } : { ok: true, license: r.license, usage: { dailyLimit: r.license.dailyLimit, usedToday: r.license.usedToday, remainingToday: r.license.remainingToday } });
+      return json(req, res, r.status, r.error ? { ok: false, error: r.error, license: r.license } : {
+        ok: true,
+        license: r.license,
+        usage: {
+          dailyLimit: r.license.dailyLimit,
+          usedToday: r.license.usedToday,
+          remainingToday: r.license.remainingToday,
+          totalLimit: r.license.totalLimit,
+          usedTotal: r.license.usedTotal,
+          remainingTotal: r.license.remainingTotal
+        }
+      });
     }
     if (pathname === '/v1/session' && req.method === 'POST') {
       const p = sessionPayload(await body(req));
@@ -375,13 +418,16 @@ const server = http.createServer(async (req, res) => {
         events: events.length,
         licenses: lic.length,
         activeLicenses: lic.filter(x => x.status === 'active' && (!x.expiresAt || Date.parse(x.expiresAt) > ts)).length,
+        paidLicenses: lic.filter(x => x.plan !== 'trial' && x.status === 'active' && (!x.expiresAt || Date.parse(x.expiresAt) > ts)).length,
         activeTrials: lic.filter(x => x.plan === 'trial' && x.status === 'active' && (!x.expiresAt || Date.parse(x.expiresAt) > ts)).length,
+        trialSignalsUsed: lic.filter(x => x.plan === 'trial').reduce((n, x) => n + x.usedTotal, 0),
         revokedLicenses: lic.filter(x => x.status === 'revoked').length,
         expiredLicenses: lic.filter(x => x.expiresAt && Date.parse(x.expiresAt) <= ts).length,
         expiringSoon: lic.filter(x => x.status === 'active' && x.expiresAt && Date.parse(x.expiresAt) > ts && Date.parse(x.expiresAt) <= ts + 3 * 86400000).length,
         signalsToday: lic.reduce((n, x) => n + x.usedToday, 0),
+        renewals: adminAudit.filter(x => x.action === 'license_renewed').length,
         platforms: Object.entries(groups).map(([name, online]) => ({ name, online })),
-        version: '0.5.0'
+        version: '0.6.0'
       });
     }
 
