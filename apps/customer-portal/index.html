@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#050914">
+  <title>AI Trading Scanner</title>
+  <link rel="stylesheet" href="/customer.css">
+</head>
+<body>
+<div class="bg-grid"></div>
+<header class="site-header">
+  <a class="brand" href="/"><span>ATS</span><div><b>AI TRADING</b><small>SMART MARKET SCANNER</small></div></a>
+  <nav><a href="#como">Como funciona</a><a href="#planos">Planos</a><a href="#plataformas">Plataformas</a></nav>
+  <div class="header-actions"><a id="supportTop" class="ghost" target="_blank" rel="noopener">Suporte</a><button id="accountBtn" class="primary">ENTRAR</button></div>
+</header>
+
+<main id="publicView">
+  <section class="hero">
+    <div class="hero-copy">
+      <span class="eyebrow">SCANNER MULTIPLATAFORMA • LIVE OPS</span>
+      <h1>Leitura de mercado com <em>confluência</em>, não palpite.</h1>
+      <p>Crie sua conta, conecte a extensão e acompanhe setups em tempo real. A confirmação só é liberada quando os critérios técnicos e a qualidade do feed forem suficientes.</p>
+      <div class="hero-actions"><button class="primary xl" data-open-auth="signup">TESTAR GRÁTIS</button><a class="secondary xl" href="#planos">VER PLANOS</a></div>
+      <div class="hero-notes"><span>✓ Trial controlado</span><span>✓ 1 aparelho por acesso</span><span>✓ Entrada com confirmação manual</span></div>
+    </div>
+    <div class="terminal-card">
+      <div class="terminal-head"><span><i></i> ATS LIVE</span><small>DEMONSTRAÇÃO</small></div>
+      <div class="asset"><div><small>MERCADO EM FOCO</small><b>EUR/USD</b></div><strong>84</strong></div>
+      <div class="signal buy"><span>ESTADO OPERACIONAL</span><b>ACOMPANHANDO BUY</b><small>aguardando fechamento e confirmação do feed</small></div>
+      <div class="terminal-grid"><div><small>TIMEFRAME</small><b>M1</b></div><div><small>EXPIRAÇÃO</small><b>1 MIN</b></div><div><small>FEED</small><b>ESTRUTURADO</b></div><div><small>QUALIDADE</small><b>96%</b></div></div>
+      <div class="criteria"><span>Confluência do setup</span><div><i style="width:84%"></i></div><small>6 critérios monitorados</small></div>
+    </div>
+  </section>
+
+  <section id="como" class="section">
+    <div class="section-title"><span class="eyebrow">FLUXO SIMPLES</span><h2>Comece sem pedir chave no WhatsApp.</h2></div>
+    <div class="steps"><article><b>01</b><h3>Crie sua conta</h3><p>Use e-mail e senha ou Google quando configurado.</p></article><article><b>02</b><h3>Confirme o e-mail</h3><p>O Trial é liberado automaticamente após a confirmação.</p></article><article><b>03</b><h3>Conecte a extensão</h3><p>Use um código de 6 dígitos. A licença fica invisível.</p></article><article><b>04</b><h3>Assine quando quiser</h3><p>Pagamento aprovado atualiza o acesso da conta.</p></article></div>
+  </section>
+
+  <section id="planos" class="section plans-section">
+    <div class="section-title"><span class="eyebrow">PLANOS</span><h2>Escolha o nível de uso ideal.</h2><p>Preços e limites são controlados pelo administrador.</p></div>
+    <div id="plansGrid" class="plans-grid"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>
+  </section>
+
+  <section id="plataformas" class="section platform-section">
+    <div class="platform-copy"><span class="eyebrow">MULTIPLATAFORMA</span><h2>CasaTrade primeiro. Arquitetura pronta para outras plataformas.</h2><p>A CasaTrade é a integração inicial recomendada, mas o motor usa adapters independentes.</p><div class="platform-actions"><a id="casaTradeBtn" class="primary" target="_blank" rel="noopener" hidden>ABRIR CASATRADE</a><button class="secondary" data-open-auth="signup">CRIAR CONTA ATS</button></div></div>
+    <div class="platform-stack"><div class="platform-card featured"><b>★ CasaTrade</b><span>Integração inicial</span></div><div class="platform-card"><b>+ Novas plataformas</b><span>Adapters independentes</span></div></div>
+  </section>
+</main>
+
+<main id="accountView" class="account-shell" hidden>
+  <aside class="account-rail"><a class="brand" href="/"><span>ATS</span><div><b>MINHA CONTA</b><small>CLIENT PORTAL</small></div></a><nav><button class="active" data-account-page="home">⌂ <b>Visão geral</b></button><button data-account-page="plans">◆ <b>Planos</b></button><button data-account-page="device">◉ <b>Conectar extensão</b></button></nav><a id="supportRail" class="support-link" target="_blank" rel="noopener">💬 Suporte</a><button id="logoutBtn" class="logout">Sair</button></aside>
+  <section class="account-workspace">
+    <header class="account-top"><div><span class="eyebrow">AI TRADING SCANNER</span><h1 id="helloTitle">Minha conta</h1><p id="accountEmail">—</p></div><span id="accountStatus" class="status-pill">ATIVO</span></header>
+    <section class="account-page active" data-account-view="home">
+      <div class="account-hero"><div><span class="eyebrow">SEU ACESSO</span><h2 id="planTitle">Carregando...</h2><p id="planText">Sincronizando assinatura e dispositivo.</p></div><button class="primary" data-account-page="device">CONECTAR EXTENSÃO</button></div>
+      <div class="kpi-grid"><article><span>PLANO</span><b id="kpiPlan">—</b><small id="kpiExpiry">—</small></article><article><span>USO HOJE</span><b id="kpiUsage">—</b><small>sinais confirmados</small></article><article><span>APARELHO</span><b id="kpiDevice">—</b><small>1 acesso por dispositivo</small></article><article><span>STATUS</span><b id="kpiStatus">—</b><small>sincronizado com o scanner</small></article></div>
+      <section class="account-card"><div><span class="eyebrow">PRÓXIMO PASSO</span><h3 id="nextTitle">Conecte sua extensão</h3><p id="nextText">Use um código temporário para entrar na extensão sem enxergar uma chave de licença.</p></div><button class="secondary" data-account-page="device">GERAR CÓDIGO</button></section>
+    </section>
+    <section class="account-page" data-account-view="plans"><div class="section-title left"><span class="eyebrow">UPGRADE</span><h2>Planos disponíveis</h2><p>O pagamento aprovado atualiza o acesso automaticamente.</p></div><div id="accountPlans" class="plans-grid compact"></div></section>
+    <section class="account-page" data-account-view="device"><div class="device-connect"><span class="eyebrow">CONEXÃO SEGURA</span><h2>Entrar na extensão</h2><p>Abra a extensão no computador que será usado e digite o código temporário abaixo. Ele expira em 10 minutos e só pode ser usado uma vez.</p><button id="generateCode" class="primary xl">GERAR CÓDIGO DE CONEXÃO</button><div id="connectCodeBox" class="connect-code" hidden><small>CÓDIGO</small><strong id="connectCode">------</strong><span id="connectExpiry">expira em 10:00</span></div><aside>🔒 O Trial é limitado por conta e por instalação. Outro e-mail no mesmo aparelho não libera outro Trial.</aside></div></section>
+  </section>
+</main>
+
+<div id="authModal" class="modal" hidden><div class="modal-backdrop" data-close-auth></div><section class="auth-card"><button class="modal-close" data-close-auth>×</button><div class="auth-logo">ATS</div><span class="eyebrow">ACESSO À PLATAFORMA</span><h2 id="authTitle">Criar sua conta</h2><p id="authSub">Confirme seu e-mail para liberar o teste.</p><div id="googleWrap" hidden><div id="googleButton"></div><div class="divider"><span>ou</span></div></div><form id="signupForm"><label>Nome<input name="name" autocomplete="name" required minlength="2" placeholder="Seu nome"></label><label>E-mail<input name="email" type="email" autocomplete="email" required placeholder="voce@email.com"></label><label>Senha<input name="password" type="password" autocomplete="new-password" required minlength="8" placeholder="Mínimo 8 caracteres"></label><button class="primary full">CRIAR CONTA E LIBERAR TESTE</button></form><form id="loginForm" hidden><label>E-mail<input name="email" type="email" autocomplete="email" required></label><label>Senha<input name="password" type="password" autocomplete="current-password" required></label><button class="primary full">ENTRAR NA MINHA CONTA</button></form><p id="authMsg" class="auth-msg"></p><button id="authSwitch" class="text-btn">Já tenho conta • Entrar</button></section></div>
+<div id="verifyView" class="verify-screen" hidden><section><div class="auth-logo">✓</div><h2>Confirme seu e-mail</h2><p id="verifyText">Enviamos um link para seu e-mail. Depois da confirmação, seu Trial é liberado automaticamente.</p><button id="backLogin" class="primary">IR PARA ENTRAR</button></section></div>
+<div id="toast" class="toast"></div>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="/customer.js"></script>
+</body>
+</html>
