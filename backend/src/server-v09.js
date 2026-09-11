@@ -6,7 +6,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const VERSION = '0.9.1';
+const VERSION = '0.9.2';
 const PUBLIC_PORT = Number(process.env.PORT || 8787);
 const ATS_CHILD_PORT = Number(process.env.ATS_V08_PORT || 8791);
 const ATS_CORE_PORT = Number(process.env.ATS_INTERNAL_PORT || 8792);
@@ -29,8 +29,10 @@ const SUPPORT_WHATSAPP = String(process.env.SUPPORT_WHATSAPP || '5535991429262')
 const SALES_PRICES = {
   starter: Number(process.env.SALES_STARTER_PRICE || 79.90),
   pro: Number(process.env.SALES_PRO_PRICE || 149.90),
-  unlimited: Number(process.env.SALES_UNLIMITED_PRICE || 299.90)
+  unlimited: Number(process.env.SALES_UNLIMITED_PRICE || 299.90),
+  lifetime: Number(process.env.SALES_LIFETIME_PRICE || 2997.00)
 };
+const LIFETIME_DAYS = 36500;
 
 let state = { accounts: [], orders: [], trialDevices: {}, paymentEvents: [] };
 const connectCodes = new Map();
@@ -136,8 +138,13 @@ function hashPassword(password,salt=crypto.randomBytes(16).toString('hex')){
   const hash=crypto.scryptSync(String(password),salt,64).toString('hex');return{salt,hash};
 }
 function verifyPassword(password,a){if(!a.passwordHash||!a.passwordSalt)return false;const got=crypto.scryptSync(String(password),a.passwordSalt,64).toString('hex');return safeEq(got,a.passwordHash)}
+function presentLicense(a,license=null){
+  if(!license)return null;
+  if(a?.commercialPlan==='lifetime'&&license.plan==='unlimited')return{...license,plan:'lifetime',planLabel:'Vitalício',expiresAt:null,lifetime:true,billing:'one_time'};
+  return license;
+}
 function publicAccount(a,license=null){
-  return{id:a.id,name:a.name,email:a.email,emailVerified:!!a.emailVerified,provider:a.googleSub?'google':'email',createdAt:a.createdAt,currentLicenseKey:a.currentLicenseKey||null,trialClaimedAt:a.trialClaimedAt||null,license:license||null};
+  return{id:a.id,name:a.name,email:a.email,emailVerified:!!a.emailVerified,provider:a.googleSub?'google':'email',createdAt:a.createdAt,currentLicenseKey:a.currentLicenseKey||null,trialClaimedAt:a.trialClaimedAt||null,commercialPlan:a.commercialPlan||null,license:presentLicense(a,license)};
 }
 async function licenseProfile(a){
   if(!a?.currentLicenseKey)return null;
@@ -160,12 +167,21 @@ async function ensureTrial(a){
 }
 async function grantPaidEntitlement(a,plan,days=30){
   const current=await licenseProfile(a);
-  if(current?.key&&current.plan===plan&&current.plan!=='trial'){
+  if(plan==='lifetime'){
+    if(current?.key&&current.plan==='unlimited'&&a.commercialPlan==='lifetime')return presentLicense(a,current);
+    const previousKey=a.currentLicenseKey||null;
+    const created=await createEntitlement(a,'unlimited',LIFETIME_DAYS);
+    a.commercialPlan='lifetime';a.updatedAt=now();saveState();
+    if(previousKey&&previousKey!==created.key)await child(`/v1/admin/licenses/${encodeURIComponent(previousKey)}/revoke`,{method:'POST',headers:{'x-admin-key':ADMIN_KEY}}).catch(()=>{});
+    return presentLicense(a,created);
+  }
+  if(current?.key&&current.plan===plan&&current.plan!=='trial'&&a.commercialPlan!=='lifetime'){
     const renewed=await child(`/v1/admin/licenses/${encodeURIComponent(current.key)}/renew`,{method:'POST',headers:{'x-admin-key':ADMIN_KEY},body:{days}});
-    if(renewed.status<300&&renewed.data?.license){a.currentLicenseKey=current.key;a.updatedAt=now();saveState();return renewed.data.license}
+    if(renewed.status<300&&renewed.data?.license){a.currentLicenseKey=current.key;a.commercialPlan=plan;a.updatedAt=now();saveState();return renewed.data.license}
   }
   const previousKey=a.currentLicenseKey||null;
   const created=await createEntitlement(a,plan,days);
+  a.commercialPlan=plan;a.updatedAt=now();saveState();
   if(previousKey&&previousKey!==created.key){
     await child(`/v1/admin/licenses/${encodeURIComponent(previousKey)}/revoke`,{method:'POST',headers:{'x-admin-key':ADMIN_KEY}}).catch(()=>{});
   }
@@ -199,16 +215,18 @@ async function activateForAccount(a,installationId,version){
   if(!a.currentLicenseKey)await ensureTrial(a);
   const r=await child('/v1/license/activate',{method:'POST',body:{licenseKey:a.currentLicenseKey,installationId,version}});
   if(r.status>=300||!r.data?.ok)throw Object.assign(new Error(r.data?.error||'license_activation_failed'),{status:r.status,data:r.data});
-  return{...r.data,licenseKey:a.currentLicenseKey,accountToken:issueAccountToken(a),accountTokenExpiresAt:now()+ACCOUNT_TOKEN_DAYS*86400000};
+  return{...r, ...r.data, license:presentLicense(a,r.data.license),licenseKey:a.currentLicenseKey,accountToken:issueAccountToken(a),accountTokenExpiresAt:now()+ACCOUNT_TOKEN_DAYS*86400000};
 }
 async function publicPlans(){
   const r=await child('/v1/admin/plans',{headers:{'x-admin-key':ADMIN_KEY}});
   const rows=Array.isArray(r.data?.plans)?r.data.plans:[];
   const map=Object.fromEntries(rows.map(p=>[p.id,p]));
-  return ['trial','starter','pro','unlimited'].map(id=>{
+  const core=['trial','starter','pro','unlimited'].map(id=>{
     const p=map[id]||{id,label:id};
-    return{...p,price:id==='trial'?0:(Number(p.price)>0?Number(p.price):SALES_PRICES[id]||0),recommended:id==='pro'};
+    return{...p,price:id==='trial'?0:(Number(p.price)>0?Number(p.price):SALES_PRICES[id]||0),recommended:id==='pro',lifetime:false,billing:'monthly'};
   });
+  core.push({id:'lifetime',label:'Vitalício',dailySignals:null,totalSignals:null,deviceLimit:1,price:SALES_PRICES.lifetime,defaultDays:null,recommended:false,lifetime:true,billing:'one_time'});
+  return core;
 }
 async function checkoutPreference(req,a,planId){
   if(!PAYMENTS_CONFIGURED)throw Object.assign(new Error('payment_not_configured'),{status:503});
@@ -217,8 +235,9 @@ async function checkoutPreference(req,a,planId){
   const order={id:crypto.randomUUID(),accountId:a.id,plan:plan.id,amount:Number(plan.price),currency:'BRL',status:'created',createdAt:now(),updatedAt:now(),paymentId:null,preferenceId:null};
   state.orders.unshift(order);state.orders=state.orders.slice(0,3000);saveState();
   const root=baseUrl(req);
+  const description=plan.lifetime?`Plano ${plan.label} • pagamento único • 1 aparelho`:`Plano ${plan.label} por 30 dias`;
   const pref=await fetch('https://api.mercadopago.com/checkout/preferences',{method:'POST',headers:{authorization:`Bearer ${MP_ACCESS_TOKEN}`,'content-type':'application/json','x-idempotency-key':order.id},body:JSON.stringify({
-    items:[{id:plan.id,title:`AI Trading Scanner • ${plan.label}`,description:`Plano ${plan.label} por 30 dias`,quantity:1,currency_id:'BRL',unit_price:Number(plan.price)}],
+    items:[{id:plan.id,title:`AI Trading Scanner • ${plan.label}`,description,quantity:1,currency_id:'BRL',unit_price:Number(plan.price)}],
     payer:{email:a.email},external_reference:order.id,
     notification_url:`${root}/v1/payments/mercadopago/webhook`,
     back_urls:{success:`${root}/?payment=success`,pending:`${root}/?payment=pending`,failure:`${root}/?payment=failure`},
@@ -247,7 +266,7 @@ async function processPayment(paymentId){
   order.paymentId=String(p.id);order.paymentStatus=p.status;order.updatedAt=now();
   if(p.status==='approved'&&order.status!=='approved'){
     const a=state.accounts.find(x=>x.id===order.accountId);if(!a)return;
-    const lic=await grantPaidEntitlement(a,order.plan,30);
+    const lic=await grantPaidEntitlement(a,order.plan,order.plan==='lifetime'?LIFETIME_DAYS:30);
     order.status='approved';order.licenseKey=lic.key;order.approvedAt=now();
   } else if(p.status!=='approved') order.status=p.status||'pending';
   saveState();
@@ -284,7 +303,7 @@ const server=http.createServer(async(req,res)=>{
       const b=await readBody(req),email=cleanEmail(b.email),name=cleanName(b.name),password=String(b.password||'');
       if(!email.includes('@')||name.length<2||password.length<8)return response(res,422,{error:'invalid_signup'});
       if(state.accounts.some(a=>a.email===email))return response(res,409,{error:'email_in_use'});
-      const h=hashPassword(password),a={id:crypto.randomUUID(),name,email,emailVerified:false,passwordHash:h.hash,passwordSalt:h.salt,createdAt:now(),updatedAt:now(),currentLicenseKey:null,trialClaimedAt:null};
+      const h=hashPassword(password),a={id:crypto.randomUUID(),name,email,emailVerified:false,passwordHash:h.hash,passwordSalt:h.salt,createdAt:now(),updatedAt:now(),currentLicenseKey:null,trialClaimedAt:null,commercialPlan:null};
       state.accounts.push(a);saveState();const delivery=await sendVerification(req,a);
       return response(res,201,{ok:true,verificationRequired:true,emailDeliveryConfigured:delivery.sent});
     }
@@ -310,7 +329,7 @@ const server=http.createServer(async(req,res)=>{
     if(pathname==='/v1/customer/google'&&req.method==='POST'){
       if(!GOOGLE_CLIENT_ID)return response(res,503,{error:'google_not_configured'});
       const b=await readBody(req),g=await verifyGoogleCredential(String(b.credential||''));let a=state.accounts.find(x=>x.googleSub===g.sub||x.email===g.email);
-      if(!a){a={id:crypto.randomUUID(),name:g.name||g.email.split('@')[0],email:g.email,emailVerified:true,googleSub:g.sub,createdAt:now(),updatedAt:now(),currentLicenseKey:null,trialClaimedAt:null};state.accounts.push(a)}
+      if(!a){a={id:crypto.randomUUID(),name:g.name||g.email.split('@')[0],email:g.email,emailVerified:true,googleSub:g.sub,createdAt:now(),updatedAt:now(),currentLicenseKey:null,trialClaimedAt:null,commercialPlan:null};state.accounts.push(a)}
       else{a.googleSub=g.sub;a.emailVerified=true;a.name=a.name||g.name;a.updatedAt=now()}
       if(!a.currentLicenseKey&&!a.trialClaimedAt)await ensureTrial(a);saveState();
       return response(res,200,{ok:true,account:publicAccount(a,await licenseProfile(a))},{'set-cookie':customerCookie(req,a)});
@@ -368,7 +387,7 @@ const server=http.createServer(async(req,res)=>{
       return response(res,200,{accounts:rows,summary:{accounts:rows.length,verified:rows.filter(x=>x.emailVerified).length,trials:rows.filter(x=>active(x)&&x.license?.plan==='trial').length,paid:rows.filter(x=>active(x)&&x.license?.plan!=='trial').length,approvedOrders:state.orders.filter(x=>x.status==='approved').length}});
     }
     if(pathname==='/health'){
-      const r=await child('/health');return response(res,r.status,{...(r.data||{}),version:VERSION,sales:true,customerAccounts:true,paymentsConfigured:PAYMENTS_CONFIGURED,emailDeliveryConfigured:!!(RESEND_API_KEY&&EMAIL_FROM),googleConfigured:!!GOOGLE_CLIENT_ID});
+      const r=await child('/health');return response(res,r.status,{...(r.data||{}),version:VERSION,sales:true,customerAccounts:true,paymentsConfigured:PAYMENTS_CONFIGURED,emailDeliveryConfigured:!!(RESEND_API_KEY&&EMAIL_FROM),googleConfigured:!!GOOGLE_CLIENT_ID,lifetimePlan:true});
     }
     return proxy(req,res);
   }catch(e){
