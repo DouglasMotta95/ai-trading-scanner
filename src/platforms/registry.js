@@ -1,0 +1,3 @@
+export const PLATFORM_ADAPTERS=[{id:'casatrade',name:'CasaTrade',hosts:['casatrade.com','casatrade.io'],status:'beta'},{id:'generic',name:'Generic Web Trader',hosts:[],status:'experimental'}];
+export function detectPlatform(host=location.hostname){return PLATFORM_ADAPTERS.find(p=>p.hosts.some(h=>host===h||host.endsWith('.'+h)))||PLATFORM_ADAPTERS.at(-1)}
+export function normalizeMarket(raw={}){return{platform:raw.platform||null,asset:raw.asset||null,timeframe:raw.timeframe||null,price:Number(String(raw.price||'').replace(',','.'))||null,timestamp:raw.timestamp||Date.now(),candles:Array.isArray(raw.candles)?raw.candles:[]}}
