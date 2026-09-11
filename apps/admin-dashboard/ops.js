@@ -4,7 +4,7 @@
   globalThis.__ATS_OPS__ = true;
   const q=s=>document.querySelector(s), qa=s=>[...document.querySelectorAll(s)];
   let attention=[], busy=false;
-  const safe=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot',"'":'&#39;'}[c]));
+  const safe=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const daysLeft=l=>l?.expiresAt?Math.ceil((Date.parse(l.expiresAt)-Date.now())/86400000):null;
   const isActive=l=>l?.status==='active'&&(!l.expiresAt||Date.parse(l.expiresAt)>Date.now());
 
