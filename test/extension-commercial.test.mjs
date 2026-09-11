@@ -10,15 +10,16 @@ const read = file => fs.readFileSync(path.join(root, file), 'utf8');
 
 const PUBLIC_API = 'https://ats-control-center-v07-production.up.railway.app';
 
-test('manifest exposes popup fallback, side panel and CasaTrade hosts', () => {
+test('manifest exposes dedicated popup, side panel and CasaTrade hosts', () => {
   const manifest = JSON.parse(read('manifest.json'));
   assert.equal(manifest.manifest_version, 3);
   assert.equal(manifest.background?.service_worker, 'src/background-entry.js');
-  assert.equal(manifest.action?.default_popup, 'src/sidepanel/index.html');
+  assert.equal(manifest.action?.default_popup, 'src/popup/index.html');
   assert.equal(manifest.side_panel?.default_path, 'src/sidepanel/index.html');
   assert.equal(manifest.options_page, 'src/admin/index.html');
   assert.ok(manifest.host_permissions.includes('https://*.casatrade.com/*'));
   assert.ok(manifest.host_permissions.includes('https://*.casatrade.io/*'));
+  assert.ok(manifest.host_permissions.includes('https://ats-control-center-v07-production.up.railway.app/*'));
   assert.ok(manifest.permissions.includes('sidePanel'));
   assert.ok(manifest.permissions.includes('scripting'));
   const entry = read('src/background-entry.js');
