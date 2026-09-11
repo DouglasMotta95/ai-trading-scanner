@@ -24,11 +24,43 @@ test('public portal exposes verification recovery, code copy, extension onboardi
   assert.match(app, /usedTotal/);
   assert.match(app, /totalLimit/);
   assert.match(app, /paymentsConfigured/);
-  assert.match(app, /Pagamento aprovado\. Sincronizando seu acesso/);
+  assert.match(app, /Retorno do checkout recebido\. Confirmando pagamento com o servidor/);
   assert.match(css, /\[hidden\]\s*\{\s*display\s*:\s*none\s*!important\s*\}/i);
   assert.match(html, /id="authModal"[^>]*hidden/);
   assert.match(html, /id="verifyView"[^>]*hidden/);
   assert.match(html, /id="accountView"[^>]*hidden/);
+});
+
+test('customer portal security sanitizes auth fields, rate-limits customer routes and never accepts card data', () => {
+  const app = read('apps/customer-portal/app.js');
+  const server = read('backend/src/server.js');
+  assert.match(app, /cleanTextInput/);
+  assert.match(app, /cleanEmailInput/);
+  assert.match(app, /authPayload/);
+  assert.match(server, /cleanPlain/);
+  assert.match(server, /validEmail/);
+  assert.match(server, /htmlEscape/);
+  assert.match(server, /pathname\.startsWith\('\/v1\/customer\/'\)/);
+  assert.match(server, /only\(b, \['plan'\]\)/);
+  assert.match(app, /JSON\.stringify\(\{plan:String\(plan\|\|''\)\}\)/);
+  assert.doesNotMatch(app, /card_number|security_code|cvv|cardholder/i);
+  assert.doesNotMatch(server, /card_number|security_code|cvv|cardholder/i);
+});
+
+test('payment success URL is not authoritative and entitlement requires verified Mercado Pago data', () => {
+  const app = read('apps/customer-portal/app.js');
+  const server = read('backend/src/server.js');
+  assert.match(app, /Ainda não há confirmação do pagamento no servidor/);
+  assert.match(server, /mpSignatureValid/);
+  assert.match(server, /invalid_signature/);
+  assert.match(server, /api\.mercadopago\.com\/v1\/payments/);
+  assert.match(server, /payment\.status === 'approved'/);
+  assert.match(server, /amountOk/);
+  assert.match(server, /currencyOk/);
+  assert.match(server, /preferenceOk/);
+  assert.match(server, /metadataAccountOk/);
+  assert.match(server, /metadataPlanOk/);
+  assert.match(server, /rejected_mismatch/);
 });
 
 test('paid entitlement upgrade does not leave an old trial active', () => {
@@ -63,14 +95,32 @@ test('preflight continuously protects candle and expiration alignment', () => {
   assert.match(preflight, /CasaTrade está com expiração/);
 });
 
-test('admin ops does not inject CRM twice and does not fake a successful sync', () => {
+test('admin ops documents its global override debt without loading CRM', () => {
   const ops = read('apps/admin-dashboard/ops.js');
+  assert.match(ops, /TECH DEBT/);
   assert.match(ops, /__ATS_OPS__/);
   assert.doesNotMatch(ops, /script\.src=['"]crm\.js/);
   assert.match(ops, /falha na atualização/);
   assert.match(ops, /const before=metrics/);
   assert.match(ops, /metrics!==before/);
   assert.match(ops, /\/v1\/public\/config/);
+});
+
+test('live operations is integrated natively and obsolete CRM/live scripts are removed', () => {
+  const html = read('apps/admin-dashboard/index.html');
+  const app = read('apps/admin-dashboard/app.js');
+  const server = read('backend/src/server.js');
+  assert.match(html, /data-page="operations"/);
+  assert.match(html, /data-view="operations"/);
+  assert.match(html, /live\.css/);
+  assert.match(app, /\/v1\/admin\/operations/);
+  assert.match(app, /function renderOperations/);
+  assert.match(app, /observedAccuracy/);
+  assert.match(app, /structured/);
+  assert.equal(fs.existsSync(path.join(root, 'apps/admin-dashboard/crm.js')), false);
+  assert.equal(fs.existsSync(path.join(root, 'apps/admin-dashboard/live.js')), false);
+  assert.doesNotMatch(server, /crm\.js/);
+  assert.doesNotMatch(server, /live\.js/);
 });
 
 test('extension sync indicator is based on a confirmed heartbeat response', () => {
