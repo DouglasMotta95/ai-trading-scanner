@@ -1,4 +1,7 @@
 (() => {
+  document.documentElement.style.background = '#040713';
+  document.body.style.background = '#040713';
+
   const text = document.getElementById('licenseText');
   if (!text) return;
 
@@ -21,7 +24,9 @@
   });
   setInterval(clean, 1000);
 
-  const s = document.createElement('script');
-  s.src = chrome.runtime.getURL('src/sidepanel/account-login.js');
-  document.body.appendChild(s);
+  for (const file of ['account-login.js', 'preflight.js']) {
+    const s = document.createElement('script');
+    s.src = chrome.runtime.getURL(`src/sidepanel/${file}`);
+    document.body.appendChild(s);
+  }
 })();
