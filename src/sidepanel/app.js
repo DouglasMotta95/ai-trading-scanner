@@ -1,4 +1,5 @@
 const PUBLIC_API='https://ats-control-center-v07-production.up.railway.app';
+const LAST_VALID_LICENSE_KEY='atsLastValidLicense';
 const $=id=>document.getElementById(id);
 const extensionVersion=$('extensionVersion');if(extensionVersion)extensionVersion.textContent=`v${chrome.runtime.getManifest().version} • LIVE OPS`;
 const connectBtn=$('connectBtn'),toggleBtn=$('toggleScanner'),tfSelect=$('analysisTimeframe'),expSelect=$('targetExpiration'),buyBtn=$('prepareBuy'),sellBtn=$('prepareSell'),scoreGauge=$('scoreGauge');
@@ -7,6 +8,15 @@ const fresh=s=>s.connection==='online'&&s.lastSeen&&Date.now()-s.lastSeen<7000;
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmt=v=>v==null||v===''?'—':Number.isFinite(Number(v))?String(Number(v)):'—';
 const activeLicense=s=>s.license?.status==='active';
+const licenseStillValid=l=>{if(l?.status!=='active')return false;if(!l.expiresAt)return true;const t=Date.parse(l.expiresAt);return Number.isFinite(t)&&t>Date.now()};
+function effectiveLicense(stateLicense={},cachedEntry=null){
+  if(licenseStillValid(stateLicense))return stateLicense;
+  if(['expired','limit','device_locked'].includes(String(stateLicense?.status||'')))return stateLicense;
+  const cached=cachedEntry?.license;
+  if(licenseStillValid(cached))return{...cached,status:'active',error:'backend_unreachable',syncPending:true};
+  if(stateLicense?.status==='active'&&!licenseStillValid(stateLicense))return{...stateLicense,status:'expired',error:'license_expired',syncPending:false};
+  return stateLicense;
+}
 function ensureOption(select,value){value=String(value||'').trim();if(!value||[...select.options].some(o=>o.value===value))return;const o=document.createElement('option');o.value=value;o.textContent=value;select.appendChild(o)}
 function setDot(id,on){const el=$(id);if(el)el.className=on?'on':''}
 function usageText(l={}){
@@ -16,12 +26,12 @@ function usageText(l={}){
   return`Uso diário: ${Number(l.usedToday)||0}/${l.dailyLimit} • ${l.remainingToday??Math.max(0,l.dailyLimit-(Number(l.usedToday)||0))} restantes`
 }
 function renderLicense(s={}){
-  const l=s.license||{},active=l.status==='active',trial=l.isTrial||l.plan==='trial',limit=trial&&l.totalLimit!=null?l.totalLimit:l.dailyLimit,used=trial&&l.totalLimit!=null?Number(l.usedTotal)||0:Number(l.usedToday)||0;
+  const l=s.license||{},active=l.status==='active',waiting=active&&(l.syncPending||l.error==='backend_unreachable'),trial=l.isTrial||l.plan==='trial',limit=trial&&l.totalLimit!=null?l.totalLimit:l.dailyLimit,used=trial&&l.totalLimit!=null?Number(l.usedTotal)||0:Number(l.usedToday)||0;
   $('licenseCard').classList.toggle('active',active);$('licenseCard').classList.toggle('blocked',!active);$('activationBox').hidden=active;
   $('licenseHealth').textContent=active?String(l.planLabel||l.plan||'ATIVA').toUpperCase():String(l.status||'INATIVA').toUpperCase();
   $('planBadge').textContent=active?String(l.planLabel||l.plan||'ATIVA').toUpperCase():'LICENÇA';
-  $('licenseTitle').textContent=active?'Licença ativa':l.status==='expired'?'Licença expirada':l.status==='limit'?'Limite do plano atingido':l.status==='device_locked'?'Licença vinculada a outro aparelho':'Ativação necessária';
-  $('licenseText').textContent=active?`${l.planLabel||l.plan||'Plano'} ativo${l.expiresAt?` • vence ${new Date(l.expiresAt).toLocaleDateString('pt-BR')}`:''}.`:l.status==='expired'?'Esta licença precisa ser renovada.':l.status==='device_locked'?'Esta licença já está vinculada a outro aparelho. A troca precisa ser liberada pelo administrador.':l.status==='limit'?'O limite disponível para este acesso foi utilizado.':l.error==='backend_unreachable'?'Servidor ATS indisponível no momento.':'Entre na sua conta ATS ou use uma licença manual de suporte.';
+  $('licenseTitle').textContent=active?(waiting?'Licença ativa • aguardando sincronização':'Licença ativa'):l.status==='expired'?'Licença expirada':l.status==='limit'?'Limite do plano atingido':l.status==='device_locked'?'Licença vinculada a outro aparelho':'Ativação necessária';
+  $('licenseText').textContent=active?(waiting?'Último acesso válido mantido. O ATS vai sincronizar automaticamente quando o servidor estiver disponível.':`${l.planLabel||l.plan||'Plano'} ativo${l.expiresAt?` • vence ${new Date(l.expiresAt).toLocaleDateString('pt-BR')}`:''}.`):l.status==='expired'?'Esta licença precisa ser renovada.':l.status==='device_locked'?'Esta licença já está vinculada a outro aparelho. A troca precisa ser liberada pelo administrador.':l.status==='limit'?'O limite disponível para este acesso foi utilizado.':l.error==='backend_unreachable'?'Servidor ATS indisponível no momento.':'Entre na sua conta ATS ou use uma licença manual de suporte.';
   $('licenseUsage').textContent=active?usageText(l):'Uso: —';
   $('licenseDevice').textContent=active?(l.deviceLocked||l.devices>0?'Aparelho: VINCULADO':'Aparelho: LIVRE'):'Aparelho: —';
   const pct=limit==null?0:Math.max(0,Math.min(100,limit?used/limit*100:0));
@@ -67,7 +77,14 @@ function render(s={}){
 }
 function tfMs(raw){const s=String(raw||'M1').toUpperCase();let m=s.match(/^S(\d+)$/);if(m)return Number(m[1])*1000;m=s.match(/^M(\d+)$/);if(m)return Number(m[1])*60000;m=s.match(/^H(\d+)$/);if(m)return Number(m[1])*3600000;return 60000}
 function updateCountdown(){const tf=lastState.analysisTimeframe||lastState.signal?.timeframe||lastState.timeframe||'M1',ms=tfMs(tf),left=Math.max(0,Math.ceil(Date.now()/ms)*ms-Date.now()),sec=Math.ceil(left/1000),min=Math.floor(sec/60),rem=sec%60;$('entryCountdown').textContent=min?`${min}:${String(rem).padStart(2,'0')}`:`0:${String(rem).padStart(2,'0')}`}
-async function getState(){try{const [state,stored]=await Promise.all([chrome.runtime.sendMessage({type:'ATS_GET_STATE'}),chrome.storage.local.get('atsTelemetryStatus')]);const status=stored.atsTelemetryStatus||{};render({...state,telemetry:{...(state?.telemetry||{}),...status}})}catch{render({})}}
+async function getState(){
+  const [state,stored]=await Promise.all([
+    chrome.runtime.sendMessage({type:'ATS_GET_STATE'}).catch(()=>({})),
+    chrome.storage.local.get(['atsTelemetryStatus',LAST_VALID_LICENSE_KEY]).catch(()=>({}))
+  ]);
+  const status=stored.atsTelemetryStatus||{},license=effectiveLicense(state?.license||{},stored[LAST_VALID_LICENSE_KEY]||null);
+  render({...state,license,telemetry:{...(state?.telemetry||{}),...status}})
+}
 async function loadPrefs(){const{settings={}}=await chrome.storage.local.get('settings'),p=settings.scanPreferences||{};ensureOption(tfSelect,p.timeframe);ensureOption(expSelect,p.expiration);tfSelect.value=p.timeframe||'AUTO';expSelect.value=p.expiration||'AUTO'}
 async function savePrefs(){const{settings={}}=await chrome.storage.local.get('settings');await chrome.storage.local.set({settings:{...settings,scanPreferences:{...(settings.scanPreferences||{}),timeframe:tfSelect.value,expiration:expSelect.value}}})}
 async function ensureBackendPermission(){try{const origin=`${new URL(PUBLIC_API).origin}/*`,has=await chrome.permissions.contains({origins:[origin]});if(has)return{ok:true};const granted=await chrome.permissions.request({origins:[origin]});return{ok:granted,error:granted?null:'permission_denied'}}catch{return{ok:false,error:'invalid_backend_url'}}}
@@ -77,4 +94,10 @@ toggleBtn.addEventListener('click',async()=>{const s=await chrome.runtime.sendMe
 async function prepare(direction){const r=await chrome.runtime.sendMessage({type:'ATS_PREPARE_TRADE',direction}).catch(e=>({ok:false,error:e?.message||String(e)}));$('manualStatus').textContent=!r?.ok?'Não foi possível preparar a ação. Verifique conexão e licença.':r.intent?.handoff?.found?`${direction} preparada e controle destacado na plataforma.`:`${direction} preparada. Confirme na plataforma.`;getState()}
 buyBtn.addEventListener('click',()=>prepare('BUY'));sellBtn.addEventListener('click',()=>prepare('SELL'));
 $('activateLicense').addEventListener('click',async()=>{const key=$('licenseKey').value.trim();$('licenseText').textContent='Validando licença e vinculando este aparelho...';const permission=await ensureBackendPermission();if(!permission.ok){$('licenseText').textContent='Permissão para acessar o backend não concedida.';return}const r=await chrome.runtime.sendMessage({type:'ATS_ACTIVATE_LICENSE',key}).catch(e=>({ok:false,error:String(e)}));$('licenseText').textContent=r.ok?'Licença ativada e aparelho vinculado com sucesso.':r.error==='license_not_found'?'Licença não encontrada.':r.error==='license_expired'?'Licença expirada.':r.error==='device_locked'||r.error==='device_limit_reached'?'Esta licença já está vinculada a outro aparelho.':r.error==='trial_limit_reached'?'O Trial já utilizou todos os sinais disponíveis.':r.error==='backend_unreachable'?'Servidor ATS indisponível no momento.':`Não foi possível ativar: ${r.error||'erro desconhecido'}`;getState()});
-tfSelect.addEventListener('change',savePrefs);expSelect.addEventListener('change',savePrefs);$('settingsBtn').addEventListener('click',()=>chrome.runtime.openOptionsPage());chrome.storage.onChanged.addListener(c=>{if(c.scannerState||c.atsTelemetryStatus)getState();if(c.settings)loadPrefs()});loadPrefs();chrome.runtime.sendMessage({type:'ATS_VALIDATE_LICENSE'}).catch(()=>{}).finally(getState);setInterval(getState,1000);setInterval(updateCountdown,250);
+tfSelect.addEventListener('change',savePrefs);expSelect.addEventListener('change',savePrefs);$('settingsBtn').addEventListener('click',()=>chrome.runtime.openOptionsPage());chrome.storage.onChanged.addListener(c=>{if(c.scannerState||c.atsTelemetryStatus||c[LAST_VALID_LICENSE_KEY])getState();if(c.settings)loadPrefs()});
+async function boot(){
+  await loadPrefs();
+  await getState();
+  chrome.runtime.sendMessage({type:'ATS_VALIDATE_LICENSE'}).catch(()=>null).then(()=>getState());
+}
+boot();setInterval(getState,1000);setInterval(updateCountdown,250);
