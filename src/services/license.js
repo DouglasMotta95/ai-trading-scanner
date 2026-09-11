@@ -1,10 +1,11 @@
 import{installationId,saveClientToken,clearClientToken}from'./telemetry.js';
-const LICENSE_KEY='atsLicenseKey',PUBLIC_API='https://ats-control-center-v07-production.up.railway.app',base=s=>String(s?.apiBase||PUBLIC_API).replace(/\/$/,'');
+const LICENSE_KEY='atsLicenseKey',PUBLIC_API='https://ats-control-center-v07-production.up.railway.app';
+const base=s=>{const raw=String(s?.apiBase||'').trim();if(!raw)return PUBLIC_API;if(/ats-control-center-live-production|ats-control-center-production-|ai-trading-scanner-production-/i.test(raw))return PUBLIC_API;return raw.replace(/\/$/,'')};
 export const isDevBuild=()=>!chrome.runtime.getManifest().update_url;
 export const licenseRequired=(settings={})=>settings.licenseRequired!==false&&(!isDevBuild()||settings.forceLicense===true);
 export async function savedLicenseKey(){const x=await chrome.storage.local.get(LICENSE_KEY);return String(x[LICENSE_KEY]||'').trim()}
 export async function saveLicenseKey(key=''){key=String(key||'').trim();await chrome.storage.local.set({[LICENSE_KEY]:key});return key}
-async function call(settings,path,payload){if(!base(settings))return{ok:false,error:'backend_not_configured'};try{const r=await fetch(`${base(settings)}${path}`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)}),data=await r.json().catch(()=>({}));return{ok:r.ok,status:r.status,...data}}catch{return{ok:false,error:'backend_unreachable'}}}
+async function call(settings,path,payload){try{const r=await fetch(`${base(settings)}${path}`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)}),data=await r.json().catch(()=>({}));return{ok:r.ok,status:r.status,...data}}catch{return{ok:false,error:'backend_unreachable'}}}
 async function acceptSession(r,licenseKey=''){if(r?.ok&&r.clientToken){await saveClientToken(r.clientToken,r.clientTokenExpiresAt);if(licenseKey)await saveLicenseKey(licenseKey)}return r}
 export async function activateLicense(settings={},key=''){
   const installationIdValue=await installationId(),licenseKey=String(key||'').trim();
