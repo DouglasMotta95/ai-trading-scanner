@@ -11,6 +11,7 @@ const read = file => fs.readFileSync(path.join(root, file), 'utf8');
 test('public portal exposes verification recovery, code copy and risk disclosure', () => {
   const html = read('apps/customer-portal/index.html');
   const app = read('apps/customer-portal/app.js');
+  const css = read('apps/customer-portal/styles.css');
   assert.match(html, /id="resendVerification"/);
   assert.match(html, /id="copyConnectCode"/);
   assert.match(html, /resultados de mercado não são garantidos/i);
@@ -19,6 +20,10 @@ test('public portal exposes verification recovery, code copy and risk disclosure
   assert.match(app, /totalLimit/);
   assert.match(app, /paymentsConfigured/);
   assert.match(app, /Pagamento aprovado\. Sincronizando seu acesso/);
+  assert.match(css, /\[hidden\]\s*\{\s*display\s*:\s*none\s*!important\s*\}/i);
+  assert.match(html, /id="authModal"[^>]*hidden/);
+  assert.match(html, /id="verifyView"[^>]*hidden/);
+  assert.match(html, /id="accountView"[^>]*hidden/);
 });
 
 test('paid entitlement upgrade does not leave an old trial active', () => {
