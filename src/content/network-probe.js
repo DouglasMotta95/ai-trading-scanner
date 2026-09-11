@@ -22,6 +22,9 @@
     assets: new Map()
   };
 
+  const trimSet = (set, max) => {
+    while (set.size > max) set.delete(set.values().next().value);
+  };
   const safeUrl = u => {
     try {
       const x = new URL(String(u || ''), location.href);
@@ -90,10 +93,11 @@
     return null;
   };
 
-  const scan = data => {
+  const scan = (data, meta = {}) => {
     const root = parse(data);
     if (root == null) return;
     const stack = [{ v: root, d: 0 }];
+    const found = new Map();
     let seen = 0;
     while (stack.length && seen < 600) {
       const { v, d } = stack.pop();
@@ -104,12 +108,24 @@
         continue;
       }
       const c = candidate(v);
-      if (c) stats.assets.set(c.asset, c);
+      if (c) found.set(c.asset, c);
       for (const [k, val] of Object.entries(v)) {
         if (SENSITIVE.test(k)) continue;
         if (k.length <= 64) stats.keys.add(k);
         if (val && typeof val === 'object') stack.push({ v: val, d: d + 1 });
       }
+    }
+    trimSet(stats.keys, 300);
+    for (const [asset, c] of found) {
+      const previous = stats.assets.get(asset);
+      stats.assets.set(asset, {
+        ...previous,
+        ...c,
+        transport: meta.transport || previous?.transport || null,
+        endpoint: meta.endpoint || previous?.endpoint || null,
+        firstObservedAt: previous?.firstObservedAt || c.observedAt,
+        seenCount: Math.min(1000000, Number(previous?.seenCount || 0) + 1)
+      });
     }
   };
 
@@ -117,11 +133,11 @@
     if (flushTimer.id) return;
     flushTimer.id = setTimeout(() => {
       flushTimer.id = null;
-      const now = Date.now();
-      // Keep recent observations only; stale candidates cannot become a structured live quote.
+      const ts = Date.now();
       for (const [asset, c] of stats.assets) {
-        if (now - Number(c.observedAt || 0) > 15000) stats.assets.delete(asset);
+        if (ts - Number(c.observedAt || 0) > 15000) stats.assets.delete(asset);
       }
+      trimSet(stats.endpoints, 100);
       window.postMessage({
         source: 'ATS_NETWORK_PROBE',
         type: 'summary',
@@ -142,7 +158,8 @@
     if (stats.messages[transport] != null) stats.messages[transport]++;
     const clean = safeUrl(url);
     if (clean) stats.endpoints.add(`${transport}:${clean}`);
-    scan(data);
+    trimSet(stats.endpoints, 100);
+    scan(data, { transport, endpoint: clean });
     flushTimer();
   };
 
@@ -153,6 +170,7 @@
       stats.connections.ws++;
       const clean = safeUrl(url);
       if (clean) stats.endpoints.add(`ws:${clean}`);
+      trimSet(stats.endpoints, 100);
       flushTimer();
       ws.addEventListener('message', e => {
         if (typeof e.data === 'string') record('ws', url, e.data);
