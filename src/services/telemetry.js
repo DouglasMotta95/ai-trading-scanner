@@ -2,7 +2,7 @@ const INSTALL_KEY='atsInstallationId';
 const CLIENT_TOKEN_KEY='atsClientToken';
 const CLIENT_TOKEN_EXP_KEY='atsClientTokenExpiresAt';
 const PUBLIC_API='https://ats-control-center-v07-production.up.railway.app';
-const apiBase=settings=>String(settings?.apiBase||PUBLIC_API).replace(/\/$/,'');
+const apiBase=settings=>{const raw=String(settings?.apiBase||'').trim();if(!raw)return PUBLIC_API;if(/ats-control-center-live-production|ats-control-center-production-|ai-trading-scanner-production-/i.test(raw))return PUBLIC_API;return raw.replace(/\/$/,'')};
 
 export async function installationId(){
   const x=await chrome.storage.local.get(INSTALL_KEY);
