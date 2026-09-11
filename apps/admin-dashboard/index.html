@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#07111c">
   <title>ATS Control Center</title>
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css?v=0.5.1">
 </head>
 <body>
   <div id="authGate" class="auth-gate" hidden>
@@ -42,13 +42,14 @@
     <main class="workspace">
       <header class="appbar">
         <div>
-          <span class="eyebrow">ATS ADMIN</span>
+          <span class="eyebrow">ATS ADMIN • LIVE CONTROL</span>
           <h1 id="pageTitle">Central de controle</h1>
           <p id="pageSub">Ações rápidas, licenças e clientes em um único painel.</p>
         </div>
         <div class="appbar-actions">
+          <span id="syncChip" class="sync-chip">↻ automático • 15s</span>
           <span class="status-live"><i></i>ONLINE</span>
-          <button id="refreshBtn" class="icon-button" title="Atualizar">↻</button>
+          <button id="refreshBtn" class="icon-button" title="Atualizar agora">↻</button>
           <button class="btn primary desktop-only" data-action-open="license">+ NOVA LICENÇA</button>
         </div>
       </header>
@@ -56,9 +57,9 @@
       <section class="view active" data-view="dashboard">
         <section class="command-hero">
           <div class="hero-text">
-            <span class="eyebrow">OPERAÇÃO COMERCIAL</span>
-            <h2>Controle rápido, visual e direto.</h2>
-            <p>Crie testes, emita acessos, resete extensões e já receba a mensagem pronta para mandar ao cliente.</p>
+            <span class="eyebrow">CENTRAL DE OPERAÇÃO</span>
+            <h2>Gerencie clientes e acessos sem perder tempo.</h2>
+            <p>Crie teste grátis, emita licença, resete extensão, renove acesso e já receba a mensagem pronta para enviar ao cliente. O painel atualiza os dados automaticamente.</p>
           </div>
           <div class="hero-badge"><span id="heroClock">--:--</span><small>PAINEL ATIVO</small></div>
         </section>
@@ -67,16 +68,16 @@
 
         <section class="section-card action-center">
           <div class="section-head">
-            <div><span class="eyebrow">ATALHOS</span><h3>Ações rápidas</h3></div>
+            <div><span class="eyebrow">COMANDOS PRINCIPAIS</span><h3>Ações rápidas</h3></div>
             <span class="mini-tag">1 TOQUE</span>
           </div>
           <div class="quick-grid">
-            <button class="quick-card trial" data-action-open="trial"><span class="quick-icon">🎁</span><b>Teste grátis</b><small>Gerar Trial e mensagem</small></button>
-            <button class="quick-card license" data-action-open="license"><span class="quick-icon">🔑</span><b>Nova licença</b><small>Plano + validade</small></button>
-            <button class="quick-card reset" data-action-open="reset"><span class="quick-icon">♻</span><b>Resetar cliente</b><small>Dispositivo + consumo</small></button>
-            <button class="quick-card renew" data-action-open="renew"><span class="quick-icon">↻</span><b>Renovar acesso</b><small>Somar validade</small></button>
-            <button class="quick-card clients" data-page-jump="clients"><span class="quick-icon">◉</span><b>Clientes online</b><small>Ver dispositivos</small></button>
-            <button class="quick-card messages" data-page-jump="messages"><span class="quick-icon">✦</span><b>Mensagens</b><small>Modelos prontos</small></button>
+            <button class="quick-card trial" data-action-open="trial"><span class="quick-icon">🎁</span><b>Teste grátis</b><small>Gera Trial + mensagem automática</small></button>
+            <button class="quick-card license" data-action-open="license"><span class="quick-icon">🔑</span><b>Nova licença</b><small>Escolha plano e validade</small></button>
+            <button class="quick-card reset" data-action-open="reset"><span class="quick-icon">♻</span><b>Resetar cliente</b><small>Libera dispositivo + consumo</small></button>
+            <button class="quick-card renew" data-action-open="renew"><span class="quick-icon">↻</span><b>Renovar acesso</b><small>Adiciona validade e gera mensagem</small></button>
+            <button class="quick-card clients" data-page-jump="clients"><span class="quick-icon">◉</span><b>Clientes online</b><small>Veja quem está conectado agora</small></button>
+            <button class="quick-card messages" data-page-jump="messages"><span class="quick-icon">✦</span><b>Mensagens</b><small>Modelos prontos e editáveis</small></button>
           </div>
         </section>
 
@@ -206,13 +207,30 @@
   </div>
 
   <aside id="resultSheet" class="result-sheet" hidden>
-    <div class="result-head"><div><span class="eyebrow">PRONTO</span><h3 id="resultTitle">Acesso gerado</h3></div><button id="closeResult">×</button></div>
+    <div class="result-head"><div><span class="eyebrow">PRONTO PARA ENVIAR</span><h3 id="resultTitle">Acesso gerado</h3></div><button id="closeResult">×</button></div>
     <div id="resultLicense" class="result-license"></div>
     <label class="result-message"><span>Mensagem automática para o cliente</span><textarea id="resultMessage"></textarea></label>
     <div class="result-actions"><button id="copyResultBtn" class="btn primary">COPIAR TUDO</button><button id="shareResultBtn" class="btn secondary">COMPARTILHAR</button></div>
   </aside>
 
   <div id="toast" class="toast"></div>
-  <script src="app.js"></script>
+  <script src="app.js?v=0.5.1"></script>
+  <script>
+  (()=>{
+    const previous=new Map();
+    const stamp=()=>{const el=document.getElementById('syncChip');if(el)el.textContent='✓ atualizado '+new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})};
+    const reveal=()=>document.querySelectorAll('.metric,.quick-card,.section-card,.client-card,.license-item,.plan-card').forEach((el,i)=>{if(!el.dataset.motion){el.dataset.motion='1';el.classList.add('reveal');el.style.animationDelay=Math.min(i*22,180)+'ms'}});
+    const animateNumbers=()=>document.querySelectorAll('.metric').forEach(card=>{const label=card.querySelector('small')?.textContent||'';const strong=card.querySelector('strong');if(!strong)return;const target=Number(String(strong.textContent).replace(/[^0-9.-]/g,''));if(!Number.isFinite(target))return;const start=previous.has(label)?previous.get(label):0;if(start===target){previous.set(label,target);return}const t0=performance.now(),dur=480;const step=t=>{const p=Math.min(1,(t-t0)/dur),e=1-Math.pow(1-p,3);strong.textContent=Math.round(start+(target-start)*e);if(p<1)requestAnimationFrame(step);else previous.set(label,target)};requestAnimationFrame(step)});
+    const observer=new MutationObserver(()=>{reveal();animateNumbers()});
+    const grid=document.getElementById('metricGrid');if(grid)observer.observe(grid,{childList:true,subtree:true});
+    ['recentLicenses','licensesList','clientsGrid','planStrip','auditList'].forEach(id=>{const el=document.getElementById(id);if(el)observer.observe(el,{childList:true,subtree:true})});
+    document.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;const r=document.createElement('span');r.className='ripple';const box=b.getBoundingClientRect(),size=Math.max(box.width,box.height);r.style.width=r.style.height=size+'px';r.style.left=(e.clientX-box.left-size/2)+'px';r.style.top=(e.clientY-box.top-size/2)+'px';if(getComputedStyle(b).position==='static')b.style.position='relative';b.style.overflow='hidden';b.appendChild(r);setTimeout(()=>r.remove(),600)});
+    const tick=()=>{const c=document.getElementById('heroClock');if(c)c.textContent=new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})};tick();setInterval(tick,1000);
+    const auto=()=>{if(document.visibilityState!=='visible')return;const gate=document.getElementById('authGate');if(gate&&!gate.hidden)return;const b=document.getElementById('refreshBtn');if(b){b.classList.add('flash-update');b.click();stamp();setTimeout(()=>b.classList.remove('flash-update'),700)}};
+    setTimeout(()=>{reveal();animateNumbers();stamp()},900);
+    setInterval(auto,15000);
+    document.getElementById('refreshBtn')?.addEventListener('click',()=>setTimeout(stamp,500));
+  })();
+  </script>
 </body>
 </html>
