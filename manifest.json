@@ -4,14 +4,27 @@
   "version": "0.3.0",
   "description": "Scanner inteligente multi-plataforma com análise quantitativa, diagnóstico e sinais em tempo real.",
   "permissions": ["storage", "activeTab", "scripting", "sidePanel"],
-  "host_permissions": ["https://*.casatrade.com/*", "https://*.casatrade.io/*"],
+  "host_permissions": [
+    "https://*.casatrade.com/*",
+    "https://*.casatrade.io/*"
+  ],
   "background": { "service_worker": "src/background.js", "type": "module" },
   "action": { "default_title": "AI Trading Scanner" },
   "options_page": "src/admin/index.html",
   "side_panel": { "default_path": "src/sidepanel/index.html" },
   "content_scripts": [{
-    "matches": ["https://*.casatrade.com/*", "https://*.casatrade.io/*"],
-    "js": ["src/content/casatrade.js"],
+    "matches": [
+      "https://*.casatrade.com/*",
+      "https://*.casatrade.io/*"
+    ],
+    "js": ["src/content/generic-adapter.js"],
     "run_at": "document_start"
+  }],
+  "web_accessible_resources": [{
+    "resources": ["src/platforms/registry.js", "src/platforms/base-adapter.js"],
+    "matches": [
+      "https://*.casatrade.com/*",
+      "https://*.casatrade.io/*"
+    ]
   }]
 }
