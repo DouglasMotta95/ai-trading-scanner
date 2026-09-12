@@ -24,8 +24,11 @@ test('sidepanel exposes only the focused license, candle and next-entry surface'
 
   assert.match(app, /ATS_ACTIVATE_LICENSE/);
   assert.match(app, /ATS_CONNECT_ACTIVE_TAB/);
-  assert.match(app, /POSSÍVEL COMPRA|POSSÍVEL VENDA/);
-  assert.match(app, /ENTRAR EM COMPRA|ENTRAR EM VENDA/);
+  assert.match(app, /POSSÍVEL/);
+  assert.match(app, /COMPRA/);
+  assert.match(app, /VENDA/);
+  assert.match(app, /ENTRAR EM COMPRA/);
+  assert.match(app, /ENTRAR EM VENDA/);
   assert.match(app, /NÃO ENTRAR/);
   assert.doesNotMatch(app, /ATS_RUN_BACKTEST|ATS_GET_WEEKLY_REPORT|renderIndicators|renderAI|renderIntelligence/);
 
