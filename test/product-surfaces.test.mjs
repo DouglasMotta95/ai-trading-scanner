@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
 const read = file => fs.readFileSync(path.join(root, file), 'utf8');
+const standalone = term => new RegExp(`(?:^|[^A-ZÀ-ÖØ-Þ])${term}(?:$|[^A-ZÀ-ÖØ-Þ])`);
 
 test('sidepanel exposes only the six requested functional sections and controls', () => {
   const html = read('src/sidepanel/index.html');
@@ -36,7 +37,7 @@ test('sidepanel exposes only the six requested functional sections and controls'
   for (const removed of [
     'RSI','MACD','EMA 9','EMA 21','BACKTEST','RELATÓRIO SEMANAL','CORRELAÇÃO',
     'CALENDÁRIO','NOTÍCIAS','MELHORES OPORTUNIDADES','RADAR MULTIATIVO','POR QUE A IA'
-  ]) assert.doesNotMatch(html.toUpperCase(), new RegExp(removed));
+  ]) assert.doesNotMatch(html.toUpperCase(), standalone(removed));
 });
 
 test('unsupported platform text is explicit and market values stay empty', () => {

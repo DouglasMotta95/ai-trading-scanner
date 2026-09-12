@@ -5,9 +5,6 @@ const LAST_VALID_LICENSE_KEY = 'atsLastValidLicense';
 const REQUEST_TIMEOUT_MS = 8000;
 const REOPEN_CACHE_GRACE_MS = 5 * 60 * 1000;
 
-// Only errors that conclusively invalidate the license itself may erase the last
-// known-good local session. Request/protocol errors, temporary quota errors and
-// backend outages must never make a previously active license disappear.
 const AUTHORITATIVE_LICENSE_ERRORS = new Set([
   'license_not_found',
   'license_inactive',
@@ -17,15 +14,9 @@ const AUTHORITATIVE_LICENSE_ERRORS = new Set([
 ]);
 
 export const PUBLIC_LICENSE_API = 'https://ats-control-center-v07-production.up.railway.app';
-
-// Commercial builds must never trust an endpoint supplied by local settings.
-// This prevents a copied extension from pointing licensing at a fake server.
 const base = () => PUBLIC_LICENSE_API;
 
 export const isDevBuild = () => !chrome.runtime.getManifest().update_url;
-
-// Licensing is mandatory for every distributed/sideloaded build.
-// Local testing should use an ATS account/trial/test license instead of bypassing validation.
 export const licenseRequired = () => true;
 
 export async function savedLicenseKey() {
@@ -78,7 +69,9 @@ export async function restoreCachedLicense() {
   const cached = await cachedLicenseSession();
   if (!cached) return null;
   const currentKey = await savedLicenseKey();
-  if (!currentKey && cached.licenseKey) await saveLicenseKey(cached.licenseKey);
+  if (!currentKey && cached.licenseKey) {
+    await chrome.storage.local.set({ [LICENSE_KEY]: cached.licenseKey });
+  }
   return {
     ...cached.license,
     status: 'active',
@@ -96,8 +89,9 @@ async function saveValidLicenseSession(r, licenseKey = '') {
     clientTokenExpiresAt: Number(r.clientTokenExpiresAt) || 0,
     validatedAt: Date.now()
   };
-  await chrome.storage.local.set({ [LAST_VALID_LICENSE_KEY]: snapshot });
-  if (resolvedKey) await saveLicenseKey(resolvedKey);
+  const values = { [LAST_VALID_LICENSE_KEY]: snapshot };
+  if (resolvedKey) values[LICENSE_KEY] = resolvedKey;
+  await chrome.storage.local.set(values);
   return snapshot;
 }
 
@@ -142,7 +136,7 @@ async function acceptSession(r, licenseKey = '') {
 async function withCachedFallback(r, cached = null) {
   if (r?.ok) return r;
   if (AUTHORITATIVE_LICENSE_ERRORS.has(String(r?.error || ''))) return r;
-  cached ||= await cachedLicenseSession();
+  if (!cached) cached = await cachedLicenseSession();
   if (!cached) return r;
   return cachedResponse(cached, { syncPending: true, error: r?.error || 'backend_unreachable' }) || r;
 }
@@ -162,8 +156,6 @@ export async function activateLicense(settings = {}, key = '') {
 }
 
 export async function validateLicense(settings = {}) {
-  // Cache-first is intentional. Reopening the side panel must restore the last
-  // valid local session before any network validation is allowed to change UI state.
   const cached = await cachedLicenseSession();
   let licenseKey = await savedLicenseKey();
   if (!licenseKey && cached?.licenseKey) {
@@ -176,8 +168,6 @@ export async function validateLicense(settings = {}) {
       : { ok: false, error: 'license_required' };
   }
 
-  // A just-validated session is authoritative enough for the reopen path. This
-  // prevents close/reopen races from replacing an active UI with activation state.
   const validatedAt = Number(cached?.validatedAt) || 0;
   if (cached && validatedAt > 0 && Date.now() - validatedAt < REOPEN_CACHE_GRACE_MS) {
     return cachedResponse(cached);
@@ -195,8 +185,6 @@ export async function validateLicense(settings = {}) {
     return r;
   }
 
-  // Malformed requests, quota responses and temporary backend/protocol failures
-  // do not revoke a license. Keep the last server-validated session visible.
   return withCachedFallback(r, cached);
 }
 
@@ -218,7 +206,6 @@ export async function consumeSignal(settings = {}) {
 }
 
 export async function clearLicense() {
-  await saveLicenseKey('');
-  await chrome.storage.local.remove(LAST_VALID_LICENSE_KEY);
+  await chrome.storage.local.remove([LICENSE_KEY, LAST_VALID_LICENSE_KEY]);
   await clearClientToken();
 }

@@ -28,7 +28,7 @@ export function recentPriceAction(candles = []) {
     };
   }
 
-  const last = rows.at(-1);
+  const last = rows[rows.length - 1];
   const prev = rows.slice(0, -1);
   const support = Math.min(...rows.map(x => x.low));
   const resistance = Math.max(...rows.map(x => x.high));
@@ -68,7 +68,7 @@ export function recentPriceAction(candles = []) {
   score = clamp(score);
 
   const opinion = !direction
-    ? (reasons.at(-1) || 'Sem direção clara nas últimas velas.')
+    ? (reasons[reasons.length - 1] || 'Sem direção clara nas últimas velas.')
     : reasons[0] || `Movimento recente favorece ${direction}.`;
 
   return {

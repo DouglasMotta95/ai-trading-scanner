@@ -7,10 +7,15 @@ const PUBLIC_API = 'https://ats-control-center-v07-production.up.railway.app';
 // Telemetry follows the same fixed commercial backend used by licensing.
 const apiBase = () => PUBLIC_API;
 
+function stableInstallationId() {
+  const runtimeId = String(chrome.runtime?.id || '').trim();
+  return runtimeId ? `ats-${runtimeId}` : crypto.randomUUID();
+}
+
 export async function installationId() {
   const x = await chrome.storage.local.get(INSTALL_KEY);
   if (x[INSTALL_KEY]) return x[INSTALL_KEY];
-  const id = crypto.randomUUID();
+  const id = stableInstallationId();
   await chrome.storage.local.set({ [INSTALL_KEY]: id });
   return id;
 }
