@@ -3,77 +3,118 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="theme-color" content="#050914">
-  <title>ATS Smart Terminal</title>
+  <meta name="theme-color" content="#050816">
+  <title>AI Trading Scanner</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
 <main class="terminal-shell">
   <header class="terminal-topbar">
-    <div class="brand"><div class="brand-mark">ATS</div><div><h1>AI TRADING</h1><p>TERMINAL INTELIGENTE DE MERCADO</p></div></div>
-    <div class="top-actions"><button id="settingsBtn" class="icon-btn" title="Configurações">⚙</button><div id="liveBadge" class="live-badge offline"><i></i><span>OFFLINE</span></div></div>
+    <div class="brand">
+      <div class="brand-mark">ATS</div>
+      <div><h1>AI Trading Scanner</h1><p>Leitura inteligente em tempo real</p></div>
+    </div>
+    <div class="top-actions">
+      <button id="settingsBtn" class="icon-btn" title="Configurações" aria-label="Configurações">⚙</button>
+      <div id="liveBadge" class="live-badge offline"><i></i><span>OFFLINE</span></div>
+    </div>
   </header>
 
   <section id="licenseCard" class="license-strip panel">
-    <div class="license-main"><div><span class="eyebrow">ACESSO PROTEGIDO</span><strong id="licenseTitle">Verificando licença</strong><p id="licenseText">Validando este dispositivo.</p></div><span id="planBadge" class="plan-badge">—</span></div>
+    <div class="license-main">
+      <div><span class="eyebrow">ACESSO</span><strong id="licenseTitle">Verificando licença</strong><p id="licenseText">Validando este dispositivo.</p></div>
+      <span id="planBadge" class="plan-badge">—</span>
+    </div>
     <div id="activationBox" class="activation-box"><input id="licenseKey" autocomplete="off" spellcheck="false" placeholder="ATS-XXXXXX-XXXXXX-XXXX"><button id="activateLicense">ATIVAR</button></div>
     <div class="license-meta"><span id="licenseUsage">Uso: —</span><span id="licenseDevice">Aparelho: —</span></div>
-    <a class="btn secondary" href="https://wa.me/5535991429262" target="_blank" rel="noopener noreferrer">💬 SUPORTE • (35) 99142-9262</a>
+    <a class="support-link" href="https://wa.me/5535991429262" target="_blank" rel="noopener noreferrer">Precisa de ajuda? Falar com o suporte</a>
   </section>
 
-  <section class="rail-status">
-    <div><i id="platformDot"></i><span>PLATAFORMA</span><b id="platformRail">OFFLINE</b></div>
-    <div><i id="feedDot"></i><span>DADOS</span><b id="feedRail">SEM DADOS</b></div>
+  <section class="rail-status" aria-label="Status do scanner">
+    <div><i id="platformDot"></i><span>CASATRADE</span><b id="platformRail">OFFLINE</b></div>
+    <div><i id="feedDot"></i><span>FEED</span><b id="feedRail">SEM DADOS</b></div>
     <div><i id="scannerDot"></i><span>ANÁLISE</span><b id="scannerRail">PARADA</b></div>
     <div><i id="telemetryDot"></i><span>SINCRONIA</span><b id="telemetryHealth">AGUARDANDO</b></div>
   </section>
 
-  <section class="panel config-panel">
-    <div class="section-head"><div><span class="eyebrow">CONFIGURAÇÃO DA OPERAÇÃO</span><h2>Defina como quer operar</h2></div><span class="mini-tag">SINCRONIZA COM A CASATRADE</span></div>
-    <div class="line-controls">
+  <section class="panel config-panel priority-panel">
+    <div class="section-head">
+      <div><span class="eyebrow">1. CONFIGURE SUA OPERAÇÃO</span><h2>O ATS usa exatamente o que estiver na CasaTrade</h2></div>
+      <span id="syncBadge" class="mini-tag">AGUARDANDO</span>
+    </div>
+    <div class="line-controls three">
       <label><small>VALOR DA ENTRADA</small><input id="tradeAmount" inputmode="decimal" placeholder="Ex.: 20,00" autocomplete="off"></label>
-      <label><small>VELA / TIMEFRAME</small><select id="analysisTimeframe"><option value="AUTO">SELECIONE</option><option value="S5">S5 • 5 SEG</option><option value="S15">S15 • 15 SEG</option><option value="S30">S30 • 30 SEG</option><option value="M1">M1 • 1 MIN</option><option value="M2">M2 • 2 MIN</option><option value="M5">M5 • 5 MIN</option><option value="M15">M15 • 15 MIN</option><option value="M30">M30 • 30 MIN</option></select></label>
-      <label><small>EXPIRAÇÃO DA ENTRADA</small><select id="targetExpiration"><option value="AUTO">SELECIONE</option><option value="5s">5 SEG</option><option value="15s">15 SEG</option><option value="30s">30 SEG</option><option value="60s">1 MIN</option><option value="2m">2 MIN</option><option value="5m">5 MIN</option></select></label>
+      <label><small>TEMPO DA VELA</small><select id="analysisTimeframe"><option value="AUTO">SELECIONE</option><option value="S5">5 segundos</option><option value="S15">15 segundos</option><option value="S30">30 segundos</option><option value="M1">1 minuto</option><option value="M2">2 minutos</option><option value="M5">5 minutos</option><option value="M15">15 minutos</option><option value="M30">30 minutos</option></select></label>
+      <label><small>EXPIRAÇÃO</small><select id="targetExpiration"><option value="AUTO">SELECIONE</option><option value="5s">5 segundos</option><option value="15s">15 segundos</option><option value="30s">30 segundos</option><option value="60s">1 minuto</option><option value="2m">2 minutos</option><option value="5m">5 minutos</option></select></label>
     </div>
     <div id="platformObserved" class="platform-confirm">
-      <div><span>VALOR NA CASATRADE</span><b id="platformAmount">não identificado</b></div>
-      <div><span>VELA NA CASATRADE</span><b id="platformTimeframe">não identificado</b></div>
-      <div><span>EXPIRAÇÃO NA CASATRADE</span><b id="platformExpiration">não identificado</b></div>
+      <div><span>VALOR NA PLATAFORMA</span><b id="platformAmount">Não identificado</b></div>
+      <div><span>VELA NA PLATAFORMA</span><b id="platformTimeframe">Não identificado</b></div>
+      <div><span>EXPIRAÇÃO NA PLATAFORMA</span><b id="platformExpiration">Não identificado</b></div>
     </div>
-    <div id="platformSyncRow" class="sync-row warn"><div><strong id="platformSyncTitle">Conecte a CasaTrade</strong><small id="platformSyncText">O ATS só inicia quando valor, vela e expiração estiverem iguais nos dois lados.</small></div><button id="syncPlatformBtn">APLICAR DE NOVO</button></div>
-    <p class="truth-note"><b>Fonte de verdade:</b> o ATS lê de volta o que ficou configurado na CasaTrade. Se não conseguir confirmar, a leitura fica bloqueada.</p>
+    <div id="platformSyncRow" class="sync-row warn">
+      <div><strong id="platformSyncTitle">Abra a CasaTrade e conecte</strong><small id="platformSyncText">O ATS aplica a configuração e confere o resultado antes de liberar a análise.</small></div>
+      <button id="syncPlatformBtn">SINCRONIZAR</button>
+    </div>
   </section>
 
-  <section class="market-hero panel">
+  <section class="market-hero panel priority-panel">
     <div class="hero-glow"></div>
-    <div class="market-head"><div><span class="eyebrow">MERCADO EM FOCO</span><div class="asset-line"><strong id="asset">—</strong><span id="platformPill" class="pill">AGUARDANDO</span></div><div class="price-line"><b id="price">—</b><small id="marketType">NÃO IDENTIFICADO</small></div></div><div id="scoreGauge" class="score-orb"><span>FORÇA</span><strong id="score">—</strong><small id="signalDirection">—</small></div></div>
-    <div id="signalCommand" class="signal-command neutral"><div><span class="command-kicker">DECISÃO DO SCANNER</span><strong id="scannerState">SCANNER DESATIVADO</strong><p id="scannerHint">Conecte a plataforma para começar.</p></div><span id="signalBadge" class="signal-badge neutral">AGUARDAR</span></div>
-    <div class="hero-stats"><div><span>VELA REAL</span><b id="timeframe">NÃO IDENTIFICADO</b></div><div><span>EXPIRAÇÃO REAL</span><b id="expiration">NÃO IDENTIFICADO</b></div><div><span>FONTE DOS DADOS</span><b id="feedMode">OFFLINE</b></div><div><span>QUALIDADE</span><b id="quality">—</b></div></div>
-    <div class="countdown-card"><div><span>PRÓXIMA JANELA</span><b id="entryCountdown">--:--</b></div><div><span>LATÊNCIA</span><b id="latency">—</b></div><small id="signalCommandSub">O scanner só confirma quando os dados e os critérios passam pelos filtros.</small></div>
+    <div class="section-head hero-title"><div><span class="eyebrow">2. MERCADO EM FOCO</span><h2>Leitura da plataforma</h2></div><span id="platformPill" class="pill">AGUARDANDO</span></div>
+    <div class="market-head">
+      <div>
+        <div class="asset-line"><strong id="asset">—</strong><span id="marketType" class="market-chip">NÃO IDENTIFICADO</span></div>
+        <div class="price-line"><span>Cotação</span><b id="price">—</b></div>
+      </div>
+      <div id="scoreGauge" class="score-orb"><span>FORÇA</span><strong id="score">—</strong><small id="signalDirection">—</small></div>
+    </div>
+    <div id="signalCommand" class="signal-command neutral">
+      <div><span class="command-kicker">DECISÃO DO SCANNER</span><strong id="scannerState">Aguardando conexão</strong><p id="scannerHint">Conecte a CasaTrade para começar a leitura.</p></div>
+      <span id="signalBadge" class="signal-badge neutral">AGUARDAR</span>
+    </div>
+    <div class="hero-stats">
+      <div><span>VELA REAL</span><b id="timeframe">—</b></div>
+      <div><span>EXPIRAÇÃO REAL</span><b id="expiration">—</b></div>
+      <div><span>FONTE</span><b id="feedMode">OFFLINE</b></div>
+      <div><span>QUALIDADE</span><b id="quality">—</b></div>
+    </div>
+    <div class="countdown-card"><div><span>PRÓXIMA JANELA</span><b id="entryCountdown">--:--</b></div><div><span>LATÊNCIA</span><b id="latency">—</b></div><small id="signalCommandSub">O ATS não libera entrada enquanto os dados ainda estiverem incompletos.</small></div>
     <div class="hero-actions"><button id="connectBtn" class="btn primary"><span>↯</span><b id="connectLabel">CONECTAR CASATRADE</b></button><button id="toggleScanner" class="btn secondary" disabled><span>◉</span><b id="toggleLabel">INICIAR ANÁLISE</b></button></div>
   </section>
 
-  <section class="panel execution-panel">
-    <div class="section-head"><div><span class="eyebrow">ENTRADA NA PLATAFORMA</span><h2>Sua entrada aparece aqui</h2></div><span class="mini-tag safe">CONFIRMAÇÃO MANUAL</span></div>
+  <section class="panel execution-panel priority-panel">
+    <div class="section-head"><div><span class="eyebrow">3. ENTRADA</span><h2>Quando houver sinal, ele aparece aqui</h2></div><span class="mini-tag safe">MANUAL</span></div>
+    <div class="entry-preview" id="entryPreview"><span id="entryPreviewIcon">◎</span><div><strong id="entryPreviewTitle">Nenhuma entrada liberada</strong><small id="entryPreviewText">Continue acompanhando. Os botões só serão liberados com confirmação válida.</small></div></div>
     <div class="trade-buttons"><button id="prepareBuy" class="trade buy" disabled><span>▲</span><strong>COMPRA</strong><small>PREPARAR ENTRADA</small></button><button id="prepareSell" class="trade sell" disabled><span>▼</span><strong>VENDA</strong><small>PREPARAR ENTRADA</small></button></div>
-    <p id="manualStatus" class="section-note">Quando houver uma entrada realmente confirmada, somente a direção correta será liberada aqui.</p>
+    <p id="manualStatus" class="section-note">A extensão destaca a direção correta na CasaTrade; a confirmação final continua manual.</p>
+  </section>
+
+  <section class="panel intelligence-panel">
+    <div class="section-head"><div><span class="eyebrow">INTELIGÊNCIA DE MERCADO</span><h2>Melhores oportunidades monitoradas</h2></div><span id="intelligenceBadge" class="mini-tag">AUTOMÁTICO</span></div>
+    <p id="intelligenceSummary" class="intelligence-summary">Assim que o feed chegar, o ATS classifica automaticamente os mercados mais interessantes.</p>
+    <div id="intelligenceList" class="intelligence-list"><div class="empty-state">Aguardando ativos e cotações reais da plataforma.</div></div>
+    <p id="intelligenceNote" class="truth-note">O ranking local usa dados reais, confluência e contexto de sessão. IA externa só será usada quando houver provedor configurado no backend.</p>
   </section>
 
   <section class="panel analysis-panel">
-    <div class="section-head"><div><span class="eyebrow">LEITURA DO MERCADO</span><h2>Por que o ATS está esperando ou entrando?</h2></div><span id="setup" class="grade-badge">—</span></div>
-    <div class="progress-wrap"><div><span>Histórico disponível para análise</span><b id="warmupText">0 / 21 candles</b></div><div class="progress"><i id="warmupBar"></i></div></div>
+    <div class="section-head"><div><span class="eyebrow">ANÁLISE TÉCNICA</span><h2>O que o ATS está enxergando?</h2></div><span id="setup" class="grade-badge">—</span></div>
+    <div class="progress-wrap"><div><span id="warmupLabel">Histórico para análise</span><b id="warmupText">0 / 21 velas</b></div><div class="progress"><i id="warmupBar"></i></div></div>
     <div class="analysis-grid"><div><span>CRITÉRIOS</span><b id="confirmations">0 de 6</b></div><div><span>REGIME</span><b id="regime">—</b></div><div><span>DADOS</span><b id="structureState">AGUARDANDO</b></div></div>
-    <div class="reason-box"><span>O QUE O SCANNER ESTÁ ENXERGANDO?</span><div id="signalReasons" class="reason-list"><p>Aguardando dados suficientes.</p></div></div>
+    <div class="reason-box"><span>MOTIVOS</span><div id="signalReasons" class="reason-list"><p>Aguardando dados suficientes.</p></div></div>
   </section>
 
-  <section class="panel history-panel"><div class="section-head"><div><span class="eyebrow">HISTÓRICO DESTA SESSÃO</span><h2>Últimos sinais confirmados</h2></div><span class="mini-tag">SESSÃO</span></div><div id="signalHistory" class="signal-history"><div class="empty-state">Nenhum sinal confirmado nesta instalação ainda.</div></div></section>
-  <section class="panel plan-panel"><div class="section-head"><div><span class="eyebrow">PLANO E CONSUMO</span><h2>Uso da licença</h2></div><strong id="quotaText">—</strong></div><div class="quota"><i id="quotaBar"></i></div><p id="quotaHint">O consumo do plano é separado da qualidade da análise.</p></section>
-  <section class="panel universe-panel"><div class="section-head"><div><span class="eyebrow">ATIVOS ENCONTRADOS</span><h2>Radar da plataforma</h2></div><span id="catalogCount" class="mini-tag">0 ATIVOS</span></div><div id="catalogList" class="catalog-list"><div class="empty-state">Conecte a CasaTrade para mapear os ativos recebidos.</div></div></section>
+  <section class="panel universe-panel">
+    <div class="section-head"><div><span class="eyebrow">TODOS OS MERCADOS</span><h2>Radar de ativos detectados</h2></div><span id="catalogCount" class="mini-tag">0 ATIVOS</span></div>
+    <div id="catalogList" class="catalog-list"><div class="empty-state">Conecte a CasaTrade para mapear os ativos do DOM e do WebSocket.</div></div>
+  </section>
+
+  <section class="panel history-panel"><div class="section-head"><div><span class="eyebrow">HISTÓRICO DA SESSÃO</span><h2>Últimos sinais confirmados</h2></div><span class="mini-tag">LOCAL</span></div><div id="signalHistory" class="signal-history"><div class="empty-state">Nenhum sinal confirmado nesta instalação ainda.</div></div></section>
+  <section class="panel plan-panel"><div class="section-head"><div><span class="eyebrow">PLANO E CONSUMO</span><h2>Uso da licença</h2></div><strong id="quotaText">—</strong></div><div class="quota"><i id="quotaBar"></i></div><p id="quotaHint">O limite do plano é separado da qualidade da análise.</p></section>
   <section class="health-panel panel"><div><i class="health-dot"></i><span>Motor local</span><b>PRONTO</b></div><div><i class="health-dot muted"></i><span>Dados da plataforma</span><b id="feedHealth">OFFLINE</b></div><div><i class="health-dot muted"></i><span>Licença</span><b id="licenseHealth">VERIFICANDO</b></div></section>
+
   <footer><span>AI Trading Scanner</span><span id="extensionVersion">—</span></footer>
 </main>
 <script src="app.js"></script>
 <script src="account-login.js"></script>
-<script src="experience.js"></script>
 </body>
 </html>
