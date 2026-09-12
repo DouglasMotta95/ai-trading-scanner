@@ -36,6 +36,28 @@
     if (s === '1min') return '60s';
     return null;
   };
+  const assetRx = /\b[A-Z0-9]{2,12}\s*[\/-]\s*[A-Z0-9]{2,12}(?:\s*\(OTC\))?/i;
+  const assetDisplay = v => {
+    const m = clean(v).match(assetRx); if (!m) return null;
+    return m[0].toUpperCase().replace(/\s*([\/-])\s*/g, '$1').replace('-', '/').replace(/\s*\(OTC\)/i, ' (OTC)');
+  };
+  function detectAsset() {
+    const nodes = [...document.querySelectorAll('[aria-selected="true"],[aria-current="true"],[class*="active" i],[class*="selected" i],button,span,strong')].slice(0, 1800);
+    const found = [];
+    for (const el of nodes) {
+      if (!visible(el)) continue;
+      const raw = short(el.innerText || el.textContent || '', 90);
+      const asset = assetDisplay(raw); if (!asset) continue;
+      let score = 1;
+      if (el.getAttribute('aria-selected') === 'true' || el.getAttribute('aria-current') === 'true') score += 12;
+      if (/active|selected|current/i.test(String(el.className || ''))) score += 7;
+      if (/\(OTC\)/i.test(raw)) score += 2;
+      if (raw.length <= 28) score += 2;
+      found.push({ asset, score });
+    }
+    found.sort((a, b) => b.score - a.score);
+    return found[0]?.asset || null;
+  }
   const context = el => {
     const parts = [el.getAttribute?.('aria-label'), el.getAttribute?.('title'), el.getAttribute?.('placeholder'), el.name, el.id, el.className];
     let p = el;
@@ -84,6 +106,7 @@
     const timeframeValue = timeframe ? normTf(textOf(timeframe.el)) : null;
     const expirationValue = expiration ? normExp(textOf(expiration.el)) : null;
     return {
+      asset: detectAsset(),
       amount: amountValue,
       timeframe: timeframeValue,
       expiration: expirationValue,
