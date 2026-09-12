@@ -2,16 +2,24 @@
   if (globalThis.__ATS_GENERIC_ADAPTER__) return;
   globalThis.__ATS_GENERIC_ADAPTER__ = true;
 
+  const COMMON_QUOTES = new Set(['USDT','USDC','USD','EUR','GBP','JPY','AUD','CAD','CHF','NZD','BRL','BTC','ETH']);
+  const host = String(location.hostname || '').toLowerCase().replace(/\.$/, '');
+  const refHost = (() => { try { return new URL(document.referrer || '').hostname.toLowerCase().replace(/\.$/, ''); } catch { return ''; } })();
+  const isCasaTradeHost = value => value === 'casatrade.com' || value.endsWith('.casatrade.com') || value === 'casatrade.io' || value.endsWith('.casatrade.io');
+  const trustedHost = isCasaTradeHost(host) ? host : (isCasaTradeHost(refHost) ? refHost : '');
+  if (!trustedHost) return;
+
+  const FRAME_SOURCE = 'ATS_CT_FRAME_OBSERVATION_V2';
+  const frameId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  const isTop = window === window.top;
+  const frameObservations = new Map();
+
   let platform = null;
   let networkState = {};
   let timer = null;
   let running = false;
   let lastAsset = null;
-
-  const COMMON_QUOTES = new Set(['USDT','USDC','USD','EUR','GBP','JPY','AUD','CAD','CHF','NZD','BRL','BTC','ETH']);
-  const host = String(location.hostname || '').toLowerCase().replace(/\.$/, '');
-  const isCasaTradeHost = value => value === 'casatrade.com' || value.endsWith('.casatrade.com') || value === 'casatrade.io' || value.endsWith('.casatrade.io');
-  if (!isCasaTradeHost(host)) return;
+  let lastEmitAt = 0;
 
   const clean = v => String(v ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
   const fold = v => clean(v).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
@@ -31,8 +39,16 @@
     return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden' && Number(s.opacity || 1) > 0;
   };
   const textOf = el => clean(el?.innerText || el?.textContent || el?.getAttribute?.('aria-label') || '');
+  const classText = el => {
+    const parts = [];
+    let node = el;
+    for (let i = 0; node && i < 4; i++, node = node.parentElement) {
+      parts.push(String(node.className || ''), String(node.getAttribute?.('data-state') || ''), String(node.getAttribute?.('aria-selected') || ''));
+    }
+    return parts.join(' ');
+  };
 
-  function deepElements(limit = 9000) {
+  function deepElements(limit = 12000) {
     const out = [];
     const roots = [document];
     const seenRoots = new Set();
@@ -53,18 +69,24 @@
 
   function fullText() {
     const parts = [document.body?.innerText || document.body?.textContent || ''];
-    for (const el of deepElements(2500)) {
+    for (const el of deepElements(3500)) {
       if (el.shadowRoot) parts.push(el.shadowRoot.textContent || '');
     }
-    return clean(parts.join(' ')).slice(0, 220000);
+    return clean(parts.join(' ')).slice(0, 300000);
   }
 
   const canonicalAsset = value => {
     let raw = clean(value).toUpperCase();
-    if (!raw || raw.length > 64) return '';
+    if (!raw || raw.length > 80) return '';
     const otc = /(?:\(|\b|[_-])OTC(?:\)|\b)?/.test(raw);
-    let s = raw.replace(/\(OTC\)|\bOTC\b/g, '').replace(/^FRX[:_-]?/, '').replace(/\s+/g, '').replace(/_/g, '/').replace(/-/g, '/').replace(/:+/g, '/');
-    s = s.replace(/^\/+|\/+$/g, '').replace(/\/{2,}/g, '/');
+    let s = raw.replace(/\(\s*OTC\s*\)|\bOTC\b/g, '')
+      .replace(/^FRX[:_-]?/, '')
+      .replace(/\s+/g, '')
+      .replace(/_/g, '/')
+      .replace(/-/g, '/')
+      .replace(/:+/g, '/')
+      .replace(/^\/+|\/+$/g, '')
+      .replace(/\/{2,}/g, '/');
     if (!s.includes('/')) {
       const quote = [...COMMON_QUOTES].find(q => s.length > q.length && s.endsWith(q));
       if (quote) s = `${s.slice(0, -quote.length)}/${quote}`;
@@ -74,7 +96,8 @@
     if (!m || !COMMON_QUOTES.has(m[2])) return '';
     return `${m[1]}/${m[2]}${otc ? ' (OTC)' : ''}`;
   };
-  const assetRegex = /\b(?:[A-Z0-9]{2,16}\s*[\/_-]\s*(?:USDT|USDC|USD|EUR|GBP|JPY|AUD|CAD|CHF|NZD|BRL|BTC|ETH)|[A-Z]{6})(?:\s*\(?OTC\)?)?\b/gi;
+
+  const assetRegex = /\b(?:[A-Z0-9]{2,16}\s*[\/_-]\s*(?:USDT|USDC|USD|EUR|GBP|JPY|AUD|CAD|CHF|NZD|BRL|BTC|ETH)|[A-Z]{6})(?:\s*\(\s*OTC\s*\)|\s+OTC)?/gi;
   const assetsIn = text => {
     const out = [];
     for (const match of String(text || '').matchAll(assetRegex)) {
@@ -103,28 +126,31 @@
     const page = fullText();
     const counts = new Map();
     for (const asset of assetsIn(page)) counts.set(asset, (counts.get(asset) || 0) + 1);
-    const map = new Map();
+    const rows = [];
+
     for (const el of deepElements()) {
       if (!visible(el)) continue;
       const text = textOf(el);
-      if (!text || text.length > 90) continue;
+      if (!text || text.length > 110) continue;
       for (const asset of assetsIn(text)) {
         const r = el.getBoundingClientRect();
-        let score = (counts.get(asset) || 0) * 25;
-        if (el.getAttribute?.('aria-selected') === 'true' || /active|selected|current/i.test(String(el.className || ''))) score += 80;
-        if (/\bOTC\b/i.test(text)) score += 45;
-        if (r.top >= 0 && r.top < innerHeight * .42) score += 25;
-        if (r.left >= 0 && r.left < innerWidth * .62) score += 12;
-        if (/portfolio|historico|histórico|chat|suporte|leader|depositar/i.test(fold(text))) score -= 45;
-        const previous = map.get(asset);
-        if (!previous || score > previous.score) map.set(asset, { asset, score, el });
+        const classes = classText(el);
+        let score = (counts.get(asset) || 0) * 18;
+        if (/true|active|selected|current|checked/i.test(classes)) score += 130;
+        if (/\bOTC\b/i.test(text)) score += 55;
+        if (r.top >= 0 && r.top < innerHeight * .42) score += 35;
+        if (r.left >= 0 && r.left < innerWidth * .7) score += 20;
+        if (text.length < 35) score += 18;
+        if (/portfolio|historico|histórico|chat|suporte|leader|depositar/i.test(fold(text))) score -= 80;
+        rows.push({ asset, score });
       }
     }
-    if (!map.size && counts.size) {
-      const fallback = [...counts.entries()].sort((a, b) => b[1] - a[1] || Number(/\(OTC\)$/.test(b[0])) - Number(/\(OTC\)$/.test(a[0])))[0];
-      return fallback ? { asset: fallback[0], score: fallback[1] * 20, el: null } : null;
+
+    if (!rows.length && counts.size) {
+      for (const [asset, count] of counts) rows.push({ asset, score: count * 18 + (/\(OTC\)$/.test(asset) ? 20 : 0) });
     }
-    return [...map.values()].sort((a, b) => b.score - a.score)[0] || null;
+    rows.sort((a, b) => b.score - a.score);
+    return rows[0] || null;
   }
 
   const decimalPrices = text => {
@@ -135,31 +161,34 @@
     }
     return out;
   };
+
   const firstPriceAfter = (page, label) => {
-    const re = new RegExp(`(?:${label})\\s*([0-9]{1,6}[.,][0-9]{3,8})`, 'i');
+    const re = new RegExp(`(?:${label})[^0-9]{0,24}([0-9]{1,6}[.,][0-9]{3,8})`, 'i');
     return num(page.match(re)?.[1]);
   };
+
   function tradeButtonPrice() {
     const page = fullText();
     const buyText = firstPriceAfter(page, 'COMPRAR|BUY');
     const sellText = firstPriceAfter(page, 'VENDER|SELL');
-    if (buyText != null && sellText != null) return (buyText + sellText) / 2;
-    if (buyText != null || sellText != null) return buyText ?? sellText;
+    if (buyText != null && sellText != null) return { price: (buyText + sellText) / 2, source: 'buttons', buy: buyText, sell: sellText };
+    if (buyText != null || sellText != null) return { price: buyText ?? sellText, source: 'buttons', buy: buyText, sell: sellText };
 
-    const buy = [], sell = [];
+    const buys = [], sells = [];
     for (const el of deepElements()) {
       if (!visible(el)) continue;
       const text = textOf(el);
-      if (!text || text.length > 100) continue;
+      if (!text || text.length > 120) continue;
       const f = fold(text);
       if (!/\b(comprar|buy|vender|sell)\b/.test(f)) continue;
       const values = decimalPrices(text);
       if (!values.length) continue;
-      if (/\b(comprar|buy)\b/.test(f)) buy.push(values[values.length - 1]);
-      if (/\b(vender|sell)\b/.test(f)) sell.push(values[values.length - 1]);
+      if (/\b(comprar|buy)\b/.test(f)) buys.push(values[values.length - 1]);
+      if (/\b(vender|sell)\b/.test(f)) sells.push(values[values.length - 1]);
     }
-    if (buy.length && sell.length) return (buy[0] + sell[0]) / 2;
-    return buy[0] ?? sell[0] ?? null;
+    if (buys.length && sells.length) return { price: (buys[0] + sells[0]) / 2, source: 'buttons', buy: buys[0], sell: sells[0] };
+    if (buys.length || sells.length) return { price: buys[0] ?? sells[0], source: 'buttons', buy: buys[0] ?? null, sell: sells[0] ?? null };
+    return null;
   }
 
   function chartPrice() {
@@ -167,18 +196,18 @@
     for (const el of deepElements()) {
       if (!visible(el)) continue;
       const text = textOf(el);
-      if (!text || text.length > 36 || /%|\$|R\$/i.test(text)) continue;
+      if (!text || text.length > 40 || /%|\$|R\$/i.test(text)) continue;
       for (const value of decimalPrices(text)) {
         const r = el.getBoundingClientRect();
         let score = 0;
-        if (r.left > innerWidth * .5) score += 20;
-        if (r.top > innerHeight * .12 && r.top < innerHeight * .88) score += 12;
-        if (/price|quote|rate/i.test(String(el.className || ''))) score += 22;
+        if (r.left > innerWidth * .5) score += 25;
+        if (r.top > innerHeight * .12 && r.top < innerHeight * .88) score += 18;
+        if (/price|quote|rate|current/i.test(classText(el))) score += 35;
         values.push({ value, score });
       }
     }
     values.sort((a, b) => b.score - a.score);
-    return values[0]?.value ?? null;
+    return values[0] ? { price: values[0].value, source: 'chart' } : null;
   }
 
   function selectedTimeframe() {
@@ -186,13 +215,13 @@
     for (const el of deepElements()) {
       if (!visible(el)) continue;
       const text = textOf(el);
-      if (!text || text.length > 20) continue;
+      if (!text || text.length > 24) continue;
       const tf = normalizeTf(text);
       if (!tf) continue;
       const r = el.getBoundingClientRect();
       let score = 0;
-      if (el.getAttribute?.('aria-selected') === 'true' || /active|selected|current/i.test(String(el.className || ''))) score += 80;
-      if (r.left < innerWidth * .35) score += 20;
+      if (/true|active|selected|current|checked/i.test(classText(el))) score += 120;
+      if (r.left < innerWidth * .35) score += 25;
       if (r.top > innerHeight * .18 && r.top < innerHeight * .9) score += 10;
       rows.push({ tf, score });
     }
@@ -202,26 +231,26 @@
 
   function selectedExpiration() {
     const page = fullText();
-    const match = page.match(/(?:EXPIRA(?:ÇÃO|CAO)|EXPIRY|DURATION)\s*[^\d]{0,40}(\d{1,4})\s*(S|SEG|SEGUNDO|SEGUNDOS|M|MIN|MINUTO|MINUTOS)/i);
+    const match = page.match(/(?:EXPIRA(?:ÇÃO|CAO)|EXPIRY|DURATION)\s*[^0-9]{0,40}(\d{1,4})\s*(S|SEG|SEGUNDO|SEGUNDOS|M|MIN|MINUTO|MINUTOS)/i);
     if (match) return normalizeExp(`${match[1]}${match[2]}`);
     for (const el of deepElements()) {
       if (!visible(el)) continue;
       const text = textOf(el);
-      if (!text || text.length > 80) continue;
-      const local = fold([text, el.parentElement?.innerText, el.getAttribute?.('aria-label'), el.getAttribute?.('data-testid')].filter(Boolean).join(' '));
-      if (!/expira|expiry|duration/.test(local)) continue;
-      const value = text.match(/\d{1,4}\s*(?:s|seg|segundo|segundos|m|min|minuto|minutos)/i)?.[0] || local.match(/\d{1,4}\s*(?:s|seg|segundo|segundos|m|min|minuto|minutos)/i)?.[0];
+      if (!text || text.length > 90) continue;
+      const context = fold([text, el.parentElement?.innerText, el.getAttribute?.('aria-label'), el.getAttribute?.('data-testid')].filter(Boolean).join(' '));
+      if (!/expira|expiry|duration/.test(context)) continue;
+      const value = context.match(/\d{1,4}\s*(?:s|seg|segundo|segundos|m|min|minuto|minutos)/i)?.[0];
       const exp = normalizeExp(value);
       if (exp) return exp;
     }
     return null;
   }
 
-  function instrumentType(assetEl) {
-    const local = fold([assetEl?.parentElement?.innerText, assetEl?.innerText, fullText().slice(0, 10000)].filter(Boolean).join(' '));
-    if (/\bblitz\b/.test(local)) return 'blitz';
-    if (/\bbinaria\b|\bbinary\b/.test(local)) return 'binary';
-    if (/\bturbo\b/.test(local)) return 'turbo';
+  function instrumentType() {
+    const page = fold(fullText().slice(0, 20000));
+    if (/\bblitz\b/.test(page)) return 'blitz';
+    if (/\bbinaria\b|\bbinary\b/.test(page)) return 'binary';
+    if (/\bturbo\b/.test(page)) return 'turbo';
     return 'unknown';
   }
 
@@ -234,17 +263,24 @@
     observedAt: Number(c.observedAt || 0),
     confidence: Number(c.confidence || 0),
     seenCount: Number(c.seenCount || 0)
-  })).filter(c => c.asset && c.price != null && c.price > 0);
+  })).filter(c => c.asset && c.price != null && c.price > 0 && Date.now() - c.observedAt < 15000);
 
-  const networkQuoteFor = asset => {
-    const wanted = canonicalAsset(asset);
-    if (!wanted) return null;
+  function bestNetworkQuote(preferredAsset = '') {
+    const wanted = canonicalAsset(preferredAsset);
     const noOtc = wanted.replace(/ \(OTC\)$/, '');
-    return networkCandidates()
-      .filter(c => Date.now() - c.observedAt < 10000)
-      .filter(c => c.asset === wanted || c.asset.replace(/ \(OTC\)$/, '') === noOtc)
-      .sort((a, b) => Number(b.selected === true) - Number(a.selected === true) || b.confidence - a.confidence || b.seenCount - a.seenCount)[0] || null;
-  };
+    let rows = networkCandidates();
+    if (wanted) {
+      const matching = rows.filter(c => c.asset === wanted || c.asset.replace(/ \(OTC\)$/, '') === noOtc);
+      if (matching.length) rows = matching;
+    }
+    rows.sort((a, b) =>
+      Number(b.selected === true) - Number(a.selected === true)
+      || b.confidence - a.confidence
+      || b.seenCount - a.seenCount
+      || b.observedAt - a.observedAt
+    );
+    return rows[0] || null;
+  }
 
   const historyFor = asset => {
     const wanted = canonicalAsset(asset);
@@ -258,92 +294,192 @@
     return key && Array.isArray(history[key]) ? history[key].slice(-120) : [];
   };
 
+  function localObservation() {
+    const active = scanAsset();
+    const buttonQuote = tradeButtonPrice();
+    const chartQuote = buttonQuote ? null : chartPrice();
+    const quote = buttonQuote || chartQuote;
+    return {
+      frameId,
+      href: location.href,
+      at: Date.now(),
+      asset: active?.asset || null,
+      assetScore: Number(active?.score || 0),
+      price: num(quote?.price),
+      buy: num(quote?.buy),
+      sell: num(quote?.sell),
+      priceSource: quote?.source || null,
+      timeframe: selectedTimeframe(),
+      expiration: selectedExpiration(),
+      instrumentType: instrumentType()
+    };
+  }
+
+  function postObservation(obs) {
+    try {
+      window.top.postMessage({ source: FRAME_SOURCE, payload: obs }, '*');
+    } catch {}
+  }
+
+  function recentFrameRows() {
+    const now = Date.now();
+    for (const [id, row] of frameObservations) {
+      if (!row || now - Number(row.at || 0) > 3500) frameObservations.delete(id);
+    }
+    return [...frameObservations.values()];
+  }
+
+  async function emitAggregated() {
+    if (!isTop || !platform) return;
+    const now = Date.now();
+    if (now - lastEmitAt < 180) return;
+    lastEmitAt = now;
+
+    const rows = recentFrameRows();
+    const assetRows = rows.filter(r => r.asset).sort((a, b) => b.assetScore - a.assetScore || b.at - a.at);
+    const domAsset = assetRows[0]?.asset || lastAsset || '';
+    const net = bestNetworkQuote(domAsset) || (!domAsset ? bestNetworkQuote('') : null);
+    const asset = domAsset || net?.asset || null;
+
+    const sameAssetRows = asset
+      ? rows.filter(r => r.asset && canonicalAsset(r.asset).replace(/ \(OTC\)$/, '') === canonicalAsset(asset).replace(/ \(OTC\)$/, ''))
+      : [];
+    const priceRows = [...sameAssetRows, ...rows]
+      .filter((r, i, arr) => r.price != null && arr.indexOf(r) === i)
+      .sort((a, b) => Number(b.priceSource === 'buttons') - Number(a.priceSource === 'buttons') || b.at - a.at);
+
+    let price = priceRows[0]?.price ?? net?.price ?? null;
+    if (net?.price != null && price != null) {
+      const scale = Math.max(Math.abs(net.price), Math.abs(price), 1e-9);
+      if (Math.abs(net.price - price) / scale > 0.08) price = net.price;
+    }
+    if (price == null && net?.price != null) price = net.price;
+
+    const timeframe = rows.map(r => r.timeframe).find(Boolean) || net?.timeframe || 'M1';
+    const expiration = rows.map(r => r.expiration).find(Boolean) || net?.expiration || null;
+    const type = sameAssetRows.map(r => r.instrumentType).find(x => x && x !== 'unknown')
+      || rows.map(r => r.instrumentType).find(x => x && x !== 'unknown')
+      || net?.instrumentType
+      || 'unknown';
+
+    if (!asset || price == null) return;
+    lastAsset = asset;
+
+    const history = historyFor(asset);
+    const marketType = /\(OTC\)$/i.test(asset) ? 'otc' : 'regular';
+    const candidate = {
+      asset,
+      price,
+      timeframe,
+      expiration,
+      transport: net?.transport || priceRows[0]?.priceSource || 'dom',
+      source: net ? 'network+cross-frame-dom' : 'cross-frame-dom',
+      confidence: net ? Math.max(75, Number(net.confidence || 0)) : 78,
+      seenCount: Number(net?.seenCount || 1),
+      observedAt: Date.now()
+    };
+
+    chrome.runtime.sendMessage({
+      type: 'ATS_DOM_CATALOG',
+      payload: { candidates: [candidate], assetCount: 1, timeframe, expiration, instrumentType: type, marketType }
+    }).catch(() => {});
+
+    chrome.runtime.sendMessage({
+      type: 'ATS_PLATFORM_SNAPSHOT',
+      payload: {
+        platformId: platform.id,
+        platformName: platform.name,
+        adapterVersion: chrome.runtime.getManifest().version,
+        connection: 'online',
+        url: location.origin + location.pathname,
+        asset,
+        timeframe,
+        price,
+        marketType,
+        instrumentType: type,
+        expiration,
+        serverTime: Number(net?.timestamp) > 1e12 ? Number(net.timestamp) : null,
+        candles: history,
+        ticks: [{ price, at: Date.now() }],
+        capabilities: {
+          structuredQuotes: !!net,
+          candles: history.length >= 3,
+          expiration: !!expiration,
+          multiAsset: false
+        },
+        diagnostics: {
+          capture: net ? 'rede-validada+cross-frame-dom' : 'cross-frame-dom-casatrade',
+          frameCount: rows.length,
+          structuredSource: net?.transport || null,
+          networkQuoteMatched: !!net,
+          networkConfidence: Number(net?.confidence || 0),
+          networkQuality: Number(networkState?.feedQuality || 0),
+          candleHistory: history.length,
+          host: trustedHost,
+          privacy: 'Sem cookies, credenciais, tokens, headers ou saldo.'
+        }
+      }
+    }).catch(() => {});
+  }
+
   async function inspect() {
     if (!platform || running) return;
     running = true;
     try {
-      const active = scanAsset();
-      const activeAsset = active?.asset || lastAsset;
-      const net = networkQuoteFor(activeAsset);
-      const asset = activeAsset || net?.asset || null;
-      const price = tradeButtonPrice() ?? net?.price ?? chartPrice() ?? null;
-      if (!asset || price == null) return;
-      lastAsset = asset;
-
-      const timeframe = selectedTimeframe() || net?.timeframe || null;
-      const expiration = selectedExpiration() || net?.expiration || null;
-      const history = historyFor(asset);
-      const type = net?.instrumentType || instrumentType(active?.el);
-      const marketType = /\(OTC\)$/i.test(asset) ? 'otc' : 'regular';
-      const candidate = {
-        asset, price, timeframe, expiration, transport: net?.transport || 'dom', source: net ? 'network+dom' : 'dom',
-        confidence: net ? Math.max(70, Number(net.confidence || 0)) : 70, seenCount: Number(net?.seenCount || 1), observedAt: Date.now()
-      };
-
-      chrome.runtime.sendMessage({
-        type: 'ATS_DOM_CATALOG',
-        payload: { candidates: [candidate], assetCount: 1, timeframe, expiration, instrumentType: type, marketType }
-      }).catch(() => {});
-
-      chrome.runtime.sendMessage({
-        type: 'ATS_PLATFORM_SNAPSHOT',
-        payload: {
-          platformId: platform.id,
-          platformName: platform.name,
-          adapterVersion: chrome.runtime.getManifest().version,
-          connection: 'online',
-          url: location.origin + location.pathname,
-          asset,
-          timeframe,
-          price,
-          marketType,
-          instrumentType: type,
-          expiration,
-          serverTime: Number(net?.timestamp) > 1e12 ? Number(net.timestamp) : null,
-          candles: history,
-          ticks: [{ price, at: Date.now() }],
-          capabilities: { structuredQuotes: !!net, candles: history.length >= 3, expiration: !!expiration, multiAsset: false },
-          diagnostics: {
-            capture: net ? 'rede-validada+frame-dom' : 'frame-dom-casatrade',
-            frameUrl: location.href,
-            structuredSource: net?.transport || null,
-            networkQuoteMatched: !!net,
-            networkConfidence: Number(net?.confidence || 0),
-            networkQuality: Number(networkState?.feedQuality || 0),
-            missing: [!timeframe ? 'timeframe' : null, !expiration ? 'expiration' : null].filter(Boolean),
-            host: location.hostname,
-            candleHistory: history.length,
-            privacy: 'Sem cookies, credenciais, tokens, headers ou saldo.'
-          }
-        }
-      }).catch(() => {});
+      const obs = localObservation();
+      if (isTop) {
+        frameObservations.set(frameId, obs);
+        await emitAggregated();
+      } else {
+        postObservation(obs);
+      }
     } finally {
       running = false;
     }
   }
 
-  const schedule = (delay = 80) => { clearTimeout(timer); timer = setTimeout(inspect, delay); };
+  const schedule = (delay = 80) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => inspect().catch(() => {}), delay);
+  };
+
   async function init() {
-    const response = await chrome.runtime.sendMessage({ type: 'ATS_GET_PLATFORM_CONFIG', host: location.hostname }).catch(() => null);
+    const response = await chrome.runtime.sendMessage({ type: 'ATS_GET_PLATFORM_CONFIG', host: trustedHost }).catch(() => null);
     platform = response?.platform || null;
     if (!platform) return;
+
+    if (isTop) {
+      window.addEventListener('message', event => {
+        if (event.data?.source !== FRAME_SOURCE) return;
+        const obs = event.data?.payload;
+        if (!obs?.frameId || !Number(obs.at)) return;
+        frameObservations.set(obs.frameId, obs);
+        emitAggregated().catch(() => {});
+      });
+    }
+
     const stored = await chrome.storage.local.get('scannerState').catch(() => ({}));
     networkState = stored.scannerState?.diagnostics?.network || {};
     chrome.storage.onChanged.addListener(changes => {
       if (!changes.scannerState) return;
       networkState = changes.scannerState.newValue?.diagnostics?.network || {};
-      schedule(40);
+      schedule(35);
     });
+
     const start = () => {
       if (!document.documentElement) return setTimeout(start, 50);
-      new MutationObserver(() => schedule(70)).observe(document.documentElement, {
-        subtree: true, childList: true, characterData: true, attributes: true,
-        attributeFilter: ['class','aria-selected','data-state','value']
+      new MutationObserver(() => schedule(55)).observe(document.documentElement, {
+        subtree: true,
+        childList: true,
+        characterData: true,
+        attributes: true,
+        attributeFilter: ['class','aria-selected','data-state','value','aria-label']
       });
       inspect();
-      setInterval(inspect, 700);
+      setInterval(() => inspect().catch(() => {}), 450);
     };
     start();
   }
+
   init().catch(() => {});
 })();
