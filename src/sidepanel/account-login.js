@@ -13,11 +13,15 @@
   const $ = s => document.querySelector(s);
 
   const base = () => PUBLIC_API;
+  const stableInstallId = () => {
+    const runtimeId = String(chrome.runtime?.id || '').trim();
+    return runtimeId ? `ats-${runtimeId}` : crypto.randomUUID();
+  };
 
   async function installId() {
     const x = await chrome.storage.local.get(INSTALL_KEY);
     if (x[INSTALL_KEY]) return x[INSTALL_KEY];
-    const id = crypto.randomUUID();
+    const id = stableInstallId();
     await chrome.storage.local.set({ [INSTALL_KEY]: id });
     return id;
   }
@@ -144,7 +148,7 @@
     `;
     document.head.appendChild(style);
 
-    const box = document.createElement('section');
+    const box = document.createElement('div');
     box.id = 'accountAccessBox';
     box.className = 'account-access';
     box.innerHTML = `
@@ -158,21 +162,18 @@
       </div>
       <div class="account-links">
         <button id="openCustomerPortal">ABRIR PORTAL DO CLIENTE</button>
-        <button id="manualKeyToggle">OCULTAR CHAVE MANUAL</button>
+        <button id="manualKeyToggle">USAR CHAVE MANUAL</button>
       </div>
-      <small id="accountConnectStatus" class="account-status">Você também pode colar uma chave manual logo abaixo.</small>
+      <small id="accountConnectStatus" class="account-status">Você também pode usar uma chave manual quando precisar.</small>
     `;
 
     const activation = $('#activationBox');
     activation?.before(box);
     if (activation) {
       activation.dataset.accountManaged = '1';
-      activation.dataset.manualOpen = activation.hidden ? '0' : '1';
-      if (!card.classList.contains('active')) {
-        activation.dataset.manualOpen = '1';
-        activation.hidden = false;
-      }
-      $('#manualKeyToggle').textContent = activation.hidden ? 'USAR CHAVE MANUAL' : 'OCULTAR CHAVE MANUAL';
+      activation.dataset.manualOpen = '0';
+      activation.hidden = true;
+      $('#manualKeyToggle').textContent = 'USAR CHAVE MANUAL';
     }
 
     const codeInput = $('#accountConnectCode');
