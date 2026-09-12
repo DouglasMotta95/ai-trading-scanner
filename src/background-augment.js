@@ -27,6 +27,42 @@ const riskFrom = (settings = {}, license = {}) => ({
 
 const rank = s => ({ CONFIRM: 6, WATCH: 5, SEARCHING: 4, WAIT: 3, NO_TRADE: 2, CANCEL: 1, IDLE: 0 })[s] ?? 0;
 
+function sanitizeRecentCandles(input = {}) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return {};
+  const out = {};
+  for (const [rawAsset, rows] of Object.entries(input).slice(0, 20)) {
+    const asset = normAsset(rawAsset);
+    if (!asset || !Array.isArray(rows)) continue;
+    const cleanRows = rows.slice(-80).map(r => {
+      let time = num(r?.time ?? r?.timestamp);
+      if (time != null && time > 0 && time < 1e12) time *= 1000;
+      const open = num(r?.open), high = num(r?.high), low = num(r?.low), close = num(r?.close);
+      if (![time, open, high, low, close].every(Number.isFinite)) return null;
+      return { time, open, high, low, close, timeframe: normTf(r?.timeframe) };
+    }).filter(Boolean).sort((a, b) => a.time - b.time);
+    if (cleanRows.length) out[asset] = cleanRows;
+  }
+  return out;
+}
+
+async function persistRecentCandles(payload = {}, sender = {}) {
+  const recentCandles = sanitizeRecentCandles(payload.recentCandles || {});
+  if (!Object.keys(recentCandles).length) return;
+  const { scannerState = {} } = await chrome.storage.local.get('scannerState');
+  if (scannerState.targetTabId && sender?.tab?.id && scannerState.targetTabId !== sender.tab.id) return;
+  const latestNetwork = scannerState.diagnostics?.network || {};
+  await chrome.storage.local.set({
+    scannerState: {
+      ...scannerState,
+      diagnostics: {
+        ...(scannerState.diagnostics || {}),
+        network: { ...latestNetwork, recentCandles, historyUpdatedAt: Date.now() }
+      },
+      marketHistory: recentCandles
+    }
+  });
+}
+
 async function analyzeUniverse(payload = {}, sender = {}) {
   if (Date.now() - lastRun < 350) return;
   lastRun = Date.now();
@@ -68,6 +104,7 @@ async function analyzeUniverse(payload = {}, sender = {}) {
       analysisTimeframe: timeframe,
       expiration,
       targetExpiration: expiration,
+      candles: scannerState.marketHistory?.[asset] || [],
       capabilities: { ...(scannerState.capabilities || {}), structuredQuotes: true, multiAsset: true }
     };
     const localState = {
@@ -120,5 +157,6 @@ async function analyzeUniverse(payload = {}, sender = {}) {
 
 chrome.runtime.onMessage.addListener((message, sender) => {
   if (message?.type !== 'ATS_NETWORK_DIAGNOSTIC') return;
-  setTimeout(() => analyzeUniverse(message.payload || {}, sender).catch(() => {}), 80);
+  setTimeout(() => persistRecentCandles(message.payload || {}, sender).catch(() => {}), 140);
+  setTimeout(() => analyzeUniverse(message.payload || {}, sender).catch(() => {}), 180);
 });
