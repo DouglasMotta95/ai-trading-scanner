@@ -54,6 +54,21 @@ test('manual activation persists key and last valid license even if backend omit
   assert.equal(storage.data.get('atsLastValidLicense')?.license?.status, 'active');
 });
 
+test('numeric epoch expiration remains cacheable and active after activation', async () => {
+  const storage = storageMock({ atsInstallationId: 'install-epoch' });
+  const license = { key: 'ATS-EPOCH-001', status: 'active', plan: 'pro', expiresAt: Date.now() + 86400000 };
+  const mod = await loadLicenseModule(storage, async () => jsonResponse({ ok: true, license }));
+  const activated = await mod.activateLicense({}, license.key);
+  assert.equal(activated.ok, true);
+  assert.equal(storage.data.get('atsLastValidLicense')?.license?.status, 'active');
+  let requests = 0;
+  globalThis.fetch = async () => { requests++; throw new Error('should not validate over network'); };
+  const reopened = await mod.validateLicense({});
+  assert.equal(reopened.ok, true);
+  assert.equal(reopened.cacheHit, true);
+  assert.equal(requests, 0);
+});
+
 test('reopening extension restores active license from local cache before backend validation', async () => {
   const license = { key: 'ATS-PERSIST-001', status: 'active', plan: 'pro', planLabel: 'Pro', expiresAt: future() };
   const storage = storageMock({

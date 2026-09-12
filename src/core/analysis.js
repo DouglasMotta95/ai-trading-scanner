@@ -19,7 +19,7 @@ function shape(c) {
 }
 
 export function recentPriceAction(candles = []) {
-  const rows = (Array.isArray(candles) ? candles : []).map(shape).filter(Boolean).slice(-5);
+  const rows = (Array.isArray(candles) ? candles : []).map(shape).filter(Boolean).slice(-10);
   if (rows.length < 3) {
     return {
       ready: false, required: 3, count: rows.length, direction: null, score: 0,
@@ -35,6 +35,7 @@ export function recentPriceAction(candles = []) {
   const up = rows.filter(x => x.direction === 'BUY').length;
   const down = rows.filter(x => x.direction === 'SELL').length;
   const aligned = Math.max(up, down);
+  const agreement = aligned / rows.length;
   const majority = up === down ? null : up > down ? 'BUY' : 'SELL';
   const avgBody = avg(rows.map(x => x.bodyRatio));
   const rangeSpan = resistance - support;
@@ -42,17 +43,18 @@ export function recentPriceAction(candles = []) {
   const lateral = rangeSpan > 0 && Math.abs(last.close - rows[0].open) / rangeSpan < .2 && avgBody < .38;
   const doji = last.bodyRatio < .12 && last.upperRatio > .28 && last.lowerRatio > .28;
   const force = last.bodyRatio >= .62;
-  const prevHigh = Math.max(...prev.slice(-3).map(x => x.high));
-  const prevLow = Math.min(...prev.slice(-3).map(x => x.low));
+  const prevHigh = Math.max(...prev.slice(-4).map(x => x.high));
+  const prevLow = Math.min(...prev.slice(-4).map(x => x.low));
   const breakout = last.close > prevHigh ? 'BUY' : last.close < prevLow ? 'SELL' : null;
   const rejection = last.lowerRatio >= .5 && last.close > last.open ? 'BUY' : last.upperRatio >= .5 && last.close < last.open ? 'SELL' : null;
 
   let buy = 0, sell = 0;
   const reasons = [];
-  if (majority === 'BUY') { buy += aligned >= 4 ? 34 : aligned >= 3 ? 26 : 14; reasons.push(`${up} de ${rows.length} velas fecharam em alta`); }
-  if (majority === 'SELL') { sell += aligned >= 4 ? 34 : aligned >= 3 ? 26 : 14; reasons.push(`${down} de ${rows.length} velas fecharam em baixa`); }
-  if (force && last.direction === 'BUY') { buy += 24; reasons.push('Última vela fechou com força compradora'); }
-  if (force && last.direction === 'SELL') { sell += 24; reasons.push('Última vela fechou com força vendedora'); }
+  const trendPoints = agreement >= .7 ? 34 : agreement >= .6 ? 26 : 14;
+  if (majority === 'BUY') { buy += trendPoints; reasons.push(`${up} de ${rows.length} velas favoreceram alta`); }
+  if (majority === 'SELL') { sell += trendPoints; reasons.push(`${down} de ${rows.length} velas favoreceram baixa`); }
+  if (force && last.direction === 'BUY') { buy += 24; reasons.push('Vela atual/recente mostra força compradora'); }
+  if (force && last.direction === 'SELL') { sell += 24; reasons.push('Vela atual/recente mostra força vendedora'); }
   if (breakout === 'BUY') { buy += 28; reasons.push('Rompimento da máxima recente'); }
   if (breakout === 'SELL') { sell += 28; reasons.push('Rompimento da mínima recente'); }
   if (rejection === 'BUY') { buy += 28; reasons.push('Rejeição compradora nas últimas velas'); }
@@ -60,11 +62,11 @@ export function recentPriceAction(candles = []) {
 
   let direction = buy === sell ? majority : buy > sell ? 'BUY' : 'SELL';
   let score = Math.max(buy, sell);
-  if (aligned >= 3) score += 10;
+  if (agreement >= .6) score += 10;
   if (avgBody >= .48) score += 8;
   if (lateral) { score = Math.min(score, 54); direction = null; reasons.push('Mercado lateral nas últimas velas'); }
   if (doji && !rejection) { score = Math.min(score, 48); direction = null; reasons.push('Doji sem confirmação'); }
-  if (tiny >= 3 && aligned < 4) { score = Math.min(score, 56); direction = null; reasons.push('Compressão: aguardando rompimento'); }
+  if (tiny >= Math.ceil(rows.length * .6) && agreement < .75) { score = Math.min(score, 56); direction = null; reasons.push('Compressão: aguardando rompimento'); }
   score = clamp(score);
 
   const opinion = !direction
@@ -73,7 +75,7 @@ export function recentPriceAction(candles = []) {
 
   return {
     ready: true, required: 3, count: rows.length, direction, score, opinion,
-    breakout, lateral, doji, rejection, aligned, up, down, reasons
+    breakout, lateral, doji, rejection, aligned, agreement, up, down, reasons
   };
 }
 

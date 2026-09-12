@@ -3,8 +3,6 @@ import { installationId, saveClientToken, clearClientToken } from './telemetry.j
 const LICENSE_KEY = 'atsLicenseKey';
 const LAST_VALID_LICENSE_KEY = 'atsLastValidLicense';
 const REQUEST_TIMEOUT_MS = 8000;
-// Kept as a compatibility marker for the persistence tests. A valid cached
-// license now remains authoritative locally until its own expiresAt.
 const REOPEN_CACHE_GRACE_MS = 5 * 60 * 1000;
 
 const AUTHORITATIVE_LICENSE_ERRORS = new Set([
@@ -32,11 +30,32 @@ export async function saveLicenseKey(key = '') {
   return key;
 }
 
+function expiryMs(value) {
+  if (value == null || value === '') return null;
+  if (typeof value === 'number' || /^\d+(?:\.\d+)?$/.test(String(value).trim())) {
+    let n = Number(value);
+    if (!Number.isFinite(n) || n <= 0) return null;
+    if (n < 1e12) n *= 1000;
+    return n;
+  }
+  const parsed = Date.parse(String(value));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function normalizeActiveLicense(license = {}) {
+  const status = String(license?.status || '').toLowerCase();
+  return {
+    ...license,
+    status: status === 'active' || status === 'valid' ? 'active' : license?.status
+  };
+}
+
 function licenseStillValid(license = {}) {
-  if (license?.status !== 'active') return false;
-  if (!license.expiresAt) return true;
-  const expiresAt = Date.parse(license.expiresAt);
-  return Number.isFinite(expiresAt) && expiresAt > Date.now();
+  const normalized = normalizeActiveLicense(license);
+  if (normalized?.status !== 'active') return false;
+  if (!normalized.expiresAt) return true;
+  const expiresAt = expiryMs(normalized.expiresAt);
+  return expiresAt != null && expiresAt > Date.now();
 }
 
 function cachedResponse(cached, { syncPending = false, error = null } = {}) {
@@ -47,7 +66,7 @@ function cachedResponse(cached, { syncPending = false, error = null } = {}) {
     offlineFallback: !!syncPending,
     error,
     license: {
-      ...cached.license,
+      ...normalizeActiveLicense(cached.license),
       status: 'active',
       error,
       syncPending: !!syncPending
@@ -64,7 +83,7 @@ export async function cachedLicenseSession() {
     return null;
   }
   const licenseKey = String(cached.licenseKey || cached.license?.key || '').trim();
-  return { ...cached, licenseKey };
+  return { ...cached, license: normalizeActiveLicense(cached.license), licenseKey };
 }
 
 export async function restoreCachedLicense() {
@@ -83,10 +102,12 @@ export async function restoreCachedLicense() {
 }
 
 async function saveValidLicenseSession(r, licenseKey = '') {
-  if (!r?.ok || !licenseStillValid(r.license)) return null;
-  const resolvedKey = String(licenseKey || r.license?.key || '').trim();
+  if (!r?.ok) return null;
+  const license = normalizeActiveLicense(r.license || {});
+  if (!licenseStillValid(license)) return null;
+  const resolvedKey = String(licenseKey || license?.key || '').trim();
   const snapshot = {
-    license: { ...r.license, error: null, syncPending: false },
+    license: { ...license, status: 'active', error: null, syncPending: false },
     licenseKey: resolvedKey,
     clientTokenExpiresAt: Number(r.clientTokenExpiresAt) || 0,
     validatedAt: Date.now()
@@ -128,11 +149,13 @@ async function call(_settings, path, payload) {
 }
 
 async function acceptSession(r, licenseKey = '') {
-  if (!r?.ok || !licenseStillValid(r.license)) return r;
-  const resolvedKey = String(licenseKey || r.license?.key || '').trim();
-  if (r.clientToken) await saveClientToken(r.clientToken, r.clientTokenExpiresAt);
-  await saveValidLicenseSession(r, resolvedKey);
-  return r;
+  if (!r?.ok) return r;
+  const normalized = { ...r, license: normalizeActiveLicense(r.license || {}) };
+  if (!licenseStillValid(normalized.license)) return normalized;
+  const resolvedKey = String(licenseKey || normalized.license?.key || '').trim();
+  if (normalized.clientToken) await saveClientToken(normalized.clientToken, normalized.clientTokenExpiresAt);
+  await saveValidLicenseSession(normalized, resolvedKey);
+  return normalized;
 }
 
 async function withCachedFallback(r, cached = null) {
@@ -165,12 +188,7 @@ export async function validateLicense(settings = {}) {
     licenseKey = await saveLicenseKey(cached.licenseKey);
   }
 
-  // The real extension must survive service-worker restarts, panel closes and
-  // temporary backend/device-sync problems. Once a license was validated and
-  // cached, its own expiresAt controls local reopening. Server enforcement is
-  // still applied by /consume whenever a confirmed signal is used.
   if (cached) return cachedResponse(cached);
-
   if (!licenseKey) return { ok: false, error: 'license_required' };
 
   const r = await call(settings, '/v1/license/validate', {
@@ -200,7 +218,7 @@ export async function consumeSignal(settings = {}) {
     version: chrome.runtime.getManifest().version
   });
   if (r.ok && r.license) {
-    await saveValidLicenseSession({ ...r, ok: true }, licenseKey);
+    await saveValidLicenseSession({ ...r, ok: true, license: normalizeActiveLicense(r.license) }, licenseKey);
   }
   return r;
 }
@@ -210,5 +228,4 @@ export async function clearLicense() {
   await clearClientToken();
 }
 
-// Keep the historical constant visible for compatibility checks.
 void REOPEN_CACHE_GRACE_MS;

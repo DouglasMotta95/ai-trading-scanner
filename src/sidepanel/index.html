@@ -62,6 +62,12 @@
         <div><span>MÍNIMA</span><b id="currentLow">—</b></div>
         <div><span>ATUAL</span><b id="currentClose">—</b></div>
       </div>
+
+      <div class="recent-head">
+        <span>ÚLTIMAS 10 VELAS FECHADAS</span>
+        <b id="recentCandleCount">0/10</b>
+      </div>
+      <div id="recentCandles" class="recent-candles" aria-label="Últimas 10 velas"></div>
     </section>
 
     <section id="decisionCard" class="card decision-card">
@@ -83,7 +89,12 @@
         <span>Força do padrão <b id="signalScore">—</b></span>
         <span>Entrada <b id="targetTime">—</b></span>
       </div>
-      <p class="manual-note">A extensão só informa a direção. A entrada continua manual na CasaTrade.</p>
+
+      <div class="trade-actions" aria-label="Direção da próxima vela">
+        <button id="prepareBuy" class="trade-choice buy-choice" disabled>🟢 COMPRA</button>
+        <button id="prepareSell" class="trade-choice sell-choice" disabled>🔴 VENDA</button>
+      </div>
+      <p id="tradeActionStatus" class="manual-note">COMPRA/VENDA só libera quando a confirmação final estiver pronta.</p>
     </section>
   </main>
 
