@@ -23,7 +23,7 @@
         "https://casatrade.io/*",
         "https://*.casatrade.io/*"
       ],
-      "js": ["src/content/network-probe.js"],
+      "js": ["src/content/canvas-probe.js", "src/content/network-probe.js"],
       "run_at": "document_start",
       "world": "MAIN",
       "all_frames": true,
