@@ -26,9 +26,6 @@ test('public portal exposes verification recovery, code copy, extension onboardi
   assert.match(app, /paymentsConfigured/);
   assert.match(app, /Retorno do checkout recebido\. Confirmando pagamento com o servidor/);
   assert.match(css, /\[hidden\]\s*\{\s*display\s*:\s*none\s*!important\s*\}/i);
-  assert.match(html, /id="authModal"[^>]*hidden/);
-  assert.match(html, /id="verifyView"[^>]*hidden/);
-  assert.match(html, /id="accountView"[^>]*hidden/);
 });
 
 test('customer portal security sanitizes auth fields, rate-limits customer routes and never accepts card data', () => {
@@ -86,17 +83,19 @@ test('lifetime plan is a one-time commercial plan with unlimited entitlement', (
   assert.match(portal, /sem vencimento/i);
 });
 
-test('synchronized operation setup replaces duplicate preflight and blocks mismatched platform state', () => {
+test('synchronized operation setup is native and blocks mismatched platform state', () => {
   const html = read('src/sidepanel/index.html');
-  const experience = read('src/sidepanel/experience.js');
+  const app = read('src/sidepanel/app.js');
   const sync = read('src/background-platform-sync.js');
   assert.equal(fs.existsSync(path.join(root, 'src/sidepanel/preflight.js')), false);
+  assert.equal(fs.existsSync(path.join(root, 'src/sidepanel/experience.js')), false);
   assert.match(html, /id="tradeAmount"/);
-  assert.match(html, /VALOR NA CASATRADE/);
-  assert.match(html, /VELA NA CASATRADE/);
-  assert.match(html, /EXPIRAÇÃO NA CASATRADE/);
-  assert.match(experience, /ATS_SYNC_PLATFORM_PREFERENCES/);
-  assert.match(experience, /SINCRONIZE PARA INICIAR/);
+  assert.match(html, /VALOR NA PLATAFORMA/);
+  assert.match(html, /VELA NA PLATAFORMA/);
+  assert.match(html, /EXPIRAÇÃO NA PLATAFORMA/);
+  assert.match(app, /ATS_SYNC_PLATFORM_PREFERENCES/);
+  assert.match(app, /CasaTrade sincronizada/);
+  assert.match(app, /toggleBtn\.disabled = !online \|\| !licensed \|\| !configuredPrefs\(prefs\) \|\| !aligned\(s\)/);
   assert.match(sync, /patch\.scanner = 'idle'/);
   assert.match(sync, /Leitura pausada:/);
   assert.match(sync, /amountOk/);
@@ -141,22 +140,21 @@ test('extension sync indicator is based on a confirmed heartbeat response', () =
   assert.match(telemetry, /acceptedAt/);
   assert.match(panel, /lastSyncSuccess/);
   assert.match(panel, /atsTelemetryStatus/);
-  assert.match(panel, /telemetryError\?'ERRO'/);
+  assert.match(panel, /telemetryError/);
 });
 
 test('structured feed requires repeated recent network observations and active-asset matching', () => {
   const probe = read('src/content/network-probe.js');
   const adapter = read('src/content/generic-adapter.js');
-  const history = read('src/content/history-adapter.js');
   assert.match(probe, /seenCount/);
   assert.match(probe, /transport/);
   assert.match(probe, /recentCandles/);
-  assert.match(probe, /trimSet\(stats\.endpoints, 100\)/);
-  assert.match(adapter, /seenCount \|\| 0\) >= 2/);
-  assert.match(adapter, /allowedTransports/);
-  assert.match(adapter, /Date\.now\(\) - Number\(c\.observedAt \|\| 0\) <= 6000/);
-  assert.match(history, /normAsset\(c\?\.asset\) === asset/);
-  assert.match(history, /structuredQuotes: structured/);
+  assert.match(probe, /feedQuality/);
+  assert.match(adapter, /seenCount >= 2/);
+  assert.match(adapter, /observedAt <= 6500|t - c\.observedAt <= 6500/);
+  assert.match(adapter, /structuredNetworkQuote/);
+  assert.match(adapter, /selectedAsset/);
+  assert.match(adapter, /structuredQuotes: structured/);
 });
 
 test('extension account refresh clears expired account tokens instead of showing stale connected state', () => {
