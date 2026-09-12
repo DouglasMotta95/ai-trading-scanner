@@ -7,7 +7,7 @@ let reconnectBusy = false;
 if ($('extensionVersion')) $('extensionVersion').textContent = `v${chrome.runtime.getManifest().version}`;
 
 const num = v => v == null || v === '' ? null : Number.isFinite(Number(v)) ? Number(v) : null;
-const fresh = s => s.connection === 'online' && s.lastSeen && Date.now() - Number(s.lastSeen) < 8000;
+const fresh = s => s.connection === 'online' && !!s.asset && num(s.price) != null && s.lastSeen && Date.now() - Number(s.lastSeen) < 8000;
 const priceText = v => num(v) == null ? '—' : String(v);
 
 function expiryMs(value) {
