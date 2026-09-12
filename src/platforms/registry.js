@@ -72,7 +72,8 @@ function normalizeHost(host = '') {
 
 export function isCasaTradeHost(host = '') {
   const normalized = normalizeHost(host);
-  return CASATRADE_HOSTS.has(normalized);
+  return normalized === 'casatrade.com' || normalized.endsWith('.casatrade.com') ||
+    normalized === 'casatrade.io' || normalized.endsWith('.casatrade.io');
 }
 
 export function detectPlatform(host = '') {

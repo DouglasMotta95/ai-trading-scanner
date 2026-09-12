@@ -6,13 +6,9 @@
   "permissions": ["storage", "activeTab", "scripting", "sidePanel"],
   "host_permissions": [
     "https://casatrade.com/*",
-    "https://www.casatrade.com/*",
-    "https://app.casatrade.com/*",
-    "https://trade.casatrade.com/*",
+    "https://*.casatrade.com/*",
     "https://casatrade.io/*",
-    "https://www.casatrade.io/*",
-    "https://app.casatrade.io/*",
-    "https://trade.casatrade.io/*",
+    "https://*.casatrade.io/*",
     "https://ats-control-center-v07-production.up.railway.app/*"
   ],
   "background": { "service_worker": "src/background-entry.js", "type": "module" },
@@ -23,31 +19,27 @@
     {
       "matches": [
         "https://casatrade.com/*",
-        "https://www.casatrade.com/*",
-        "https://app.casatrade.com/*",
-        "https://trade.casatrade.com/*",
+        "https://*.casatrade.com/*",
         "https://casatrade.io/*",
-        "https://www.casatrade.io/*",
-        "https://app.casatrade.io/*",
-        "https://trade.casatrade.io/*"
+        "https://*.casatrade.io/*"
       ],
       "js": ["src/content/network-probe.js"],
       "run_at": "document_start",
-      "world": "MAIN"
+      "world": "MAIN",
+      "all_frames": true,
+      "match_origin_as_fallback": true
     },
     {
       "matches": [
         "https://casatrade.com/*",
-        "https://www.casatrade.com/*",
-        "https://app.casatrade.com/*",
-        "https://trade.casatrade.com/*",
+        "https://*.casatrade.com/*",
         "https://casatrade.io/*",
-        "https://www.casatrade.io/*",
-        "https://app.casatrade.io/*",
-        "https://trade.casatrade.io/*"
+        "https://*.casatrade.io/*"
       ],
       "js": ["src/content/network-bridge.js", "src/content/generic-adapter.js", "src/content/platform-sync.js"],
-      "run_at": "document_start"
+      "run_at": "document_start",
+      "all_frames": true,
+      "match_origin_as_fallback": true
     }
   ]
 }
