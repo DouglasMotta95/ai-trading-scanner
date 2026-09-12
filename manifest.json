@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "AI Trading Scanner",
-  "version": "0.10.0",
-  "description": "Scanner inteligente multi-plataforma com WebSocket de baixa latência, análise multiativo, IA ponderada, gestão de risco e terminal profissional.",
+  "version": "0.10.1",
+  "description": "Scanner inteligente multi-plataforma com WebSocket de baixa latência, análise prática de 3–5 velas, IA ponderada, gestão de risco e terminal profissional.",
   "permissions": ["storage", "activeTab", "scripting", "sidePanel"],
   "optional_host_permissions": ["http://*/*", "https://*/*"],
   "host_permissions": [
