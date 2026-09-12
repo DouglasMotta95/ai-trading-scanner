@@ -83,7 +83,7 @@ test('lifetime plan is a one-time commercial plan with unlimited entitlement', (
   assert.match(portal, /sem vencimento/i);
 });
 
-test('synchronized operation setup is native and blocks mismatched platform state', () => {
+test('synchronized operation setup is native and blocks mismatched or paused state', () => {
   const html = read('src/sidepanel/index.html');
   const app = read('src/sidepanel/app.js');
   const sync = read('src/background-platform-sync.js');
@@ -93,9 +93,11 @@ test('synchronized operation setup is native and blocks mismatched platform stat
   assert.match(html, /VALOR NA PLATAFORMA/);
   assert.match(html, /VELA NA PLATAFORMA/);
   assert.match(html, /EXPIRAÇÃO NA PLATAFORMA/);
+  assert.match(html, /id="pauseAllBtn"/);
   assert.match(app, /ATS_SYNC_PLATFORM_PREFERENCES/);
   assert.match(app, /CasaTrade sincronizada/);
-  assert.match(app, /toggleBtn\.disabled = !online \|\| !licensed \|\| !configuredPrefs\(prefs\) \|\| !aligned\(s\)/);
+  assert.match(app, /const canStart=online&&licensed&&configuredPrefs\(prefs\)&&aligned\(s\)&&!paused/);
+  assert.match(app, /runtimePaused/);
   assert.match(sync, /patch\.scanner = 'idle'/);
   assert.match(sync, /Leitura pausada:/);
   assert.match(sync, /amountOk/);
@@ -131,16 +133,19 @@ test('live operations is integrated natively and obsolete CRM/live scripts are r
   assert.doesNotMatch(server, /live\.js/);
 });
 
-test('extension sync indicator is based on a confirmed heartbeat response', () => {
+test('extension exposes actual feed latency and telemetry status without faking synchronization', () => {
   const telemetry = read('src/services/telemetry.js');
   const panel = read('src/sidepanel/app.js');
+  const background = read('src/background.js');
   assert.match(telemetry, /lastSyncAttempt/);
   assert.match(telemetry, /lastSyncSuccess/);
   assert.match(telemetry, /lastSyncError/);
   assert.match(telemetry, /acceptedAt/);
-  assert.match(panel, /lastSyncSuccess/);
   assert.match(panel, /atsTelemetryStatus/);
-  assert.match(panel, /telemetryError/);
+  assert.match(panel, /latency/);
+  assert.match(panel, / ms/);
+  assert.match(background, /latencyOf/);
+  assert.match(background, /feedQuality/);
 });
 
 test('structured feed requires repeated recent network observations and active-asset matching', () => {
@@ -155,6 +160,23 @@ test('structured feed requires repeated recent network observations and active-a
   assert.match(adapter, /structuredNetworkQuote/);
   assert.match(adapter, /selectedAsset/);
   assert.match(adapter, /structuredQuotes: structured/);
+});
+
+test('weighted AI, risk, chart overlay and backtest are visible product surfaces', () => {
+  const html = read('src/sidepanel/index.html');
+  const scoring = read('src/core/ai-scoring.js');
+  const risk = read('src/core/risk-controls.js');
+  const overlay = read('src/content/chart-overlay.js');
+  const backtest = read('src/core/backtest.js');
+  assert.match(html, /NOTA IA/);
+  assert.match(html, /PRICE ACTION/);
+  assert.match(html, /CORRELAÇÃO/);
+  assert.match(html, /CALENDÁRIO \/ NOTÍCIAS/);
+  assert.match(html, /BACKTEST AUTOMATIZADO/);
+  assert.match(scoring, /AI_WEIGHTS/);
+  assert.match(risk, /RISK_PROFILES/);
+  assert.match(overlay, /ats-chart-overlay/);
+  assert.match(backtest, /runBacktest/);
 });
 
 test('extension account refresh clears expired account tokens instead of showing stale connected state', () => {
