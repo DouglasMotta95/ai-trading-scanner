@@ -1,438 +1,87 @@
-const PUBLIC_API = 'https://ats-control-center-v07-production.up.railway.app';
-const LAST_VALID_LICENSE_KEY = 'atsLastValidLicense';
-const $ = id => document.getElementById(id);
-const connectBtn = $('connectBtn');
-const toggleBtn = $('toggleScanner');
-const tfSelect = $('analysisTimeframe');
-const expSelect = $('targetExpiration');
-const amountInput = $('tradeAmount');
-const buyBtn = $('prepareBuy');
-const sellBtn = $('prepareSell');
-const scoreGauge = $('scoreGauge');
-const extensionVersion = $('extensionVersion');
-if (extensionVersion) extensionVersion.textContent = `v${chrome.runtime.getManifest().version}`;
+const PUBLIC_API='https://ats-control-center-v07-production.up.railway.app';
+const LAST_VALID_LICENSE_KEY='atsLastValidLicense';
+const $=id=>document.getElementById(id);
+const connectBtn=$('connectBtn'),toggleBtn=$('toggleScanner'),tfSelect=$('analysisTimeframe'),expSelect=$('targetExpiration'),amountInput=$('tradeAmount'),buyBtn=$('prepareBuy'),sellBtn=$('prepareSell'),scoreGauge=$('scoreGauge');
+const extensionVersion=$('extensionVersion');if(extensionVersion)extensionVersion.textContent=`v${chrome.runtime.getManifest().version}`;
+let lastState={},settingsCache={},prefs={},riskSettings={},features={},requested=false,syncBusy=false,autoConnectAt=0,lastAlertKey='',audioCtx=null,syncTimer=null;
 
-let requested = false;
-let lastError = '';
-let lastState = {};
-let prefs = {};
-let autoConnectAt = 0;
-let syncBusy = false;
+const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const num=v=>v==null||v===''?null:Number.isFinite(Number(v))?Number(v):null;
+const money=v=>num(v)==null?'—':new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(Number(v));
+const fresh=s=>s.connection==='online'&&s.lastSeen&&Date.now()-s.lastSeen<8000;
+const activeLicense=s=>s.license?.status==='active';
+const profileMap={conservative:{label:'Conservador',stakePct:1,maxStakePct:2,maxLosses:2,maxSignals:8,cooldownMs:90000},moderate:{label:'Moderado',stakePct:2,maxStakePct:3.5,maxLosses:3,maxSignals:12,cooldownMs:60000},aggressive:{label:'Agressivo',stakePct:3,maxStakePct:5,maxLosses:4,maxSignals:18,cooldownMs:30000}};
+const profile=()=>profileMap[riskSettings.profile]||profileMap.moderate;
+const licenseStillValid=l=>{if(l?.status!=='active')return false;if(!l.expiresAt)return true;const t=Date.parse(l.expiresAt);return Number.isFinite(t)&&t>Date.now()};
+const effectiveLicense=(stateLicense={},cachedEntry=null)=>{if(licenseStillValid(stateLicense))return stateLicense;if(['expired','limit','device_locked'].includes(String(stateLicense?.status||'')))return stateLicense;const cached=cachedEntry?.license;if(licenseStillValid(cached))return{...cached,status:'active',error:'backend_unreachable',syncPending:true};if(stateLicense?.status==='active'&&!licenseStillValid(stateLicense))return{...stateLicense,status:'expired',error:'license_expired',syncPending:false};return stateLicense};
+const configuredPrefs=p=>{const amount=num(p.tradeAmount??p.stake);return amount!=null&&amount>0&&p.timeframe&&p.timeframe!=='AUTO'&&p.expiration&&p.expiration!=='AUTO'};
+const aligned=s=>!!s.platformControls?.aligned;
+const setDot=(id,on)=>{const el=$(id);if(el)el.className=on?'on':''};
+const ensureOption=(select,value)=>{value=String(value||'').trim();if(!select||!value||[...select.options].some(o=>o.value===value))return;const o=document.createElement('option');o.value=value;o.textContent=value;select.appendChild(o)};
+const currentSuggestedStake=()=>{const bank=Math.max(0,num(riskSettings.bankroll)||0),p=profile();return bank?Math.round(bank*p.stakePct)/100:0};
+const maxStake=()=>{const bank=Math.max(0,num(riskSettings.bankroll)||0);return bank?bank*profile().maxStakePct/100:Infinity};
 
-const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const num = v => v == null || v === '' ? null : Number.isFinite(Number(v)) ? Number(v) : null;
-const money = v => num(v) == null ? 'Não identificado' : new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(v));
-const fresh = s => s.connection === 'online' && s.lastSeen && Date.now() - s.lastSeen < 8000;
-const activeLicense = s => s.license?.status === 'active';
-const licenseStillValid = l => {
-  if (l?.status !== 'active') return false;
-  if (!l.expiresAt) return true;
-  const t = Date.parse(l.expiresAt);
-  return Number.isFinite(t) && t > Date.now();
-};
-const effectiveLicense = (stateLicense = {}, cachedEntry = null) => {
-  if (licenseStillValid(stateLicense)) return stateLicense;
-  if (['expired', 'limit', 'device_locked'].includes(String(stateLicense?.status || ''))) return stateLicense;
-  const cached = cachedEntry?.license;
-  if (licenseStillValid(cached)) return { ...cached, status: 'active', error: 'backend_unreachable', syncPending: true };
-  if (stateLicense?.status === 'active' && !licenseStillValid(stateLicense)) return { ...stateLicense, status: 'expired', error: 'license_expired', syncPending: false };
-  return stateLicense;
-};
-const normalizeTf = v => String(v || '').trim().toUpperCase();
-const normalizeExp = v => String(v || '').trim().toLowerCase().replace(/\s+/g, '');
-const configuredPrefs = p => {
-  const amount = num(p.tradeAmount ?? p.stake);
-  return amount != null && amount > 0 && p.timeframe && p.timeframe !== 'AUTO' && p.expiration && p.expiration !== 'AUTO';
-};
-const aligned = s => !!s.platformControls?.aligned;
-const setDot = (id, on) => { const el = $(id); if (el) el.className = on ? 'on' : ''; };
-const ensureOption = (select, value) => {
-  value = String(value || '').trim();
-  if (!select || !value || [...select.options].some(o => o.value === value)) return;
-  const o = document.createElement('option');
-  o.value = value; o.textContent = value; select.appendChild(o);
-};
+function usageText(l={}){const trial=l.isTrial||l.plan==='trial';if(trial&&l.totalLimit!=null)return`Teste: ${Number(l.usedTotal)||0}/${l.totalLimit} • ${l.remainingTotal??Math.max(0,l.totalLimit-(Number(l.usedTotal)||0)} restantes`;if(l.dailyLimit==null)return`Uso diário: ${Number(l.usedToday)||0} • sem limite`;return`Uso diário: ${Number(l.usedToday)||0}/${l.dailyLimit} • ${l.remainingToday??Math.max(0,l.dailyLimit-(Number(l.usedToday)||0))} restantes`}
+function renderLicense(s={}){const l=s.license||{},active=l.status==='active',waiting=active&&(l.syncPending||l.error==='backend_unreachable'),trial=l.isTrial||l.plan==='trial',limit=trial&&l.totalLimit!=null?l.totalLimit:l.dailyLimit,used=trial&&l.totalLimit!=null?Number(l.usedTotal)||0:Number(l.usedToday)||0;$('licenseCard')?.classList.toggle('active',active);if($('activationBox'))$('activationBox').hidden=active;if($('licenseHealth'))$('licenseHealth').textContent=active?String(l.planLabel||l.plan||'ATIVA').toUpperCase():String(l.status||'INATIVA').toUpperCase();if($('planBadge'))$('planBadge').textContent=active?String(l.planLabel||l.plan||'ATIVA').toUpperCase():'LICENÇA';if($('licenseTitle'))$('licenseTitle').textContent=active?(waiting?'Licença ativa • sincronizando':'Licença ativa'):l.status==='expired'?'Licença expirada':l.status==='limit'?'Limite do plano atingido':l.status==='device_locked'?'Licença vinculada a outro aparelho':'Ativação necessária';if($('licenseText'))$('licenseText').textContent=active?(waiting?'Seu último acesso válido foi mantido. A sincronização será retomada automaticamente.':`${l.planLabel||l.plan||'Plano'} ativo${l.expiresAt?` • vence ${new Date(l.expiresAt).toLocaleDateString('pt-BR')}`:''}.`):l.status==='expired'?'Renove seu acesso para continuar.':l.status==='device_locked'?'Este acesso já está vinculado a outro aparelho.':l.status==='limit'?'O limite disponível para este acesso foi utilizado.':l.error==='backend_unreachable'?'Servidor ATS indisponível no momento.':'Entre na sua conta ATS ou use uma licença manual.';if($('licenseUsage'))$('licenseUsage').textContent=active?usageText(l):'Uso: —';if($('licenseDevice'))$('licenseDevice').textContent=active?(l.deviceLocked||l.devices>0?'Aparelho: VINCULADO':'Aparelho: LIVRE'):'Aparelho: —';const pct=limit==null?0:Math.max(0,Math.min(100,limit?used/limit*100:0));if($('quotaText'))$('quotaText').textContent=limit==null?(active?'ILIMITADO':'—'):`${used} / ${limit}`;if($('quotaBar'))$('quotaBar').style.width=`${pct}%`;if($('quotaHint'))$('quotaHint').textContent=trial&&l.totalLimit!=null?'O teste usa um limite total de sinais.':limit==null?'Seu plano não possui limite diário de sinais.':'Este é o limite comercial do plano. A análise técnica é calculada separadamente.'}
 
-function usageText(l = {}) {
-  const trial = l.isTrial || l.plan === 'trial';
-  if (trial && l.totalLimit != null) return `Teste: ${Number(l.usedTotal) || 0}/${l.totalLimit} • ${l.remainingTotal ?? Math.max(0, l.totalLimit - (Number(l.usedTotal) || 0))} restantes`;
-  if (l.dailyLimit == null) return `Uso diário: ${Number(l.usedToday) || 0} • sem limite`;
-  return `Uso diário: ${Number(l.usedToday) || 0}/${l.dailyLimit} • ${l.remainingToday ?? Math.max(0, l.dailyLimit - (Number(l.usedToday) || 0))} restantes`;
-}
+function renderPlatformSync(s={}){const pc=s.platformControls||{},observed=pc.observed||{},row=$('platformSyncRow');if($('platformAmount'))$('platformAmount').textContent=observed.amount==null?'Não identificado':money(observed.amount);if($('platformTimeframe'))$('platformTimeframe').textContent=observed.timeframe||'Não identificado';if($('platformExpiration'))$('platformExpiration').textContent=observed.expiration||'Não identificado';row?.classList.remove('ok','warn','bad');let title='Defina valor, vela e expiração',text='Preencha os três campos. Depois o ATS aplica e confere tudo na CasaTrade.',badge='CONFIGURAR';if(!configuredPrefs(prefs))row?.classList.add('warn');else if(!s.targetTabId||!fresh(s)){row?.classList.add('warn');title='Conecte a CasaTrade';text='Abra a plataforma. O ATS tentará sincronizar a configuração automaticamente.';badge='AGUARDANDO'}else if(pc.aligned){row?.classList.add('ok');title='CasaTrade sincronizada';text='Valor, vela e expiração foram lidos de volta e conferidos.';badge='SINCRONIZADO'}else{row?.classList.add('bad');const miss=[!pc.amountOk?'valor':null,!pc.timeframeOk?'vela':null,!pc.expirationOk?'expiração':null].filter(Boolean);title='Configuração ainda não bate';text=`Ainda não consegui confirmar ${miss.join(', ')||'os controles'} na CasaTrade. A análise fica bloqueada.`;badge='VERIFICAR'}if($('platformSyncTitle'))$('platformSyncTitle').textContent=title;if($('platformSyncText'))$('platformSyncText').textContent=text;if($('syncBadge'))$('syncBadge').textContent=badge}
 
-function renderLicense(s = {}) {
-  const l = s.license || {};
-  const active = l.status === 'active';
-  const waiting = active && (l.syncPending || l.error === 'backend_unreachable');
-  const trial = l.isTrial || l.plan === 'trial';
-  const limit = trial && l.totalLimit != null ? l.totalLimit : l.dailyLimit;
-  const used = trial && l.totalLimit != null ? Number(l.usedTotal) || 0 : Number(l.usedToday) || 0;
-  $('licenseCard')?.classList.toggle('active', active);
-  if ($('activationBox')) $('activationBox').hidden = active;
-  if ($('licenseHealth')) $('licenseHealth').textContent = active ? String(l.planLabel || l.plan || 'ATIVA').toUpperCase() : String(l.status || 'INATIVA').toUpperCase();
-  if ($('planBadge')) $('planBadge').textContent = active ? String(l.planLabel || l.plan || 'ATIVA').toUpperCase() : 'LICENÇA';
-  if ($('licenseTitle')) $('licenseTitle').textContent = active
-    ? (waiting ? 'Licença ativa • sincronizando' : 'Licença ativa')
-    : l.status === 'expired' ? 'Licença expirada'
-      : l.status === 'limit' ? 'Limite do plano atingido'
-        : l.status === 'device_locked' ? 'Licença vinculada a outro aparelho'
-          : 'Ativação necessária';
-  if ($('licenseText')) $('licenseText').textContent = active
-    ? waiting ? 'Seu último acesso válido foi mantido. A sincronização será retomada automaticamente.' : `${l.planLabel || l.plan || 'Plano'} ativo${l.expiresAt ? ` • vence ${new Date(l.expiresAt).toLocaleDateString('pt-BR')}` : ''}.`
-    : l.status === 'expired' ? 'Renove seu acesso para continuar.'
-      : l.status === 'device_locked' ? 'Este acesso já está vinculado a outro aparelho.'
-        : l.status === 'limit' ? 'O limite disponível para este acesso foi utilizado.'
-          : l.error === 'backend_unreachable' ? 'Servidor ATS indisponível no momento.'
-            : 'Entre na sua conta ATS ou use uma licença manual.';
-  if ($('licenseUsage')) $('licenseUsage').textContent = active ? usageText(l) : 'Uso: —';
-  if ($('licenseDevice')) $('licenseDevice').textContent = active ? (l.deviceLocked || l.devices > 0 ? 'Aparelho: VINCULADO' : 'Aparelho: LIVRE') : 'Aparelho: —';
-  const pct = limit == null ? 0 : Math.max(0, Math.min(100, limit ? used / limit * 100 : 0));
-  if ($('quotaText')) $('quotaText').textContent = limit == null ? (active ? 'ILIMITADO' : '—') : `${used} / ${limit}`;
-  if ($('quotaBar')) $('quotaBar').style.width = `${pct}%`;
-  if ($('quotaHint')) $('quotaHint').textContent = trial && l.totalLimit != null ? 'O teste usa um limite total de sinais.' : limit == null ? 'Seu plano não possui limite diário de sinais.' : 'Este é o limite comercial do plano. A análise técnica é calculada separadamente.';
-}
+function renderRisk(s={}){const p=profile(),bank=Math.max(0,num(riskSettings.bankroll)||0),target=Math.max(0,num(riskSettings.dailyTarget)||0),profit=num(riskSettings.dailyProfit)||0,suggested=num(s.signal?.risk?.suggestedStake)??currentSuggestedStake(),manual=num(prefs.tradeAmount),warnings=[];if($('riskBadge'))$('riskBadge').textContent=p.label.toUpperCase();if($('suggestedStake'))$('suggestedStake').textContent=suggested?money(suggested):'Informe a banca';if($('entrySuggestedStake'))$('entrySuggestedStake').textContent=suggested?money(suggested):'—';if(bank<=0)warnings.push('Informe sua banca para calcular automaticamente uma entrada proporcional.');if(bank>0&&manual!=null&&manual>bank*p.maxStakePct/100)warnings.push(`Valor configurado acima do limite de proteção do perfil (${p.maxStakePct}% da banca).`);const losses=Number(riskSettings.consecutiveLosses||0),signals=Math.max(Number(s.license?.usedToday||0),Array.isArray(s.signalHistory)?s.signalHistory.filter(x=>new Date(x.at).toDateString()===new Date().toDateString()).length:0);if(losses>=p.maxLosses)warnings.push(`Bloqueio por sequência de perdas: ${losses}/${p.maxLosses}.`);if(signals>=Math.ceil(p.maxSignals*.75))warnings.push(`Atenção a overtrading: ${signals}/${p.maxSignals} operações do perfil.`);if(target>0&&profit>=target)warnings.push('Meta diária atingida. O perfil recomenda encerrar a sessão.');if(Array.isArray(s.signal?.risk?.warnings))warnings.push(...s.signal.risk.warnings);if($('riskWarnings'))$('riskWarnings').innerHTML=[...new Set(warnings)].slice(0,5).map(x=>`<p class="${/acima|bloqueio|overtrading|atingida/i.test(x)?'danger':''}">${esc(x)}</p>`).join('')||'<p>Risco dentro dos parâmetros configurados.</p>';const progress=target>0?Math.max(0,Math.min(100,profit/target*100)):0;if($('goalProgress'))$('goalProgress').style.width=`${progress}%`;if($('goalProgressText'))$('goalProgressText').textContent=target>0?`${Math.round(progress)}% • ${money(profit)} / ${money(target)}`:'Meta não definida'}
 
-function renderPlatformSync(s = {}) {
-  const pc = s.platformControls || {};
-  const observed = pc.observed || {};
-  if ($('platformAmount')) $('platformAmount').textContent = observed.amount == null ? 'Não identificado' : money(observed.amount);
-  if ($('platformTimeframe')) $('platformTimeframe').textContent = observed.timeframe || 'Não identificado';
-  if ($('platformExpiration')) $('platformExpiration').textContent = observed.expiration || 'Não identificado';
-  const row = $('platformSyncRow');
-  row?.classList.remove('ok', 'warn', 'bad');
-  let title = 'Defina valor, vela e expiração';
-  let text = 'Preencha os três campos. Depois o ATS aplica e confere tudo na CasaTrade.';
-  let badge = 'CONFIGURAR';
-  if (!configuredPrefs(prefs)) row?.classList.add('warn');
-  else if (!s.targetTabId || !fresh(s)) {
-    row?.classList.add('warn'); title = 'Conecte a CasaTrade'; text = 'Abra a plataforma. O ATS tentará sincronizar a configuração automaticamente.'; badge = 'AGUARDANDO';
-  } else if (pc.aligned) {
-    row?.classList.add('ok'); title = 'CasaTrade sincronizada'; text = 'Valor, vela e expiração foram lidos de volta e conferidos. A análise usa esses valores reais.'; badge = 'SINCRONIZADO';
-  } else {
-    row?.classList.add('bad');
-    const miss = [!pc.amountOk ? 'valor' : null, !pc.timeframeOk ? 'vela' : null, !pc.expirationOk ? 'expiração' : null].filter(Boolean);
-    title = 'Configuração ainda não bate'; text = `Ainda não consegui confirmar ${miss.join(', ') || 'os controles'} na CasaTrade. A análise fica bloqueada para não trabalhar com tempo diferente.`; badge = 'VERIFICAR';
-  }
-  if ($('platformSyncTitle')) $('platformSyncTitle').textContent = title;
-  if ($('platformSyncText')) $('platformSyncText').textContent = text;
-  if ($('syncBadge')) $('syncBadge').textContent = badge;
-}
+function renderCatalog(s={}){const c=s.marketCatalog||{},analysis=new Map((s.universeAnalysis||[]).map(x=>[String(x.asset),x])),lines=Array.isArray(c.lines)?c.lines:[],assets=Array.isArray(c.assets)?c.assets:[];if($('catalogCount'))$('catalogCount').textContent=`${assets.length} ${assets.length===1?'ATIVO':'ATIVOS'}`;for(const v of c.timeframes||[])ensureOption(tfSelect,v);for(const v of c.expirations||[])ensureOption(expSelect,v);if(!$('catalogList'))return;if(!lines.length){$('catalogList').innerHTML='<div class="empty-state">Ainda não encontrei ativos. Deixe a CasaTrade aberta por alguns segundos; o ATS está lendo DOM e WebSocket.</div>';return}$('catalogList').innerHTML=lines.slice(0,60).map(x=>{const a=analysis.get(String(x.asset)),sig=a?.signal||{},source=x.source==='network'||x.transport==='ws'?'WS':x.transport?String(x.transport).toUpperCase():'DOM',state=sig.state==='CONFIRM'?(sig.direction==='SELL'?'VENDA':'COMPRA'):sig.state==='WATCH'?'OBSERVAR':sig.state==='SEARCHING'?'AQUECENDO':'AGUARDAR',score=sig.ai?.score??sig.score,meta=[x.timeframe||a?.timeframe,x.expiration||a?.expiration,score!=null?`IA ${Math.round(Number(score||0))}`:null,state].filter(Boolean).join(' • ');return`<div class="catalog-row"><div><b>${esc(x.asset)}</b><small>${esc(meta||'Mapeado')}</small></div><span>${x.price==null?'—':esc(x.price)}</span><em class="${source==='WS'?'feed':'dom'}">${esc(source)}</em></div>`}).join('')}
 
-function renderCatalog(s = {}) {
-  const c = s.marketCatalog || {};
-  const analysis = new Map((s.universeAnalysis || []).map(x => [String(x.asset), x]));
-  const lines = Array.isArray(c.lines) ? c.lines : [];
-  const assets = Array.isArray(c.assets) ? c.assets : [];
-  if ($('catalogCount')) $('catalogCount').textContent = `${assets.length} ${assets.length === 1 ? 'ATIVO' : 'ATIVOS'}`;
-  for (const v of c.timeframes || []) ensureOption(tfSelect, v);
-  for (const v of c.expirations || []) ensureOption(expSelect, v);
-  if (!$('catalogList')) return;
-  if (!lines.length) {
-    $('catalogList').innerHTML = '<div class="empty-state">Ainda não encontrei ativos. Deixe a CasaTrade aberta por alguns segundos; o ATS está lendo DOM e WebSocket.</div>';
-    return;
-  }
-  $('catalogList').innerHTML = lines.slice(0, 50).map(x => {
-    const a = analysis.get(String(x.asset));
-    const sig = a?.signal || {};
-    const source = x.source === 'network' || x.transport === 'ws' ? 'WS' : x.transport ? String(x.transport).toUpperCase() : 'DOM';
-    const state = sig.state === 'CONFIRM' ? (sig.direction === 'SELL' ? 'VENDA' : 'COMPRA') : sig.state === 'WATCH' ? 'OBSERVAR' : sig.state === 'SEARCHING' ? 'AQUECENDO' : 'AGUARDAR';
-    const meta = [x.timeframe || a?.timeframe, x.expiration || a?.expiration, sig.score != null ? `score ${Math.round(Number(sig.score || 0))}` : null, state].filter(Boolean).join(' • ');
-    return `<div class="catalog-row"><div><b>${esc(x.asset)}</b><small>${esc(meta || 'Mapeado')}</small></div><span>${x.price == null ? '—' : esc(x.price)}</span><em class="${source === 'WS' ? 'feed' : 'dom'}">${esc(source)}</em></div>`;
-  }).join('');
-}
+function renderIntelligence(s={}){const intel=s.marketIntelligence||{},rows=Array.isArray(intel.top)?intel.top:[];if($('intelligenceSummary'))$('intelligenceSummary').textContent=intel.summary||'Aguardando o feed da plataforma para classificar os mercados.';if($('intelligenceNote'))$('intelligenceNote').textContent=intel.note||'A nota usa dados observados e pesos explícitos.';if($('intelligenceBadge'))$('intelligenceBadge').textContent='IA PONDERADA';if(!$('intelligenceList'))return;if(!rows.length){$('intelligenceList').innerHTML='<div class="empty-state">Aguardando ativos e cotações reais da CasaTrade.</div>';return}$('intelligenceList').innerHTML=rows.slice(0,5).map((x,i)=>{const dir=x.direction==='SELL'?'VENDA':x.direction==='BUY'?'COMPRA':'AGUARDAR',cls=x.direction==='SELL'?'sell':x.direction==='BUY'?'buy':x.state==='WATCH'?'watch':'',warm=x.warmup?`${Math.min(Number(x.warmup.current||0),Number(x.warmup.required||21))}/${Number(x.warmup.required||21)} velas`:'histórico em formação',meta=`${x.timeframe||'tempo não identificado'} • ${x.session?.label||'sessão não identificada'} • ${warm}`,score=Math.round(Number(x.aiScore??x.adjustedScore??x.score??0));return`<div class="intel-row ${cls}"><div><strong>${i+1}. ${esc(x.asset||'Ativo')} • ${dir}</strong><small>${esc(meta)}</small></div><span class="intel-score">${score}</span></div>`}).join('')}
 
-function renderIntelligence(s = {}) {
-  const intel = s.marketIntelligence || {};
-  const rows = Array.isArray(intel.top) ? intel.top : [];
-  if ($('intelligenceSummary')) $('intelligenceSummary').textContent = intel.summary || 'Aguardando o feed da plataforma para classificar os mercados.';
-  if ($('intelligenceNote')) $('intelligenceNote').textContent = intel.note || 'O ranking usa somente dados observados. Nenhuma informação externa é inventada.';
-  if ($('intelligenceBadge')) $('intelligenceBadge').textContent = intel.externalAi === 'nao_configurada' ? 'MOTOR LOCAL' : 'IA + MOTOR';
-  if (!$('intelligenceList')) return;
-  if (!rows.length) {
-    $('intelligenceList').innerHTML = '<div class="empty-state">Aguardando ativos e cotações reais da CasaTrade.</div>';
-    return;
-  }
-  $('intelligenceList').innerHTML = rows.map((x, i) => {
-    const dir = x.direction === 'SELL' ? 'VENDA' : x.direction === 'BUY' ? 'COMPRA' : 'AGUARDAR';
-    const cls = x.direction === 'SELL' ? 'sell' : x.direction === 'BUY' ? 'buy' : x.state === 'WATCH' ? 'watch' : '';
-    const warm = x.warmup ? `${Math.min(Number(x.warmup.current || 0), Number(x.warmup.required || 21))}/${Number(x.warmup.required || 21)} velas` : 'histórico em formação';
-    const meta = `${x.timeframe || 'tempo não identificado'} • ${x.session?.label || 'sessão não identificada'} • ${warm}`;
-    return `<div class="intel-row ${cls}"><div><strong>${i + 1}. ${esc(x.asset || 'Ativo')} • ${dir}</strong><small>${esc(meta)}</small></div><span class="intel-score">${Math.round(Number(x.adjustedScore ?? x.score ?? 0))}</span></div>`;
-  }).join('');
-}
+function renderIndicators(s={}){const tech=s.signal?.technical||{},ind=tech.indicators||{},st=tech.structure||{},corr=tech.correlation||s.correlationByAsset?.[s.asset]||null,news=tech.news||s.newsRiskByAsset?.[s.asset]||null;if($('rsiValue'))$('rsiValue').textContent=num(ind.rsi14)==null?'—':Number(ind.rsi14).toFixed(1);if($('macdValue'))$('macdValue').textContent=num(ind.macd?.histogram)==null?'—':Number(ind.macd.histogram).toFixed(6);if($('ema9Value'))$('ema9Value').textContent=num(ind.ema9)==null?'—':String(Number(ind.ema9).toFixed(6));if($('ema21Value'))$('ema21Value').textContent=num(ind.ema21)==null?'—':String(Number(ind.ema21).toFixed(6));if($('supportValue'))$('supportValue').textContent=num(st.support)==null?'—':String(st.support);if($('resistanceValue'))$('resistanceValue').textContent=num(st.resistance)==null?'—':String(st.resistance);if($('correlationText'))$('correlationText').textContent=corr?.available?`${corr.peer} • ${Number(corr.value).toFixed(2)} • ${corr.alignment==='conflicting'?'conflito':corr.alignment==='supportive'?'confirma':'neutra'}`:'Aguardando histórico multiativo';if($('newsText'))$('newsText').textContent=news?.unknown?'Fonte externa não configurada':news?.blocked?`PAUSAR • ${news.reason||'notícia de alto impacto'}`:news?.nearest?`${news.nearest.currency} • ${news.minutesToNearest} min • ${String(news.nearest.impact||'').toUpperCase()}`:'Sem evento relevante próximo';const tf=String(s.analysisTimeframe||s.timeframe||'');if($('scalpingBadge'))$('scalpingBadge').textContent=/^(S5|S15|S30|M1)$/.test(tf)?'SCALPING':'NORMAL'}
 
-function renderReasons(sig = {}) {
-  let reasons = Array.isArray(sig.reasons) ? sig.reasons.filter(Boolean).slice(0, 6) : [];
-  if (!reasons.length && sig.hint) reasons = String(sig.hint).split(' • ').filter(Boolean).slice(0, 5);
-  if (!reasons.length) reasons = ['Aguardando dados suficientes para explicar a leitura.'];
-  if ($('signalReasons')) $('signalReasons').innerHTML = reasons.map(r => `<p>${esc(r)}</p>`).join('');
-}
+function renderAI(s={}){const ai=s.signal?.ai||{},parts=ai.parts||{},map={aiPriceAction:'priceAction',aiIndicators:'indicators',aiEma:'emaTrend',aiVolatility:'volatility',aiCorrelation:'correlation',aiNews:'news',aiMomentum:'momentum'};for(const[id,key]of Object.entries(map))if($(id))$(id).textContent=parts[key]==null?'—':String(Math.round(Number(parts[key])));if($('aiOpinion'))$('aiOpinion').textContent=ai.opinion||'Aguardando dados suficientes para formar o parecer da IA.'}
+function renderReasons(sig={}){let reasons=Array.isArray(sig.reasons)?sig.reasons.filter(Boolean).slice(0,6):[];if(!reasons.length&&sig.hint)reasons=String(sig.hint).split(' • ').filter(Boolean).slice(0,5);if($('signalReasons'))$('signalReasons').innerHTML=reasons.map(r=>`<p>${esc(r)}</p>`).join('')}
+function signalTone(state,direction){if(state==='CONFIRM')return direction==='SELL'?'sell':'confirm';if(state==='WATCH')return'watch';if(state==='NO_TRADE')return'blocked';return'neutral'}
 
-function signalTone(state, direction) {
-  if (state === 'CONFIRM') return direction === 'SELL' ? 'sell' : 'confirm';
-  if (state === 'WATCH') return 'watch';
-  if (state === 'NO_TRADE') return 'blocked';
-  return 'neutral';
-}
+function renderSignal(s={}){const sig=s.signal||{},state=String(sig.state||'WAIT'),direction=sig.direction||null,score=Number.isFinite(Number(sig.ai?.score??sig.score))?Math.max(0,Math.min(100,Number(sig.ai?.score??sig.score))):0,warm=sig.warmup||{current:sig.candleCount||0,required:21},required=Number(warm.required||21),current=Math.min(Number(warm.current||0),required),pct=Math.max(0,Math.min(100,current/required*100)),tone=signalTone(state,direction);if($('score'))$('score').textContent=Number.isFinite(score)?String(Math.round(score)):'—';if($('signalDirection'))$('signalDirection').textContent=direction==='BUY'?'COMPRA':direction==='SELL'?'VENDA':'—';if($('setup'))$('setup').textContent=sig.grade||'—';if($('confirmations'))$('confirmations').textContent=String(sig.confirmations||'0 / 6').replace(/\s*\/\s*/,' de ');if($('regime'))$('regime').textContent=String(sig.regime||'—').toUpperCase();const titles={CONFIRM:direction==='SELL'?'VENDA CONFIRMADA':'COMPRA CONFIRMADA',WATCH:'OPORTUNIDADE EM FORMAÇÃO',SEARCHING:'ANALISANDO O MERCADO',NO_TRADE:'NÃO ENTRAR AGORA',WAIT:'AGUARDANDO CONFIRMAÇÕES',IDLE:'AGUARDANDO CONEXÃO'};if($('scannerState'))$('scannerState').textContent=titles[state]||'AGUARDANDO';let hint=sig.hint||'Aguardando dados suficientes.';if(!s.asset||!s.price)hint='Estou procurando o ativo e a cotação reais da CasaTrade. Ainda não vou gerar entrada.';else if(sig.provisional)hint='Estou recebendo movimento, mas o feed ainda está em validação. Não vou inventar entrada.';if($('scannerHint'))$('scannerHint').textContent=hint;if($('warmupText'))$('warmupText').textContent=`${current} / ${required} velas${current<required?` • faltam ${required-current}`:' • análise pronta'}`;if($('warmupBar'))$('warmupBar').style.width=`${pct}%`;scoreGauge?.style.setProperty('--score',`${score}%`);if(scoreGauge)scoreGauge.className=`score-orb ${state==='CONFIRM'?(direction==='SELL'?'sell':'buy'):''}`;const command=$('signalCommand');if(command)command.className=`signal-command ${tone}`;const badge=$('signalBadge');if(badge){badge.className=`signal-badge ${tone}`;badge.textContent=state==='CONFIRM'?(direction==='SELL'?'VENDA':'COMPRA'):state==='WATCH'?'OBSERVAR':state==='NO_TRADE'?'NÃO ENTRAR':'AGUARDAR'}if($('structureState'))$('structureState').textContent=sig.provisional?'EM VALIDAÇÃO':'VALIDADOS';if($('signalCommandSub'))$('signalCommandSub').textContent=state==='CONFIRM'?`Entrada validada • Nota IA ${Math.round(score)} • confirme manualmente na plataforma.`:sig.provisional?'O feed ainda está em validação; nenhum sinal final será liberado.':'O scanner aguarda confluência, risco e nota mínima da IA.';const confirmed=state==='CONFIRM'&&!sig.provisional&&aligned(s),suggested=num(sig.risk?.suggestedStake)??currentSuggestedStake();buyBtn.disabled=!(confirmed&&direction==='BUY');sellBtn.disabled=!(confirmed&&direction==='SELL');const panel=document.querySelector('.execution-panel');panel?.classList.toggle('signal-ready',confirmed);panel?.classList.toggle('sell-ready',confirmed&&direction==='SELL');if($('entryPreviewTitle'))$('entryPreviewTitle').textContent=confirmed?`${direction==='BUY'?'COMPRA':'VENDA'} • ${s.asset||'ativo'} • Nota ${Math.round(score)}`:'Nenhuma entrada liberada';if($('entryPreviewText'))$('entryPreviewText').textContent=confirmed?`${s.analysisTimeframe||s.timeframe||'—'} • expiração ${s.targetExpiration||s.expiration||'—'} • valor sugerido ${suggested?money(suggested):'não calculado'}`:'Aguarde feed validado, confluência, risco e nota mínima.';if($('entryPreviewIcon'))$('entryPreviewIcon').textContent=confirmed?(direction==='BUY'?'▲':'▼'):'◎';renderAI(s);renderIndicators(s);renderReasons(sig);maybeAlert(s)}
 
-function renderSignal(s = {}) {
-  const sig = s.signal || {};
-  const state = String(sig.state || 'WAIT');
-  const direction = sig.direction || null;
-  const score = Number.isFinite(Number(sig.score)) ? Math.max(0, Math.min(100, Number(sig.score))) : 0;
-  const warm = sig.warmup || { current: sig.candleCount || 0, required: 21 };
-  const required = Number(warm.required || 21);
-  const current = Math.min(Number(warm.current || 0), required);
-  const pct = Math.max(0, Math.min(100, current / required * 100));
-  const tone = signalTone(state, direction);
-  if ($('score')) $('score').textContent = Number.isFinite(Number(sig.score)) ? String(Math.round(Number(sig.score))) : '—';
-  if ($('signalDirection')) $('signalDirection').textContent = direction === 'BUY' ? 'COMPRA' : direction === 'SELL' ? 'VENDA' : '—';
-  if ($('setup')) $('setup').textContent = sig.grade || '—';
-  if ($('confirmations')) $('confirmations').textContent = String(sig.confirmations || '0 / 6').replace(/\s*\/\s*/, ' de ');
-  if ($('regime')) $('regime').textContent = String(sig.regime || '—').toUpperCase();
-  const titles = {
-    CONFIRM: direction === 'SELL' ? 'VENDA CONFIRMADA' : 'COMPRA CONFIRMADA',
-    WATCH: 'OPORTUNIDADE EM FORMAÇÃO', SEARCHING: 'ANALISANDO O MERCADO', NO_TRADE: 'NÃO ENTRAR AGORA', WAIT: 'AGUARDANDO CONFIRMAÇÕES', IDLE: 'AGUARDANDO CONEXÃO'
-  };
-  if ($('scannerState')) $('scannerState').textContent = titles[state] || 'AGUARDANDO';
-  let hint = sig.hint || 'Aguardando dados suficientes.';
-  if (!s.asset || s.price == null) hint = 'Estou procurando o ativo e a cotação reais da CasaTrade. Ainda não vou gerar entrada.';
-  else if (configuredPrefs(prefs) && !aligned(s)) hint = 'Antes de analisar, preciso confirmar que valor, vela e expiração estão iguais na CasaTrade.';
-  else if (sig.provisional) hint = 'Já estou vendo movimento da plataforma, mas o feed ainda está sendo validado. Não vou inventar uma entrada.';
-  else if (state === 'SEARCHING') hint = `Analisando ${s.asset} em ${s.timeframe || 'tempo não identificado'} com dados recebidos da plataforma.`;
-  else if (state === 'WATCH') hint = 'Existe movimento interessante, mas ainda faltam confirmações. Aguarde.';
-  else if (state === 'CONFIRM') hint = `${direction === 'SELL' ? 'Venda' : 'Compra'} confirmada pelo motor. A direção correta foi liberada logo abaixo.`;
-  else if (state === 'NO_TRADE') hint = 'As condições atuais não passaram pelos filtros. Melhor não entrar agora.';
-  if ($('scannerHint')) $('scannerHint').textContent = hint;
-  if ($('warmupText')) $('warmupText').textContent = current >= required ? `${required}/${required} velas • análise pronta` : `${current}/${required} velas • faltam ${Math.max(0, required - current)}`;
-  if ($('warmupLabel')) $('warmupLabel').textContent = current ? 'Histórico real disponível' : 'Procurando histórico da plataforma';
-  if ($('warmupBar')) $('warmupBar').style.width = `${pct}%`;
-  if (scoreGauge) { scoreGauge.style.setProperty('--score', `${score}%`); scoreGauge.className = `score-orb ${state === 'CONFIRM' ? (direction === 'SELL' ? 'sell' : 'buy') : ''}`; }
-  const command = $('signalCommand'); if (command) command.className = `signal-command ${tone}`;
-  const badge = $('signalBadge'); if (badge) { badge.className = `signal-badge ${tone}`; badge.textContent = state === 'CONFIRM' ? (direction === 'SELL' ? 'VENDA' : 'COMPRA') : state === 'WATCH' ? 'OBSERVAR' : state === 'NO_TRADE' ? 'NÃO ENTRAR' : 'AGUARDAR'; }
-  if ($('structureState')) $('structureState').textContent = sig.provisional ? 'VALIDANDO' : 'VALIDADOS';
-  if ($('signalCommandSub')) $('signalCommandSub').textContent = state === 'CONFIRM' ? `Entrada validada • ${sig.confirmations || 'critérios confirmados'}.` : sig.provisional ? 'Feed em validação: o ATS acompanha o mercado, mas não libera entrada confirmada.' : 'O ATS aguarda confluência e qualidade mínima antes de confirmar.';
-  renderReasons(sig);
+function renderHistory(s={}){const rows=Array.isArray(s.signalHistory)?s.signalHistory:[];if(!$('signalHistory'))return;$('signalHistory').innerHTML=rows.length?rows.slice(0,10).map(x=>`<div class="history-row"><span class="history-dir ${x.direction==='SELL'?'sell':'buy'}">${esc(x.direction==='SELL'?'VENDA':'COMPRA')}</span><div><b>${esc(x.asset||'—')} • nota ${Math.round(Number(x.ai?.score??x.score||0))}</b><small>${esc(x.timeframe||'AUTO')} • ${esc(x.expiration||'AUTO')} • ${esc(x.regime||'—')}</small></div><time>${new Date(x.at).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}</time></div>`).join(''):'<div class="empty-state">Nenhum sinal confirmado nesta instalação ainda.</div>'}
 
-  const canTrade = state === 'CONFIRM' && !sig.provisional && aligned(s) && activeLicense(s);
-  if (buyBtn) buyBtn.disabled = !(canTrade && direction === 'BUY');
-  if (sellBtn) sellBtn.disabled = !(canTrade && direction === 'SELL');
-  document.querySelector('.execution-panel')?.classList.toggle('signal-ready', canTrade);
-  document.querySelector('.execution-panel')?.classList.toggle('sell-ready', canTrade && direction === 'SELL');
-  if ($('entryPreviewTitle')) $('entryPreviewTitle').textContent = canTrade ? `${direction === 'SELL' ? 'VENDA' : 'COMPRA'} liberada em ${s.asset || 'ativo'}` : 'Nenhuma entrada liberada';
-  if ($('entryPreviewText')) $('entryPreviewText').textContent = canTrade ? `${s.timeframe || '—'} • expiração ${s.expiration || '—'} • score ${Math.round(score)}. Confirmação final manual na plataforma.` : 'Continue acompanhando. Os botões só são liberados quando os dados e o sinal estão confirmados.';
-  if ($('entryPreviewIcon')) $('entryPreviewIcon').textContent = canTrade ? (direction === 'SELL' ? '▼' : '▲') : '◎';
-  if ($('manualStatus') && s.tradeIntent?.status !== 'prepared') $('manualStatus').textContent = canTrade ? 'Clique apenas na direção liberada. O ATS vai localizar e destacar o controle correspondente na CasaTrade.' : 'A extensão não executa ordem financeira automaticamente; a confirmação final continua manual.';
-}
+function renderBacktest(r={}){if(!$('backtestResult'))return;if(!r?.ok){$('backtestResult').innerHTML=`<div class="empty-state">${r?.error==='insufficient_history'?`Histórico insuficiente: ${r.available||0}/${r.required||32} velas.`:'Clique em RODAR BACKTEST para testar o histórico capturado.'}</div>`;return}const p=r.profiles||{},m=p.moderate||{};$('backtestResult').innerHTML=`<div class="metric-grid"><div class="metric"><span>TAXA DE ACERTO</span><b>${m.winRate==null?'—':`${m.winRate}%`}</b></div><div class="metric"><span>LUCRO SIMULADO</span><b>${m.profitUnits??0} u</b></div><div class="metric"><span>DRAWDOWN MÁX.</span><b>${m.maxDrawdownUnits??0} u</b></div></div><div class="profile-results">${[['conservative','Conservador'],['moderate','Moderado'],['aggressive','Agressivo']].map(([k,label])=>{const x=p[k]||{};return`<div class="profile-row"><b>${label}</b><span>${x.trades||0} sinais</span><span>${x.winRate==null?'—':`${x.winRate}%`}</span><span>${x.profitUnits??0} u</span></div>`}).join('')}</div><div class="profile-results"><div class="profile-row"><b>Sequências</b><span>Melhor ${m.bestWinStreak||0}W</span><span>Pior ${m.worstLossStreak||0}L</span><span>${r.candles} velas</span></div></div>`}
+function renderWeekly(r={}){const x=r.report||r;if(!$('weeklyReport'))return;$('weeklyReport').innerHTML=`<div class="weekly-message">${esc(x.message||'Ainda não há dados suficientes para esta semana.')}</div><div class="metric-grid" style="margin-top:8px"><div class="metric"><span>SINAIS</span><b>${x.totalSignals??0}</b></div><div class="metric"><span>ACERTO</span><b>${x.winRate==null?'—':`${x.winRate}%`}</b></div><div class="metric"><span>NOTA MÉDIA</span><b>${x.averageScore??'—'}</b></div></div>`}
 
-function renderHistory(s = {}) {
-  const rows = Array.isArray(s.signalHistory) ? s.signalHistory : [];
-  if (!$('signalHistory')) return;
-  $('signalHistory').innerHTML = rows.length ? rows.slice(0, 8).map(x => `<div class="history-row"><span class="history-dir ${x.direction === 'SELL' ? 'sell' : 'buy'}">${x.direction === 'SELL' ? 'VENDA' : 'COMPRA'}</span><div><b>${esc(x.asset || '—')} • score ${Math.round(Number(x.score || 0))}</b><small>${esc(x.timeframe || '—')} • exp. ${esc(x.expiration || '—')} • ${esc(x.regime || '—')}</small></div><time>${new Date(x.at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</time></div>`).join('') : '<div class="empty-state">Nenhum sinal confirmado nesta instalação ainda.</div>';
-}
+function render(s={}){lastState=s;const online=fresh(s),net=s.diagnostics?.network||{},ws=Number(net.connections?.ws)||0,assetCount=s.marketCatalog?.assets?.length||Number(net.candidateCount)||0,structured=!!s.capabilities?.structuredQuotes,quality=Math.round(Number(net.feedQuality??s.telemetry?.feedQuality??0)),latency=num(s.telemetry?.latency)??(s.serverTime&&Date.now()-Number(s.serverTime)>=0?Date.now()-Number(s.serverTime):null),licensed=activeLicense(s),paused=!!settingsCache.runtimePaused;if($('liveBadge')){$('liveBadge').className=`live-badge ${online?'online':'offline'}`;$('liveBadge').querySelector('span').textContent=online?'CONECTADO':'OFFLINE'}if($('platformPill')){$('platformPill').className=`pill ${online?'online':''}`;$('platformPill').textContent=online?String(s.platformName||'CasaTrade').toUpperCase():'AGUARDANDO'}if($('asset'))$('asset').textContent=s.asset||'—';if($('price'))$('price').textContent=s.price??'—';const instrument=s.instrumentType&&s.instrumentType!=='unknown'?String(s.instrumentType).toUpperCase():null,market=s.marketType&&s.marketType!=='unknown'?String(s.marketType).toUpperCase():null;if($('marketType'))$('marketType').textContent=[instrument,market].filter(Boolean).join(' • ')||'NÃO IDENTIFICADO';if($('timeframe'))$('timeframe').textContent=s.timeframe||'NÃO IDENTIFICADO';if($('expiration'))$('expiration').textContent=s.expiration||'NÃO IDENTIFICADO';if($('latency'))$('latency').textContent=latency==null?'—':`${Math.max(0,Math.round(latency))} ms`;if($('quality'))$('quality').textContent=online?`${quality||25}/100`:'—';if($('feedMode'))$('feedMode').textContent=online?(structured?'WEBSOCKET VALIDADO':ws?'WS EM VALIDAÇÃO':assetCount?'DOM EM VALIDAÇÃO':'MAPEANDO'):'OFFLINE';if($('feedHealth'))$('feedHealth').textContent=online?(structured?'ESTRUTURADO':ws?`WS • ${assetCount} ativos`:assetCount?`${assetCount} ativos • DOM`:'MAPEANDO'):'OFFLINE';if($('platformRail'))$('platformRail').textContent=online?'ONLINE':'OFFLINE';if($('feedRail'))$('feedRail').textContent=online?(structured?'VALIDADO':ws?'MAPEANDO WS':assetCount?'DOM ATIVO':'AGUARDANDO'):'SEM DADOS';if($('scannerRail'))$('scannerRail').textContent=paused?'PAUSADO':s.scanner==='scanning'?'ATIVA':'PARADA';if($('telemetryHealth'))$('telemetryHealth').textContent=latency==null?'—':`${Math.max(0,Math.round(latency))} ms`;setDot('platformDot',online);setDot('feedDot',online&&(ws>0||assetCount>0||structured));setDot('scannerDot',s.scanner==='scanning'&&!paused);setDot('telemetryDot',latency!=null&&latency<1500);if($('pauseAllBtn')){$('pauseAllBtn').classList.toggle('active',paused);$('pauseAllBtn').textContent=paused?'RETOMAR':'PAUSAR TUDO'}connectBtn?.classList.toggle('connecting',s.connection==='connecting'||requested);if($('connectLabel'))$('connectLabel').textContent=online?'RECONECTAR CASATRADE':s.connection==='connecting'||requested?'CONECTANDO...':'CONECTAR CASATRADE';const canStart=online&&licensed&&configuredPrefs(prefs)&&aligned(s)&&!paused;if(toggleBtn){toggleBtn.disabled=s.scanner==='scanning'?false:!canStart;toggleBtn.classList.toggle('active',s.scanner==='scanning');if($('toggleLabel'))$('toggleLabel').textContent=s.scanner==='scanning'?'PAUSAR ANÁLISE':canStart?'INICIAR ANÁLISE':'SINCRONIZE PARA INICIAR'}renderLicense(s);renderPlatformSync(s);renderRisk(s);renderSignal(s);renderIntelligence(s);renderCatalog(s);renderHistory(s);if(s.backtest)renderBacktest(s.backtest);autoConnect(s)}
 
-function render(s = {}) {
-  lastState = s;
-  const online = fresh(s);
-  const platform = s.platformName || 'CasaTrade';
-  const age = s.lastSeen ? Date.now() - s.lastSeen : null;
-  const net = s.diagnostics?.network || {};
-  const dom = s.diagnostics?.domCatalog || {};
-  const ws = Number(net.connections?.ws || 0);
-  const assetCount = s.marketCatalog?.assets?.length || Number(net.candidateCount || 0) || Number(dom.assetCount || 0);
-  const structured = !!s.capabilities?.structuredQuotes;
-  const quality = Math.max(Number(net.feedQuality || 0), Number(s.diagnostics?.networkQuality || 0), Number(s.telemetry?.feedQuality || 0));
-  const licensed = activeLicense(s);
-  const lastSyncSuccess = Number(s.telemetry?.lastSyncSuccess || 0);
-  const telemetryRecent = lastSyncSuccess > 0 && Date.now() - lastSyncSuccess < 20000;
-  const telemetryError = s.telemetry?.lastSyncError;
+function ensureAudio(){if(audioCtx)return audioCtx;try{audioCtx=new AudioContext();return audioCtx}catch{return null}}
+function beep(kind='watch'){if(!features.soundAlerts||settingsCache.runtimePaused)return;const ctx=ensureAudio();if(!ctx)return;const run=()=>{const osc=ctx.createOscillator(),gain=ctx.createGain();osc.connect(gain);gain.connect(ctx.destination);osc.type='sine';osc.frequency.value=kind==='confirm'?880:kind==='sell'?620:520;gain.gain.setValueAtTime(.0001,ctx.currentTime);gain.gain.exponentialRampToValueAtTime(kind==='confirm'?0.09:0.045,ctx.currentTime+.015);gain.gain.exponentialRampToValueAtTime(.0001,ctx.currentTime+(kind==='confirm'?.28:.16));osc.start();osc.stop(ctx.currentTime+(kind==='confirm'?.3:.18))};if(ctx.state==='suspended')ctx.resume().then(run).catch(()=>{});else run()}
+function maybeAlert(s={}){const sig=s.signal||{};if(!['WATCH','CONFIRM'].includes(sig.state)||settingsCache.runtimePaused)return;const key=`${sig.state}|${sig.direction}|${s.asset}|${Math.round(Number(sig.ai?.score??sig.score||0))}`;if(key===lastAlertKey)return;lastAlertKey=key;const kind=sig.state==='CONFIRM'?(sig.direction==='SELL'?'sell':'confirm'):'watch';if(features.pulseAlerts!==false){const hero=document.querySelector('.market-hero');hero?.classList.remove('signal-pulse','confirm','sell');requestAnimationFrame(()=>{hero?.classList.add('signal-pulse',kind==='sell'?'sell':'confirm');setTimeout(()=>hero?.classList.remove('signal-pulse','confirm','sell'),2300)})}beep(kind)}
 
-  if ($('liveBadge')) { $('liveBadge').className = `live-badge ${online ? 'online' : 'offline'}`; $('liveBadge').querySelector('span').textContent = online ? 'AO VIVO' : s.connection === 'connecting' ? 'CONECTANDO' : 'OFFLINE'; }
-  if ($('platformPill')) { $('platformPill').className = `pill ${online ? 'online' : ''}`; $('platformPill').textContent = online ? platform.toUpperCase() : s.connection === 'connecting' ? 'CONECTANDO' : 'AGUARDANDO'; }
-  if ($('asset')) $('asset').textContent = s.asset || '—';
-  if ($('price')) $('price').textContent = s.price == null ? '—' : String(s.price);
-  const instrument = s.instrumentType && s.instrumentType !== 'unknown' ? String(s.instrumentType).toUpperCase() : null;
-  const market = s.marketType === 'otc' ? 'OTC' : s.marketType && s.marketType !== 'unknown' ? String(s.marketType).toUpperCase() : null;
-  if ($('marketType')) $('marketType').textContent = [instrument, market].filter(Boolean).join(' • ') || 'NÃO IDENTIFICADO';
-  if ($('timeframe')) $('timeframe').textContent = s.timeframe || s.analysisTimeframe || 'NÃO IDENTIFICADO';
-  if ($('expiration')) $('expiration').textContent = s.expiration || s.targetExpiration || 'NÃO IDENTIFICADO';
-  if ($('latency')) $('latency').textContent = online ? (s.telemetry?.latency != null ? `${Math.round(s.telemetry.latency)} ms` : age != null ? `${Math.round(age)} ms` : '—') : '—';
-  if ($('quality')) $('quality').textContent = online ? `${Math.round(quality || (ws ? 35 : 20))}/100` : '—';
-  if ($('feedMode')) $('feedMode').textContent = online ? (structured ? 'WEBSOCKET' : ws ? 'WS • VALIDANDO' : assetCount ? 'DOM • PROVISÓRIO' : 'MAPEANDO') : 'OFFLINE';
-  if ($('feedHealth')) $('feedHealth').textContent = online ? (structured ? `WS ESTRUTURADO • ${assetCount} ativos` : ws ? `WS ${ws} • ${assetCount} ativos` : assetCount ? `${assetCount} ativos • DOM` : 'MAPEANDO') : 'OFFLINE';
-  if ($('platformRail')) $('platformRail').textContent = online ? platform.toUpperCase() : 'OFFLINE';
-  if ($('feedRail')) $('feedRail').textContent = online ? (structured ? 'ESTRUTURADO' : ws ? 'VALIDANDO WS' : assetCount ? 'DOM ATIVO' : 'AGUARDANDO') : 'SEM DADOS';
-  if ($('scannerRail')) $('scannerRail').textContent = s.scanner === 'scanning' ? 'ATIVA' : 'PARADA';
-  if ($('telemetryHealth')) $('telemetryHealth').textContent = licensed ? (telemetryRecent ? 'OK' : telemetryError ? 'ERRO' : 'CONECTANDO') : 'AGUARDANDO';
-  setDot('platformDot', online); setDot('feedDot', online && (ws > 0 || assetCount > 0 || structured)); setDot('scannerDot', s.scanner === 'scanning'); setDot('telemetryDot', telemetryRecent);
+function tfMs(raw){const s=String(raw||'M1').toUpperCase();let m=s.match(/^S(\d+)$/);if(m)return Number(m[1])*1000;m=s.match(/^M(\d+)$/);if(m)return Number(m[1])*60000;m=s.match(/^H(\d+)$/);if(m)return Number(m[1])*3600000;return 60000}
+function updateCountdown(){const tf=lastState.analysisTimeframe||lastState.signal?.timeframe||lastState.timeframe||'M1',ms=tfMs(tf),left=Math.max(0,Math.ceil(Date.now()/ms)*ms-Date.now()),sec=Math.ceil(left/1000),min=Math.floor(sec/60),rem=sec%60;if($('entryCountdown'))$('entryCountdown').textContent=min?`${min}:${String(rem).padStart(2,'0')}`:`0:${String(rem).padStart(2,'0')}`}
 
-  if (connectBtn) { connectBtn.classList.toggle('connecting', s.connection === 'connecting' || requested); $('connectLabel').textContent = online ? 'RECONECTAR CASATRADE' : s.connection === 'connecting' || requested ? 'CONECTANDO...' : 'CONECTAR CASATRADE'; }
-  if (toggleBtn) { toggleBtn.disabled = !online || !licensed || !configuredPrefs(prefs) || !aligned(s); toggleBtn.classList.toggle('active', s.scanner === 'scanning'); $('toggleLabel').textContent = s.scanner === 'scanning' ? 'PAUSAR ANÁLISE' : 'INICIAR ANÁLISE'; }
+async function loadSettings(){const{settings={}}=await chrome.storage.local.get('settings');settingsCache=settings;prefs=settings.scanPreferences||{};riskSettings={profile:'moderate',bankroll:0,dailyTarget:0,dailyProfit:0,consecutiveLosses:0,bankHistory:[],...(settings.risk||{})};features={chartLines:true,emaOverlay:true,supportResistance:true,trendLine:true,soundAlerts:true,pulseAlerts:true,nightMode:false,...(settings.features||{})};if(document.activeElement!==amountInput&&amountInput)amountInput.value=num(prefs.tradeAmount??prefs.stake)>0?String(prefs.tradeAmount??prefs.stake).replace('.',','):'';if(tfSelect){ensureOption(tfSelect,prefs.timeframe);tfSelect.value=prefs.timeframe||'AUTO'}if(expSelect){ensureOption(expSelect,prefs.expiration);expSelect.value=prefs.expiration||'AUTO'}if($('riskProfile'))$('riskProfile').value=riskSettings.profile||'moderate';if(document.activeElement!==$('bankroll')&&$('bankroll'))$('bankroll').value=num(riskSettings.bankroll)>0?String(riskSettings.bankroll).replace('.',','):'';if(document.activeElement!==$('dailyTarget')&&$('dailyTarget'))$('dailyTarget').value=num(riskSettings.dailyTarget)>0?String(riskSettings.dailyTarget).replace('.',','):'';const checks={chartLinesToggle:'chartLines',emaOverlayToggle:'emaOverlay',supportToggle:'supportResistance',trendToggle:'trendLine',soundToggle:'soundAlerts',pulseToggle:'pulseAlerts'};for(const[id,key]of Object.entries(checks))if($(id))$(id).checked=features[key]!==false;if($('onlyAToggle'))$('onlyAToggle').checked=!!riskSettings.onlyA;if($('scalpingToggle'))$('scalpingToggle').checked=!!riskSettings.scalpingMode;document.body.classList.toggle('night-comfort',!!features.nightMode)}
+async function saveSettingsPatch(patch={}){const{settings={}}=await chrome.storage.local.get('settings');const next={...settings,...patch};await chrome.storage.local.set({settings:next});settingsCache=next;return next}
+async function savePrefs(){const amount=Number(String(amountInput?.value||'').replace(',','.'));const{settings={}}=await chrome.storage.local.get('settings');prefs={...(settings.scanPreferences||{}),tradeAmount:Number.isFinite(amount)&&amount>0?amount:null,stake:Number.isFinite(amount)&&amount>0?amount:null,timeframe:tfSelect?.value||'AUTO',expiration:expSelect?.value||'AUTO'};await chrome.storage.local.set({settings:{...settings,scanPreferences:prefs}})}
+async function saveRisk(fromBank=false){const{settings={}}=await chrome.storage.local.get('settings'),old=settings.risk||{},bank=Number(String($('bankroll')?.value||'').replace(',','.')),target=Number(String($('dailyTarget')?.value||'').replace(',','.')),profileId=$('riskProfile')?.value||'moderate',p=profileMap[profileId]||profileMap.moderate;let history=Array.isArray(old.bankHistory)?old.bankHistory.slice(-199):[];if(fromBank&&Number.isFinite(bank)&&bank>=0&&Number(history.at(-1)?.balance)!==bank)history.push({at:Date.now(),balance:bank,source:'manual'});riskSettings={...old,profile:profileId,bankroll:Number.isFinite(bank)&&bank>=0?bank:0,dailyTarget:Number.isFinite(target)&&target>=0?target:0,maxConsecutiveLosses:p.maxLosses,maxSignals:p.maxSignals,cooldownMs:p.cooldownMs,bankHistory:history};await chrome.storage.local.set({settings:{...settings,risk:riskSettings}})}
+async function saveFeatures(){const{settings={}}=await chrome.storage.local.get('settings');features={...(settings.features||{}),chartLines:!!$('chartLinesToggle')?.checked,emaOverlay:!!$('emaOverlayToggle')?.checked,supportResistance:!!$('supportToggle')?.checked,trendLine:!!$('trendToggle')?.checked,soundAlerts:!!$('soundToggle')?.checked,pulseAlerts:!!$('pulseToggle')?.checked,nightMode:!!features.nightMode};riskSettings={...(settings.risk||{}),onlyA:!!$('onlyAToggle')?.checked,scalpingMode:!!$('scalpingToggle')?.checked};await chrome.storage.local.set({settings:{...settings,features,risk:riskSettings}});document.body.classList.toggle('night-comfort',!!features.nightMode)}
 
-  renderLicense(s);
-  renderPlatformSync(s);
-  renderSignal(s);
-  renderIntelligence(s);
-  renderCatalog(s);
-  renderHistory(s);
-  if (s.tradeIntent?.status === 'prepared' && $('manualStatus')) {
-    const h = s.tradeIntent.handoff;
-    $('manualStatus').textContent = h?.found ? `${s.tradeIntent.direction === 'SELL' ? 'VENDA' : 'COMPRA'} preparada • controle localizado e destacado na plataforma.` : 'Entrada preparada • confirme manualmente na CasaTrade.';
-  }
-  if (!online && lastError && $('scannerHint')) $('scannerHint').textContent = lastError;
-}
+async function syncNow(){if(syncBusy)return;syncBusy=true;try{await savePrefs();const r=await chrome.runtime.sendMessage({type:'ATS_SYNC_PLATFORM_PREFERENCES'}).catch(()=>({ok:false,error:'sync_failed'}));setTimeout(()=>chrome.runtime.sendMessage({type:'ATS_READ_PLATFORM_CONTROLS'}).catch(()=>{}),250);return r}finally{syncBusy=false}}
+function scheduleSync(){clearTimeout(syncTimer);syncTimer=setTimeout(()=>syncNow().then(getState),350)}
+async function getState(){const[state,stored]=await Promise.all([chrome.runtime.sendMessage({type:'ATS_GET_STATE'}).catch(()=>({})),chrome.storage.local.get(['atsTelemetryStatus',LAST_VALID_LICENSE_KEY]).catch(()=>({}))]);const status=stored.atsTelemetryStatus||{},license=effectiveLicense(state?.license||{},stored[LAST_VALID_LICENSE_KEY]||null);render({...state,license,telemetry:{...(state?.telemetry||{}),...status}})}
+async function autoConnect(s={}){if(settingsCache.runtimePaused||!activeLicense(s)||fresh(s)||Date.now()-autoConnectAt<15000)return;autoConnectAt=Date.now();const r=await chrome.runtime.sendMessage({type:'ATS_CONNECT_ACTIVE_TAB'}).catch(()=>null);if(r?.ok){setTimeout(()=>syncNow(),700);setTimeout(()=>getState(),1300)}}
 
-function tfMs(raw) {
-  const s = String(raw || 'M1').toUpperCase();
-  let m = s.match(/^S(\d+)$/); if (m) return Number(m[1]) * 1000;
-  m = s.match(/^M(\d+)$/); if (m) return Number(m[1]) * 60000;
-  m = s.match(/^H(\d+)$/); if (m) return Number(m[1]) * 3600000;
-  return 60000;
-}
-function updateCountdown() {
-  const tf = lastState.timeframe || lastState.analysisTimeframe || lastState.signal?.timeframe || 'M1';
-  const ms = tfMs(tf);
-  const left = Math.max(0, Math.ceil(Date.now() / ms) * ms - Date.now());
-  const sec = Math.ceil(left / 1000), min = Math.floor(sec / 60), rem = sec % 60;
-  if ($('entryCountdown')) $('entryCountdown').textContent = `${min}:${String(rem).padStart(2, '0')}`;
-}
+connectBtn?.addEventListener('click',async()=>{requested=true;render(lastState);const r=await chrome.runtime.sendMessage({type:'ATS_CONNECT_ACTIVE_TAB'}).catch(()=>({ok:false}));requested=false;if(r?.ok){setTimeout(()=>syncNow(),550)}await getState()});
+toggleBtn?.addEventListener('click',async()=>{const enabled=lastState.scanner!=='scanning';if(enabled&&(!configuredPrefs(prefs)||!aligned(lastState)||settingsCache.runtimePaused)){renderPlatformSync(lastState);return}await chrome.runtime.sendMessage({type:'ATS_SET_SCANNER',enabled}).catch(()=>{});await getState()});
+$('syncPlatformBtn')?.addEventListener('click',async()=>{await syncNow();await getState()});
+buyBtn?.addEventListener('click',async()=>{if(lastState.signal?.state!=='CONFIRM'||lastState.signal?.direction!=='BUY'||lastState.signal?.provisional)return;await chrome.runtime.sendMessage({type:'ATS_PREPARE_TRADE',direction:'BUY'}).catch(()=>{});await getState()});
+sellBtn?.addEventListener('click',async()=>{if(lastState.signal?.state!=='CONFIRM'||lastState.signal?.direction!=='SELL'||lastState.signal?.provisional)return;await chrome.runtime.sendMessage({type:'ATS_PREPARE_TRADE',direction:'SELL'}).catch(()=>{});await getState()});
+$('activateLicense')?.addEventListener('click',async()=>{const key=$('licenseKey')?.value?.trim();if(!key)return;const r=await chrome.runtime.sendMessage({type:'ATS_ACTIVATE_LICENSE',key}).catch(()=>({ok:false}));if(r?.ok&&$('licenseKey'))$('licenseKey').value='';await getState()});
+$('settingsBtn')?.addEventListener('click',()=>chrome.runtime.openOptionsPage());
+$('pauseAllBtn')?.addEventListener('click',async()=>{const paused=!settingsCache.runtimePaused;await saveSettingsPatch({runtimePaused:paused});if(paused)await chrome.runtime.sendMessage({type:'ATS_SET_SCANNER',enabled:false}).catch(()=>{});await loadSettings();await getState()});
+$('themeBtn')?.addEventListener('click',async()=>{features.nightMode=!features.nightMode;await saveFeatures();await getState()});
+$('riskProfile')?.addEventListener('change',async()=>{await saveRisk(false);if(!num(prefs.tradeAmount)&&currentSuggestedStake()){amountInput.value=String(currentSuggestedStake()).replace('.',',');await savePrefs()}await getState()});
+$('bankroll')?.addEventListener('blur',async()=>{await saveRisk(true);if(!num(prefs.tradeAmount)&&currentSuggestedStake()){amountInput.value=String(currentSuggestedStake()).replace('.',',');await savePrefs()}await getState()});
+$('dailyTarget')?.addEventListener('change',async()=>{await saveRisk(false);await getState()});
+for(const id of['chartLinesToggle','emaOverlayToggle','supportToggle','trendToggle','soundToggle','pulseToggle','onlyAToggle','scalpingToggle'])$(id)?.addEventListener('change',async e=>{if(id==='scalpingToggle'&&e.target.checked&&!/^(S5|S15|S30|M1)$/.test(tfSelect.value)){tfSelect.value='M1';await savePrefs();scheduleSync()}await saveFeatures();await getState()});
+amountInput?.addEventListener('change',scheduleSync);amountInput?.addEventListener('blur',scheduleSync);tfSelect?.addEventListener('change',scheduleSync);expSelect?.addEventListener('change',scheduleSync);
+$('runBacktestBtn')?.addEventListener('click',async()=>{const btn=$('runBacktestBtn');btn.disabled=true;btn.textContent='RODANDO...';const r=await chrome.runtime.sendMessage({type:'ATS_RUN_BACKTEST',asset:lastState.asset,timeframe:lastState.analysisTimeframe||lastState.timeframe}).catch(()=>({ok:false,error:'unavailable'}));renderBacktest(r);btn.disabled=false;btn.textContent='RODAR BACKTEST'});
+$('weeklyReportBtn')?.addEventListener('click',async()=>{const r=await chrome.runtime.sendMessage({type:'ATS_GET_WEEKLY_REPORT'}).catch(()=>({ok:false}));if(r?.ok)renderWeekly(r)});
+document.addEventListener('pointerdown',ensureAudio,{once:true});
+chrome.storage.onChanged.addListener(c=>{if(c.settings)loadSettings().then(getState);else if(c.scannerState)setTimeout(getState,35)});
 
-async function getState() {
-  const [state, stored] = await Promise.all([
-    chrome.runtime.sendMessage({ type: 'ATS_GET_STATE' }).catch(() => ({})),
-    chrome.storage.local.get(['atsTelemetryStatus', LAST_VALID_LICENSE_KEY]).catch(() => ({}))
-  ]);
-  const status = stored.atsTelemetryStatus || {};
-  const license = effectiveLicense(state?.license || {}, stored[LAST_VALID_LICENSE_KEY] || null);
-  render({ ...state, license, telemetry: { ...(state?.telemetry || {}), ...status } });
-  return { ...state, license };
-}
-
-async function loadPrefs() {
-  const { settings = {} } = await chrome.storage.local.get('settings');
-  prefs = settings.scanPreferences || {};
-  ensureOption(tfSelect, prefs.timeframe); ensureOption(expSelect, prefs.expiration);
-  if (tfSelect) tfSelect.value = prefs.timeframe || 'AUTO';
-  if (expSelect) expSelect.value = prefs.expiration || 'AUTO';
-  if (amountInput && document.activeElement !== amountInput) amountInput.value = num(prefs.tradeAmount ?? prefs.stake) > 0 ? String(prefs.tradeAmount ?? prefs.stake).replace('.', ',') : '';
-}
-
-async function savePrefs() {
-  const amount = num(String(amountInput?.value || '').replace(',', '.'));
-  const { settings = {} } = await chrome.storage.local.get('settings');
-  const next = {
-    ...(settings.scanPreferences || {}),
-    tradeAmount: amount,
-    stake: amount,
-    timeframe: tfSelect?.value || 'AUTO',
-    expiration: expSelect?.value || 'AUTO',
-    scanScope: settings.scanPreferences?.scanScope || 'all',
-    preflightConfigured: amount != null && amount > 0 && tfSelect?.value !== 'AUTO' && expSelect?.value !== 'AUTO'
-  };
-  prefs = next;
-  await chrome.storage.local.set({ settings: { ...settings, scanPreferences: next } });
-  return next;
-}
-
-async function syncPlatform() {
-  if (syncBusy) return null;
-  syncBusy = true;
-  try {
-    await savePrefs();
-    if ($('platformSyncTitle')) $('platformSyncTitle').textContent = 'Sincronizando com a CasaTrade...';
-    if ($('platformSyncText')) $('platformSyncText').textContent = 'Aplicando valor, vela e expiração e conferindo o resultado na plataforma.';
-    const r = await chrome.runtime.sendMessage({ type: 'ATS_SYNC_PLATFORM_PREFERENCES' }).catch(() => ({ ok: false, error: 'sync_failed' }));
-    setTimeout(getState, 120);
-    return r;
-  } finally { syncBusy = false; }
-}
-
-async function ensureBackendPermission() {
-  try {
-    const origin = `${new URL(PUBLIC_API).origin}/*`;
-    const has = await chrome.permissions.contains({ origins: [origin] });
-    if (has) return { ok: true };
-    const granted = await chrome.permissions.request({ origins: [origin] });
-    return { ok: granted, error: granted ? null : 'permission_denied' };
-  } catch { return { ok: false, error: 'invalid_backend_url' }; }
-}
-
-function connectionError(r = {}) {
-  if (r.error === 'platform_not_registered') return `A página aberta (${r.host || 'desconhecida'}) ainda não está cadastrada.`;
-  if (r.error === 'active_tab_unavailable') return 'Não consegui acessar a aba atual.';
-  return `Não consegui conectar à CasaTrade: ${r.error || 'erro desconhecido'}`;
-}
-
-async function connect() {
-  requested = true; lastError = '';
-  const r = await chrome.runtime.sendMessage({ type: 'ATS_CONNECT_ACTIVE_TAB' }).catch(e => ({ ok: false, error: e?.message || String(e) }));
-  requested = false;
-  if (!r?.ok) lastError = connectionError(r);
-  else setTimeout(() => syncPlatform().catch(() => {}), 550);
-  setTimeout(getState, 180); setTimeout(getState, 900);
-  return r;
-}
-
-async function maybeAutoConnect(state) {
-  if (!activeLicense(state) || fresh(state) || requested || Date.now() - autoConnectAt < 7000) return;
-  autoConnectAt = Date.now();
-  const r = await chrome.runtime.sendMessage({ type: 'ATS_CONNECT_ACTIVE_TAB' }).catch(() => null);
-  if (r?.ok) setTimeout(() => syncPlatform().catch(() => {}), 650);
-}
-
-async function prepare(direction) {
-  const s = await chrome.runtime.sendMessage({ type: 'ATS_GET_STATE' }).catch(() => ({}));
-  if (s.signal?.state !== 'CONFIRM' || s.signal?.direction !== direction || s.signal?.provisional || !aligned(s)) return;
-  const r = await chrome.runtime.sendMessage({ type: 'ATS_PREPARE_TRADE', direction }).catch(e => ({ ok: false, error: e?.message || String(e) }));
-  if ($('manualStatus')) $('manualStatus').textContent = !r?.ok ? 'Não foi possível preparar a ação. Verifique conexão e licença.' : r.intent?.handoff?.found ? `${direction === 'SELL' ? 'VENDA' : 'COMPRA'} preparada e controle destacado na plataforma.` : 'Entrada preparada. Confirme manualmente na plataforma.';
-  getState();
-}
-
-connectBtn?.addEventListener('click', connect);
-$('syncPlatformBtn')?.addEventListener('click', syncPlatform);
-toggleBtn?.addEventListener('click', async () => {
-  const s = await chrome.runtime.sendMessage({ type: 'ATS_GET_STATE' }).catch(() => ({}));
-  if (s.scanner !== 'scanning' && (!configuredPrefs(prefs) || !aligned(s))) {
-    renderPlatformSync(s); $('platformSyncRow')?.scrollIntoView({ behavior: 'smooth', block: 'center' }); return;
-  }
-  const r = await chrome.runtime.sendMessage({ type: 'ATS_SET_SCANNER', enabled: s.scanner !== 'scanning' }).catch(() => ({ ok: false }));
-  if (!r?.ok && r?.error === 'license_required' && $('licenseText')) $('licenseText').textContent = 'Ative uma licença válida para iniciar a análise.';
-  getState();
-});
-buyBtn?.addEventListener('click', () => prepare('BUY'));
-sellBtn?.addEventListener('click', () => prepare('SELL'));
-$('activateLicense')?.addEventListener('click', async () => {
-  const key = $('licenseKey')?.value.trim() || '';
-  if ($('licenseText')) $('licenseText').textContent = 'Validando licença e vinculando este aparelho...';
-  const permission = await ensureBackendPermission();
-  if (!permission.ok) { if ($('licenseText')) $('licenseText').textContent = 'Permissão para acessar o servidor ATS não concedida.'; return; }
-  const r = await chrome.runtime.sendMessage({ type: 'ATS_ACTIVATE_LICENSE', key }).catch(e => ({ ok: false, error: String(e) }));
-  if ($('licenseText')) $('licenseText').textContent = r.ok ? 'Licença ativada e aparelho vinculado com sucesso.' : r.error === 'license_not_found' ? 'Licença não encontrada.' : r.error === 'license_expired' ? 'Licença expirada.' : r.error === 'device_locked' || r.error === 'device_limit_reached' ? 'Esta licença já está vinculada a outro aparelho.' : r.error === 'trial_limit_reached' ? 'O teste já utilizou todos os sinais disponíveis.' : r.error === 'backend_unreachable' ? 'Servidor ATS indisponível no momento.' : `Não foi possível ativar: ${r.error || 'erro desconhecido'}`;
-  const state = await getState();
-  if (r.ok) maybeAutoConnect(state);
-});
-
-const onPreferenceChanged = async () => { await savePrefs(); const s = await getState(); if (s.targetTabId) await syncPlatform(); };
-tfSelect?.addEventListener('change', onPreferenceChanged);
-expSelect?.addEventListener('change', onPreferenceChanged);
-amountInput?.addEventListener('change', onPreferenceChanged);
-amountInput?.addEventListener('blur', onPreferenceChanged);
-$('settingsBtn')?.addEventListener('click', () => chrome.runtime.openOptionsPage());
-chrome.storage.onChanged.addListener(changes => {
-  if (changes.settings) loadPrefs().then(getState);
-  if (changes.scannerState || changes.atsTelemetryStatus || changes[LAST_VALID_LICENSE_KEY]) getState().then(maybeAutoConnect);
-});
-
-async function boot() {
-  await loadPrefs();
-  const state = await getState();
-  maybeAutoConnect(state);
-  chrome.runtime.sendMessage({ type: 'ATS_VALIDATE_LICENSE' }).catch(() => null).then(async () => {
-    const refreshed = await getState();
-    maybeAutoConnect(refreshed);
-  });
-}
-
-boot();
-setInterval(async () => { const s = await getState(); maybeAutoConnect(s); }, 1100);
-setInterval(updateCountdown, 250);
+(async()=>{await loadSettings();await getState();chrome.runtime.sendMessage({type:'ATS_VALIDATE_LICENSE'}).catch(()=>{});setTimeout(()=>getState(),500);setInterval(getState,900);setInterval(updateCountdown,250);updateCountdown();setTimeout(()=>{$('weeklyReportBtn')?.click()},1200)})();
