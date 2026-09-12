@@ -15,7 +15,7 @@ const tf=s=>TIMEFRAMES[frame(s)]||TIMEFRAMES.M1;
 const priceOf=v=>{if(Number.isFinite(v))return Number(v);let s=String(v??'').trim().replace(/\s/g,'').replace(/[^\d,.-]/g,'');if(s.includes(',')&&s.includes('.'))s=s.lastIndexOf(',')>s.lastIndexOf('.')?s.replace(/\./g,'').replace(',','.'):s.replace(/,/g,'');else s=s.replace(',','.');const n=Number(s);return Number.isFinite(n)?n:null};
 const aligned=(direction,a,b)=>direction==='BUY'?a>b:direction==='SELL'?a<b:false;
 const recentFlow=candles=>{const rows=candles.slice(-5);let up=0,down=0,flat=0;for(const c of rows){const o=Number(c?.open),cl=Number(c?.close);if(!Number.isFinite(o)||!Number.isFinite(cl))continue;if(cl>o)up++;else if(cl<o)down++;else flat++}return{count:rows.length,up,down,flat,direction:up===down?null:up>down?'BUY':'SELL'}};
-const aiProfile=risk=>risk?.onlyA?'aplus':risk?.aiMode||risk?.profile==='aggressive'?'aggressive':risk?.profile==='conservative'?'aplus':'balanced';
+const aiProfile=risk=>{if(risk?.onlyA)return'aplus';if(['aggressive','balanced','aplus'].includes(risk?.aiMode))return risk.aiMode;if(risk?.profile==='aggressive')return'aggressive';if(risk?.profile==='conservative')return'aplus';return'balanced'};
 
 const warm=(state,connected,candles,timeframe,targetExpiration,structured)=>({signal:{state:state.scanner==='scanning'?'SEARCHING':'WAIT',score:0,grade:'—',confirmations:'0 / 6',direction:null,timeframe,targetExpiration,hint:!connected?'Aguardando preço válido.':state.scanner!=='scanning'?'Scanner pronto.':`Aquecendo motor • ${Math.min(candles.length,21)}/21 velas ${structured?'validadas':'provisórias'}.`,provisional:!structured,candleCount:candles.length,recentFlow:recentFlow(candles),warmup:{current:Math.min(candles.length,21),required:21},technical:null,ai:null}});
 
@@ -40,7 +40,7 @@ export function processSnapshot(snapshot={},state={},risk={}){
     {label:'Regime identificado',weight:10,passed:regime.type!=='unknown'}
   ];
   const cf=confluence(checks),profile=aiProfile(risk),ai=weightedConfidence({direction:d,profile,structure,indicators:analysis.indicators,candles,confirmations:cf.confirmations,totalConfirmations:cf.total,correlation:risk.correlation||{score:70},news:risk.newsRisk||{unknown:true}});
-  const gate=qualityGate({connected,stale,regime,dataQuality:structured?1:.82}),guard=tradingGuard({...risk,profile:risk.profile||'moderate',requestedStake:risk.tradeAmount});
+  const gate=qualityGate({connected,stale,regime,dataQuality:structured?1:.82}),guard=tradingGuard({...risk,profile:risk.profile||'moderate',requestedStake:risk.requestedStake});
   const candidate={asset:snapshot.asset,direction:d,createdAt:Date.now()},duplicate=!!d&&dedupeSignal(lastSignals.get(k),candidate,risk.cooldownMs||riskProfile(risk.profile).cooldownMs),baseAllowed=gate.allowed&&guard.allowed&&!duplicate&&!ai.blockers.length,scoreReady=!!d&&ai.score>=ai.threshold,provisionalWatch=!structured&&baseAllowed&&scoreReady,allowed=structured&&baseAllowed;
   const finalAnalysis={...analysis,score:ai.score,state:allowed?(scoreReady?'WATCH':'WAIT'):provisionalWatch?'WATCH':'NO_TRADE'};
   const machine=provisionalWatch?{state:'WATCH',label:`${d} • PRÉ-SINAL PROVISÓRIO`}:nextSignalState(state.signal?.state,finalAnalysis,{connected,scanning:state.scanner==='scanning',stale,confirmThreshold:ai.threshold,watchThreshold:Math.max(60,ai.threshold-10)});
