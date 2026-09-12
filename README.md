@@ -2,22 +2,80 @@
 
 Extensão Chrome/Edge Manifest V3 com arquitetura multi-plataforma para captura, normalização e análise de mercado. A CasaTrade é a primeira integração real; o motor de análise continua independente da plataforma.
 
-## Estado atual — extensão v0.9.5
+## Estado atual — extensão v0.9.6
 
-A experiência principal da extensão está em português e foi organizada para uso comercial:
+A experiência principal está em português e segue o fluxo comercial:
 
 1. **Configuração da operação** — valor, tempo da vela e expiração.
-2. **Confirmação na CasaTrade** — a extensão tenta aplicar a configuração na plataforma e lê os controles de volta.
-3. **Mercado em foco** — ativo, cotação, vela e expiração observados na plataforma.
+2. **Sincronização com a CasaTrade** — o ATS tenta aplicar a configuração e lê os controles de volta.
+3. **Mercado em foco** — ativo, cotação, tipo de instrumento, OTC/regular, vela, expiração, fonte e qualidade do feed.
 4. **Decisão do scanner** — aguardando, observando, não entrar ou entrada confirmada.
-5. **Entrada na plataforma** — fica logo abaixo do sinal; somente a direção confirmada é liberada.
-6. Detalhes técnicos, histórico, licença e radar ficam abaixo como informação secundária.
+5. **Entrada** — fica imediatamente abaixo do sinal e somente a direção confirmada é liberada.
+6. **Inteligência de mercado** — ranking automático dos mercados observados, usando confluência quantitativa e contexto de sessão.
+7. **Todos os mercados** — catálogo combinado de ativos encontrados no DOM e no WebSocket.
 
-> Regra de segurança: o ATS não trata o valor escolhido no painel como se ele já estivesse configurado na CasaTrade. Depois de tentar aplicar valor, vela e expiração, ele lê a plataforma novamente. Se não conseguir confirmar os três valores, a análise fica bloqueada/pausada em vez de assumir que deu certo.
+> Regra de segurança: o ATS não trata o valor escolhido no painel como se já estivesse configurado na CasaTrade. Depois de tentar aplicar valor, vela e expiração, ele lê a plataforma novamente. Se não conseguir confirmar os três valores, a análise principal fica bloqueada/pausada.
+
+## Detecção CasaTrade
+
+`src/platforms/registry.js` mantém a configuração por plataforma. A CasaTrade possui candidatos de seletores para ativo, preço, timeframe, expiração e valor, além de padrões para pares convencionais, OTC e símbolos compactos.
+
+`src/content/generic-adapter.js` usa essas informações com fallback semântico. Ele procura elementos visíveis e selecionados, abas/roles, elementos ativos, texto comum e `svg text`. O gráfico pode ser canvas sem texto interno; nesse caso o contexto do ativo vem dos controles/abas da plataforma e o preço deve vir preferencialmente do feed de rede.
+
+A normalização procura representar pares no formato legível, por exemplo:
+
+```text
+EURUSD_otc → EUR/USD (OTC)
+EUR-USD     → EUR/USD
+```
+
+O tipo de instrumento é classificado quando a página/feed expõe informações legíveis como `Blitz`, `Binária`, `Turbo` ou `CFD`.
+
+## WebSocket e feed estruturado
+
+`src/content/network-probe.js` observa as respostas de mercado que a própria página já recebe. O parser suporta JSON direto, mensagens WebSocket em Blob/ArrayBuffer, frames comuns de Socket.IO, linhas `data:` e estruturas aninhadas.
+
+Ele tenta extrair e normalizar:
+
+```text
+asset / symbol / instrument
+price / bid / ask
+open / high / low / close
+timeframe / interval
+expiration / expiry
+timestamp
+payout
+tipo de instrumento
+flag de ativo selecionado
+```
+
+Cada candidato recebe evidências de repetição, recência e confiança. O adapter só promove uma cotação para `structuredQuotes=true` quando existe candidato recente, repetido e compatível com o ativo em foco. WebSocket é priorizado quando disponível; DOM continua como fallback.
+
+O probe também mantém histórico OHLC observado por ativo. Quando esse histórico existe, ele alimenta `CandleBuilder.seed(...)`; candles ausentes não são inventados.
+
+## Todos os mercados / multiativo
+
+O catálogo combina ativos detectados no DOM com ativos recebidos no feed de rede. O `background-augment.js` analisa candidatos estruturados por ativo e mantém `universeAnalysis` e `universeRecommendation`.
+
+Esse radar roda automaticamente quando existe licença ativa e dados disponíveis, sem consumir um sinal comercial apenas por estar classificando mercados. A execução/entrada continua separada e sujeita aos guards do scanner principal.
+
+## Inteligência de mercado e IA
+
+A v0.9.6 possui uma camada automática de **inteligência local**, não uma integração externa de IA fingida. Ela classifica os mercados observados usando:
+
+- score e estado técnico do motor;
+- feed estruturado;
+- histórico real disponível;
+- contexto aproximado de sessão (Ásia, Londres e Nova York) para pares não-OTC;
+- contexto específico de OTC, que não é tratado como se seguisse a sessão oficial do par.
+
+O painel mostra os melhores candidatos automaticamente depois que a extensão conecta e recebe dados.
+
+`marketIntelligence.externalAi = "nao_configurada"` é intencional. Para integrar um modelo externo e notícias/calendário ao vivo, é necessário escolher o provedor e configurar a credencial **somente no backend**. Nenhuma chave de IA deve ser embutida na extensão. Até existir esse provedor, o ATS não inventa notícias, sentimento ou respostas de IA.
 
 ## Fonte de verdade: CasaTrade
 
-O campo de **Valor** deixou de ser um valor independente sem sincronia. A implementação usada é:
+O fluxo de configuração é:
 
 ```text
 Configuração escolhida no ATS
@@ -28,63 +86,18 @@ ATS lê os controles reais da CasaTrade de volta
   ↓
 Só considera sincronizado se os 3 valores coincidirem
   ↓
-Somente então permite iniciar a análise
+Somente então permite iniciar a análise principal
 ```
 
-Essa abordagem foi usada porque o seletor DOM oficial/estável da CasaTrade ainda não foi fornecido. Em vez de inventar um seletor fixo, `src/content/platform-sync.js` procura controles visíveis pelo contexto semântico (`Valor`, `Expiração`, vela/timeframe), roles e opções exibidas. A rotina exclui explicitamente controles financeiros de compra/venda e **falha de forma segura**: se não conseguir localizar e confirmar um controle, não libera a leitura.
-
-Os valores efetivamente lidos da CasaTrade ficam visíveis no painel como:
-
-- Valor na CasaTrade
-- Vela na CasaTrade
-- Expiração na CasaTrade
-
-Assim fica claro quando a plataforma e o ATS estão ou não alinhados.
-
-## Leitura real do mercado
-
-O scanner não deve criar candles históricos fictícios. O fluxo atual é:
-
-```text
-CasaTrade autenticada
-  ↓
-WebSocket / fetch / XHR já recebidos pela própria página
-  ↓
-Network Probe sanitizado
-  ↓
-ativo + cotação + OHLC/timestamp quando existirem no feed
-  ↓
-histórico real observado
-  ↓
-CandleBuilder.seed(...)
-  ↓
-análise quantitativa
-```
-
-`src/content/network-probe.js` procura estruturas de preço e OHLC que já chegaram à página e mantém histórico recente por ativo. Se o feed disponibilizar candles com ativo + OHLC + timestamp de forma legível, esse histórico é usado para aquecer o motor imediatamente. Se não houver histórico utilizável no feed, o ATS continua construindo candles a partir das cotações recebidas; ele não preenche os candles que faltam artificialmente.
-
-Para considerar uma cotação **estruturada**, o ATS exige uma observação recente e repetida do mesmo ativo em WebSocket/fetch/XHR. O `history-adapter.js` valida o ativo em foco contra essa cotação antes de promover `structuredQuotes=true`.
-
-## Últimas velas e contexto recente
-
-Os indicadores continuam usando histórico suficiente para evitar uma decisão baseada em poucas amostras. Quando existe histórico real, o motor também resume as **últimas até 5 velas fechadas**, mostrando quantas foram de alta e quantas de baixa. Esse contexto recente aparece para explicar o movimento atual, mas não substitui sozinho os filtros técnicos nem inventa um sinal.
+`src/content/platform-sync.js` procura controles visíveis por contexto semântico e exclui explicitamente controles financeiros de compra/venda. Se não conseguir localizar e confirmar algum controle, falha de forma segura.
 
 ## Critério técnico atual
 
-Depois de existir histórico suficiente, o motor avalia:
+Depois de existir histórico suficiente, o motor avalia direção quantitativa, EMA 9 x EMA 21, RSI 14, MACD, regime de mercado e força quantitativa. A confluência gera score e grade. O estado `CONFIRM` continua exigindo direção válida, score forte e feed aprovado pelos guards.
 
-- direção quantitativa;
-- EMA 9 x EMA 21;
-- RSI 14;
-- MACD;
-- regime de mercado;
-- força quantitativa.
-
-A confluência gera score e grade. A máquina de estados usa os estados `SEARCHING`, `WATCH`, `WAIT`, `CONFIRM`, `NO_TRADE`, entre outros. O estado `CONFIRM` continua exigindo direção válida, score forte e feed aprovado pelos guards. Score não é probabilidade garantida de acerto.
+Os indicadores usam histórico suficiente e o motor também resume as últimas até 5 velas fechadas para explicar o movimento recente. Score não é probabilidade garantida de acerto.
 
 ## Timeframes e expiração
-
-A extensão suporta, entre outros:
 
 ```text
 Vela / análise:
@@ -94,30 +107,38 @@ Expiração:
 5s, 15s, 30s, 60s, 2m, 5m
 ```
 
-`M2` foi adicionado porque esse período aparece na operação mostrada da CasaTrade. O ATS mostra como **vela real** e **expiração real** os valores lidos de volta da plataforma, não apenas o que foi selecionado no painel.
+O painel mostra como **vela real** e **expiração real** os valores lidos da plataforma, não apenas os valores escolhidos localmente.
 
 ## Compra e venda
 
-A extensão continua em confirmação manual. Quando há um `CONFIRM` válido e a configuração está sincronizada, somente o botão correspondente ao sinal é liberado:
+A extensão continua em confirmação manual. Quando existe um `CONFIRM` válido, feed aprovado e configuração sincronizada, somente o botão correspondente é liberado:
 
 ```text
-COMPRA confirmada → libera PREPARAR COMPRA
-VENDA confirmada  → libera PREPARAR VENDA
+COMPRA confirmada → libera COMPRA
+VENDA confirmada  → libera VENDA
 sem confirmação   → os dois permanecem bloqueados
 ```
 
 O handoff foca a aba da CasaTrade, localiza e destaca o controle correspondente. **A extensão não executa o clique financeiro final nesta versão.**
 
+## Privacidade
+
+O investigador de feed observa somente respostas entregues à própria página. Ele não coleta cookies, headers de autenticação, corpos de requisição, bearer tokens, passwords ou campos de sessão. Campos com nomes relacionados a autenticação/segredo são ignorados.
+
+## Licença
+
+Licenciamento comercial é obrigatório também em builds descompactadas. A extensão mantém localmente o último estado válido e revalida em segundo plano. Uma falha temporária de rede/backend não transforma automaticamente uma licença válida em “Ativação necessária”; respostas autoritativas de expiração, bloqueio ou licença inexistente continuam invalidando o acesso.
+
 ## Arquitetura
 
 ```text
-Plataforma aberta na aba atual
+CasaTrade / outra plataforma
   ↓
 Platform Registry
   ↓
 Network Probe + DOM Adapter + Platform Sync
   ↓
-Snapshot / histórico real normalizado
+Catálogo / histórico / snapshot normalizado
   ↓
 CandleBuilder por platformId:asset:timeframe
   ↓
@@ -129,16 +150,16 @@ Quality Gate + Risk Controls + Licença/Quota
   ↓
 Signal State Machine
   ↓
-Side Panel em português
+Side Panel + Radar / Inteligência local
 ```
 
 Pastas principais:
 
 ```text
 src/core/                 lógica pura e orquestração
-src/platforms/            registry e adapters
+src/platforms/            registry e configuração por plataforma
 src/services/             licença e telemetria
-src/content/              captura, sincronização e diagnóstico da plataforma
+src/content/              captura, sincronização e diagnóstico
 src/sidepanel/            terminal principal
 src/admin/                configurações locais da extensão
 backend/                  API Node e licenciamento
@@ -146,45 +167,32 @@ apps/admin-dashboard/     painel administrativo
 apps/customer-portal/     site público e conta do cliente
 ```
 
-## Privacidade da captura
-
-O investigador de feed observa somente dados que a própria página já recebeu. Ele foi construído para não coletar cookies, headers de autenticação, corpos de requisição, query strings, passwords, bearer tokens ou campos de sessão. As chaves que tenham nomes relacionados a autenticação/segredo são ignoradas.
-
-## Licença
-
-Licenciamento comercial é obrigatório também em builds descompactadas. A extensão mantém localmente o último estado de licença válido e revalida em segundo plano. Uma falha temporária de rede/backend não transforma automaticamente uma licença válida em “Ativação necessária”; respostas autoritativas de expiração, bloqueio ou licença inexistente continuam invalidando o acesso.
-
-## Instalação para teste
+## Como testar
 
 1. Baixe ou clone o repositório.
-2. Abra `chrome://extensions`.
-3. Ative **Modo do desenvolvedor**.
-4. Use **Carregar sem compactação** na pasta que contém `manifest.json`.
-5. Abra a CasaTrade e recarregue a página para os content scripts entrarem desde o início.
-6. Abra o Side Panel.
-7. Conecte sua conta/licença.
-8. Escolha valor, vela e expiração.
-9. Clique em **CONECTAR CASATRADE**.
-10. Confirme que o card informa **CasaTrade sincronizada** antes de iniciar a análise.
+2. Abra `chrome://extensions` e ative o modo do desenvolvedor.
+3. Carregue a pasta que contém `manifest.json` ou recarregue a extensão existente.
+4. Recarregue também a CasaTrade para o probe entrar desde `document_start`.
+5. Abra o Side Panel e conecte a conta/licença.
+6. Com a aba da CasaTrade ativa, o ATS tenta conectar automaticamente; o botão manual continua disponível.
+7. Escolha valor, vela e expiração e confira o status **CasaTrade sincronizada**.
+8. No card Mercado em foco, valide ativo, tipo/OTC, preço, vela real, expiração real, fonte e qualidade.
+9. Aguarde o catálogo e a Inteligência de mercado listarem os ativos observados.
+10. Somente quando existir `CONFIRM` válido o botão de COMPRA ou VENDA correspondente será liberado.
 
-## Como cadastrar uma nova plataforma
-
-1. Adicione a plataforma em `src/platforms/registry.js` com `id`, `name`, hosts, padrões/seletores e capabilities.
-2. Adicione os hosts necessários no `manifest.json`.
-3. Implemente apenas os controles específicos que forem realmente necessários no adapter da plataforma.
-4. Mantenha o motor quantitativo independente da corretora.
-
-## Testes
+## Testes automatizados
 
 ```bash
 cd backend
 npm test
 ```
 
-O CI também valida sintaxe dos módulos da extensão, presença do Side Panel único, persistência de licença, sincronização dos controles da plataforma e ausência do antigo `preflight.js` duplicado.
+O CI valida Manifest V3, sintaxe, Side Panel único, captura/sincronização, persistência de licença, ausência dos overlays antigos e testes do produto.
 
-## Limitações que ainda exigem teste autenticado
+## Limitações e calibração
 
-A CasaTrade pode alterar DOM, nomes de classes ou formato das mensagens de rede. Por isso, a sincronização de valor/vela/expiração usa detecção semântica e readback, e bloqueia a análise quando não consegue comprovar o alinhamento. A captura de histórico acelera o aquecimento apenas quando OHLC/timestamp reais estão disponíveis no tráfego observado. Esses pontos precisam ser validados na sessão autenticada real depois de cada mudança relevante da plataforma.
+A CasaTrade pode alterar DOM, classes e formato das mensagens de rede. Por isso a captura usa múltiplas evidências e falha de forma segura quando não consegue provar o dado. A v0.9.6 melhora fortemente a descoberta, mas **o formato exato de uma sessão autenticada da CasaTrade ainda precisa ser validado em teste real**. Se algum controle/feed não for reconhecido, o diagnóstico deve ser usado para calibrar o adapter; não se deve inventar um seletor ou marcar feed como estruturado sem evidência.
 
-Nenhuma taxa de acerto é garantida. Antes de uso real, o motor deve ser acompanhado em demo/forward-test com dados suficientes.
+A inteligência de mercado atual é local/quantitativa. Notícias em tempo real, calendário econômico e análise por modelo externo permanecem pendentes até a escolha/configuração de um provedor backend.
+
+Nenhuma taxa de acerto é garantida. Antes de uso real, faça demo/forward-test com amostra suficiente.
