@@ -52,6 +52,7 @@ async function mergePlatformState(observed = {}, extra = {}) {
       ...extra
     }
   };
+  if (observed.asset) patch.asset = observed.asset;
   if (observed.timeframe) { patch.timeframe = observed.timeframe; patch.analysisTimeframe = observed.timeframe; }
   if (observed.expiration) { patch.expiration = observed.expiration; patch.targetExpiration = observed.expiration; }
   if (observed.amount != null) patch.tradeAmount = observed.amount;
@@ -104,9 +105,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     syncPlatform().then(sendResponse).catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
     return true;
   }
-  if (message?.type === 'ATS_CONNECT_ACTIVE_TAB') {
-    setTimeout(() => syncPlatform().catch(() => {}), 600);
-  }
+  if (message?.type === 'ATS_CONNECT_ACTIVE_TAB') setTimeout(() => syncPlatform().catch(() => {}), 600);
 });
 
 let syncTimer = null;
