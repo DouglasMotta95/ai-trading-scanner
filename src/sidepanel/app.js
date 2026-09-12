@@ -14,7 +14,7 @@ let sessionHistory = [];
 if ($('extensionVersion')) $('extensionVersion').textContent = `v${chrome.runtime.getManifest().version}`;
 
 const num = v => v == null || v === '' ? null : Number.isFinite(Number(v)) ? Number(v) : null;
-const money = v => num(v) == null ? '—' : new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(v));
+const money = v => num(v) == null ? '—' : new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 8 }).format(Number(v));
 const fresh = s => s.connection === 'online' && s.lastSeen && Date.now() - Number(s.lastSeen) < 8000;
 const configuredPrefs = p => {
   const amount = num(p.tradeAmount ?? p.stake);
