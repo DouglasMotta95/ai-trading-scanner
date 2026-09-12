@@ -11,27 +11,19 @@
     "https://ats-control-center-v07-production.up.railway.app/*"
   ],
   "background": { "service_worker": "src/background-entry.js", "type": "module" },
-  "action": {
-    "default_title": "AI Trading Scanner"
-  },
+  "action": { "default_title": "AI Trading Scanner" },
   "options_page": "src/admin/index.html",
   "side_panel": { "default_path": "src/sidepanel/index.html" },
   "content_scripts": [
     {
-      "matches": [
-        "https://*.casatrade.com/*",
-        "https://*.casatrade.io/*"
-      ],
+      "matches": ["https://*.casatrade.com/*", "https://*.casatrade.io/*"],
       "js": ["src/content/network-probe.js"],
       "run_at": "document_start",
       "world": "MAIN"
     },
     {
-      "matches": [
-        "https://*.casatrade.com/*",
-        "https://*.casatrade.io/*"
-      ],
-      "js": ["src/content/network-bridge.js", "src/content/generic-adapter.js", "src/content/platform-sync.js"],
+      "matches": ["https://*.casatrade.com/*", "https://*.casatrade.io/*"],
+      "js": ["src/content/network-bridge.js", "src/content/generic-adapter.js", "src/content/platform-sync.js", "src/content/history-adapter.js"],
       "run_at": "document_start"
     }
   ]
