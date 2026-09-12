@@ -20,7 +20,7 @@ const effectiveLicense = (stateLicense = {}, cachedEntry = null) => {
   if (licenseStillValid(stateLicense)) return stateLicense;
   if (['expired', 'limit', 'device_locked'].includes(String(stateLicense?.status || ''))) return stateLicense;
   const cached = cachedEntry?.license;
-  if (licenseStillValid(cached)) return { ...cached, status: 'active', error: stateLicense?.error || null, syncPending: true };
+  if (licenseStillValid(cached)) return { ...cached, status: 'active', error: null, syncPending: false };
   return stateLicense;
 };
 
@@ -163,13 +163,15 @@ function render(s = {}) {
 }
 
 async function getState() {
-  const [state, stored] = await Promise.all([
-    chrome.runtime.sendMessage({ type: 'ATS_GET_STATE' }).catch(() => ({})),
-    chrome.storage.local.get(LAST_VALID_LICENSE_KEY).catch(() => ({}))
-  ]);
+  // Do not trigger a fresh DOM scan on every 500 ms UI refresh. The CasaTrade
+  // readers write scannerState continuously; the panel should only render it.
+  // This prevents a partial direct scan from overwriting a valid live snapshot.
+  const stored = await chrome.storage.local.get(['scannerState', LAST_VALID_LICENSE_KEY]).catch(() => ({}));
+  const state = stored.scannerState || {};
   const license = effectiveLicense(state?.license || {}, stored[LAST_VALID_LICENSE_KEY] || null);
-  render({ ...state, license });
-  return state;
+  const rendered = { ...state, license };
+  render(rendered);
+  return rendered;
 }
 
 async function autoConnect(force = false) {
@@ -199,7 +201,6 @@ chrome.storage.onChanged.addListener(changes => {
 (async () => {
   await autoConnect(true);
   await getState();
-  chrome.runtime.sendMessage({ type: 'ATS_VALIDATE_LICENSE' }).catch(() => {});
 
   setInterval(() => getState().catch(() => {}), 500);
   setInterval(() => {
