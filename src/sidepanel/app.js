@@ -5,11 +5,12 @@ const tfSelect = $('analysisTimeframe');
 const expSelect = $('targetExpiration');
 const buyBtn = $('prepareBuy');
 const sellBtn = $('prepareSell');
+
 let lastState = {};
 let prefs = {};
-let syncBusy = false;
-let syncTimer = null;
 let sessionHistory = [];
+let syncBusy = false;
+let reconnectBusy = false;
 
 if ($('extensionVersion')) $('extensionVersion').textContent = `v${chrome.runtime.getManifest().version}`;
 
@@ -20,12 +21,14 @@ const configuredPrefs = p => {
   const amount = num(p.tradeAmount ?? p.stake);
   return amount != null && amount > 0 && p.timeframe && p.timeframe !== 'AUTO' && p.expiration && p.expiration !== 'AUTO';
 };
+
 const licenseStillValid = l => {
   if (l?.status !== 'active') return false;
   if (!l.expiresAt) return true;
   const t = Date.parse(l.expiresAt);
   return Number.isFinite(t) && t > Date.now();
 };
+
 const effectiveLicense = (stateLicense = {}, cachedEntry = null) => {
   if (licenseStillValid(stateLicense)) return stateLicense;
   if (['expired', 'limit', 'device_locked'].includes(String(stateLicense?.status || ''))) return stateLicense;
@@ -64,24 +67,30 @@ function renderLicense(s = {}) {
 
 function renderConnection(s = {}) {
   const online = fresh(s) && s.platformId === 'casatrade';
-  const reported = Number(s.telemetry?.feedQuality ?? s.diagnostics?.network?.feedQuality ?? 0);
-  const fallback = online && s.asset && s.price != null ? 42 : 0;
-  const quality = online ? Math.max(0, Math.min(100, Math.round(reported > 0 ? reported : fallback))) : 0;
-  if ($('connectionTitle')) $('connectionTitle').textContent = online ? 'CasaTrade conectada' : 'Não conectado';
+  const quality = online
+    ? Math.max(0, Math.min(100, Math.round(Number(s.telemetry?.feedQuality ?? s.diagnostics?.network?.feedQuality ?? (s.asset && s.price != null ? 65 : 25)))))
+    : 0;
+
+  if ($('connectionTitle')) $('connectionTitle').textContent = online ? 'CasaTrade conectada' : 'Conectando à CasaTrade';
   if ($('connectionBadge')) {
-    $('connectionBadge').textContent = online ? 'CONECTADO' : 'OFFLINE';
-    $('connectionBadge').className = `badge ${online ? 'ok' : 'bad'}`;
+    $('connectionBadge').textContent = online ? 'CONECTADO' : 'CONECTANDO';
+    $('connectionBadge').className = `badge ${online ? 'ok' : 'warn'}`;
   }
-  if ($('connectionText')) $('connectionText').textContent = online ? 'Recebendo dados da aba CasaTrade vinculada.' : 'Plataforma não suportada ou CasaTrade não conectada.';
+  if ($('connectionText')) {
+    $('connectionText').textContent = online
+      ? 'Lendo automaticamente a aba CasaTrade ativa.'
+      : 'Plataforma não suportada ou CasaTrade não conectada.';
+  }
   if ($('feedQuality')) $('feedQuality').textContent = online ? `${quality}/100` : '—';
-  if ($('lastFeed')) $('lastFeed').textContent = online && s.lastSeen ? new Date(s.lastSeen).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—';
+  if ($('lastFeed')) $('lastFeed').textContent = online && s.lastSeen
+    ? new Date(s.lastSeen).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    : '—';
   if ($('connectBtn')) $('connectBtn').textContent = online ? 'RECONECTAR CASATRADE' : 'CONECTAR CASATRADE';
 }
 
 function renderConfig(s = {}) {
   const observed = s.platformControls?.observed || {};
   const online = fresh(s) && s.platformId === 'casatrade';
-  const aligned = !!s.platformControls?.aligned && online;
   const fullyRead = observed.amount != null && !!observed.timeframe && !!observed.expiration;
 
   if (online) {
@@ -97,9 +106,10 @@ function renderConfig(s = {}) {
   }
 
   if ($('syncBadge')) {
-    $('syncBadge').textContent = aligned ? 'SINCRONIZADO' : fullyRead ? 'LIDO' : configuredPrefs(prefs) ? 'VERIFICAR' : 'CONFIGURAR';
-    $('syncBadge').className = `badge ${aligned ? 'ok' : fullyRead || configuredPrefs(prefs) ? 'warn' : ''}`;
+    $('syncBadge').textContent = fullyRead ? 'LIDO' : online ? 'LENDO' : configuredPrefs(prefs) ? 'VERIFICAR' : 'CONFIGURAR';
+    $('syncBadge').className = `badge ${fullyRead ? 'ok' : online || configuredPrefs(prefs) ? 'warn' : ''}`;
   }
+
   if ($('platformObserved')) {
     $('platformObserved').textContent = online
       ? `CasaTrade: ${observed.amount == null ? 'valor não lido' : money(observed.amount)} • ${observed.timeframe || 'vela não lida'} • ${observed.expiration || 'expiração não lida'}`
@@ -108,10 +118,10 @@ function renderConfig(s = {}) {
 }
 
 function signalLabel(sig = {}) {
-  if (sig.state === 'CONFIRM') return sig.direction === 'SELL' ? 'VENDA CONFIRMADA' : 'COMPRA CONFIRMADA';
-  if (sig.state === 'WATCH') return 'CONFLUÊNCIA';
-  if (sig.state === 'SEARCHING') return 'AGUARDANDO VELAS';
-  if (sig.state === 'NO_TRADE') return 'NÃO ENTRAR';
+  if (sig.state === 'CONFIRM' && sig.direction === 'BUY') return 'PRÓXIMA VELA: ALTA';
+  if (sig.state === 'CONFIRM' && sig.direction === 'SELL') return 'PRÓXIMA VELA: BAIXA';
+  if (sig.state === 'SEARCHING') return 'LENDO VELAS';
+  if (sig.state === 'NO_TRADE') return 'SEM DIREÇÃO CLARA';
   return 'AGUARDANDO';
 }
 
@@ -119,22 +129,30 @@ function renderSignal(s = {}) {
   const online = fresh(s) && s.platformId === 'casatrade';
   const sig = online ? (s.signal || {}) : {};
   const label = signalLabel(sig);
+
   if ($('signalTitle')) $('signalTitle').textContent = label;
   if ($('signalBadge')) {
-    $('signalBadge').textContent = sig.state === 'CONFIRM' ? sig.direction || 'CONFIRMADO' : sig.state === 'WATCH' ? 'CONFLUÊNCIA' : 'AGUARDANDO';
-    $('signalBadge').className = `badge ${sig.state === 'CONFIRM' ? 'ok' : sig.state === 'WATCH' ? 'warn' : ''}`;
+    $('signalBadge').textContent = sig.state === 'CONFIRM'
+      ? sig.direction === 'BUY' ? 'ALTA' : 'BAIXA'
+      : sig.state === 'SEARCHING' ? 'ANALISANDO' : 'AGUARDANDO';
+    $('signalBadge').className = `badge ${sig.state === 'CONFIRM' ? 'ok' : sig.state === 'SEARCHING' ? 'warn' : ''}`;
   }
-  if ($('signalReason')) $('signalReason').textContent = online ? (sig.reason || sig.hint || 'Aguardando dados suficientes.') : 'Plataforma não suportada/não conectado.';
+
+  if ($('signalReason')) $('signalReason').textContent = online
+    ? (sig.reason || sig.hint || 'Lendo as velas da CasaTrade.')
+    : 'Plataforma não suportada/não conectado.';
+
   if ($('asset')) $('asset').textContent = online && s.asset ? s.asset : '—';
   if ($('price')) $('price').textContent = online && s.price != null ? String(s.price) : '—';
 
-  const confirmed = online && sig.state === 'CONFIRM' && !sig.provisional && !!s.platformControls?.aligned;
+  const confirmed = online && sig.state === 'CONFIRM' && !sig.provisional;
   buyBtn.disabled = !(confirmed && sig.direction === 'BUY');
   sellBtn.disabled = !(confirmed && sig.direction === 'SELL');
+
   if ($('entryText')) {
     $('entryText').textContent = confirmed
-      ? `${sig.direction} ${s.asset || ''} • ${s.analysisTimeframe || s.timeframe || '—'} • expiração ${s.targetExpiration || s.expiration || '—'} • confirmação manual na CasaTrade.`
-      : 'A entrada só é liberada quando houver sinal confirmado e configuração sincronizada.';
+      ? `${sig.direction === 'BUY' ? 'Alta' : 'Baixa'} prevista para ${s.asset || ''} • ${s.analysisTimeframe || s.timeframe || 'M1'} • confirmação manual na CasaTrade.`
+      : 'A previsão aparece automaticamente quando houver velas reais suficientes.';
   }
 }
 
@@ -142,12 +160,15 @@ function renderHistory(rows = []) {
   const valid = Array.isArray(rows) ? rows.filter(x => ['BUY', 'SELL'].includes(x.direction)) : [];
   if ($('historyCount')) $('historyCount').textContent = String(valid.length);
   if (!$('signalHistory')) return;
-  $('signalHistory').innerHTML = valid.length ? valid.slice(0, 20).map(x => `
-    <div class="history-row">
-      <span class="history-dir ${x.direction === 'SELL' ? 'sell' : 'buy'}">${x.direction}</span>
-      <div><b>${x.asset || '—'}</b><small>${x.timeframe || '—'} • ${x.expiration || '—'} • ${x.entryPrice ?? '—'}</small></div>
-      <time>${new Date(x.at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</time>
-    </div>`).join('') : '<div class="empty-state">Nenhum sinal confirmado nesta sessão.</div>';
+
+  $('signalHistory').innerHTML = valid.length
+    ? valid.slice(0, 20).map(x => `
+      <div class="history-row">
+        <span class="history-dir ${x.direction === 'SELL' ? 'sell' : 'buy'}">${x.direction === 'BUY' ? 'ALTA' : 'BAIXA'}</span>
+        <div><b>${x.asset || '—'}</b><small>${x.timeframe || '—'} • ${x.entryPrice ?? '—'}</small></div>
+        <time>${new Date(x.at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</time>
+      </div>`).join('')
+    : '<div class="empty-state">Nenhuma previsão confirmada nesta sessão.</div>';
 }
 
 function render(s = {}) {
@@ -163,8 +184,14 @@ async function loadSettings() {
   const { settings = {} } = await chrome.storage.local.get('settings');
   prefs = settings.scanPreferences || {};
   if (document.activeElement !== amountInput && amountInput) amountInput.value = num(prefs.tradeAmount ?? prefs.stake) > 0 ? String(prefs.tradeAmount ?? prefs.stake).replace('.', ',') : '';
-  if (tfSelect) { ensureOption(tfSelect, prefs.timeframe); tfSelect.value = prefs.timeframe || 'AUTO'; }
-  if (expSelect) { ensureOption(expSelect, prefs.expiration); expSelect.value = prefs.expiration || 'AUTO'; }
+  if (tfSelect) {
+    ensureOption(tfSelect, prefs.timeframe);
+    tfSelect.value = prefs.timeframe || 'AUTO';
+  }
+  if (expSelect) {
+    ensureOption(expSelect, prefs.expiration);
+    expSelect.value = prefs.expiration || 'AUTO';
+  }
 }
 
 async function savePrefs() {
@@ -186,9 +213,23 @@ async function getState() {
     chrome.storage.local.get(LAST_VALID_LICENSE_KEY).catch(() => ({})),
     chrome.runtime.sendMessage({ type: 'ATS_GET_SESSION_HISTORY' }).catch(() => ({ rows: [] }))
   ]);
+
   sessionHistory = Array.isArray(history?.rows) ? history.rows : [];
   const license = effectiveLicense(state?.license || {}, stored[LAST_VALID_LICENSE_KEY] || null);
   render({ ...state, license });
+  return state;
+}
+
+async function autoConnect(force = false) {
+  if (reconnectBusy) return;
+  if (!force && fresh(lastState) && lastState.platformId === 'casatrade') return;
+  reconnectBusy = true;
+  try {
+    await chrome.runtime.sendMessage({ type: 'ATS_CONNECT_ACTIVE_TAB' }).catch(() => ({ ok: false }));
+    await getState();
+  } finally {
+    reconnectBusy = false;
+  }
 }
 
 async function syncNow() {
@@ -202,21 +243,13 @@ async function syncNow() {
     syncBusy = false;
   }
 }
-function scheduleSync() {
-  clearTimeout(syncTimer);
-  syncTimer = setTimeout(syncNow, 300);
-}
 
-$('connectBtn')?.addEventListener('click', async () => {
-  const result = await chrome.runtime.sendMessage({ type: 'ATS_CONNECT_ACTIVE_TAB' }).catch(() => ({ ok: false }));
-  if (result?.ok && configuredPrefs(prefs)) await syncNow();
-  else await getState();
-});
+$('connectBtn')?.addEventListener('click', () => autoConnect(true));
 $('syncPlatformBtn')?.addEventListener('click', syncNow);
-amountInput?.addEventListener('change', scheduleSync);
-amountInput?.addEventListener('blur', scheduleSync);
-tfSelect?.addEventListener('change', scheduleSync);
-expSelect?.addEventListener('change', scheduleSync);
+amountInput?.addEventListener('change', savePrefs);
+amountInput?.addEventListener('blur', savePrefs);
+tfSelect?.addEventListener('change', savePrefs);
+expSelect?.addEventListener('change', savePrefs);
 
 $('activateLicense')?.addEventListener('click', async () => {
   const key = $('licenseKey')?.value?.trim();
@@ -231,6 +264,7 @@ buyBtn?.addEventListener('click', async () => {
   await chrome.runtime.sendMessage({ type: 'ATS_PREPARE_TRADE', direction: 'BUY' }).catch(() => ({}));
   await getState();
 });
+
 sellBtn?.addEventListener('click', async () => {
   if (lastState.signal?.state !== 'CONFIRM' || lastState.signal?.direction !== 'SELL') return;
   await chrome.runtime.sendMessage({ type: 'ATS_PREPARE_TRADE', direction: 'SELL' }).catch(() => ({}));
@@ -244,10 +278,16 @@ chrome.storage.onChanged.addListener(changes => {
 
 (async () => {
   await loadSettings();
+  await autoConnect(true);
   await getState();
   chrome.runtime.sendMessage({ type: 'ATS_VALIDATE_LICENSE' }).catch(() => {});
-  setInterval(getState, 1000);
+
   setInterval(() => {
-    if (fresh(lastState) && lastState.platformId === 'casatrade') chrome.runtime.sendMessage({ type: 'ATS_READ_PLATFORM_CONTROLS' }).catch(() => {});
-  }, 1600);
+    getState().catch(() => {});
+  }, 1000);
+
+  setInterval(() => {
+    if (!fresh(lastState) || lastState.platformId !== 'casatrade') autoConnect().catch(() => {});
+    else chrome.runtime.sendMessage({ type: 'ATS_READ_PLATFORM_CONTROLS' }).catch(() => {});
+  }, 2500);
 })();
