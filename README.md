@@ -1,25 +1,112 @@
 # AI Trading Scanner
 
-Extensão Chrome/Edge Manifest V3 com arquitetura multi-plataforma para captura, normalização e análise de mercado. A CasaTrade é a primeira integração real; o core não depende dela.
+Extensão Chrome/Edge Manifest V3 com arquitetura multi-plataforma para captura, normalização e análise de mercado. A CasaTrade é a primeira integração real; o motor de análise continua independente da plataforma.
 
-## Estado atual — v0.4.0
+## Estado atual — extensão v0.9.5
 
-O projeto possui:
+A experiência principal da extensão está em português e foi organizada para uso comercial:
 
-- Side Panel com layout de terminal, vínculo à aba ativa, mercado em foco, score, warmup, catálogo de ativos, timeframe/expiração e handoff de compra/venda.
-- Investigador de feed em `src/content/network-probe.js` para observar WebSocket/fetch/XHR recebidos pela própria página, sem coletar cookies, headers, corpo de requisição, query string ou campos de autenticação/sessão.
-- Fallback DOM em `src/content/generic-adapter.js`, inclusive ativos visíveis, expiração e tipos Blitz/Binária/Turbo/CFD quando aparecem no texto da página.
-- Timeframes curtos `S5`, `S15`, `S30` além de M1/M5/M15/M30/H1/H4.
-- Pipeline `snapshot → CandleBuilder → análise → confluence → quality gate → risk controls → state machine`.
-- Pré-sinal provisório quando a leitura técnica existe, mas o feed estruturado da plataforma ainda não foi validado. Confirmação operacional continua bloqueada até a qualidade necessária ser atendida.
-- Sistema de licenciamento com planos, limite diário de sinais e limite de dispositivos.
-- Admin Central para gerar/revogar licenças, ver clientes online, consumo e métricas reais.
-- Backend Node sem framework, com validação, CORS allowlist, `x-api-key` técnico e `x-admin-key` separado.
-- Testes com `node:test` e CI no GitHub Actions.
+1. **Configuração da operação** — valor, tempo da vela e expiração.
+2. **Confirmação na CasaTrade** — a extensão tenta aplicar a configuração na plataforma e lê os controles de volta.
+3. **Mercado em foco** — ativo, cotação, vela e expiração observados na plataforma.
+4. **Decisão do scanner** — aguardando, observando, não entrar ou entrada confirmada.
+5. **Entrada na plataforma** — fica logo abaixo do sinal; somente a direção confirmada é liberada.
+6. Detalhes técnicos, histórico, licença e radar ficam abaixo como informação secundária.
 
-> Importante: `0 de 6` no card de sinal significa **critérios técnicos confirmados**, não limite de entradas do plano. O limite diário comercial aparece separadamente no card **Plano e consumo**.
+> Regra de segurança: o ATS não trata o valor escolhido no painel como se ele já estivesse configurado na CasaTrade. Depois de tentar aplicar valor, vela e expiração, ele lê a plataforma novamente. Se não conseguir confirmar os três valores, a análise fica bloqueada/pausada em vez de assumir que deu certo.
 
-> A CasaTrade continua com `structuredQuotes=false` até o feed real ser validado. DOM e tráfego ainda não confirmado podem gerar diagnóstico/pré-sinal, mas não devem ser tratados como confirmação real.
+## Fonte de verdade: CasaTrade
+
+O campo de **Valor** deixou de ser um valor independente sem sincronia. A implementação usada é:
+
+```text
+Configuração escolhida no ATS
+  ↓
+ATS tenta aplicar Valor + Vela + Expiração na CasaTrade
+  ↓
+ATS lê os controles reais da CasaTrade de volta
+  ↓
+Só considera sincronizado se os 3 valores coincidirem
+  ↓
+Somente então permite iniciar a análise
+```
+
+Essa abordagem foi usada porque o seletor DOM oficial/estável da CasaTrade ainda não foi fornecido. Em vez de inventar um seletor fixo, `src/content/platform-sync.js` procura controles visíveis pelo contexto semântico (`Valor`, `Expiração`, vela/timeframe), roles e opções exibidas. A rotina exclui explicitamente controles financeiros de compra/venda e **falha de forma segura**: se não conseguir localizar e confirmar um controle, não libera a leitura.
+
+Os valores efetivamente lidos da CasaTrade ficam visíveis no painel como:
+
+- Valor na CasaTrade
+- Vela na CasaTrade
+- Expiração na CasaTrade
+
+Assim fica claro quando a plataforma e o ATS estão ou não alinhados.
+
+## Leitura real do mercado
+
+O scanner não deve criar candles históricos fictícios. O fluxo atual é:
+
+```text
+CasaTrade autenticada
+  ↓
+WebSocket / fetch / XHR já recebidos pela própria página
+  ↓
+Network Probe sanitizado
+  ↓
+ativo + cotação + OHLC/timestamp quando existirem no feed
+  ↓
+histórico real observado
+  ↓
+CandleBuilder.seed(...)
+  ↓
+análise quantitativa
+```
+
+`src/content/network-probe.js` procura estruturas de preço e OHLC que já chegaram à página e mantém histórico recente por ativo. Se o feed disponibilizar candles com ativo + OHLC + timestamp de forma legível, esse histórico é usado para aquecer o motor imediatamente. Se não houver histórico utilizável no feed, o ATS continua construindo candles a partir das cotações recebidas; ele não preenche os candles que faltam artificialmente.
+
+Para considerar uma cotação **estruturada**, o ATS exige uma observação recente e repetida do mesmo ativo em WebSocket/fetch/XHR. O `history-adapter.js` valida o ativo em foco contra essa cotação antes de promover `structuredQuotes=true`.
+
+## Últimas velas e contexto recente
+
+Os indicadores continuam usando histórico suficiente para evitar uma decisão baseada em poucas amostras. Quando existe histórico real, o motor também resume as **últimas até 5 velas fechadas**, mostrando quantas foram de alta e quantas de baixa. Esse contexto recente aparece para explicar o movimento atual, mas não substitui sozinho os filtros técnicos nem inventa um sinal.
+
+## Critério técnico atual
+
+Depois de existir histórico suficiente, o motor avalia:
+
+- direção quantitativa;
+- EMA 9 x EMA 21;
+- RSI 14;
+- MACD;
+- regime de mercado;
+- força quantitativa.
+
+A confluência gera score e grade. A máquina de estados usa os estados `SEARCHING`, `WATCH`, `WAIT`, `CONFIRM`, `NO_TRADE`, entre outros. O estado `CONFIRM` continua exigindo direção válida, score forte e feed aprovado pelos guards. Score não é probabilidade garantida de acerto.
+
+## Timeframes e expiração
+
+A extensão suporta, entre outros:
+
+```text
+Vela / análise:
+S5, S15, S30, M1, M2, M5, M15, M30
+
+Expiração:
+5s, 15s, 30s, 60s, 2m, 5m
+```
+
+`M2` foi adicionado porque esse período aparece na operação mostrada da CasaTrade. O ATS mostra como **vela real** e **expiração real** os valores lidos de volta da plataforma, não apenas o que foi selecionado no painel.
+
+## Compra e venda
+
+A extensão continua em confirmação manual. Quando há um `CONFIRM` válido e a configuração está sincronizada, somente o botão correspondente ao sinal é liberado:
+
+```text
+COMPRA confirmada → libera PREPARAR COMPRA
+VENDA confirmada  → libera PREPARAR VENDA
+sem confirmação   → os dois permanecem bloqueados
+```
+
+O handoff foca a aba da CasaTrade, localiza e destaca o controle correspondente. **A extensão não executa o clique financeiro final nesta versão.**
 
 ## Arquitetura
 
@@ -28,9 +115,9 @@ Plataforma aberta na aba atual
   ↓
 Platform Registry
   ↓
-Network Probe + Generic Adapter
+Network Probe + DOM Adapter + Platform Sync
   ↓
-Catálogo / Snapshot normalizado
+Snapshot / histórico real normalizado
   ↓
 CandleBuilder por platformId:asset:timeframe
   ↓
@@ -42,7 +129,7 @@ Quality Gate + Risk Controls + Licença/Quota
   ↓
 Signal State Machine
   ↓
-Side Panel
+Side Panel em português
 ```
 
 Pastas principais:
@@ -50,141 +137,42 @@ Pastas principais:
 ```text
 src/core/                 lógica pura e orquestração
 src/platforms/            registry e adapters
-src/services/             licença, telemetria e providers
-src/content/              captura e diagnóstico de rede
+src/services/             licença e telemetria
+src/content/              captura, sincronização e diagnóstico da plataforma
 src/sidepanel/            terminal principal
 src/admin/                configurações locais da extensão
-backend/                  API Node + persistência local de licenças
-apps/admin-dashboard/     Admin Central
+backend/                  API Node e licenciamento
+apps/admin-dashboard/     painel administrativo
+apps/customer-portal/     site público e conta do cliente
 ```
 
-## Por que o scanner pode ficar em “analisando”
+## Privacidade da captura
 
-O motor precisa formar histórico suficiente. O Side Panel mostra o aquecimento como `X / 21 candles`. Antes disso ele fica em `ANALISANDO MERCADO` em vez de mostrar um falso `NO_TRADE`.
+O investigador de feed observa somente dados que a própria página já recebeu. Ele foi construído para não coletar cookies, headers de autenticação, corpos de requisição, query strings, passwords, bearer tokens ou campos de sessão. As chaves que tenham nomes relacionados a autenticação/segredo são ignoradas.
 
-Depois do warmup, se houver confluência técnica mas a fonte ainda for provisória, o estado pode virar `SETUP EM FORMAÇÃO / PRÉ-SINAL PROVISÓRIO`. A confirmação final só é liberada quando a qualidade do feed e os demais guards estiverem válidos.
+## Licença
 
-## Timeframe e expiração
+Licenciamento comercial é obrigatório também em builds descompactadas. A extensão mantém localmente o último estado de licença válido e revalida em segundo plano. Uma falha temporária de rede/backend não transforma automaticamente uma licença válida em “Ativação necessária”; respostas autoritativas de expiração, bloqueio ou licença inexistente continuam invalidando o acesso.
 
-Timeframe de análise e expiração da operação são campos separados. Exemplos:
+## Instalação para teste
 
-```text
-Análise: S5 / S15 / S30 / M1 / M5 / M15
-Expiração: 5s / 15s / 30s / 60s / 2m / 5m
-```
-
-O modo `AUTO` usa o que for detectado na própria plataforma.
-
-## Licenciamento e planos
-
-O backend possui planos iniciais configuráveis por variável de ambiente:
-
-```text
-trial      3 sinais/dia   1 dispositivo
-starter    6 sinais/dia   1 dispositivo
-pro       20 sinais/dia   2 dispositivos
-unlimited sem limite      5 dispositivos
-```
-
-Esses valores são defaults técnicos e podem ser alterados sem mudar a extensão usando:
-
-```text
-PLAN_TRIAL_SIGNALS
-PLAN_STARTER_SIGNALS
-PLAN_PRO_SIGNALS
-PLAN_PRO_DEVICES
-PLAN_UNLIMITED_DEVICES
-```
-
-A extensão valida a licença no backend e atualiza presença do dispositivo. Quando um novo `CONFIRM` é realmente liberado, o backend consome 1 sinal do limite diário do plano. Se o limite acabar, novos sinais confirmados ficam bloqueados até a próxima virada de dia.
-
-Build descompactada/local permanece em modo de desenvolvimento para não travar os testes. Uma distribuição de produção deve usar `licenseRequired=true` e backend configurado.
-
-## Admin Central
-
-O dashboard central agora é servido pelo próprio backend.
-
-```bash
-cd backend
-ATS_API_KEY=dev-api ATS_ADMIN_KEY=dev-admin CORS_ORIGINS=chrome-extension://SEU_ID npm start
-```
-
-Abra:
-
-```text
-http://localhost:8787/admin
-```
-
-No painel, informe:
-
-- Backend: `http://localhost:8787`
-- Chave Admin: o valor de `ATS_ADMIN_KEY`
-
-O Admin Central permite:
-
-- gerar licença;
-- escolher plano e validade;
-- revogar/reativar licença;
-- ver uso diário;
-- ver dispositivos/clientes online;
-- ver versão e métricas reais.
-
-As licenças são persistidas localmente em `backend/data/licenses.json`, que não é versionado no GitHub. Para produção SaaS, o próximo passo é trocar esse arquivo por banco de dados.
-
-## Backend
-
-Exemplo de ambiente:
-
-```text
-PORT=8787
-ATS_API_KEY=change-me
-ATS_ADMIN_KEY=change-admin-me
-CORS_ORIGINS=chrome-extension://SEU_EXTENSION_ID,http://localhost:5500
-PLAN_TRIAL_SIGNALS=3
-PLAN_STARTER_SIGNALS=6
-PLAN_PRO_SIGNALS=20
-PLAN_PRO_DEVICES=2
-PLAN_UNLIMITED_DEVICES=5
-```
-
-Rotas técnicas protegidas por `x-api-key`:
-
-```text
-POST /v1/session
-POST /v1/events
-```
-
-Rotas administrativas protegidas por `x-admin-key`:
-
-```text
-GET  /v1/admin/metrics
-GET  /v1/admin/plans
-GET  /v1/admin/licenses
-POST /v1/admin/licenses
-GET  /v1/admin/clients
-POST /v1/admin/licenses/:key/revoke
-POST /v1/admin/licenses/:key/activate
-```
-
-Rotas de licença usadas pela extensão:
-
-```text
-POST /v1/license/activate
-POST /v1/license/validate
-POST /v1/license/consume
-```
-
-## Compra e venda
-
-Os botões da extensão fazem handoff seguro: focam a aba da corretora, localizam o controle correspondente e o destacam. A ordem financeira não é enviada automaticamente; a confirmação final continua na própria plataforma.
+1. Baixe ou clone o repositório.
+2. Abra `chrome://extensions`.
+3. Ative **Modo do desenvolvedor**.
+4. Use **Carregar sem compactação** na pasta que contém `manifest.json`.
+5. Abra a CasaTrade e recarregue a página para os content scripts entrarem desde o início.
+6. Abra o Side Panel.
+7. Conecte sua conta/licença.
+8. Escolha valor, vela e expiração.
+9. Clique em **CONECTAR CASATRADE**.
+10. Confirme que o card informa **CasaTrade sincronizada** antes de iniciar a análise.
 
 ## Como cadastrar uma nova plataforma
 
-1. Adicione uma entrada em `src/platforms/registry.js` com `id`, `name`, `hosts`, seletores/patterns e capabilities.
-2. Adicione o host em `host_permissions` e nos dois blocos `content_scripts[].matches` do `manifest.json`.
-3. Se necessário, configure seletores específicos em `settings.selectorsByPlatform[platformId]` nas Configurações da Extensão.
-
-O `orchestrator` separa histórico por `platformId:asset:analysisTimeframe`, portanto casas diferentes nunca compartilham CandleBuilder.
+1. Adicione a plataforma em `src/platforms/registry.js` com `id`, `name`, hosts, padrões/seletores e capabilities.
+2. Adicione os hosts necessários no `manifest.json`.
+3. Implemente apenas os controles específicos que forem realmente necessários no adapter da plataforma.
+4. Mantenha o motor quantitativo independente da corretora.
 
 ## Testes
 
@@ -193,31 +181,10 @@ cd backend
 npm test
 ```
 
-Cobertura atual inclui EMA, RSI, MACD, confluence, state machine, CandleBuilder, registry e isolamento entre plataformas.
+O CI também valida sintaxe dos módulos da extensão, presença do Side Panel único, persistência de licença, sincronização dos controles da plataforma e ausência do antigo `preflight.js` duplicado.
 
-## Instalação para teste
+## Limitações que ainda exigem teste autenticado
 
-1. Baixe/clone o repositório.
-2. Abra `chrome://extensions`.
-3. Ative Modo do desenvolvedor.
-4. Carregue a pasta que contém `manifest.json`.
-5. Abra a CasaTrade e recarregue a página para o probe entrar desde `document_start`.
-6. Abra o Side Panel e clique em **CONECTAR SCANNER**.
-7. Inicie a leitura e acompanhe o warmup, ativos e pré-sinais.
+A CasaTrade pode alterar DOM, nomes de classes ou formato das mensagens de rede. Por isso, a sincronização de valor/vela/expiração usa detecção semântica e readback, e bloqueia a análise quando não consegue comprovar o alinhamento. A captura de histórico acelera o aquecimento apenas quando OHLC/timestamp reais estão disponíveis no tráfego observado. Esses pontos precisam ser validados na sessão autenticada real depois de cada mudança relevante da plataforma.
 
-## Próximas etapas
-
-1. Validar o formato real do feed CasaTrade autenticado e identificar quotes/ticks/candles multiativo.
-2. Confirmar relógio, payout, expiração e OTC com dados reais.
-3. Elevar capabilities para `true` apenas quando cada fonte estiver comprovada.
-4. Trocar persistência local de licenças por banco de dados e autenticação de usuário/licença em produção.
-5. Executar backtest, replay e forward-test/demo antes de qualquer uso real.
-6. Calibrar scores com amostra observada; score não é probabilidade garantida.
-
-## Limitações atuais
-
-- Sessões/eventos continuam em memória e zeram ao reiniciar o backend.
-- Licenças usam arquivo JSON local; adequado para desenvolvimento, não para produção distribuída.
-- Feed estruturado CasaTrade ainda não foi validado.
-- Não existe execução automática de ordens.
-- Nenhuma taxa de acerto é garantida ou inferida pelos scores.
+Nenhuma taxa de acerto é garantida. Antes de uso real, o motor deve ser acompanhado em demo/forward-test com dados suficientes.
