@@ -22,6 +22,16 @@ const priceOf = v => {
 
 const aligned = (direction, a, b) => direction === 'BUY' ? a > b : direction === 'SELL' ? a < b : false;
 const clampScore = v => Math.max(50, Math.min(95, Number.isFinite(Number(v)) ? Number(v) : 78));
+const recentFlow = candles => {
+  const rows = candles.slice(-5);
+  let up = 0, down = 0, flat = 0;
+  for (const c of rows) {
+    const o = Number(c?.open), cl = Number(c?.close);
+    if (!Number.isFinite(o) || !Number.isFinite(cl)) continue;
+    if (cl > o) up++; else if (cl < o) down++; else flat++;
+  }
+  return { count: rows.length, up, down, flat, direction: up === down ? null : up > down ? 'BUY' : 'SELL' };
+};
 
 const warm = (state, connected, candles, timeframe, targetExpiration, structured) => ({
   signal: {
@@ -39,6 +49,7 @@ const warm = (state, connected, candles, timeframe, targetExpiration, structured
         : `Aquecendo motor • ${Math.min(candles.length, 21)}/21 candles ${structured ? 'estruturados' : 'provisórios'}.`,
     provisional: !structured,
     candleCount: candles.length,
+    recentFlow: recentFlow(candles),
     warmup: { current: Math.min(candles.length, 21), required: 21 }
   }
 });
@@ -64,6 +75,7 @@ export function processSnapshot(snapshot = {}, state = {}, risk = {}) {
 
   if (!builders.has(k)) builders.set(k, new CandleBuilder(tf(snapshot)));
   const builder = builders.get(k);
+  if (Array.isArray(snapshot.candles) && snapshot.candles.length) builder.seed(snapshot.candles);
   const closed = connected ? builder.push(price, Number(snapshot.serverTime) || Date.now()) : null;
   const candles = builder.snapshot().closed;
 
@@ -75,6 +87,7 @@ export function processSnapshot(snapshot = {}, state = {}, risk = {}) {
         timeframe: analysisTimeframe,
         targetExpiration,
         candleCount: candles.length,
+        recentFlow: recentFlow(candles),
         provisional: !structured,
         warmup: { current: 21, required: 21 }
       }
@@ -83,6 +96,7 @@ export function processSnapshot(snapshot = {}, state = {}, risk = {}) {
 
   const analysis = analyzeCandles(candles);
   const regime = marketRegime(candles);
+  const recent = recentFlow(candles);
   const rsi = analysis.indicators?.rsi14;
   const macd = analysis.indicators?.macd?.histogram;
   const e9 = analysis.indicators?.ema9;
@@ -128,6 +142,7 @@ export function processSnapshot(snapshot = {}, state = {}, risk = {}) {
   if (allowed && scoreReady && machine.state === 'CONFIRM') lastSignals.set(k, candidate);
 
   const readyDirection = baseAllowed && scoreReady ? d : null;
+  const recentText = recent.count >= 3 ? `Últimas ${recent.count} velas: ${recent.up} alta • ${recent.down} baixa` : null;
   const hint = provisionalWatch
     ? `${machine.label} • aguardando validação do feed antes de confirmar entrada.`
     : allowed && scoreReady
@@ -145,8 +160,9 @@ export function processSnapshot(snapshot = {}, state = {}, risk = {}) {
       timeframe: analysisTimeframe,
       targetExpiration,
       hint,
-      reasons: [...new Set([...(analysis.reasons || []), ...(cf.reasons || [])])],
+      reasons: [...new Set([...(analysis.reasons || []), ...(cf.reasons || []), recentText].filter(Boolean))],
       regime: regime.type,
+      recentFlow: recent,
       provisional: !structured,
       candleCount: candles.length,
       warmup: { current: 21, required: 21 },
