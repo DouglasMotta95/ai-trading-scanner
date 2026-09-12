@@ -8,7 +8,7 @@ const REOPEN_CACHE_GRACE_MS = 5 * 60 * 1000;
 // Only errors that conclusively invalidate the license itself may erase the last
 // known-good local session. Request/protocol errors, temporary quota errors and
 // backend outages must never make a previously active license disappear.
-const CACHE_INVALIDATING_LICENSE_ERRORS = new Set([
+const AUTHORITATIVE_LICENSE_ERRORS = new Set([
   'license_not_found',
   'license_inactive',
   'license_expired',
@@ -102,7 +102,7 @@ async function saveValidLicenseSession(r, licenseKey = '') {
 }
 
 async function invalidateCachedLicense(r, licenseKey = '') {
-  if (!CACHE_INVALIDATING_LICENSE_ERRORS.has(String(r?.error || ''))) return false;
+  if (!AUTHORITATIVE_LICENSE_ERRORS.has(String(r?.error || ''))) return false;
   const cached = await cachedLicenseSession();
   const attempted = String(licenseKey || '').trim().toUpperCase();
   const cachedKey = String(cached?.licenseKey || '').trim().toUpperCase();
@@ -141,7 +141,7 @@ async function acceptSession(r, licenseKey = '') {
 
 async function withCachedFallback(r, cached = null) {
   if (r?.ok) return r;
-  if (CACHE_INVALIDATING_LICENSE_ERRORS.has(String(r?.error || ''))) return r;
+  if (AUTHORITATIVE_LICENSE_ERRORS.has(String(r?.error || ''))) return r;
   cached ||= await cachedLicenseSession();
   if (!cached) return r;
   return cachedResponse(cached, { syncPending: true, error: r?.error || 'backend_unreachable' }) || r;
@@ -190,7 +190,7 @@ export async function validateLicense(settings = {}) {
   });
   if (r.ok) return acceptSession(r, licenseKey);
 
-  if (CACHE_INVALIDATING_LICENSE_ERRORS.has(String(r?.error || ''))) {
+  if (AUTHORITATIVE_LICENSE_ERRORS.has(String(r?.error || ''))) {
     await invalidateCachedLicense(r, licenseKey);
     return r;
   }
