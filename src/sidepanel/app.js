@@ -1,4 +1,5 @@
 const LAST_VALID_LICENSE_KEY = 'atsLastValidLicense';
+const LICENSE_KEY = 'atsLicenseKey';
 const $ = id => document.getElementById(id);
 const amountInput = $('tradeAmount');
 const tfSelect = $('analysisTimeframe');
@@ -30,9 +31,30 @@ const effectiveLicense = (stateLicense = {}, cachedEntry = null) => {
   if (licenseStillValid(stateLicense)) return stateLicense;
   if (['expired', 'limit', 'device_locked'].includes(String(stateLicense?.status || ''))) return stateLicense;
   const cached = cachedEntry?.license;
-  if (licenseStillValid(cached)) return { ...cached, status: 'active', error: stateLicense?.error || null, syncPending: true };
+  if (licenseStillValid(cached)) return { ...cached, status: 'active', error: null, syncPending: false };
   return stateLicense;
 };
+
+async function restoreLicenseBeforeState() {
+  const stored = await chrome.storage.local.get([LAST_VALID_LICENSE_KEY, LICENSE_KEY, 'scannerState']).catch(() => ({}));
+  const cachedEntry = stored[LAST_VALID_LICENSE_KEY];
+  const cachedLicense = cachedEntry?.license;
+  if (!licenseStillValid(cachedLicense)) return false;
+
+  const updates = {};
+  const cachedKey = String(cachedEntry?.licenseKey || cachedLicense?.key || '').trim();
+  if (!String(stored[LICENSE_KEY] || '').trim() && cachedKey) updates[LICENSE_KEY] = cachedKey;
+
+  if (!licenseStillValid(stored.scannerState?.license)) {
+    updates.scannerState = {
+      ...(stored.scannerState || {}),
+      license: { ...cachedLicense, status: 'active', error: null, syncPending: false }
+    };
+  }
+
+  if (Object.keys(updates).length) await chrome.storage.local.set(updates);
+  return true;
+}
 
 function ensureOption(select, value) {
   value = String(value || '').trim();
@@ -226,9 +248,9 @@ chrome.storage.onChanged.addListener(changes => {
 });
 
 (async () => {
+  await restoreLicenseBeforeState();
   await loadSettings();
   await getState();
-  chrome.runtime.sendMessage({ type: 'ATS_VALIDATE_LICENSE' }).catch(() => {});
   setInterval(getState, 1000);
   setInterval(() => {
     if (fresh(lastState) && lastState.platformId === 'casatrade') chrome.runtime.sendMessage({ type: 'ATS_READ_PLATFORM_CONTROLS' }).catch(() => {});

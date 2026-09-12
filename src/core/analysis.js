@@ -28,7 +28,7 @@ export function recentPriceAction(candles = []) {
     };
   }
 
-  const last = rows.at(-1);
+  const last = rows[rows.length - 1];
   const prev = rows.slice(0, -1);
   const support = Math.min(...rows.map(x => x.low));
   const resistance = Math.max(...rows.map(x => x.high));
@@ -67,8 +67,9 @@ export function recentPriceAction(candles = []) {
   if (tiny >= 3 && aligned < 4) { score = Math.min(score, 56); direction = null; reasons.push('Compressão: aguardando rompimento'); }
   score = clamp(score);
 
+  const lastReason = reasons.length ? reasons[reasons.length - 1] : null;
   const opinion = !direction
-    ? (reasons.at(-1) || 'Sem direção clara nas últimas velas.')
+    ? (lastReason || 'Sem direção clara nas últimas velas.')
     : reasons[0] || `Movimento recente favorece ${direction}.`;
 
   return {

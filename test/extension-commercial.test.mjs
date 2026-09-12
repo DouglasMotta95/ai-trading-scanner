@@ -19,31 +19,44 @@ const REMOVED = [
   'src/background-platform-sync.js'
 ];
 
-test('manifest only injects supported CasaTrade capture scripts', () => {
+test('manifest injects capture scripts only into the real CasaTrade web app', () => {
   const manifest = JSON.parse(read('manifest.json'));
   assert.equal(manifest.manifest_version, 3);
   assert.equal(manifest.background?.service_worker, 'src/background-entry.js');
   assert.equal(manifest.side_panel?.default_path, 'src/sidepanel/index.html');
   assert.equal(manifest.optional_host_permissions, undefined);
+  assert.deepEqual(manifest.content_scripts.flatMap(x => x.matches || []), [
+    'https://trade.casatrade.com/*',
+    'https://trade.casatrade.com/*'
+  ]);
+  assert.ok(manifest.host_permissions.includes('https://trade.casatrade.com/*'));
+  assert.ok(manifest.host_permissions.includes('https://ats-control-center-v07-production.up.railway.app/*'));
+  assert.equal(manifest.host_permissions.some(x => /(?:^|\.)casatrade\.io\//.test(x)), false);
+  assert.equal(manifest.host_permissions.some(x => /https:\/\/(?:www\.|app\.)?casatrade\.com\//.test(x)), false);
   const serialized = JSON.stringify(manifest);
   assert.doesNotMatch(serialized, /history-adapter|chart-overlay|background-platform-sync/);
-  for (const host of manifest.content_scripts.flatMap(x => x.matches || [])) assert.match(host, /casatrade\.(com|io)/);
 });
 
-test('platform detection is strict and returns null for unrelated hosts', async () => {
+test('platform detection is strict and rejects CasaTrade marketing or guessed hosts', async () => {
   const { detectPlatform } = await import('../src/platforms/registry.js');
-  assert.equal(detectPlatform('example.com'), null);
-  assert.equal(detectPlatform('google.com'), null);
-  assert.equal(detectPlatform('fake-casatrade.com'), null);
-  assert.equal(detectPlatform('casatrade.com')?.id, 'casatrade');
-  assert.equal(detectPlatform('app.casatrade.com')?.id, 'casatrade');
+  assert.equal(detectPlatform('trade.casatrade.com')?.id, 'casatrade');
+  for (const host of ['casatrade.com', 'www.casatrade.com', 'app.casatrade.com', 'trade.casatrade.io', 'example.com', 'google.com', 'fake-casatrade.com']) {
+    assert.equal(detectPlatform(host), null);
+  }
 });
 
 test('sidepanel contains only the six requested functional sections', () => {
   const html = read('src/sidepanel/index.html');
-  for (const heading of ['1. LICENÇA','2. CONEXÃO CASATRADE','3. CONFIGURAÇÃO','4. ESTADO DO SINAL','5. PREPARAR ENTRADA','6. HISTÓRICO DA SESSÃO']) assert.match(html, new RegExp(heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
-  for (const removed of ['RSI','MACD','EMA 9','EMA 21','SUPORTE','RESISTÊNCIA','BACKTEST','RELATÓRIO SEMANAL','CORRELAÇÃO','CALENDÁRIO','NOTÍCIAS','MELHORES OPORTUNIDADES','RADAR MULTIATIVO','POR QUE A IA']) assert.doesNotMatch(html.toUpperCase(), new RegExp(removed));
-  for (const id of ['licenseCard','connectionTitle','tradeAmount','analysisTimeframe','targetExpiration','signalTitle','signalReason','prepareBuy','prepareSell','signalHistory']) assert.match(html, new RegExp(`id=["']${id}["']`));
+  const headings = ['1. LICENÇA','2. CONEXÃO CASATRADE','3. CONFIGURAÇÃO','4. ESTADO DO SINAL','5. PREPARAR ENTRADA','6. HISTÓRICO DA SESSÃO'];
+  for (const heading of headings) assert.ok(html.includes(heading), `missing ${heading}`);
+  assert.equal((html.match(/<section\b/g) || []).length, 6);
+  assert.equal(html.includes('account-login.js'), false);
+  for (const removed of ['RSI','MACD','EMA 9','EMA 21','SUPORTE','RESISTÊNCIA','BACKTEST','RELATÓRIO SEMANAL','CORRELAÇÃO','CALENDÁRIO','NOTÍCIAS','MELHORES OPORTUNIDADES','RADAR MULTIATIVO','POR QUE A IA']) {
+    assert.equal(html.toUpperCase().includes(removed), false, `${removed} must not be rendered`);
+  }
+  for (const id of ['licenseCard','connectionTitle','tradeAmount','analysisTimeframe','targetExpiration','signalTitle','signalReason','prepareBuy','prepareSell','signalHistory']) {
+    assert.ok(html.includes(`id="${id}"`), `missing ${id}`);
+  }
 });
 
 test('removed unauthorized files are physically absent', () => {
@@ -63,7 +76,9 @@ test('no extension source references removed modules', () => {
   walk(path.join(root, 'src'));
   sourceFiles.push(path.join(root, 'manifest.json'));
   const body = sourceFiles.map(f => fs.readFileSync(f, 'utf8')).join('\n');
-  for (const name of ['ai-scoring.js','backtest.js','correlation.js','market-structure.js','reporting.js','chart-overlay.js','history-adapter.js','background-platform-sync.js']) assert.doesNotMatch(body, new RegExp(name.replace('.', '\\.')));
+  for (const name of ['ai-scoring.js','backtest.js','correlation.js','market-structure.js','reporting.js','chart-overlay.js','history-adapter.js','background-platform-sync.js']) {
+    assert.equal(body.includes(name), false, `${name} must not be referenced`);
+  }
 });
 
 test('background clears unsupported active-tab market state and blocks foreign snapshots', () => {
@@ -76,15 +91,17 @@ test('background clears unsupported active-tab market state and blocks foreign s
   assert.match(background, /signal: null/);
 });
 
-test('platform sync and trade preparation remain wired to real CasaTrade controls', () => {
+test('platform sync is host locked and fails closed when controls are ambiguous', () => {
   const background = read('src/background.js');
   const content = read('src/content/platform-sync.js');
   assert.match(background, /ATS_SYNC_PLATFORM_PREFERENCES/);
   assert.match(background, /ATS_READ_PLATFORM_CONTROLS/);
   assert.match(background, /platformControls/);
   assert.match(background, /aligned/);
+  assert.ok(content.includes("location.hostname || '').toLowerCase() !== 'trade.casatrade.com'"));
   assert.match(content, /ATS_PLATFORM_READ/);
   assert.match(content, /ATS_PLATFORM_APPLY/);
+  assert.match(content, /ranked\[0\]\.score - ranked\[1\]\.score < 3/);
   assert.match(content, /comprar\|vender\|buy\|sell/);
 });
 
@@ -95,12 +112,14 @@ test('trade handoff highlights but never executes financial action automatically
   assert.doesNotMatch(handoff, /dispatchEvent\s*\(\s*new\s+MouseEvent/);
 });
 
-test('license persistence remains cache-first', () => {
+test('license reopen restores cache before requesting state and does not auto-revalidate', () => {
   const license = read('src/services/license.js');
   const panel = read('src/sidepanel/app.js');
   assert.match(license, /atsLastValidLicense/);
   assert.match(license, /REOPEN_CACHE_GRACE_MS/);
   assert.match(license, /AUTHORITATIVE_LICENSE_ERRORS/);
-  assert.match(panel, /atsLastValidLicense/);
-  assert.match(panel, /effectiveLicense/);
+  assert.match(panel, /restoreLicenseBeforeState/);
+  assert.match(panel, /await restoreLicenseBeforeState\(\);[\s\S]*await getState\(\);/);
+  const boot = panel.slice(panel.lastIndexOf('(async () =>'));
+  assert.equal(boot.includes('ATS_VALIDATE_LICENSE'), false);
 });

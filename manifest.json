@@ -5,14 +5,7 @@
   "description": "Scanner de sinais para CasaTrade com leitura de mercado real, sincronização de operação e confirmação manual.",
   "permissions": ["storage", "activeTab", "scripting", "sidePanel"],
   "host_permissions": [
-    "https://casatrade.com/*",
-    "https://www.casatrade.com/*",
-    "https://app.casatrade.com/*",
     "https://trade.casatrade.com/*",
-    "https://casatrade.io/*",
-    "https://www.casatrade.io/*",
-    "https://app.casatrade.io/*",
-    "https://trade.casatrade.io/*",
     "https://ats-control-center-v07-production.up.railway.app/*"
   ],
   "background": { "service_worker": "src/background-entry.js", "type": "module" },
@@ -22,14 +15,7 @@
   "content_scripts": [
     {
       "matches": [
-        "https://casatrade.com/*",
-        "https://www.casatrade.com/*",
-        "https://app.casatrade.com/*",
-        "https://trade.casatrade.com/*",
-        "https://casatrade.io/*",
-        "https://www.casatrade.io/*",
-        "https://app.casatrade.io/*",
-        "https://trade.casatrade.io/*"
+        "https://trade.casatrade.com/*"
       ],
       "js": ["src/content/network-probe.js"],
       "run_at": "document_start",
@@ -37,14 +23,7 @@
     },
     {
       "matches": [
-        "https://casatrade.com/*",
-        "https://www.casatrade.com/*",
-        "https://app.casatrade.com/*",
-        "https://trade.casatrade.com/*",
-        "https://casatrade.io/*",
-        "https://www.casatrade.io/*",
-        "https://app.casatrade.io/*",
-        "https://trade.casatrade.io/*"
+        "https://trade.casatrade.com/*"
       ],
       "js": ["src/content/network-bridge.js", "src/content/generic-adapter.js", "src/content/platform-sync.js"],
       "run_at": "document_start"

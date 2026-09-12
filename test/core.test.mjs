@@ -17,8 +17,9 @@ test('recent candle analysis works with real short history', () => {
   assert.equal(result.direction, 'BUY');
 });
 
-test('platform detection rejects unrelated hosts', () => {
-  assert.equal(detectPlatform('example.com'), null);
-  assert.equal(detectPlatform('notcasatrade.io'), null);
-  assert.equal(detectPlatform('casatrade.com')?.id, 'casatrade');
+test('platform detection accepts only the real CasaTrade web app host', () => {
+  assert.equal(detectPlatform('trade.casatrade.com')?.id, 'casatrade');
+  for (const host of ['casatrade.com', 'www.casatrade.com', 'app.casatrade.com', 'casatrade.io', 'trade.casatrade.io', 'example.com', 'notcasatrade.io']) {
+    assert.equal(detectPlatform(host), null, `${host} must not be treated as the trading app`);
+  }
 });

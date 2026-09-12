@@ -1,6 +1,36 @@
 (() => {
   if (globalThis.__ATS_PLATFORM_SYNC__) return;
+  if (String(location.hostname || '').toLowerCase() !== 'trade.casatrade.com') return;
   globalThis.__ATS_PLATFORM_SYNC__ = true;
+
+  const SELECTORS = {
+    amount: [
+      'input[data-testid*="amount" i]',
+      'input[data-testid*="stake" i]',
+      'input[name*="amount" i]',
+      'input[name*="stake" i]',
+      'input[aria-label*="valor" i]',
+      'input[aria-label*="invest" i]',
+      'input[placeholder*="valor" i]'
+    ],
+    timeframe: [
+      '[data-testid*="timeframe" i]',
+      '[data-testid*="candle" i]',
+      '[aria-label*="timeframe" i]',
+      '[aria-label*="vela" i]',
+      '[title*="timeframe" i]',
+      '[title*="vela" i]'
+    ],
+    expiration: [
+      '[data-testid*="expiration" i]',
+      '[data-testid*="expiry" i]',
+      '[aria-label*="expira" i]',
+      '[aria-label*="expiration" i]',
+      '[aria-label*="expiry" i]',
+      '[title*="expira" i]',
+      '[title*="expiration" i]'
+    ]
+  };
 
   const visible = el => {
     if (!el || !(el instanceof Element)) return false;
@@ -36,6 +66,7 @@
     if (s === '1min') return '60s';
     return null;
   };
+
   const assetRx = /\b[A-Z0-9]{2,12}\s*[\/-]\s*[A-Z0-9]{2,12}(?:\s*\(OTC\))?/i;
   const assetDisplay = v => {
     const m = clean(v).match(assetRx); if (!m) return null;
@@ -58,11 +89,25 @@
     found.sort((a, b) => b.score - a.score);
     return found[0]?.asset || null;
   }
+
+  const associatedLabel = el => {
+    if (el.labels?.length) return [...el.labels].map(x => x.innerText || x.textContent || '').join(' ');
+    if (el.id) {
+      try {
+        const escaped = globalThis.CSS?.escape ? CSS.escape(el.id) : String(el.id).replace(/(["\\])/g, '\\$1');
+        return document.querySelector(`label[for="${escaped}"]`)?.textContent || '';
+      } catch {}
+    }
+    return el.closest('label')?.textContent || '';
+  };
   const context = el => {
-    const parts = [el.getAttribute?.('aria-label'), el.getAttribute?.('title'), el.getAttribute?.('placeholder'), el.name, el.id, el.className];
-    let p = el;
-    for (let i = 0; i < 3 && p; i++, p = p.parentElement) {
-      const t = short(p.innerText || p.textContent || '', 220);
+    const parts = [
+      el.getAttribute?.('aria-label'), el.getAttribute?.('data-testid'), el.getAttribute?.('title'),
+      el.getAttribute?.('placeholder'), el.name, el.id, associatedLabel(el)
+    ];
+    let p = el.parentElement;
+    for (let i = 0; i < 2 && p; i++, p = p.parentElement) {
+      const t = short(p.innerText || p.textContent || '', 140);
       if (t) parts.push(t);
     }
     return fold(parts.filter(Boolean).join(' '));
@@ -70,28 +115,51 @@
   const interactive = () => [...document.querySelectorAll('input,select,button,[role="button"],[role="combobox"],[contenteditable="true"]')].filter(visible);
   const excludeFinancialAction = txt => /comprar|vender|buy|sell|depositar|saque|retirar|confirmar ordem|abrir ordem/.test(txt);
   const rank = (kind, el) => {
-    const c = context(el), own = fold(el.value || el.innerText || el.textContent || '').replace(/\s+/g, '');
+    const c = context(el);
+    const own = fold(el.value || el.innerText || el.textContent || '').replace(/\s+/g, '');
     if (excludeFinancialAction(c)) return -999;
     let score = 0;
     if (kind === 'amount') {
-      if (/\bvalor\b|montante|amount|stake|investimento/.test(c)) score += 12;
-      if (el instanceof HTMLInputElement) score += 5;
-      if (/saldo|lucro|payout|retorno/.test(c)) score -= 10;
+      if (!(el instanceof HTMLInputElement)) return -999;
+      if (/\bvalor\b|montante|amount|stake|investimento/.test(c)) score += 14;
+      if (/saldo|lucro|payout|retorno|deposito|saque/.test(c)) score -= 14;
+      if (num(el.value) != null) score += 2;
     }
     if (kind === 'timeframe') {
-      if (/timeframe|tempo da vela|periodo da vela|vela|grafico/.test(c)) score += 12;
-      if (normTf(el.value || el.textContent || '')) score += 4;
-      if (/^(?:m)?(?:1|2|5|15|30)m?$/.test(own) || /^(?:s)?(?:5|15|30)s$/.test(own)) score += 5;
-      if (/expiracao|expiry|expiration/.test(c)) score -= 10;
+      if (/timeframe|tempo da vela|periodo da vela|vela|candle/.test(c)) score += 14;
+      if (normTf(el.value || el.textContent || '')) score += 5;
+      if (/expiracao|expiry|expiration|duracao da entrada/.test(c)) score -= 14;
+      if (/^(?:m)?(?:1|2|5|15|30)m?$/.test(own) || /^(?:s)?(?:5|15|30)s$/.test(own)) score += 3;
     }
     if (kind === 'expiration') {
-      if (/expiracao|expiry|expiration|duracao da entrada|tempo de expiracao/.test(c)) score += 14;
-      if (normExp(el.value || el.textContent || '')) score += 3;
-      if (/timeframe|tempo da vela|periodo da vela/.test(c)) score -= 8;
+      if (/expiracao|expiry|expiration|duracao da entrada|tempo de expiracao/.test(c)) score += 16;
+      if (normExp(el.value || el.textContent || '')) score += 4;
+      if (/timeframe|tempo da vela|periodo da vela|candle/.test(c)) score -= 12;
     }
     return score;
   };
-  const best = kind => interactive().map(el => ({ el, score: rank(kind, el) })).filter(x => x.score >= 8).sort((a, b) => b.score - a.score)[0] || null;
+  const explicit = kind => {
+    const found = [];
+    for (const selector of SELECTORS[kind] || []) {
+      for (const el of document.querySelectorAll(selector)) {
+        if (!visible(el) || excludeFinancialAction(context(el))) continue;
+        found.push({ el, score: Math.max(20, rank(kind, el)), source: 'selector' });
+      }
+    }
+    found.sort((a, b) => b.score - a.score);
+    return found[0] || null;
+  };
+  const best = kind => {
+    const exact = explicit(kind);
+    if (exact) return exact;
+    const ranked = interactive()
+      .map(el => ({ el, score: rank(kind, el), source: 'heuristic' }))
+      .filter(x => x.score >= 12)
+      .sort((a, b) => b.score - a.score);
+    if (!ranked.length) return null;
+    if (ranked[1] && ranked[0].score - ranked[1].score < 3) return null;
+    return ranked[0];
+  };
   const selectorHint = el => {
     if (!el) return null;
     const tag = el.tagName.toLowerCase();
@@ -101,7 +169,9 @@
   };
   const textOf = el => el instanceof HTMLInputElement || el instanceof HTMLSelectElement ? (el.value || el.selectedOptions?.[0]?.textContent || '') : (el.innerText || el.textContent || '');
   const read = () => {
-    const amount = best('amount'), timeframe = best('timeframe'), expiration = best('expiration');
+    const amount = best('amount');
+    const timeframe = best('timeframe');
+    const expiration = best('expiration');
     const amountValue = amount ? num(textOf(amount.el)) : null;
     const timeframeValue = timeframe ? normTf(textOf(timeframe.el)) : null;
     const expirationValue = expiration ? normExp(textOf(expiration.el)) : null;
@@ -110,12 +180,14 @@
       amount: amountValue,
       timeframe: timeframeValue,
       expiration: expirationValue,
-      detected: { amount: !!amountValue || amountValue === 0, timeframe: !!timeframeValue, expiration: !!expirationValue },
+      detected: { amount: amountValue != null, timeframe: !!timeframeValue, expiration: !!expirationValue },
       confidence: { amount: amount?.score || 0, timeframe: timeframe?.score || 0, expiration: expiration?.score || 0 },
+      source: { amount: amount?.source || null, timeframe: timeframe?.source || null, expiration: expiration?.source || null },
       hints: { amount: selectorHint(amount?.el), timeframe: selectorHint(timeframe?.el), expiration: selectorHint(expiration?.el) },
       at: Date.now()
     };
   };
+
   const fire = el => { for (const type of ['input', 'change', 'blur']) el.dispatchEvent(new Event(type, { bubbles: true })); };
   const setInput = (el, value) => {
     if (!(el instanceof HTMLInputElement)) return false;
@@ -130,46 +202,61 @@
     const x = a.getBoundingClientRect(), y = b.getBoundingClientRect();
     return Math.hypot((x.left + x.width / 2) - (y.left + y.width / 2), (x.top + x.height / 2) - (y.top + y.height / 2));
   };
-  const wait = ms => new Promise(r => setTimeout(r, ms));
+  const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
   async function setChoice(kind, control, target) {
     if (!control) return false;
     const normalize = kind === 'timeframe' ? normTf : normExp;
     if (control instanceof HTMLSelectElement) {
       const option = [...control.options].find(o => normalize(o.value) === target || normalize(o.textContent) === target);
       if (!option) return false;
-      control.value = option.value; fire(control); return true;
+      control.value = option.value;
+      fire(control);
+      return true;
     }
-    const current = normalize(textOf(control));
-    if (current === target) return true;
+    if (normalize(textOf(control)) === target) return true;
     control.click();
-    await wait(120);
-    const candidates = [...document.querySelectorAll('[role="option"],[role="menuitem"],li,button,div,span')]
-      .filter(el => visible(el) && el !== control && short(el.innerText || el.textContent || '', 40).length <= 40)
+    await wait(140);
+    const candidates = [...document.querySelectorAll('[role="option"],[role="menuitem"],li,button,[data-testid*="option" i],[class*="option" i]')]
+      .filter(el => visible(el) && el !== control)
+      .filter(el => short(el.innerText || el.textContent || '', 40).length <= 40)
       .filter(el => normalize(el.innerText || el.textContent || '') === target)
       .filter(el => !excludeFinancialAction(context(el)))
       .sort((a, b) => distance(control, a) - distance(control, b));
     const option = candidates[0];
-    if (!option) { document.body.click(); return false; }
+    if (!option) {
+      document.body.click();
+      return false;
+    }
     option.click();
-    await wait(100);
+    await wait(120);
     return true;
   }
+
   async function apply(prefs = {}) {
-    const desired = { amount: num(prefs.tradeAmount ?? prefs.stake), timeframe: normTf(prefs.timeframe), expiration: normExp(prefs.expiration) };
+    const desired = {
+      amount: num(prefs.tradeAmount ?? prefs.stake),
+      timeframe: normTf(prefs.timeframe),
+      expiration: normExp(prefs.expiration)
+    };
     const result = { attempted: {}, applied: {}, desired, before: read() };
+
     if (desired.amount != null && desired.amount > 0) {
-      const c = best('amount'); result.attempted.amount = !!c;
+      const c = best('amount');
+      result.attempted.amount = !!c;
       result.applied.amount = !!c && (Math.abs((num(textOf(c.el)) ?? NaN) - desired.amount) < 0.000001 || setInput(c.el, desired.amount));
     }
     if (desired.timeframe) {
-      const c = best('timeframe'); result.attempted.timeframe = !!c;
+      const c = best('timeframe');
+      result.attempted.timeframe = !!c;
       result.applied.timeframe = !!c && await setChoice('timeframe', c.el, desired.timeframe);
     }
     if (desired.expiration) {
-      const c = best('expiration'); result.attempted.expiration = !!c;
+      const c = best('expiration');
+      result.attempted.expiration = !!c;
       result.applied.expiration = !!c && await setChoice('expiration', c.el, desired.expiration);
     }
-    await wait(180);
+
+    await wait(220);
     result.after = read();
     result.matched = {
       amount: desired.amount != null && result.after.amount != null ? Math.abs(result.after.amount - desired.amount) < 0.000001 : false,
@@ -181,7 +268,10 @@
   }
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    if (message?.type === 'ATS_PLATFORM_READ') { sendResponse({ ok: true, observed: read() }); return; }
+    if (message?.type === 'ATS_PLATFORM_READ') {
+      sendResponse({ ok: true, observed: read() });
+      return;
+    }
     if (message?.type === 'ATS_PLATFORM_APPLY') {
       apply(message.preferences || {}).then(x => sendResponse({ ok: x.ok, ...x })).catch(e => sendResponse({ ok: false, error: String(e?.message || e), observed: read() }));
       return true;

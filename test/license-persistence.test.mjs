@@ -1,7 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { webcrypto } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const root = path.resolve(__dirname, '..');
 const future = () => new Date(Date.now() + 86400000).toISOString();
 
 function storageMock(initial = {}) {
@@ -25,7 +30,7 @@ function storageMock(initial = {}) {
 }
 
 async function loadLicenseModule(storage, fetchImpl) {
-  globalThis.crypto ||= webcrypto;
+  if (!globalThis.crypto) globalThis.crypto = webcrypto;
   globalThis.chrome = {
     storage: { local: storage.api },
     runtime: { getManifest: () => ({ version: '0.10.1' }) }
@@ -69,8 +74,22 @@ test('reopening extension restores active license from local cache before backen
   assert.equal(requests, 0);
 });
 
+test('direct cache restore repairs a missing key without contacting backend', async () => {
+  const license = { key: 'ATS-RESTORE-002', status: 'active', plan: 'pro', expiresAt: future() };
+  const storage = storageMock({
+    atsInstallationId: 'install-restore',
+    atsLastValidLicense: { license, licenseKey: license.key, validatedAt: Date.now() }
+  });
+  let requests = 0;
+  const mod = await loadLicenseModule(storage, async () => { requests++; throw new Error('should-not-run'); });
+  const restored = await mod.restoreCachedLicense();
+  assert.equal(restored.status, 'active');
+  assert.equal(storage.data.get('atsLicenseKey'), license.key);
+  assert.equal(requests, 0);
+});
+
 test('cache repairs missing saved key and validates after grace period', async () => {
-  const license = { key: 'ATS-RECOVER-002', status: 'active', plan: 'starter', expiresAt: future() };
+  const license = { key: 'ATS-RECOVER-003', status: 'active', plan: 'starter', expiresAt: future() };
   const storage = storageMock({
     atsInstallationId: 'install-3',
     atsLastValidLicense: { license, licenseKey: license.key, validatedAt: Date.now() - 10 * 60 * 1000 }
@@ -87,7 +106,7 @@ test('cache repairs missing saved key and validates after grace period', async (
 });
 
 test('temporary validation errors preserve previously valid cache', async () => {
-  const license = { key: 'ATS-SAFE-003', status: 'active', plan: 'pro', expiresAt: future() };
+  const license = { key: 'ATS-SAFE-004', status: 'active', plan: 'pro', expiresAt: future() };
   const storage = storageMock({
     atsInstallationId: 'install-4',
     atsLicenseKey: license.key,
@@ -101,7 +120,7 @@ test('temporary validation errors preserve previously valid cache', async () => 
 });
 
 test('authoritative revocation removes cached license', async () => {
-  const license = { key: 'ATS-REVOKED-004', status: 'active', plan: 'starter', expiresAt: future() };
+  const license = { key: 'ATS-REVOKED-005', status: 'active', plan: 'starter', expiresAt: future() };
   const storage = storageMock({
     atsInstallationId: 'install-5',
     atsLicenseKey: license.key,
@@ -114,4 +133,12 @@ test('authoritative revocation removes cached license', async () => {
   assert.equal(result.ok, false);
   assert.equal(storage.data.has('atsLastValidLicense'), false);
   assert.equal(storage.data.has('atsClientToken'), false);
+});
+
+test('real sidepanel boot restores persisted license before first state request', () => {
+  const app = fs.readFileSync(path.join(root, 'src/sidepanel/app.js'), 'utf8');
+  assert.ok(app.includes('async function restoreLicenseBeforeState()'));
+  const boot = app.slice(app.lastIndexOf('(async () =>'));
+  assert.ok(boot.indexOf('await restoreLicenseBeforeState();') < boot.indexOf('await getState();'));
+  assert.equal(boot.includes('ATS_VALIDATE_LICENSE'), false);
 });

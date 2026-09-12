@@ -1,12 +1,5 @@
 const CASATRADE_HOSTS = new Set([
-  'casatrade.com',
-  'www.casatrade.com',
-  'app.casatrade.com',
-  'trade.casatrade.com',
-  'casatrade.io',
-  'www.casatrade.io',
-  'app.casatrade.io',
-  'trade.casatrade.io'
+  'trade.casatrade.com'
 ]);
 
 const CASA_TRADE = {
