@@ -26,6 +26,7 @@ function intelligenceFrom(rows=[],scannerState={}){const top=rows.slice(0,12).ma
 async function analyzeUniverse(payload={},sender={}){
   if(Date.now()-lastRun<180)return;lastRun=Date.now();
   const{scannerState={},settings={}}=await chrome.storage.local.get(['scannerState','settings']);
+  if(settings.runtimePaused)return;
   if(scannerState.targetTabId&&sender?.tab?.id&&scannerState.targetTabId!==sender.tab.id)return;
   const recentCandles=sanitizeRecentCandles(payload.recentCandles||{}),matrix=correlationMatrix(recentCandles,60),latestNetwork={...(scannerState.diagnostics?.network||{}),messages:payload.messages||{},connections:payload.connections||{},endpoints:Array.isArray(payload.endpoints)?payload.endpoints.slice(-30):[],keys:Array.isArray(payload.keys)?payload.keys.slice(0,180):[],candidates:Array.isArray(payload.candidates)?payload.candidates.slice(0,180):[],candidateCount:Number(payload.candidateCount||0),recentCandles,feedQuality:Number(payload.feedQuality||0),parser:payload.parser||{},primaryTransport:payload.primaryTransport||null,lastSeen:Date.now()};
   const prefs=settings.scanPreferences||{},activeLicense=scannerState.license?.status==='active',candidates=latestNetwork.candidates.filter(c=>{const price=num(c?.price)??((num(c?.bid)!=null&&num(c?.ask)!=null)?(num(c.bid)+num(c.ask))/2:null);return normAsset(c?.asset)&&price!=null&&price>0&&allowedTransports.has(clean(c?.transport))&&Number(c?.seenCount||0)>=2&&Date.now()-Number(c?.observedAt||0)<=6500}).slice(0,80);
