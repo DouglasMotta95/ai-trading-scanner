@@ -45,7 +45,7 @@ export function processSnapshot(snapshot={},state={},risk={}){
     {label:'Contexto EMA/RSI/MACD',weight:20,passed:e9!=null&&e21!=null?aligned(d,e9,e21):rsi!=null||macd!=null}
   ];
   const cf=confluence(checks),profile=aiProfile(risk),weighted=weightedConfidence({direction:d,profile,structure,indicators:analysis.indicators,candles,confirmations:cf.confirmations,totalConfirmations:cf.total,correlation:risk.correlation||{score:70},news:risk.newsRisk||{unknown:true},recentAnalysis:recent});
-  const recentWeight=candles.length<21?.72:.60,score=round((Number(recent.score)||0)*recentWeight+Number(weighted.score||0)*(1-recentWeight));
+  const recentWeight=longEnough?.60:.72,score=round((Number(recent.score)||0)*recentWeight+Number(weighted.score||0)*(1-recentWeight));
   const shortBlockers=[];
   if(recent.lateral)shortBlockers.push('Últimas velas laterais e sem direção clara');
   if(recent.doji&&!recent.rejection)shortBlockers.push('Doji extremo sem contexto suficiente');
