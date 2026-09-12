@@ -64,7 +64,9 @@ function renderLicense(s = {}) {
 
 function renderConnection(s = {}) {
   const online = fresh(s) && s.platformId === 'casatrade';
-  const quality = online ? Math.max(0, Math.min(100, Math.round(Number(s.telemetry?.feedQuality ?? s.diagnostics?.network?.feedQuality ?? 0)))) : 0;
+  const reported = Number(s.telemetry?.feedQuality ?? s.diagnostics?.network?.feedQuality ?? 0);
+  const fallback = online && s.asset && s.price != null ? 42 : 0;
+  const quality = online ? Math.max(0, Math.min(100, Math.round(reported > 0 ? reported : fallback))) : 0;
   if ($('connectionTitle')) $('connectionTitle').textContent = online ? 'CasaTrade conectada' : 'Não conectado';
   if ($('connectionBadge')) {
     $('connectionBadge').textContent = online ? 'CONECTADO' : 'OFFLINE';
@@ -78,13 +80,28 @@ function renderConnection(s = {}) {
 
 function renderConfig(s = {}) {
   const observed = s.platformControls?.observed || {};
-  const aligned = !!s.platformControls?.aligned && fresh(s);
+  const online = fresh(s) && s.platformId === 'casatrade';
+  const aligned = !!s.platformControls?.aligned && online;
+  const fullyRead = observed.amount != null && !!observed.timeframe && !!observed.expiration;
+
+  if (online) {
+    if (amountInput && document.activeElement !== amountInput && observed.amount != null) amountInput.value = String(observed.amount).replace('.', ',');
+    if (tfSelect && observed.timeframe) {
+      ensureOption(tfSelect, observed.timeframe);
+      if (document.activeElement !== tfSelect) tfSelect.value = observed.timeframe;
+    }
+    if (expSelect && observed.expiration) {
+      ensureOption(expSelect, observed.expiration);
+      if (document.activeElement !== expSelect) expSelect.value = observed.expiration;
+    }
+  }
+
   if ($('syncBadge')) {
-    $('syncBadge').textContent = aligned ? 'SINCRONIZADO' : configuredPrefs(prefs) ? 'VERIFICAR' : 'CONFIGURAR';
-    $('syncBadge').className = `badge ${aligned ? 'ok' : configuredPrefs(prefs) ? 'warn' : ''}`;
+    $('syncBadge').textContent = aligned ? 'SINCRONIZADO' : fullyRead ? 'LIDO' : configuredPrefs(prefs) ? 'VERIFICAR' : 'CONFIGURAR';
+    $('syncBadge').className = `badge ${aligned ? 'ok' : fullyRead || configuredPrefs(prefs) ? 'warn' : ''}`;
   }
   if ($('platformObserved')) {
-    $('platformObserved').textContent = fresh(s)
+    $('platformObserved').textContent = online
       ? `CasaTrade: ${observed.amount == null ? 'valor não lido' : money(observed.amount)} • ${observed.timeframe || 'vela não lida'} • ${observed.expiration || 'expiração não lida'}`
       : 'CasaTrade ainda não lida.';
   }
@@ -232,5 +249,5 @@ chrome.storage.onChanged.addListener(changes => {
   setInterval(getState, 1000);
   setInterval(() => {
     if (fresh(lastState) && lastState.platformId === 'casatrade') chrome.runtime.sendMessage({ type: 'ATS_READ_PLATFORM_CONTROLS' }).catch(() => {});
-  }, 2500);
+  }, 1600);
 })();
