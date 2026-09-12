@@ -19,11 +19,13 @@ test('sidepanel exposes only the focused license, candle and next-entry surface'
 
   for (const id of [
     'activateLicense','analysisTitle','asset','price','secondsRemaining','timeframe','expiration',
-    'currentOpen','currentHigh','currentLow','currentClose','signalTitle','signalReason','decisionText','signalScore','targetTime'
+    'currentOpen','currentHigh','currentLow','currentClose','recentCandles','recentCandleCount',
+    'signalTitle','signalReason','decisionText','signalScore','targetTime','prepareBuy','prepareSell'
   ]) assert.match(html, new RegExp(`id=["']${id}["']`));
 
   assert.match(app, /ATS_ACTIVATE_LICENSE/);
   assert.match(app, /ATS_CONNECT_ACTIVE_TAB/);
+  assert.match(app, /ATS_PREPARE_TRADE/);
   assert.match(app, /POSSÍVEL/);
   assert.match(app, /COMPRA/);
   assert.match(app, /VENDA/);
@@ -45,7 +47,7 @@ test('unsupported platform text is explicit and market values stay empty', () =>
   assert.match(app, /online && s\.price != null \? String\(s\.price\) : '—'/);
 });
 
-test('background keeps session-scoped confirmed decisions without exposing extra UI', () => {
+test('background keeps session-scoped confirmed decisions without exposing extra history page', () => {
   const background = read('src/background.js');
   const html = read('src/sidepanel/index.html');
   assert.match(background, /chrome\.storage\.session/);

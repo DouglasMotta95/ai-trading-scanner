@@ -32,10 +32,16 @@ function validCandle(raw = {}) {
   return { ...raw, open, high, low, close };
 }
 
-function currentFromSnapshot(candles = [], bucket, timeframe, price) {
+function sameTimeframe(raw = {}, wanted = 'M1') {
+  const tf = clean(raw?.timeframe).toUpperCase();
+  return !tf || tf === clean(wanted).toUpperCase();
+}
+
+function currentFromSnapshot(candles = [], bucket, timeframeMsValue, timeframeLabel, price) {
   const row = [...(Array.isArray(candles) ? candles : [])].reverse().find(raw => {
+    if (!sameTimeframe(raw, timeframeLabel)) return false;
     const t = candleTime(raw);
-    return t != null && Math.floor(t / timeframe) * timeframe === bucket;
+    return t != null && Math.floor(t / timeframeMsValue) * timeframeMsValue === bucket;
   });
   const c = row ? validCandle(row) : null;
   if (!c) return null;
@@ -54,7 +60,7 @@ function reasonFor(result = {}, direction = null, final = false) {
   const side = direction === 'BUY' ? 'compra' : 'venda';
   if (result.recent?.breakout === direction) return `${final ? 'Confirmado' : 'Possível'} ${side}: rompimento + vela atual favorecem a direção.`;
   if (result.recent?.rejection === direction) return `${final ? 'Confirmado' : 'Possível'} ${side}: rejeição + vela atual favorecem a direção.`;
-  return `${final ? 'Confirmado' : 'Possível'} ${side}: sequência recente e vela atual mantêm a direção.`;
+  return `${final ? 'Confirmado' : 'Possível'} ${side}: sequência das últimas velas + vela atual mantêm a direção.`;
 }
 
 function baseSignal({ state = 'WAIT', direction = null, provisional = true, reason, timeframe = 'M1', expiration = null, candleCount = 0, secondsRemaining = null, progress = null, currentCandle = null, score = 0, phase = 'ANALYZING', targetStart = null } = {}) {
@@ -97,6 +103,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
   const builder = getBuilder({ ...snapshot, analysisTimeframe });
 
   const history = (Array.isArray(snapshot.candles) ? snapshot.candles : []).filter(raw => {
+    if (!sameTimeframe(raw, analysisTimeframe)) return false;
     const t = candleTime(raw);
     return t != null && Math.floor(t / tfMs) * tfMs < currentBucket;
   });
@@ -105,15 +112,19 @@ export function processSnapshot(snapshot = {}, state = {}) {
 
   const shot = builder.snapshot();
   const closed = shot.closed.slice(-120);
-  const current = currentFromSnapshot(snapshot.candles, currentBucket, tfMs, price) || shot.current;
-  const combined = current ? [...closed.slice(-4), current] : closed.slice(-5);
+  const current = currentFromSnapshot(snapshot.candles, currentBucket, tfMs, analysisTimeframe, price) || shot.current;
+  const combined = current ? [...closed.slice(-9), current] : closed.slice(-10);
   const liveResult = analyzeCandles(combined);
   const candleCount = closed.length;
 
-  const endAt = currentBucket + tfMs;
-  const remainingMs = Math.max(0, endAt - sampleAt);
+  const clockRemaining = num(snapshot.secondsRemaining);
+  const fallbackRemainingMs = Math.max(0, currentBucket + tfMs - sampleAt);
+  const remainingMs = clockRemaining != null
+    ? Math.max(0, Math.min(tfMs, Math.round(clockRemaining * 1000)))
+    : fallbackRemainingMs;
   const secondsRemaining = Math.max(0, Math.ceil(remainingMs / 1000));
   const progress = Math.max(0, Math.min(100, Math.round(((tfMs - remainingMs) / tfMs) * 100)));
+  const targetStart = clockRemaining != null ? sampleAt + remainingMs : currentBucket + tfMs;
   const direction = ['BUY', 'SELL'].includes(liveResult.direction) ? liveResult.direction : null;
   const score = Number(liveResult.score || 0);
   const expiration = snapshot.targetExpiration || state.targetExpiration || snapshot.expiration || state.expiration || null;
@@ -125,7 +136,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
     progress,
     currentCandle: current ? { ...current } : null,
     score,
-    targetStart: endAt
+    targetStart
   };
 
   const previousDecision = finalDecisions.get(key);
@@ -168,7 +179,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
         ...locked,
         phase: 'FINAL',
         score: locked.score,
-        targetStart: endAt
+        targetStart
       })
     };
   }
@@ -198,7 +209,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
       provisional: true,
       phase: 'ANALYZING',
       reason: secondsRemaining > 30
-        ? `Analisando velas anteriores + vela atual. Pré-sinal abre nos últimos 30s.`
+        ? `Analisando até 9 velas fechadas + a vela atual. Pré-sinal abre nos últimos 30s.`
         : 'Analisando a vela atual. Aguardando padrão mais forte.'
     })
   };
