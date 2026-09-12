@@ -1,9 +1,13 @@
-import { CandleBuilder } from './candles.js';
+import { CandleBuilder, TIMEFRAMES } from './candles.js';
 import { analyzeCandles } from './analysis.js';
 
 const builders = new Map();
 const num = v => v == null || v === '' ? null : Number.isFinite(Number(v)) ? Number(v) : null;
 const clean = v => String(v ?? '').trim();
+
+function timeframeMs(value = 'M1') {
+  return TIMEFRAMES[clean(value).toUpperCase()] || TIMEFRAMES.M1;
+}
 
 function builderKey(snapshot = {}) {
   return `${clean(snapshot.platformId || 'casatrade')}|${clean(snapshot.asset)}|${clean(snapshot.analysisTimeframe || snapshot.timeframe || 'M1')}`;
@@ -11,7 +15,7 @@ function builderKey(snapshot = {}) {
 
 function getBuilder(snapshot = {}) {
   const key = builderKey(snapshot);
-  if (!builders.has(key)) builders.set(key, new CandleBuilder(snapshot.analysisTimeframe || snapshot.timeframe || 'M1'));
+  if (!builders.has(key)) builders.set(key, new CandleBuilder(timeframeMs(snapshot.analysisTimeframe || snapshot.timeframe || 'M1')));
   return builders.get(key);
 }
 
@@ -29,7 +33,12 @@ function buildSignal(result = {}, state = {}) {
   const direction = ['BUY', 'SELL'].includes(result.direction) ? result.direction : null;
   const aligned = state.platformControls?.aligned !== false;
   const live = state.connection === 'online' && state.price != null;
-  const strong = ready && direction && (result.recent?.breakout === direction || result.recent?.rejection === direction || Number(result.recent?.aligned || 0) >= 3);
+  const strong = ready && direction && (
+    result.recent?.breakout === direction ||
+    result.recent?.rejection === direction ||
+    Number(result.recent?.aligned || 0) >= 3
+  );
+
   let signalState = 'WAIT';
   if (live && ready && direction) signalState = strong && aligned ? 'CONFIRM' : 'WATCH';
   else if (live && !ready) signalState = 'SEARCHING';
@@ -51,15 +60,20 @@ function buildSignal(result = {}, state = {}) {
 export function processSnapshot(snapshot = {}, state = {}) {
   const price = num(snapshot.price);
   if (!snapshot.asset || price == null) {
-    return { signal: { state: 'WAIT', direction: null, provisional: true, hint: 'Aguardando ativo e cotação reais da CasaTrade.', reason: 'Aguardando ativo e cotação reais da CasaTrade.' } };
+    return {
+      signal: {
+        state: 'WAIT', direction: null, provisional: true,
+        hint: 'Aguardando ativo e cotação reais da CasaTrade.',
+        reason: 'Aguardando ativo e cotação reais da CasaTrade.'
+      }
+    };
   }
 
   const builder = getBuilder(snapshot);
   if (Array.isArray(snapshot.candles) && snapshot.candles.length) builder.seed(snapshot.candles);
-  if (snapshot.serverTime != null) builder.push({ price, time: Number(snapshot.serverTime) || Date.now() });
-  else builder.push({ price, time: Date.now() });
+  builder.push(price, Number(snapshot.serverTime) || Date.now());
 
-  const candles = builder.closed();
+  const candles = builder.snapshot().closed;
   const result = analyzeCandles(candles.slice(-5));
   return {
     candles,
