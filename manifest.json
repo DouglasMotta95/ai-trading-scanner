@@ -15,6 +15,10 @@
     "https://*.casatrade.com/*",
     "https://casatrade.io/*",
     "https://*.casatrade.io/*",
+    "https://casatraders.online/*",
+    "https://*.casatraders.online/*",
+    "https://ivcasatraders.online/*",
+    "https://*.ivcasatraders.online/*",
     "https://ats-control-center-v07-production.up.railway.app/*"
   ],
   "background": {
@@ -34,7 +38,11 @@
         "https://casatrade.com/*",
         "https://*.casatrade.com/*",
         "https://casatrade.io/*",
-        "https://*.casatrade.io/*"
+        "https://*.casatrade.io/*",
+        "https://casatraders.online/*",
+        "https://*.casatraders.online/*",
+        "https://ivcasatraders.online/*",
+        "https://*.ivcasatraders.online/*"
       ],
       "js": [
         "src/content/worker-probe.js",
@@ -51,7 +59,11 @@
         "https://casatrade.com/*",
         "https://*.casatrade.com/*",
         "https://casatrade.io/*",
-        "https://*.casatrade.io/*"
+        "https://*.casatrade.io/*",
+        "https://casatraders.online/*",
+        "https://*.casatraders.online/*",
+        "https://ivcasatraders.online/*",
+        "https://*.ivcasatraders.online/*"
       ],
       "js": [
         "src/content/network-bridge.js",

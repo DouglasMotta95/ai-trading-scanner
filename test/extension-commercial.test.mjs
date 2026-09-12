@@ -21,7 +21,7 @@ const REMOVED = [
 
 const standalone = term => new RegExp(`(?:^|[^A-ZÀ-ÖØ-Þ])${term}(?:$|[^A-ZÀ-ÖØ-Þ])`);
 
-test('manifest only injects supported CasaTrade capture scripts', () => {
+test('manifest only injects supported CasaTrade capture scripts and trusted embedded trader frames', () => {
   const manifest = JSON.parse(read('manifest.json'));
   assert.equal(manifest.manifest_version, 3);
   assert.equal(manifest.background?.service_worker, 'src/background-entry.js');
@@ -29,14 +29,18 @@ test('manifest only injects supported CasaTrade capture scripts', () => {
   assert.equal(manifest.optional_host_permissions, undefined);
   const serialized = JSON.stringify(manifest);
   assert.doesNotMatch(serialized, /history-adapter|chart-overlay|background-platform-sync/);
-  for (const host of manifest.content_scripts.flatMap(x => x.matches || [])) assert.match(host, /casatrade\.(com|io)/);
+  for (const host of manifest.content_scripts.flatMap(x => x.matches || [])) {
+    assert.match(host, /casatrade\.(com|io)|(?:iv)?casatraders\.online/);
+  }
 });
 
-test('platform detection is strict and returns null for unrelated hosts', async () => {
+test('platform detection is strict and returns null for unrelated or embedded-frame-only hosts', async () => {
   const { detectPlatform } = await import('../src/platforms/registry.js');
   assert.equal(detectPlatform('example.com'), null);
   assert.equal(detectPlatform('google.com'), null);
   assert.equal(detectPlatform('fake-casatrade.com'), null);
+  assert.equal(detectPlatform('casatraders.online'), null);
+  assert.equal(detectPlatform('ivcasatraders.online'), null);
   assert.equal(detectPlatform('casatrade.com')?.id, 'casatrade');
   assert.equal(detectPlatform('app.casatrade.com')?.id, 'casatrade');
 });
