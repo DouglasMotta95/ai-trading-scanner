@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "AI Trading Scanner",
-  "version": "0.9.6",
-  "description": "Scanner inteligente multi-plataforma com feed WebSocket robusto, radar multiativo, sincronização de operação e análise quantitativa em tempo real.",
+  "version": "0.10.0",
+  "description": "Scanner inteligente multi-plataforma com WebSocket de baixa latência, análise multiativo, IA ponderada, gestão de risco e terminal profissional.",
   "permissions": ["storage", "activeTab", "scripting", "sidePanel"],
   "optional_host_permissions": ["http://*/*", "https://*/*"],
   "host_permissions": [
@@ -23,7 +23,7 @@
     },
     {
       "matches": ["https://*.casatrade.com/*", "https://*.casatrade.io/*"],
-      "js": ["src/content/network-bridge.js", "src/content/generic-adapter.js", "src/content/platform-sync.js", "src/content/history-adapter.js"],
+      "js": ["src/content/network-bridge.js", "src/content/generic-adapter.js", "src/content/platform-sync.js", "src/content/history-adapter.js", "src/content/chart-overlay.js"],
       "run_at": "document_start"
     }
   ]
