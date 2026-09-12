@@ -1,49 +1,88 @@
-import { processSnapshot } from './core/orchestrator.js';
-import { correlationMatrix, strongestCorrelation } from './core/correlation.js';
-import { newsRisk } from './core/news-filter.js';
-import { runBacktest } from './core/backtest.js';
-import { weeklyReport } from './core/reporting.js';
+const allowedTransports = new Set(['ws', 'fetch', 'xhr']);
+let lastRun = 0;
+const num = v => v == null || v === '' ? null : Number.isFinite(Number(v)) ? Number(v) : null;
+const clean = v => String(v ?? '').trim();
+const normAsset = v => {
+  let s = clean(v).toUpperCase();
+  const otc = /(?:\(|\b|[_-])OTC(?:\)|\b)?/.test(s);
+  s = s.replace(/\(OTC\)|\bOTC\b/g, '').replace(/^FRX[:_-]?/, '').replace(/\s+/g, '').replace(/_/g, '/').replace(/-/g, '/').replace(/^\/+|\/+$/g, '').replace(/\/{2,}/g, '/');
+  if (!s.includes('/')) {
+    const quotes = ['USDT','USDC','USD','EUR','GBP','JPY','AUD','CAD','CHF','NZD','BRL','BTC','ETH'];
+    const q = quotes.find(x => s.length > x.length && s.endsWith(x));
+    if (q) s = `${s.slice(0, -q.length)}/${q}`;
+    else if (/^[A-Z]{6}$/.test(s)) s = `${s.slice(0, 3)}/${s.slice(3)}`;
+  }
+  return s ? `${s}${otc ? ' (OTC)' : ''}` : '';
+};
+const normTf = v => {
+  const s = clean(v).toUpperCase().replace(/\s+/g, '');
+  if (/^\d+M$/.test(s)) return `M${s.replace('M', '')}`;
+  if (/^\d+S$/.test(s)) return `S${s.replace('S', '')}`;
+  if (/^M\d+$/.test(s) || /^S\d+$/.test(s) || /^H\d+$/.test(s)) return s;
+  return s || null;
+};
+const normExp = v => {
+  const s = clean(v).toLowerCase().replace(/\s+/g, '');
+  let m = s.match(/^(\d+)s$/); if (m) return `${Number(m[1])}s`;
+  m = s.match(/^(\d+)m(?:in)?$/); if (m) return Number(m[1]) === 1 ? '60s' : `${Number(m[1])}m`;
+  return s || null;
+};
 
-const allowedTransports=new Set(['ws','fetch','xhr']);
-let lastRun=0;
-const num=v=>v==null||v===''?null:Number.isFinite(Number(v))?Number(v):null;
-const clean=v=>String(v??'').trim();
-const normAsset=v=>{let s=clean(v).toUpperCase(),otc=/(?:\(|\b|[_-])OTC(?:\)|\b)?/.test(s);s=s.replace(/\(OTC\)|\bOTC\b/g,'').replace(/^FRX[:_-]?/,'').replace(/\s+/g,'').replace(/_/g,'/').replace(/-/g,'/').replace(/^\/+|\/+$/g,'').replace(/\/{2,}/g,'/');if(!s.includes('/')){const quotes=['USDT','USDC','USD','EUR','GBP','JPY','AUD','CAD','CHF','NZD','BRL','BTC','ETH'],q=quotes.find(x=>s.length>x.length&&s.endsWith(x));if(q)s=`${s.slice(0,-q.length)}/${q}`;else if(/^[A-Z]{6}$/.test(s))s=`${s.slice(0,3)}/${s.slice(3)}`}return s?`${s}${otc?' (OTC)':''}`:''};
-const normTf=v=>{const s=clean(v).toUpperCase().replace(/\s+/g,'');if(/^\d+M$/.test(s))return`M${s.replace('M','')}`;if(/^\d+S$/.test(s))return`S${s.replace('S','')}`;if(/^M\d+$/.test(s)||/^S\d+$/.test(s)||/^H\d+$/.test(s))return s;return s||null};
-const normExp=v=>{const s=clean(v).toLowerCase().replace(/\s+/g,'');let m=s.match(/^(\d+)s$/);if(m)return`${Number(m[1])}s`;m=s.match(/^(\d+)m(?:in)?$/);if(m)return Number(m[1])===1?'60s':`${Number(m[1])}m`;return s||null};
-const rank=state=>({CONFIRM:6,WATCH:5,SEARCHING:4,WAIT:3,NO_TRADE:2,CANCEL:1,IDLE:0})[state]??0;
-const riskFrom=(settings={},license={},extra={})=>({...settings?.risk,minScore:settings?.risk?.minScore??settings?.minScore,onlyA:settings?.risk?.onlyA??settings?.onlyA,staleBlock:settings?.risk?.staleBlock??settings?.staleBlock,staleMs:settings?.risk?.staleMs??settings?.staleMs,signalsToday:license.usedToday??settings?.risk?.signalsToday??0,maxSignals:license.dailyLimit??settings?.risk?.maxSignals??settings?.maxSignals??20,maxConsecutiveLosses:settings?.risk?.maxConsecutiveLosses??settings?.maxConsecutiveLosses,cooldownMs:settings?.risk?.cooldownMs??settings?.cooldownMs,requestedStake:settings?.scanPreferences?.tradeAmount??settings?.risk?.requestedStake,...extra});
-
-function sanitizeRecentCandles(input={}){if(!input||typeof input!=='object'||Array.isArray(input))return{};const out={};for(const[rawAsset,rows]of Object.entries(input).slice(0,80)){const asset=normAsset(rawAsset);if(!asset||!Array.isArray(rows))continue;const cleanRows=rows.slice(-240).map(r=>{let time=num(r?.time??r?.timestamp);if(time!=null&&time>0&&time<1e12)time*=1000;const open=num(r?.open),high=num(r?.high),low=num(r?.low),close=num(r?.close);if(![time,open,high,low,close].every(Number.isFinite))return null;return{time,open,high,low,close,timeframe:normTf(r?.timeframe)}}).filter(Boolean).sort((a,b)=>a.time-b.time);if(cleanRows.length)out[asset]=cleanRows}return out}
-
-function sessionContext(asset,when=new Date()){const value=normAsset(asset),otc=/\(OTC\)$/.test(value);if(otc)return{code:'OTC',label:'Mercado OTC',active:true,score:0,note:'OTC não segue a sessão oficial do par. O ATS prioriza o feed observado na plataforma.'};const h=when.getUTCHours()+when.getUTCMinutes()/60,sessions=[{code:'ASIA',label:'Ásia',start:0,end:9,currencies:['JPY','AUD','NZD']},{code:'LONDRES',label:'Londres',start:7,end:16,currencies:['EUR','GBP','CHF']},{code:'NY',label:'Nova York',start:12,end:21,currencies:['USD','CAD','BRL']}],currencies=value.replace(/ \(OTC\)$/,'').split('/'),active=sessions.filter(s=>h>=s.start&&h<s.end),relevant=active.filter(s=>currencies.some(c=>s.currencies.includes(c))),chosen=relevant[0]||active[0]||null,overlap=active.length>1;return{code:chosen?.code||'FORA',label:chosen?`${chosen.label}${overlap?' • sobreposição':''}`:'Fora das sessões principais',active:!!chosen,score:relevant.length?(overlap?8:5):0,note:chosen?'Sessão compatível com as moedas do par. Use como contexto, não como garantia.':'Liquidez pode ser menor fora das sessões principais.'}}
-
-function normalizedEvents(settings={}){return(Array.isArray(settings.marketEvents)?settings.marketEvents:[]).map(e=>({...e,timestamp:Number(e.timestamp||e.at||0),currency:String(e.currency||'').toUpperCase(),impact:String(e.impact||'').toLowerCase()})).filter(e=>e.timestamp&&e.currency)}
-function newsFor(asset,settings={}){const events=normalizedEvents(settings);if(!events.length)return{blocked:false,events:[],reason:null,unknown:true};const r=newsRisk(events,asset,Date.now(),Number(settings?.risk?.newsWindowMinutes||15));let nearest=null;for(const e of events){const mins=Math.abs(e.timestamp-Date.now())/60000;if(nearest==null||mins<nearest)nearest=mins}return{...r,unknown:false,minutesToNearest:nearest}}
-
-function intelligenceFrom(rows=[],scannerState={}){const top=rows.slice(0,12).map(x=>{const session=sessionContext(x.asset),signalScore=Number(x.signal?.score||0),structured=x.transport==='ws'||!!x.structured,ai=x.signal?.ai||null;return{asset:x.asset,direction:x.signal?.direction||null,state:x.signal?.state||'WAIT',score:signalScore,aiScore:ai?.score??signalScore,adjustedScore:Math.max(0,Math.min(100,(ai?.score??signalScore)+session.score)),timeframe:x.timeframe||null,expiration:x.expiration||null,feed:x.transport||null,structured,session,warmup:x.signal?.warmup||null,correlation:x.correlation||null,news:x.news||null,opinion:ai?.opinion||null,risk:x.signal?.risk||null,updatedAt:x.updatedAt}}).sort((a,b)=>rank(b.state)-rank(a.state)||b.adjustedScore-a.adjustedScore);const viable=top.filter(x=>['CONFIRM','WATCH'].includes(x.state)&&x.structured).slice(0,3);return{generatedAt:Date.now(),engine:'ia-ponderada-local',externalAi:'opcional',summary:viable.length?`${viable.length} mercado${viable.length>1?'s':''} em destaque pela IA ponderada agora.`:top.length?'Ainda não há mercado com nota suficiente. O ATS continua acompanhando os melhores candidatos.':'Aguardando o feed da plataforma para classificar os mercados.',top:top.slice(0,5),currentAsset:scannerState.asset||null,note:'A nota usa price action, indicadores, EMAs, volatilidade, correlação, notícias e momentum com pesos explícitos.'}}
-
-async function analyzeUniverse(payload={},sender={}){
-  if(Date.now()-lastRun<180)return;lastRun=Date.now();
-  const{scannerState={},settings={}}=await chrome.storage.local.get(['scannerState','settings']);
-  if(settings.runtimePaused)return;
-  if(scannerState.targetTabId&&sender?.tab?.id&&scannerState.targetTabId!==sender.tab.id)return;
-  const recentCandles=sanitizeRecentCandles(payload.recentCandles||{}),matrix=correlationMatrix(recentCandles,60),latestNetwork={...(scannerState.diagnostics?.network||{}),messages:payload.messages||{},connections:payload.connections||{},endpoints:Array.isArray(payload.endpoints)?payload.endpoints.slice(-30):[],keys:Array.isArray(payload.keys)?payload.keys.slice(0,180):[],candidates:Array.isArray(payload.candidates)?payload.candidates.slice(0,180):[],candidateCount:Number(payload.candidateCount||0),recentCandles,feedQuality:Number(payload.feedQuality||0),parser:payload.parser||{},primaryTransport:payload.primaryTransport||null,lastSeen:Date.now()};
-  const prefs=settings.scanPreferences||{},activeLicense=scannerState.license?.status==='active',candidates=latestNetwork.candidates.filter(c=>{const price=num(c?.price)??((num(c?.bid)!=null&&num(c?.ask)!=null)?(num(c.bid)+num(c.ask))/2:null);return normAsset(c?.asset)&&price!=null&&price>0&&allowedTransports.has(clean(c?.transport))&&Number(c?.seenCount||0)>=2&&Date.now()-Number(c?.observedAt||0)<=6500}).slice(0,80);
-  if(!activeLicense||!candidates.length){const latest=(await chrome.storage.local.get('scannerState')).scannerState||scannerState;await chrome.storage.local.set({scannerState:{...latest,marketHistory:recentCandles,correlationMatrix:matrix,diagnostics:{...(latest.diagnostics||{}),network:latestNetwork},universeAnalysis:activeLicense?(latest.universeAnalysis||[]):[],universeRecommendation:activeLicense?latest.universeRecommendation||null:null,marketIntelligence:intelligenceFrom(activeLicense?latest.universeAnalysis||[]:[],latest)}});return}
-  const previous=new Map((scannerState.universeAnalysis||[]).map(x=>[`${normAsset(x.asset)}|${normTf(x.timeframe)}`,x])),peerDirections=Object.fromEntries((scannerState.universeAnalysis||[]).map(x=>[normAsset(x.asset),x.signal?.direction||null])),out=[],correlationByAsset={},newsRiskByAsset={};
-  for(const c of candidates){const asset=normAsset(c.asset),price=num(c.price)??((num(c.bid)!=null&&num(c.ask)!=null)?(num(c.bid)+num(c.ask))/2:null),timeframe=normTf((prefs.timeframe&&prefs.timeframe!=='AUTO')?prefs.timeframe:(c.timeframe||scannerState.timeframe||scannerState.analysisTimeframe)),expiration=normExp((prefs.expiration&&prefs.expiration!=='AUTO')?prefs.expiration:(c.expiration||scannerState.expiration||scannerState.targetExpiration));if(!timeframe)continue;const prev=previous.get(`${asset}|${timeframe}`),rawTs=num(c.timestamp),serverTime=rawTs&&rawTs>1e12?rawTs:Number(c.observedAt)||Date.now(),historyKey=Object.keys(recentCandles).find(k=>normAsset(k)===asset),candles=historyKey?recentCandles[historyKey]:[],corr=strongestCorrelation(asset,matrix,prev?.signal?.direction||null,peerDirections),news=newsFor(asset,settings);correlationByAsset[asset]=corr;newsRiskByAsset[asset]=news;const snapshot={platformId:scannerState.platformId||'casatrade',platformName:scannerState.platformName||'CasaTrade',asset,price,serverTime,timeframe,analysisTimeframe:timeframe,expiration,targetExpiration:expiration,candles:Array.isArray(candles)?candles:[],capabilities:{...(scannerState.capabilities||{}),structuredQuotes:true,candles:Array.isArray(candles)&&candles.length>=3,multiAsset:candidates.length>1}},localState={...scannerState,asset,price,analysisTimeframe:timeframe,targetExpiration:expiration,signal:prev?.signal||null,scanner:'scanning'},result=processSnapshot(snapshot,localState,riskFrom(settings,scannerState.license||{},{correlation:corr,newsRisk:news}));out.push({asset,price,timeframe,expiration,transport:clean(c.transport),structured:true,confidence:Number(c.confidence||0),seenCount:Number(c.seenCount||0),observedAt:Number(c.observedAt||0),payout:num(c.payout),instrumentType:c.instrumentType||null,marketType:c.marketType||(/\(OTC\)$/.test(asset)?'otc':'regular'),requiresFocus:asset!==normAsset(scannerState.asset),correlation:corr,news,signal:result.signal||prev?.signal||null,updatedAt:Date.now()})}
-  out.sort((a,b)=>rank(b.signal?.state)-rank(a.signal?.state)||Number(b.signal?.ai?.score||b.signal?.score||0)-Number(a.signal?.ai?.score||a.signal?.score||0)||Number(b.signal?.warmup?.current||0)-Number(a.signal?.warmup?.current||0));
-  const recommendation=out[0]?{asset:out[0].asset,price:out[0].price,timeframe:out[0].timeframe,expiration:out[0].expiration,direction:out[0].signal?.direction||null,score:out[0].signal?.ai?.score??out[0].signal?.score??0,state:out[0].signal?.state||'WAIT',requiresFocus:!!out[0].requiresFocus,updatedAt:Date.now()}:null,latest=(await chrome.storage.local.get('scannerState')).scannerState||scannerState;
-  await chrome.storage.local.set({scannerState:{...latest,marketHistory:recentCandles,correlationMatrix:matrix,correlationByAsset,newsRiskByAsset,diagnostics:{...(latest.diagnostics||{}),network:latestNetwork},universeAnalysis:out.slice(0,80),universeRecommendation:recommendation,marketIntelligence:intelligenceFrom(out,latest),capabilities:{...(latest.capabilities||{}),multiAsset:out.length>1||latest.capabilities?.multiAsset}}});
+function sanitizeRecentCandles(input = {}) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return {};
+  const out = {};
+  for (const [rawAsset, rows] of Object.entries(input).slice(0, 80)) {
+    const asset = normAsset(rawAsset);
+    if (!asset || !Array.isArray(rows)) continue;
+    const cleanRows = rows.slice(-240).map(r => {
+      let time = num(r?.time ?? r?.timestamp);
+      if (time != null && time > 0 && time < 1e12) time *= 1000;
+      const open = num(r?.open), high = num(r?.high), low = num(r?.low), close = num(r?.close);
+      if (![time, open, high, low, close].every(Number.isFinite)) return null;
+      return { time, open, high, low, close, timeframe: normTf(r?.timeframe) };
+    }).filter(Boolean).sort((a, b) => a.time - b.time);
+    if (cleanRows.length) out[asset] = cleanRows;
+  }
+  return out;
 }
 
-chrome.runtime.onMessage.addListener((message,sender,sendResponse)=>{
-  if(message?.type==='ATS_NETWORK_DIAGNOSTIC'){setTimeout(()=>analyzeUniverse(message.payload||{},sender).catch(()=>{}),40);return}
-  if(message?.type==='ATS_RUN_BACKTEST'){
-    chrome.storage.local.get(['scannerState','settings']).then(({scannerState={},settings={}})=>{const asset=normAsset(message.asset||scannerState.asset),history=scannerState.marketHistory||{},key=Object.keys(history).find(k=>normAsset(k)===asset),rows=key?history[key]:[],timeframe=message.timeframe||scannerState.analysisTimeframe||scannerState.timeframe||'M1',result=runBacktest(rows,{timeframe,payout:Number(message.payout||.85)});return chrome.storage.local.set({scannerState:{...scannerState,backtest:result}}).then(()=>sendResponse(result))}).catch(e=>sendResponse({ok:false,error:String(e?.message||e)}));return true
-  }
-  if(message?.type==='ATS_GET_WEEKLY_REPORT'){
-    chrome.storage.local.get(['scannerState','settings']).then(({scannerState={},settings={}})=>{const report=weeklyReport(scannerState.signalHistory||[],settings?.risk?.bankHistory||[]);sendResponse({ok:true,report})}).catch(e=>sendResponse({ok:false,error:String(e?.message||e)}));return true
+async function keepRealFeedContext(payload = {}, sender = {}) {
+  if (Date.now() - lastRun < 180) return;
+  lastRun = Date.now();
+  const { scannerState = {}, settings = {} } = await chrome.storage.local.get(['scannerState', 'settings']);
+  if (settings.runtimePaused) return;
+  if (scannerState.targetTabId && sender?.tab?.id && scannerState.targetTabId !== sender.tab.id) return;
+  const recentCandles = sanitizeRecentCandles(payload.recentCandles || {});
+  const candidates = Array.isArray(payload.candidates) ? payload.candidates.slice(0, 180).filter(c => {
+    const price = num(c?.price) ?? ((num(c?.bid) != null && num(c?.ask) != null) ? (num(c.bid) + num(c.ask)) / 2 : null);
+    return normAsset(c?.asset) && price != null && price > 0 && allowedTransports.has(clean(c?.transport));
+  }) : [];
+  const latestNetwork = {
+    ...(scannerState.diagnostics?.network || {}),
+    messages: payload.messages || {},
+    connections: payload.connections || {},
+    endpoints: Array.isArray(payload.endpoints) ? payload.endpoints.slice(-30) : [],
+    keys: Array.isArray(payload.keys) ? payload.keys.slice(0, 180) : [],
+    candidates,
+    candidateCount: candidates.length,
+    recentCandles,
+    feedQuality: Number(payload.feedQuality || 0),
+    parser: payload.parser || {},
+    primaryTransport: payload.primaryTransport || null,
+    lastSeen: Date.now()
+  };
+  const latest = (await chrome.storage.local.get('scannerState')).scannerState || scannerState;
+  await chrome.storage.local.set({
+    scannerState: {
+      ...latest,
+      marketHistory: recentCandles,
+      diagnostics: { ...(latest.diagnostics || {}), network: latestNetwork }
+    }
+  });
+}
+
+chrome.runtime.onMessage.addListener((message, sender) => {
+  if (message?.type === 'ATS_NETWORK_DIAGNOSTIC') {
+    setTimeout(() => keepRealFeedContext(message.payload || {}, sender).catch(() => {}), 40);
   }
 });
