@@ -21,37 +21,37 @@ function getBuilder(snapshot = {}) {
 
 function confirmationReason(result = {}) {
   if (!result?.recent?.ready) return 'Aguardando pelo menos 3 velas reais fechadas.';
-  if (!result.direction) return 'Sem confluência suficiente nas últimas velas.';
-  if (result.recent?.breakout === result.direction) return `Rompimento recente confirmado para ${result.direction}.`;
-  if (result.recent?.rejection === result.direction) return `Rejeição recente confirmou ${result.direction}.`;
-  if (result.recent?.trend === result.direction) return `Direção das últimas velas favorece ${result.direction}.`;
-  return `Confluência recente favorece ${result.direction}.`;
+  if (!result.direction) return 'Sem direção clara nas últimas velas.';
+  if (result.recent?.breakout === result.direction) return result.direction === 'BUY'
+    ? 'Rompimento recente favorece a próxima vela de alta.'
+    : 'Rompimento recente favorece a próxima vela de baixa.';
+  if (result.recent?.rejection === result.direction) return result.direction === 'BUY'
+    ? 'Rejeição compradora favorece a próxima vela de alta.'
+    : 'Rejeição vendedora favorece a próxima vela de baixa.';
+  return result.direction === 'BUY'
+    ? 'Movimento das últimas velas favorece a próxima vela de alta.'
+    : 'Movimento das últimas velas favorece a próxima vela de baixa.';
 }
 
 function buildSignal(result = {}, state = {}) {
   const ready = !!result?.recent?.ready;
   const direction = ['BUY', 'SELL'].includes(result.direction) ? result.direction : null;
-  const aligned = state.platformControls?.aligned !== false;
   const live = state.connection === 'online' && state.price != null;
-  const strong = ready && direction && (
-    result.recent?.breakout === direction ||
-    result.recent?.rejection === direction ||
-    Number(result.recent?.aligned || 0) >= 3
-  );
 
   let signalState = 'WAIT';
-  if (live && ready && direction) signalState = strong && aligned ? 'CONFIRM' : 'WATCH';
+  if (live && ready && direction) signalState = 'CONFIRM';
   else if (live && !ready) signalState = 'SEARCHING';
+  else if (live && ready && !direction) signalState = 'NO_TRADE';
 
   return {
     state: signalState,
-    direction: signalState === 'CONFIRM' || signalState === 'WATCH' ? direction : null,
+    direction: signalState === 'CONFIRM' ? direction : null,
     provisional: signalState !== 'CONFIRM',
     hint: confirmationReason(result),
     reason: confirmationReason(result),
     candleCount: Number(result.recent?.count || 0),
     warmup: { current: Number(result.recent?.count || 0), required: 3 },
-    timeframe: state.analysisTimeframe || state.timeframe || null,
+    timeframe: state.analysisTimeframe || state.timeframe || 'M1',
     targetExpiration: state.targetExpiration || state.expiration || null,
     recentAnalysis: result.recent || null
   };
@@ -63,26 +63,32 @@ export function processSnapshot(snapshot = {}, state = {}) {
     return {
       signal: {
         state: 'WAIT', direction: null, provisional: true,
-        hint: 'Aguardando ativo e cotação reais da CasaTrade.',
-        reason: 'Aguardando ativo e cotação reais da CasaTrade.'
+        hint: 'CasaTrade conectada. Aguardando ativo e cotação.',
+        reason: 'CasaTrade conectada. Aguardando ativo e cotação.'
       }
     };
   }
 
-  const builder = getBuilder(snapshot);
+  const normalizedSnapshot = {
+    ...snapshot,
+    analysisTimeframe: snapshot.analysisTimeframe || snapshot.timeframe || state.analysisTimeframe || state.timeframe || 'M1'
+  };
+
+  const builder = getBuilder(normalizedSnapshot);
   if (Array.isArray(snapshot.candles) && snapshot.candles.length) builder.seed(snapshot.candles);
   builder.push(price, Number(snapshot.serverTime) || Date.now());
 
   const candles = builder.snapshot().closed;
   const result = analyzeCandles(candles.slice(-5));
+
   return {
     candles,
     signal: buildSignal(result, {
       ...state,
       connection: snapshot.connection || state.connection,
       price,
-      analysisTimeframe: snapshot.analysisTimeframe || state.analysisTimeframe,
-      timeframe: snapshot.timeframe || state.timeframe,
+      analysisTimeframe: normalizedSnapshot.analysisTimeframe,
+      timeframe: snapshot.timeframe || state.timeframe || 'M1',
       targetExpiration: snapshot.targetExpiration || state.targetExpiration,
       expiration: snapshot.expiration || state.expiration
     })
