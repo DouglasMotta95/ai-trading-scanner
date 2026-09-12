@@ -1,23 +1,36 @@
 (() => {
-  if (window.__ATS_RUNTIME_FEED_PROBE__) return;
-  window.__ATS_RUNTIME_FEED_PROBE__ = true;
+  if (window.__ATS_QUADCODE_FEED_PROBE_V2__) return;
+  window.__ATS_QUADCODE_FEED_PROBE_V2__ = true;
 
   const SOURCE = 'ATS_NETWORK_PROBE';
   const QUOTES = ['USDT','USDC','USD','EUR','GBP','JPY','AUD','CAD','CHF','NZD','BRL','BTC','ETH'];
-  const SENSITIVE = /token|auth|cookie|session|password|secret|bearer|csrf|api[-_]?key|credential|authorization/i;
+  const SENSITIVE = /ssid|token|auth|cookie|session|password|secret|bearer|csrf|api[-_]?key|credential|authorization/i;
   const ASSET_KEYS = ['symbol','symbolName','symbol_name','asset','assetName','asset_name','instrument','instrumentName','instrument_name','ticker','pair','marketSymbol','underlying'];
+  const ACTIVE_ID_KEYS = ['active_id','activeId','asset_id','assetId'];
   const PRICE_KEYS = ['lastPrice','last_price','price','last','close','mid','midPrice','markPrice','quote'];
   const BID_KEYS = ['bid','bidPrice','bid_price','bestBid','best_bid'];
   const ASK_KEYS = ['ask','askPrice','ask_price','bestAsk','best_ask'];
-  const TF_KEYS = ['timeframe','interval','period','resolution','tf'];
-  const TIME_KEYS = ['timestamp','time','ts','serverTime','server_time','eventTime','event_time'];
-  const EXP_KEYS = ['expiration','expiry','duration','expiresIn','expires_in'];
-  const SELECT_KEYS = ['selected','active','isActive','is_active','current','isCurrent','is_current'];
+  const TF_KEYS = ['timeframe','interval','period','resolution','tf','size','duration'];
+  const TIME_KEYS = ['from','timestamp','time','ts','to','serverTime','server_time','eventTime','event_time'];
+
+  const KNOWN_ACTIVE_IDS = new Map([
+    [1,'EUR/USD'], [2,'EUR/GBP'], [3,'GBP/JPY'], [4,'EUR/JPY'], [5,'GBP/USD'], [6,'USD/JPY'],
+    [7,'AUD/CAD'], [8,'NZD/USD'], [72,'USD/CHF'], [74,'XAU/USD'], [75,'XAG/USD'],
+    [76,'EUR/USD (OTC)'], [77,'EUR/GBP (OTC)'], [78,'USD/CHF (OTC)'], [79,'EUR/JPY (OTC)'],
+    [80,'NZD/USD (OTC)'], [81,'GBP/USD (OTC)'], [84,'GBP/JPY (OTC)'], [85,'USD/JPY (OTC)'],
+    [86,'AUD/CAD (OTC)'], [99,'AUD/USD'], [100,'USD/CAD'], [101,'AUD/JPY'], [102,'GBP/CAD'],
+    [103,'GBP/CHF'], [104,'GBP/AUD'], [105,'EUR/CAD'], [106,'CHF/JPY'], [107,'CAD/CHF'], [108,'EUR/AUD'],
+    [816,'BTC/USD'], [817,'XRP/USD'], [818,'ETH/USD']
+  ]);
 
   const state = {
     candidates: new Map(),
     candles: new Map(),
-    messages: { worker: 0, sharedworker: 0, broadcast: 0, serviceworker: 0, window: 0 },
+    assetIds: new Map(KNOWN_ACTIVE_IDS),
+    requests: new Map(),
+    selectedActiveId: null,
+    selectedAt: 0,
+    messages: { ws: 0, worker: 0, sharedworker: 0, broadcast: 0, serviceworker: 0, window: 0 },
     timer: null
   };
 
@@ -25,7 +38,7 @@
   const num = v => {
     if (typeof v === 'number' && Number.isFinite(v)) return v;
     const s0 = clean(v);
-    if (!s0 || s0.length > 48) return null;
+    if (!s0 || s0.length > 64) return null;
     let s = s0.replace(/\s/g, '').replace(/[^\d,.-]/g, '');
     if (!s) return null;
     if (s.includes(',') && s.includes('.')) s = s.lastIndexOf(',') > s.lastIndexOf('.') ? s.replace(/\./g, '').replace(',', '.') : s.replace(/,/g, '');
@@ -33,12 +46,11 @@
     const n = Number(s);
     return Number.isFinite(n) ? n : null;
   };
-  const bool = v => v === true || v === 1 || String(v).toLowerCase() === 'true';
   const pick = (o, keys) => {
     if (!o || typeof o !== 'object') return null;
     for (const k of keys) if (Object.prototype.hasOwnProperty.call(o, k) && o[k] != null) return o[k];
     let own = [];
-    try { own = Object.keys(o).slice(0, 120); } catch {}
+    try { own = Object.keys(o).slice(0, 140); } catch {}
     const lower = new Map(own.map(k => [k.toLowerCase(), k]));
     for (const k of keys) {
       const real = lower.get(k.toLowerCase());
@@ -49,7 +61,7 @@
 
   function canonicalAsset(value = '') {
     let raw = clean(value).toUpperCase();
-    if (!raw || raw.length > 80 || SENSITIVE.test(raw)) return '';
+    if (!raw || raw.length > 90 || SENSITIVE.test(raw)) return '';
     const otc = /(?:\(|\b|[_-])OTC(?:\)|\b)?/.test(raw);
     raw = raw.replace(/^FRX[:_-]?/, '').replace(/^OTC[:_-]?/, '');
     let s = raw.replace(/\(\s*OTC\s*\)|\bOTC\b/g, '')
@@ -67,194 +79,255 @@
 
   function assetFromText(value = '') {
     const text = clean(value).toUpperCase();
-    const direct = text.match(/\b[A-Z0-9]{2,16}\s*[\/_-]\s*(?:USDT|USDC|USD|EUR|GBP|JPY|AUD|CAD|CHF|NZD|BRL|BTC|ETH)(?:\s*\(\s*OTC\s*\)|\s+OTC)?/i);
+    const direct = text.match(/\b[A-Z0-9]{2,16}\s*[\/_-]\s*(?:USDT|USDC|USD|EUR|GBP|JPY|AUD|CAD|CHF|NZD|BRL|BTC|ETH)(?:\s*\(\s*OTC\s*\)|[_-]?OTC)?/i);
     if (direct) return canonicalAsset(direct[0]);
     const compact = text.match(/\b[A-Z]{6}(?:[_-]?OTC)?\b/i);
     return compact ? canonicalAsset(compact[0]) : '';
   }
 
   function normalizeTf(value) {
+    if (typeof value === 'number' || /^\d+$/.test(clean(value))) {
+      const n = Number(value);
+      if (n === 1) return 'S1';
+      if ([5, 10, 15, 30].includes(n)) return `S${n}`;
+      if (n === 60) return 'M1';
+      if (n === 120) return 'M2';
+      if (n === 300) return 'M5';
+      if (n === 900) return 'M15';
+      if (n === 1800) return 'M30';
+      if (n === 3600) return 'H1';
+    }
     const s = clean(value).toUpperCase().replace(/\s+/g, '');
     let m = s.match(/^M(1|2|5|15|30)$/); if (m) return `M${m[1]}`;
     m = s.match(/^(1|2|5|15|30)(?:M|MIN)$/); if (m) return `M${m[1]}`;
-    m = s.match(/^S(5|15|30)$/); if (m) return `S${m[1]}`;
-    if (/^(H1|1H|60M|60MIN)$/.test(s)) return 'H1';
-    return null;
-  }
-
-  function normalizeExp(value) {
-    const s = clean(value).toLowerCase().replace(/\s+/g, '');
-    let m = s.match(/^(\d{1,4})(?:s|seg|segundo|segundos)$/); if (m) return `${Number(m[1])}s`;
-    m = s.match(/^(\d{1,3})(?:m|min|minuto|minutos)$/); if (m) return Number(m[1]) === 1 ? '60s' : `${Number(m[1])}m`;
-    return null;
+    m = s.match(/^S(1|5|10|15|30)$/); if (m) return `S${m[1]}`;
+    return /^(H1|1H|60M|60MIN)$/.test(s) ? 'H1' : null;
   }
 
   function normalizeTime(value) {
     let t = num(value);
-    if (t == null) return null;
-    if (t > 0 && t < 1e11) t *= 1000;
-    return Number.isFinite(t) && t > 946684800000 ? t : null;
+    if (t == null || t <= 0) return null;
+    while (t > 1e14) t /= 1000;
+    if (t < 1e11) t *= 1000;
+    return Number.isFinite(t) && t > 946684800000 ? Math.round(t) : null;
+  }
+
+  function resolveActiveId(value) {
+    const n = Number(value);
+    if (!Number.isInteger(n) || n <= 0) return '';
+    return canonicalAsset(state.assetIds.get(n) || '');
+  }
+
+  function rememberMapping(o) {
+    if (!o || typeof o !== 'object' || Array.isArray(o)) return '';
+    const raw = pick(o, ASSET_KEYS);
+    const asset = canonicalAsset(raw) || assetFromText(raw);
+    if (!asset) return '';
+    let id = num(pick(o, ACTIVE_ID_KEYS));
+    if (id == null && !('open' in o) && !('close' in o)) id = num(o.id);
+    if (Number.isInteger(id) && id > 0) state.assetIds.set(id, asset);
+    return asset;
+  }
+
+  function requestContext(root) {
+    if (!root || typeof root !== 'object') return null;
+    let raw = '';
+    try { raw = JSON.stringify(root).slice(0, 120000); } catch { return null; }
+    if (SENSITIVE.test(raw) || !/(candle-generated|get-candles|candles|realTimeChartData|chart)/i.test(raw)) return null;
+    const requestId = root.request_id ?? root.requestId ?? root.id ?? null;
+    let activeId = null;
+    let size = null;
+    const stack = [{ v: root, d: 0 }];
+    const seen = new WeakSet();
+    while (stack.length) {
+      const { v, d } = stack.pop();
+      if (!v || typeof v !== 'object' || d > 8 || seen.has(v)) continue;
+      seen.add(v);
+      if (activeId == null) activeId = num(pick(v, ACTIVE_ID_KEYS));
+      if (size == null) size = num(pick(v, ['size','duration','interval']));
+      let entries = [];
+      try { entries = Object.entries(v).slice(0, 100); } catch {}
+      for (const [k, child] of entries) {
+        if (SENSITIVE.test(k)) continue;
+        if (child && typeof child === 'object') stack.push({ v: child, d: d + 1 });
+      }
+    }
+    if (!Number.isInteger(activeId) || activeId <= 0) return null;
+    const ctx = { activeId, asset: resolveActiveId(activeId), timeframe: normalizeTf(size), at: Date.now() };
+    state.selectedActiveId = activeId;
+    state.selectedAt = Date.now();
+    if (requestId != null) state.requests.set(String(requestId), ctx);
+    while (state.requests.size > 100) state.requests.delete(state.requests.keys().next().value);
+    return ctx;
   }
 
   function rememberCandidate(candidate, transport) {
     if (!candidate?.asset || candidate.price == null) return;
     const asset = canonicalAsset(candidate.asset);
-    if (!asset) return;
+    const price = num(candidate.price);
+    if (!asset || price == null || price <= 0) return;
     const previous = state.candidates.get(asset) || {};
+    const selected = candidate.selected === true;
     state.candidates.set(asset, {
-      ...previous,
-      ...candidate,
-      asset,
-      transport,
+      ...previous, ...candidate, asset, price, transport, selected,
       observedAt: Date.now(),
       seenCount: Math.min(1000000, Number(previous.seenCount || 0) + 1),
-      confidence: Math.max(Number(previous.confidence || 0), Number(candidate.confidence || 0), 70)
+      confidence: Math.max(Number(previous.confidence || 0), Number(candidate.confidence || 0), selected ? 99 : 82)
     });
   }
 
   function rememberCandle(candle) {
-    if (!candle?.asset) return;
-    const asset = canonicalAsset(candle.asset);
-    const open = num(candle.open), high = num(candle.high), low = num(candle.low), close = num(candle.close);
-    const time = normalizeTime(candle.time ?? candle.timestamp);
-    if (!asset || !time || [open, high, low, close].some(v => v == null)) return;
-    const timeframe = normalizeTf(candle.timeframe) || null;
+    const asset = canonicalAsset(candle?.asset);
+    const open = num(candle?.open), high = num(candle?.high), low = num(candle?.low), close = num(candle?.close);
+    const time = normalizeTime(candle?.time ?? candle?.timestamp ?? candle?.from);
+    if (!asset || !time || [open, high, low, close].every(Number.isFinite) === false) return;
+    if (high < Math.max(open, close) || low > Math.min(open, close)) return;
+    const timeframe = normalizeTf(candle?.timeframe ?? candle?.size) || null;
     const rows = state.candles.get(asset) || [];
     const key = `${time}|${timeframe || ''}`;
     const row = { time, open, high, low, close, timeframe };
-    const idx = rows.findIndex(x => `${x.time}|${x.timeframe || ''}` === key);
-    if (idx >= 0) rows[idx] = row; else rows.push(row);
+    const index = rows.findIndex(x => `${x.time}|${x.timeframe || ''}` === key);
+    if (index >= 0) rows[index] = row; else rows.push(row);
     rows.sort((a, b) => a.time - b.time);
     state.candles.set(asset, rows.slice(-180));
   }
 
-  function candidateFromObject(o, inheritedAsset = '', inheritedTf = '') {
-    if (!o || typeof o !== 'object' || Array.isArray(o)) return null;
-    const rawAsset = pick(o, ASSET_KEYS);
-    const asset = canonicalAsset(rawAsset) || canonicalAsset(inheritedAsset) || assetFromText(rawAsset);
-    if (!asset) return null;
-
-    const bid = num(pick(o, BID_KEYS));
-    const ask = num(pick(o, ASK_KEYS));
-    let price = num(pick(o, PRICE_KEYS));
-    const close = num(pick(o, ['close','c']));
-    if (price == null && close != null) price = close;
-    if (price == null && bid != null && ask != null) price = (bid + ask) / 2;
-    if (price == null || price <= 0) return null;
-
-    const timeframe = normalizeTf(pick(o, TF_KEYS)) || normalizeTf(inheritedTf);
-    const expiration = normalizeExp(pick(o, EXP_KEYS));
-    const timestamp = normalizeTime(pick(o, TIME_KEYS));
-    const selected = SELECT_KEYS.some(k => Object.prototype.hasOwnProperty.call(o, k) && bool(o[k]));
-    let confidence = 70;
-    if (bid != null || ask != null) confidence += 12;
-    if (timeframe) confidence += 6;
-    if (timestamp) confidence += 6;
-    if (selected) confidence += 10;
-    return { asset, price, bid, ask, timeframe, expiration, timestamp, selected, confidence: Math.min(100, confidence) };
+  function arrayCandle(arr, asset, timeframe) {
+    if (!Array.isArray(arr) || arr.length < 5 || arr.length > 16 || !asset) return null;
+    const time = normalizeTime(arr[0]);
+    const open = num(arr[1]);
+    if (!time || open == null) return null;
+    const iq = { close: num(arr[2]), high: num(arr[3]), low: num(arr[4]) };
+    if ([iq.close, iq.high, iq.low].every(Number.isFinite)
+      && iq.high >= Math.max(open, iq.close) && iq.low <= Math.min(open, iq.close)) {
+      return { asset, time, open, high: iq.high, low: iq.low, close: iq.close, timeframe };
+    }
+    const normal = { high: num(arr[2]), low: num(arr[3]), close: num(arr[4]) };
+    if ([normal.close, normal.high, normal.low].every(Number.isFinite)
+      && normal.high >= Math.max(open, normal.close) && normal.low <= Math.min(open, normal.close)) {
+      return { asset, time, open, high: normal.high, low: normal.low, close: normal.close, timeframe };
+    }
+    return null;
   }
 
-  function scanObject(root, transport) {
-    if (root == null || typeof root !== 'object') return;
-    const stack = [{ value: root, depth: 0, asset: '', tf: '', key: '' }];
+  function scanObject(root, transport, inherited = {}) {
+    if (!root || typeof root !== 'object') return;
+    const responseId = root.request_id ?? root.requestId ?? null;
+    const request = responseId != null ? state.requests.get(String(responseId)) : null;
+    const seedAsset = canonicalAsset(inherited.asset || request?.asset || '');
+    const seedTf = normalizeTf(inherited.timeframe || request?.timeframe);
+    const stack = [{ value: root, depth: 0, asset: seedAsset, timeframe: seedTf, key: '' }];
     const seen = new WeakSet();
     let visited = 0;
 
-    while (stack.length && visited < 4200) {
+    while (stack.length && visited < 5000) {
       const node = stack.pop();
       const value = node.value;
-      if (value == null || node.depth > 10) continue;
-
+      if (value == null || node.depth > 11) continue;
       if (Array.isArray(value)) {
-        if (node.asset && value.length >= 5 && value.length <= 14) {
-          const time = normalizeTime(value[0]);
-          const open = num(value[1]), high = num(value[2]), low = num(value[3]), close = num(value[4]);
-          if (time && [open, high, low, close].every(v => v != null)) {
-            rememberCandle({ asset: node.asset, time, open, high, low, close, timeframe: node.tf });
-          }
-        }
-        for (let i = Math.min(value.length, 600) - 1; i >= 0; i--) {
-          stack.push({ value: value[i], depth: node.depth + 1, asset: node.asset, tf: node.tf, key: node.key });
+        const candle = /candle|candles|ohlc|bar|history/i.test(node.key)
+          ? arrayCandle(value, node.asset, node.timeframe) : null;
+        if (candle) rememberCandle(candle);
+        for (let i = Math.min(value.length, 700) - 1; i >= 0; i--) {
+          stack.push({ value: value[i], depth: node.depth + 1, asset: node.asset, timeframe: node.timeframe, key: node.key });
         }
         continue;
       }
-      if (typeof value !== 'object') continue;
-      if (seen.has(value)) continue;
+      if (typeof value !== 'object' || seen.has(value)) continue;
       seen.add(value);
       visited++;
 
-      const ownAsset = canonicalAsset(pick(value, ASSET_KEYS)) || node.asset || assetFromText(node.key);
-      const ownTf = normalizeTf(pick(value, TF_KEYS)) || node.tf;
-      const candidate = candidateFromObject(value, ownAsset, ownTf);
-      if (candidate) rememberCandidate(candidate, transport);
+      const learnedAsset = rememberMapping(value);
+      const activeId = num(pick(value, ACTIVE_ID_KEYS));
+      const idAsset = resolveActiveId(activeId);
+      const ownAsset = learnedAsset || idAsset || node.asset || assetFromText(node.key);
+      const ownTf = normalizeTf(pick(value, TF_KEYS)) || node.timeframe;
+      const selected = Number.isInteger(activeId)
+        && activeId === state.selectedActiveId
+        && Date.now() - state.selectedAt < 120000;
+
+      const bid = num(pick(value, BID_KEYS));
+      const ask = num(pick(value, ASK_KEYS));
+      const close = num(pick(value, ['close','c']));
+      let price = num(pick(value, PRICE_KEYS));
+      if (price == null && close != null) price = close;
+      if (price == null && bid != null && ask != null) price = (bid + ask) / 2;
+      if (ownAsset && price != null && price > 0) {
+        rememberCandidate({
+          asset: ownAsset, price, bid, ask, timeframe: ownTf,
+          timestamp: normalizeTime(pick(value, TIME_KEYS)), selected,
+          activeId: Number.isInteger(activeId) ? activeId : null,
+          confidence: selected ? 99 : (activeId != null ? 92 : 82)
+        }, transport);
+      }
 
       const open = num(pick(value, ['open','o']));
-      const high = num(pick(value, ['high','h']));
-      const low = num(pick(value, ['low','l']));
-      const close = num(pick(value, ['close','c']));
-      if (ownAsset && [open, high, low, close].every(v => v != null)) {
+      const high = num(pick(value, ['high','h','max']));
+      const low = num(pick(value, ['low','l','min']));
+      if (ownAsset && [open, high, low, close].every(Number.isFinite)) {
         rememberCandle({ asset: ownAsset, open, high, low, close, time: pick(value, TIME_KEYS), timeframe: ownTf });
       }
 
       let entries = [];
-      try { entries = Object.entries(value).slice(0, 140); } catch {}
+      try { entries = Object.entries(value).slice(0, 160); } catch {}
       for (const [key, child] of entries) {
         if (SENSITIVE.test(key)) continue;
-        let childAsset = ownAsset;
-        if (!childAsset) childAsset = canonicalAsset(key) || assetFromText(key) || '';
-        if (child && typeof child === 'object') stack.push({ value: child, depth: node.depth + 1, asset: childAsset, tf: ownTf, key });
+        if (child && typeof child === 'object') {
+          stack.push({ value: child, depth: node.depth + 1, asset: ownAsset, timeframe: ownTf, key });
+        }
       }
     }
     scheduleFlush();
   }
 
-  function decodeText(text, transport) {
-    const raw = String(text || '').trim();
-    if (!raw || raw.length > 1048576) return;
-    const attempts = [raw];
-    if (/^\d{1,2}[\[{]/.test(raw)) attempts.push(raw.replace(/^\d{1,2}/, ''));
-    if (/^(?:42|45)\[/.test(raw)) attempts.push(raw.slice(2));
-    if (/^data:/m.test(raw)) {
-      for (const line of raw.split(/\r?\n/)) if (/^data:\s*/.test(line)) attempts.push(line.replace(/^data:\s*/, ''));
+  function parseJsonFrames(raw) {
+    const text = String(raw || '').trim();
+    if (!text || text.length > 1572864) return [];
+    const attempts = [text];
+    if (/^\d{1,3}[\[{]/.test(text)) attempts.push(text.replace(/^\d{1,3}/, ''));
+    if (/^(?:42|45)\[/.test(text)) attempts.push(text.slice(2));
+    if (/^data:/m.test(text)) {
+      for (const line of text.split(/\r?\n/).slice(0, 80)) if (/^data:\s*/.test(line)) attempts.push(line.replace(/^data:\s*/, ''));
     }
-    let parsed = false;
-    for (const attempt of attempts.slice(0, 60)) {
+    const out = [];
+    for (const attempt of attempts) {
       try {
         let value = JSON.parse(attempt);
-        if (typeof value === 'string' && /^[\[{]/.test(value.trim())) {
-          try { value = JSON.parse(value); } catch {}
-        }
-        scanObject(value, transport);
-        parsed = true;
+        if (typeof value === 'string' && /^[\[{]/.test(value.trim())) value = JSON.parse(value);
+        out.push(value);
       } catch {}
     }
-    if (!parsed) {
-      const asset = assetFromText(raw);
-      if (asset) {
-        const prices = [...raw.matchAll(/\b\d{1,7}[.,]\d{3,8}\b/g)]
-          .map(m => num(m[0])).filter(v => v != null && v > 0);
-        if (prices.length) rememberCandidate({ asset, price: prices[prices.length - 1], confidence: 56 }, transport);
-        scheduleFlush();
-      }
-    }
+    return out;
+  }
+
+  function observeOutgoing(data) {
+    if (typeof data !== 'string') return;
+    const text = data.slice(0, 250000);
+    if (SENSITIVE.test(text)) return;
+    for (const root of parseJsonFrames(text)) requestContext(root);
   }
 
   function ingest(data, transport) {
     if (data == null) return;
-    if (typeof data === 'string') { decodeText(data, transport); return; }
+    state.messages[transport] = Number(state.messages[transport] || 0) + 1;
+    if (typeof data === 'string') {
+      for (const root of parseJsonFrames(data)) scanObject(root, transport);
+      return;
+    }
     if (data instanceof Blob) {
-      if (data.size > 1048576) return;
-      data.text().then(text => decodeText(text, transport)).catch(() => {});
+      if (data.size <= 1572864) data.text().then(text => ingest(text, transport)).catch(() => {});
       return;
     }
     if (data instanceof ArrayBuffer) {
-      if (data.byteLength > 1048576) return;
-      try { decodeText(new TextDecoder().decode(new Uint8Array(data)), transport); } catch {}
+      if (data.byteLength <= 1572864) {
+        try { ingest(new TextDecoder().decode(new Uint8Array(data)), transport); } catch {}
+      }
       return;
     }
     if (ArrayBuffer.isView(data)) {
-      if (data.byteLength > 1048576) return;
-      try { decodeText(new TextDecoder().decode(new Uint8Array(data.buffer, data.byteOffset, data.byteLength)), transport); } catch {}
+      if (data.byteLength <= 1572864) {
+        try { ingest(new TextDecoder().decode(new Uint8Array(data.buffer, data.byteOffset, data.byteLength)), transport); } catch {}
+      }
       return;
     }
     if (typeof data === 'object') scanObject(data, transport);
@@ -265,85 +338,108 @@
     const now = Date.now();
     for (const [asset, c] of state.candidates) if (now - Number(c.observedAt || 0) > 15000) state.candidates.delete(asset);
     const candidates = [...state.candidates.values()]
-      .sort((a, b) => Number(b.selected) - Number(a.selected) || Number(b.confidence || 0) - Number(a.confidence || 0) || Number(b.observedAt || 0) - Number(a.observedAt || 0))
-      .slice(0, 100);
+      .sort((a, b) => Number(b.selected) - Number(a.selected)
+        || Number(b.confidence || 0) - Number(a.confidence || 0)
+        || Number(b.seenCount || 0) - Number(a.seenCount || 0)
+        || Number(b.observedAt || 0) - Number(a.observedAt || 0))
+      .slice(0, 120);
     if (!candidates.length) return;
-
     const recentCandles = {};
     for (const [asset, rows] of state.candles) if (rows.length) recentCandles[asset] = rows.slice(-120);
-
     window.postMessage({
       source: SOURCE,
       type: 'summary',
       payload: {
-        messages: { ...state.messages }, connections: { ws: 0 }, endpoints: [], keys: [],
+        messages: { ...state.messages }, connections: { ws: state.messages.ws > 0 ? 1 : 0 }, endpoints: [],
+        keys: ['active_id','size','from','open','close','min','max','bid','ask'],
         candidates, candidateCount: candidates.length, recentCandles,
-        feedQuality: Math.min(100, 65 + Math.min(25, candidates.length * 5) + (Object.keys(recentCandles).length ? 10 : 0)),
-        parser: { runtimeFeed: true }, primaryTransport: 'runtime',
-        privacy: 'Somente mensagens de mercado trocadas pela página são observadas. Campos de autenticação são ignorados.'
+        feedQuality: Math.min(100, 70 + (candidates.some(x => x.selected) ? 20 : 0) + (Object.keys(recentCandles).length ? 10 : 0)),
+        parser: { quadcodeActiveId: true, selectedActiveId: state.selectedActiveId, mappedIds: state.assetIds.size, candleAssets: Object.keys(recentCandles).length },
+        primaryTransport: 'quadcode-runtime',
+        privacy: 'Somente ids de ativo, cotação e OHLC do mercado são observados. Autenticação, cookies, tokens e saldo não são coletados.'
       }
     }, '*');
   }
 
   function scheduleFlush() {
     if (state.timer) return;
-    state.timer = setTimeout(flush, 120);
+    state.timer = setTimeout(flush, 90);
   }
 
-  function observePort(port, transport) {
-    if (!port || port.__atsRuntimeObserved) return;
-    try { Object.defineProperty(port, '__atsRuntimeObserved', { value: true }); } catch {}
-    try { port.addEventListener('message', event => { state.messages[transport]++; ingest(event.data, transport); }); } catch {}
-    try { port.start?.(); } catch {}
+  function wrapPostMessage(target) {
+    if (!target || target.__atsOutgoingObserved || typeof target.postMessage !== 'function') return;
+    const native = target.postMessage;
+    try { Object.defineProperty(target, '__atsOutgoingObserved', { value: true }); } catch {}
+    try {
+      target.postMessage = function(data, ...rest) {
+        try { observeOutgoing(data); } catch {}
+        return native.call(this, data, ...rest);
+      };
+    } catch {}
+  }
+
+  if (window.WebSocket) {
+    const Native = window.WebSocket;
+    const Wrapped = function(url, protocols) {
+      const ws = protocols === undefined ? new Native(url) : new Native(url, protocols);
+      try {
+        const nativeSend = ws.send;
+        ws.send = function(data) {
+          try { observeOutgoing(data); } catch {}
+          return nativeSend.call(this, data);
+        };
+        ws.addEventListener('message', event => ingest(event.data, 'ws'));
+      } catch {}
+      return ws;
+    };
+    Wrapped.prototype = Native.prototype;
+    Object.setPrototypeOf(Wrapped, Native);
+    for (const k of ['CONNECTING','OPEN','CLOSING','CLOSED']) {
+      try { Object.defineProperty(Wrapped, k, { value: Native[k] }); } catch {}
+    }
+    window.WebSocket = Wrapped;
   }
 
   if (window.Worker) {
-    const NativeWorker = window.Worker;
-    const WrappedWorker = function(...args) {
-      const worker = new NativeWorker(...args);
-      try { worker.addEventListener('message', event => { state.messages.worker++; ingest(event.data, 'worker'); }); } catch {}
+    const Native = window.Worker;
+    const Wrapped = function(...args) {
+      const worker = new Native(...args);
+      try { worker.addEventListener('message', event => ingest(event.data, 'worker')); wrapPostMessage(worker); } catch {}
       return worker;
     };
-    WrappedWorker.prototype = NativeWorker.prototype;
-    Object.setPrototypeOf(WrappedWorker, NativeWorker);
-    window.Worker = WrappedWorker;
+    Wrapped.prototype = Native.prototype;
+    Object.setPrototypeOf(Wrapped, Native);
+    window.Worker = Wrapped;
   }
 
   if (window.SharedWorker) {
-    const NativeSharedWorker = window.SharedWorker;
-    const WrappedSharedWorker = function(...args) {
-      const worker = new NativeSharedWorker(...args);
-      observePort(worker.port, 'sharedworker');
+    const Native = window.SharedWorker;
+    const Wrapped = function(...args) {
+      const worker = new Native(...args);
+      try { worker.port.addEventListener('message', event => ingest(event.data, 'sharedworker')); worker.port.start?.(); wrapPostMessage(worker.port); } catch {}
       return worker;
     };
-    WrappedSharedWorker.prototype = NativeSharedWorker.prototype;
-    Object.setPrototypeOf(WrappedSharedWorker, NativeSharedWorker);
-    window.SharedWorker = WrappedSharedWorker;
+    Wrapped.prototype = Native.prototype;
+    Object.setPrototypeOf(Wrapped, Native);
+    window.SharedWorker = Wrapped;
   }
 
   if (window.BroadcastChannel) {
-    const NativeBroadcast = window.BroadcastChannel;
-    const WrappedBroadcast = function(...args) {
-      const channel = new NativeBroadcast(...args);
-      try { channel.addEventListener('message', event => { state.messages.broadcast++; ingest(event.data, 'broadcast'); }); } catch {}
+    const Native = window.BroadcastChannel;
+    const Wrapped = function(...args) {
+      const channel = new Native(...args);
+      try { channel.addEventListener('message', event => ingest(event.data, 'broadcast')); wrapPostMessage(channel); } catch {}
       return channel;
     };
-    WrappedBroadcast.prototype = NativeBroadcast.prototype;
-    Object.setPrototypeOf(WrappedBroadcast, NativeBroadcast);
-    window.BroadcastChannel = WrappedBroadcast;
+    Wrapped.prototype = Native.prototype;
+    Object.setPrototypeOf(Wrapped, Native);
+    window.BroadcastChannel = Wrapped;
   }
 
-  try {
-    navigator.serviceWorker?.addEventListener('message', event => {
-      state.messages.serviceworker++;
-      ingest(event.data, 'serviceworker');
-    });
-  } catch {}
-
+  try { navigator.serviceWorker?.addEventListener('message', event => ingest(event.data, 'serviceworker')); } catch {}
   window.addEventListener('message', event => {
     const data = event.data;
     if (!data || data?.source === SOURCE || String(data?.source || '').startsWith('ATS_')) return;
-    state.messages.window++;
     ingest(data, 'window');
   }, true);
 })();
