@@ -12,7 +12,7 @@ const PUBLIC_API = 'https://ats-control-center-v07-production.up.railway.app';
 test('manifest has one sidepanel and all CasaTrade capture/overlay scripts', () => {
   const manifest = JSON.parse(read('manifest.json'));
   assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.version, '0.10.0');
+  assert.equal(manifest.version, '0.10.1');
   assert.equal(manifest.background?.service_worker, 'src/background-entry.js');
   assert.equal(manifest.action?.default_popup, undefined);
   assert.equal(manifest.side_panel?.default_path, 'src/sidepanel/index.html');
@@ -24,15 +24,17 @@ test('manifest has one sidepanel and all CasaTrade capture/overlay scripts', () 
 test('sidepanel is Portuguese, professional, synchronized and risk-aware', () => {
   const html = read('src/sidepanel/index.html');
   const app = read('src/sidepanel/app.js');
-  for (const id of ['settingsBtn','connectBtn','toggleScanner','tradeAmount','analysisTimeframe','targetExpiration','prepareBuy','prepareSell','activateLicense','intelligenceList','pauseAllBtn','riskProfile','bankroll','dailyTarget','runBacktestBtn','weeklyReportBtn','chartLinesToggle','onlyAToggle','scalpingToggle']) {
+  for (const id of ['settingsBtn','connectBtn','toggleScanner','tradeAmount','analysisTimeframe','targetExpiration','prepareBuy','prepareSell','activateLicense','intelligenceList','pauseAllBtn','riskProfile','bankroll','dailyTarget','dailyPnl','dailyLimits','riskStatus','recentDirection','recentProjection','recentAlignment','runBacktestBtn','weeklyReportBtn','chartLinesToggle','onlyAToggle','scalpingToggle']) {
     assert.match(html, new RegExp(`id=["']${id}["']`), `missing #${id}`);
   }
   assert.match(html, /CONFIGURE SUA OPERAÇÃO/);
   assert.match(html, /MERCADO EM FOCO/);
   assert.match(html, /INTELIGÊNCIA DE MERCADO/);
-  assert.match(html, /GESTÃO DE RISCO/);
+  assert.match(html, /GESTÃO DE RISCO AUTOMÁTICA/);
+  assert.match(html, /ANÁLISE DAS ÚLTIMAS VELAS/);
   assert.match(html, /PARECER DA IA/);
   assert.match(html, /BACKTEST AUTOMATIZADO/);
+  assert.doesNotMatch(html, /0 \/ 21 velas/);
   assert.doesNotMatch(html, /experience\.js|preflight\.js/);
   assert.equal(fs.existsSync(path.join(root, 'src/sidepanel/experience.js')), false);
   assert.equal(fs.existsSync(path.join(root, 'src/sidepanel/preflight.js')), false);
@@ -40,6 +42,7 @@ test('sidepanel is Portuguese, professional, synchronized and risk-aware', () =>
   assert.match(app, /autoConnect/);
   assert.match(app, /CasaTrade sincronizada/);
   assert.match(app, /runtimePaused/);
+  assert.match(app, /autoRiskPause/);
   assert.match(app, /signal\?\.state|sig\.state/);
 });
 
@@ -77,6 +80,33 @@ test('generic adapter matches active asset, DOM/SVG catalog and structured netwo
   assert.match(adapter, /candles: history/);
 });
 
+test('live analysis is driven by the last 3-5 closed candles and long indicators are optional', async () => {
+  const analysis = read('src/core/analysis.js');
+  const orchestrator = read('src/core/orchestrator.js');
+  assert.match(analysis, /recentPriceAction/);
+  assert.match(analysis, /slice\(-5\)/);
+  assert.match(analysis, /rows\.length<3/);
+  assert.match(analysis, /support=Math\.min/);
+  assert.match(analysis, /resistance=Math\.max/);
+  assert.match(analysis, /pavio|rejeição|Rompimento/i);
+  assert.match(orchestrator, /structured&&!stale\?3:5/);
+  assert.match(orchestrator, /recentWeight/);
+  assert.doesNotMatch(orchestrator, /candles\.length<21/);
+  const { analyzeCandles } = await import('../src/core/analysis.js');
+  const candles = [
+    {open:1,high:1.02,low:.99,close:1.015},
+    {open:1.015,high:1.04,low:1.01,close:1.035},
+    {open:1.035,high:1.06,low:1.03,close:1.055},
+    {open:1.055,high:1.08,low:1.05,close:1.075},
+    {open:1.075,high:1.10,low:1.07,close:1.095}
+  ];
+  const r = analyzeCandles(candles);
+  assert.equal(r.recent.ready, true);
+  assert.equal(r.recent.count, 5);
+  assert.equal(r.direction, 'BUY');
+  assert.ok(r.recent.support < r.recent.resistance);
+});
+
 test('weighted AI uses explicit factors, weights and profile thresholds', async () => {
   const scoring = read('src/core/ai-scoring.js');
   assert.match(scoring, /priceAction:25/);
@@ -110,33 +140,46 @@ test('multi-asset intelligence uses weighted AI, correlation and economic-event 
   assert.match(augment, /ATS_GET_WEEKLY_REPORT/);
 });
 
-test('risk engine protects bankroll and defines three profiles', () => {
+test('risk engine enforces profile percentages, daily target/stop and loss pauses', async () => {
   const risk = read('src/core/risk-controls.js');
-  assert.match(risk, /conservative/);
-  assert.match(risk, /moderate/);
-  assert.match(risk, /aggressive/);
-  assert.match(risk, /stakePct/);
-  assert.match(risk, /Entrada excessiva em relação à banca/);
+  assert.match(risk, /riskMinPct:\.5,riskMaxPct:1/);
+  assert.match(risk, /dailyTargetPct:3,dailyStopPct:2,maxConsecutiveLosses:2/);
+  assert.match(risk, /riskMinPct:1,riskMaxPct:2/);
+  assert.match(risk, /dailyTargetPct:5,dailyStopPct:3,maxConsecutiveLosses:3/);
+  assert.match(risk, /riskMinPct:2,riskMaxPct:3/);
+  assert.match(risk, /dailyTargetPct:8,dailyStopPct:5,maxConsecutiveLosses:4/);
+  assert.match(risk, /Proteção contra apostar tudo/);
   assert.match(risk, /overtrading/i);
-  assert.match(risk, /Meta diária de lucro atingida/);
-  assert.match(risk, /bankHistory|appendBankSnapshot/);
+  assert.match(risk, /Stop diário atingido/);
+  const { bankrollPlan } = await import('../src/core/risk-controls.js');
+  const moderate = bankrollPlan({profile:'moderate',bankroll:500});
+  assert.equal(moderate.suggestedStake, 5);
+  assert.equal(moderate.dailyTarget, 25);
+  assert.equal(moderate.dailyStop, 15);
+  assert.equal(moderate.allowed, true);
+  assert.equal(bankrollPlan({profile:'moderate',bankroll:500,dailyPnl:-15}).allowed, false);
+  assert.equal(bankrollPlan({profile:'moderate',bankroll:500,consecutiveLosses:3}).status, 'loss_pause');
 });
 
-test('chart overlay draws support resistance trend and EMAs without clicking the platform', () => {
+test('chart overlay draws only recent support resistance zones, short trend and optional EMAs', () => {
   const overlay = read('src/content/chart-overlay.js');
-  assert.match(overlay, /SUPORTE/);
-  assert.match(overlay, /RESISTÊNCIA/);
-  assert.match(overlay, /ema\(vals,9\)/);
-  assert.match(overlay, /ema\(vals,21\)/);
+  assert.match(overlay, /slice\(-5\)/);
+  assert.match(overlay, /SUPORTE • últimas/);
+  assert.match(overlay, /RESISTÊNCIA • últimas/);
+  assert.match(overlay, /TENDÊNCIA CURTA/);
+  assert.match(overlay, /ema\(closes,9\)/);
+  assert.match(overlay, /ema\(closes,21\)/);
   assert.match(overlay, /pointerEvents:'none'/);
   assert.doesNotMatch(overlay, /\.click\s*\(/);
 });
 
-test('backtest reports win rate pnl drawdown streaks profiles and setup type', () => {
+test('backtest uses the same short-candle strategy and reports commercial metrics', () => {
   const backtest = read('src/core/backtest.js');
   for (const term of ['winRate','profitUnits','maxDrawdownUnits','bestWinStreak','worstLossStreak','conservative','moderate','aggressive','scalping','A+']) assert.match(backtest, new RegExp(term.replace('+','\\+')));
-  assert.match(backtest, /analyzeCandles/);
-  assert.match(backtest, /weightedConfidence/);
+  assert.match(backtest, /for\(let i=4/);
+  assert.match(backtest, /rows\.length<6/);
+  assert.match(backtest, /price-action-3-5/);
+  assert.match(backtest, /recentWeight/);
 });
 
 test('CasaTrade settings synchronizer reads back and safely applies non-financial controls', () => {
@@ -192,6 +235,17 @@ test('real recent candles seed analysis and scalping timeframes include M2', () 
   assert.match(candles, /M2:120000/);
   assert.match(orchestrator, /builder\.seed\(snapshot\.candles\)/);
   assert.match(orchestrator, /weightedConfidence/);
+});
+
+test('transactional email setup is documented without committing a secret', () => {
+  const env = read('backend/.env.example');
+  assert.match(env, /RESEND_API_KEY=re_x/);
+  assert.match(env, /EMAIL_FROM=AI Trading Scanner/);
+  assert.match(env, /PUBLIC_BASE_URL=/);
+  const portal = read('apps/customer-portal/app.js');
+  assert.match(portal, /deliveryMessage/);
+  assert.match(portal, /RESEND_API_KEY/);
+  assert.match(portal, /REENVIANDO/);
 });
 
 test('commercial licensing remains pinned to production API', () => {
