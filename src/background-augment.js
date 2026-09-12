@@ -1,4 +1,4 @@
-const allowedTransports = new Set(['ws', 'fetch', 'xhr']);
+const allowedTransports = new Set(['ws', 'fetch', 'xhr', 'rendered']);
 let lastRun = 0;
 const num = v => v == null || v === '' ? null : Number.isFinite(Number(v)) ? Number(v) : null;
 const clean = v => String(v ?? '').trim();
@@ -47,35 +47,57 @@ function sanitizeRecentCandles(input = {}) {
 }
 
 async function keepRealFeedContext(payload = {}, sender = {}) {
-  if (Date.now() - lastRun < 180) return;
+  if (Date.now() - lastRun < 120) return;
   lastRun = Date.now();
   const { scannerState = {}, settings = {} } = await chrome.storage.local.get(['scannerState', 'settings']);
   if (settings.runtimePaused) return;
   if (scannerState.targetTabId && sender?.tab?.id && scannerState.targetTabId !== sender.tab.id) return;
+
   const recentCandles = sanitizeRecentCandles(payload.recentCandles || {});
   const candidates = Array.isArray(payload.candidates) ? payload.candidates.slice(0, 180).filter(c => {
     const price = num(c?.price) ?? ((num(c?.bid) != null && num(c?.ask) != null) ? (num(c.bid) + num(c.ask)) / 2 : null);
     return normAsset(c?.asset) && price != null && price > 0 && allowedTransports.has(clean(c?.transport));
   }) : [];
+
+  const previousNetwork = scannerState.diagnostics?.network || {};
+  const mergedHistory = { ...(previousNetwork.recentCandles || {}) };
+  for (const [asset, rows] of Object.entries(recentCandles)) {
+    const previous = Array.isArray(mergedHistory[asset]) ? mergedHistory[asset] : [];
+    const byTime = new Map([...previous, ...rows].map(row => [`${row.time}|${row.timeframe || ''}`, row]));
+    mergedHistory[asset] = [...byTime.values()].sort((a, b) => a.time - b.time).slice(-240);
+  }
+
+  const previousCandidates = Array.isArray(previousNetwork.candidates) ? previousNetwork.candidates : [];
+  const mergedCandidates = [...candidates, ...previousCandidates]
+    .filter((c, index, arr) => {
+      const asset = normAsset(c?.asset);
+      const price = num(c?.price) ?? ((num(c?.bid) != null && num(c?.ask) != null) ? (num(c.bid) + num(c.ask)) / 2 : null);
+      if (!asset || price == null || price <= 0) return false;
+      const first = arr.findIndex(x => normAsset(x?.asset) === asset && clean(x?.transport) === clean(c?.transport));
+      return first === index;
+    })
+    .slice(0, 180);
+
   const latestNetwork = {
-    ...(scannerState.diagnostics?.network || {}),
-    messages: payload.messages || {},
-    connections: payload.connections || {},
-    endpoints: Array.isArray(payload.endpoints) ? payload.endpoints.slice(-30) : [],
-    keys: Array.isArray(payload.keys) ? payload.keys.slice(0, 180) : [],
-    candidates,
-    candidateCount: candidates.length,
-    recentCandles,
-    feedQuality: Number(payload.feedQuality || 0),
-    parser: payload.parser || {},
-    primaryTransport: payload.primaryTransport || null,
+    ...previousNetwork,
+    messages: payload.messages || previousNetwork.messages || {},
+    connections: payload.connections || previousNetwork.connections || {},
+    endpoints: Array.isArray(payload.endpoints) ? payload.endpoints.slice(-30) : (previousNetwork.endpoints || []),
+    keys: Array.isArray(payload.keys) ? payload.keys.slice(0, 180) : (previousNetwork.keys || []),
+    candidates: mergedCandidates,
+    candidateCount: mergedCandidates.length,
+    recentCandles: mergedHistory,
+    feedQuality: Math.max(Number(previousNetwork.feedQuality || 0), Number(payload.feedQuality || 0)),
+    parser: { ...(previousNetwork.parser || {}), ...(payload.parser || {}) },
+    primaryTransport: payload.primaryTransport || previousNetwork.primaryTransport || null,
     lastSeen: Date.now()
   };
+
   const latest = (await chrome.storage.local.get('scannerState')).scannerState || scannerState;
   await chrome.storage.local.set({
     scannerState: {
       ...latest,
-      marketHistory: recentCandles,
+      marketHistory: mergedHistory,
       diagnostics: { ...(latest.diagnostics || {}), network: latestNetwork }
     }
   });
@@ -83,6 +105,6 @@ async function keepRealFeedContext(payload = {}, sender = {}) {
 
 chrome.runtime.onMessage.addListener((message, sender) => {
   if (message?.type === 'ATS_NETWORK_DIAGNOSTIC') {
-    setTimeout(() => keepRealFeedContext(message.payload || {}, sender).catch(() => {}), 40);
+    setTimeout(() => keepRealFeedContext(message.payload || {}, sender).catch(() => {}), 30);
   }
 });
