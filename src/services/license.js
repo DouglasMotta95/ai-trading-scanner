@@ -51,18 +51,34 @@ export async function cachedLicenseSession() {
     if (cached) await chrome.storage.local.remove(LAST_VALID_LICENSE_KEY);
     return null;
   }
-  return cached;
+  const licenseKey = String(cached.licenseKey || cached.license?.key || '').trim();
+  return { ...cached, licenseKey };
+}
+
+export async function restoreCachedLicense() {
+  const cached = await cachedLicenseSession();
+  if (!cached) return null;
+  const currentKey = await savedLicenseKey();
+  if (!currentKey && cached.licenseKey) await saveLicenseKey(cached.licenseKey);
+  return {
+    ...cached.license,
+    status: 'active',
+    error: null,
+    syncPending: false
+  };
 }
 
 async function saveValidLicenseSession(r, licenseKey = '') {
   if (!r?.ok || !licenseStillValid(r.license)) return null;
+  const resolvedKey = String(licenseKey || r.license?.key || '').trim();
   const snapshot = {
     license: { ...r.license, error: null, syncPending: false },
-    licenseKey: String(licenseKey || r.license?.key || '').trim(),
+    licenseKey: resolvedKey,
     clientTokenExpiresAt: Number(r.clientTokenExpiresAt) || 0,
     validatedAt: Date.now()
   };
   await chrome.storage.local.set({ [LAST_VALID_LICENSE_KEY]: snapshot });
+  if (resolvedKey) await saveLicenseKey(resolvedKey);
   return snapshot;
 }
 
@@ -97,18 +113,17 @@ async function call(_settings, path, payload) {
 }
 
 async function acceptSession(r, licenseKey = '') {
-  if (r?.ok && r.clientToken) {
-    await saveClientToken(r.clientToken, r.clientTokenExpiresAt);
-    if (licenseKey) await saveLicenseKey(licenseKey);
-    await saveValidLicenseSession(r, licenseKey);
-  }
+  if (!r?.ok || !licenseStillValid(r.license)) return r;
+  const resolvedKey = String(licenseKey || r.license?.key || '').trim();
+  if (r.clientToken) await saveClientToken(r.clientToken, r.clientTokenExpiresAt);
+  await saveValidLicenseSession(r, resolvedKey);
   return r;
 }
 
-async function withCachedFallback(r) {
+async function withCachedFallback(r, cached = null) {
   if (r?.ok) return r;
   if (AUTHORITATIVE_LICENSE_ERRORS.has(String(r?.error || ''))) return r;
-  const cached = await cachedLicenseSession();
+  cached ||= await cachedLicenseSession();
   if (!cached) return r;
   return {
     ok: true,
@@ -134,8 +149,16 @@ export async function activateLicense(settings = {}, key = '') {
 }
 
 export async function validateLicense(settings = {}) {
-  const licenseKey = await savedLicenseKey();
-  if (!licenseKey) return { ok: false, error: 'license_required' };
+  // Cache-first: reopening the side panel must restore the last valid session immediately.
+  // The backend is still consulted afterwards so expiry/revocation/device locks remain authoritative.
+  const cached = await cachedLicenseSession();
+  let licenseKey = await savedLicenseKey();
+  if (!licenseKey && cached?.licenseKey) {
+    licenseKey = await saveLicenseKey(cached.licenseKey);
+  }
+  if (!licenseKey) {
+    return cached ? withCachedFallback({ ok: false, error: 'backend_unreachable' }, cached) : { ok: false, error: 'license_required' };
+  }
   const r = await call(settings, '/v1/license/validate', {
     licenseKey,
     installationId: await installationId(),
@@ -146,11 +169,13 @@ export async function validateLicense(settings = {}) {
     await invalidateCachedLicense(r, licenseKey);
     return r;
   }
-  return withCachedFallback(r);
+  return withCachedFallback(r, cached);
 }
 
 export async function consumeSignal(settings = {}) {
-  const licenseKey = await savedLicenseKey();
+  const cached = await cachedLicenseSession();
+  let licenseKey = await savedLicenseKey();
+  if (!licenseKey && cached?.licenseKey) licenseKey = await saveLicenseKey(cached.licenseKey);
   if (!licenseKey) return { ok: false, error: 'license_required' };
   const r = await call(settings, '/v1/license/consume', {
     licenseKey,
@@ -159,15 +184,7 @@ export async function consumeSignal(settings = {}) {
     version: chrome.runtime.getManifest().version
   });
   if (r.ok && r.license) {
-    const cached = await cachedLicenseSession();
-    await chrome.storage.local.set({
-      [LAST_VALID_LICENSE_KEY]: {
-        license: { ...r.license, error: null, syncPending: false },
-        licenseKey,
-        clientTokenExpiresAt: Number(cached?.clientTokenExpiresAt) || 0,
-        validatedAt: Date.now()
-      }
-    });
+    await saveValidLicenseSession({ ...r, ok: true }, licenseKey);
   }
   return r;
 }
