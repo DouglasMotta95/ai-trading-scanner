@@ -48,7 +48,7 @@
   const interactive = () => [...document.querySelectorAll('input,select,button,[role="button"],[role="combobox"],[contenteditable="true"]')].filter(visible);
   const excludeFinancialAction = txt => /comprar|vender|buy|sell|depositar|saque|retirar|confirmar ordem|abrir ordem/.test(txt);
   const rank = (kind, el) => {
-    const c = context(el);
+    const c = context(el), own = fold(el.value || el.innerText || el.textContent || '').replace(/\s+/g, '');
     if (excludeFinancialAction(c)) return -999;
     let score = 0;
     if (kind === 'amount') {
@@ -59,10 +59,13 @@
     if (kind === 'timeframe') {
       if (/timeframe|tempo da vela|periodo da vela|vela|grafico/.test(c)) score += 12;
       if (normTf(el.value || el.textContent || '')) score += 4;
+      if (/^(?:m)?(?:1|2|5|15|30)m?$/.test(own) || /^(?:s)?(?:5|15|30)s$/.test(own)) score += 5;
+      if (/expiracao|expiry|expiration/.test(c)) score -= 10;
     }
     if (kind === 'expiration') {
       if (/expiracao|expiry|expiration|duracao da entrada|tempo de expiracao/.test(c)) score += 14;
       if (normExp(el.value || el.textContent || '')) score += 3;
+      if (/timeframe|tempo da vela|periodo da vela/.test(c)) score -= 8;
     }
     return score;
   };
@@ -90,9 +93,7 @@
       at: Date.now()
     };
   };
-  const fire = el => {
-    for (const type of ['input', 'change', 'blur']) el.dispatchEvent(new Event(type, { bubbles: true }));
-  };
+  const fire = el => { for (const type of ['input', 'change', 'blur']) el.dispatchEvent(new Event(type, { bubbles: true })); };
   const setInput = (el, value) => {
     if (!(el instanceof HTMLInputElement)) return false;
     const proto = Object.getPrototypeOf(el);
@@ -131,11 +132,7 @@
     return true;
   }
   async function apply(prefs = {}) {
-    const desired = {
-      amount: num(prefs.tradeAmount ?? prefs.stake),
-      timeframe: normTf(prefs.timeframe),
-      expiration: normExp(prefs.expiration)
-    };
+    const desired = { amount: num(prefs.tradeAmount ?? prefs.stake), timeframe: normTf(prefs.timeframe), expiration: normExp(prefs.expiration) };
     const result = { attempted: {}, applied: {}, desired, before: read() };
     if (desired.amount != null && desired.amount > 0) {
       const c = best('amount'); result.attempted.amount = !!c;
