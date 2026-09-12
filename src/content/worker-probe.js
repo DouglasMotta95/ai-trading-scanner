@@ -154,25 +154,26 @@
     return { asset, price, bid, ask, timeframe, expiration, timestamp, selected, confidence: Math.min(100, confidence) };
   }
 
-  function scan(root, transport) {
-    if (root == null) return;
-    if (typeof root === 'string') {
-      const text = root.trim();
-      if (!text || text.length > 1048576) return;
-      try { root = JSON.parse(text); } catch { return; }
-    }
-    if (root instanceof ArrayBuffer || ArrayBuffer.isView(root) || root instanceof Blob) return;
-
+  function scanObject(root, transport) {
+    if (root == null || typeof root !== 'object') return;
     const stack = [{ value: root, depth: 0, asset: '', tf: '', key: '' }];
     const seen = new WeakSet();
     let visited = 0;
 
-    while (stack.length && visited < 3500) {
+    while (stack.length && visited < 4200) {
       const node = stack.pop();
       const value = node.value;
-      if (value == null || node.depth > 9) continue;
+      if (value == null || node.depth > 10) continue;
+
       if (Array.isArray(value)) {
-        for (let i = Math.min(value.length, 500) - 1; i >= 0; i--) {
+        if (node.asset && value.length >= 5 && value.length <= 14) {
+          const time = normalizeTime(value[0]);
+          const open = num(value[1]), high = num(value[2]), low = num(value[3]), close = num(value[4]);
+          if (time && [open, high, low, close].every(v => v != null)) {
+            rememberCandle({ asset: node.asset, time, open, high, low, close, timeframe: node.tf });
+          }
+        }
+        for (let i = Math.min(value.length, 600) - 1; i >= 0; i--) {
           stack.push({ value: value[i], depth: node.depth + 1, asset: node.asset, tf: node.tf, key: node.key });
         }
         continue;
@@ -196,7 +197,7 @@
       }
 
       let entries = [];
-      try { entries = Object.entries(value).slice(0, 120); } catch {}
+      try { entries = Object.entries(value).slice(0, 140); } catch {}
       for (const [key, child] of entries) {
         if (SENSITIVE.test(key)) continue;
         let childAsset = ownAsset;
@@ -205,6 +206,58 @@
       }
     }
     scheduleFlush();
+  }
+
+  function decodeText(text, transport) {
+    const raw = String(text || '').trim();
+    if (!raw || raw.length > 1048576) return;
+    const attempts = [raw];
+    if (/^\d{1,2}[\[{]/.test(raw)) attempts.push(raw.replace(/^\d{1,2}/, ''));
+    if (/^(?:42|45)\[/.test(raw)) attempts.push(raw.slice(2));
+    if (/^data:/m.test(raw)) {
+      for (const line of raw.split(/\r?\n/)) if (/^data:\s*/.test(line)) attempts.push(line.replace(/^data:\s*/, ''));
+    }
+    let parsed = false;
+    for (const attempt of attempts.slice(0, 60)) {
+      try {
+        let value = JSON.parse(attempt);
+        if (typeof value === 'string' && /^[\[{]/.test(value.trim())) {
+          try { value = JSON.parse(value); } catch {}
+        }
+        scanObject(value, transport);
+        parsed = true;
+      } catch {}
+    }
+    if (!parsed) {
+      const asset = assetFromText(raw);
+      if (asset) {
+        const prices = [...raw.matchAll(/\b\d{1,7}[.,]\d{3,8}\b/g)]
+          .map(m => num(m[0])).filter(v => v != null && v > 0);
+        if (prices.length) rememberCandidate({ asset, price: prices[prices.length - 1], confidence: 56 }, transport);
+        scheduleFlush();
+      }
+    }
+  }
+
+  function ingest(data, transport) {
+    if (data == null) return;
+    if (typeof data === 'string') { decodeText(data, transport); return; }
+    if (data instanceof Blob) {
+      if (data.size > 1048576) return;
+      data.text().then(text => decodeText(text, transport)).catch(() => {});
+      return;
+    }
+    if (data instanceof ArrayBuffer) {
+      if (data.byteLength > 1048576) return;
+      try { decodeText(new TextDecoder().decode(new Uint8Array(data)), transport); } catch {}
+      return;
+    }
+    if (ArrayBuffer.isView(data)) {
+      if (data.byteLength > 1048576) return;
+      try { decodeText(new TextDecoder().decode(new Uint8Array(data.buffer, data.byteOffset, data.byteLength)), transport); } catch {}
+      return;
+    }
+    if (typeof data === 'object') scanObject(data, transport);
   }
 
   function flush() {
@@ -240,7 +293,7 @@
   function observePort(port, transport) {
     if (!port || port.__atsRuntimeObserved) return;
     try { Object.defineProperty(port, '__atsRuntimeObserved', { value: true }); } catch {}
-    try { port.addEventListener('message', event => { state.messages[transport]++; scan(event.data, transport); }); } catch {}
+    try { port.addEventListener('message', event => { state.messages[transport]++; ingest(event.data, transport); }); } catch {}
     try { port.start?.(); } catch {}
   }
 
@@ -248,7 +301,7 @@
     const NativeWorker = window.Worker;
     const WrappedWorker = function(...args) {
       const worker = new NativeWorker(...args);
-      try { worker.addEventListener('message', event => { state.messages.worker++; scan(event.data, 'worker'); }); } catch {}
+      try { worker.addEventListener('message', event => { state.messages.worker++; ingest(event.data, 'worker'); }); } catch {}
       return worker;
     };
     WrappedWorker.prototype = NativeWorker.prototype;
@@ -272,7 +325,7 @@
     const NativeBroadcast = window.BroadcastChannel;
     const WrappedBroadcast = function(...args) {
       const channel = new NativeBroadcast(...args);
-      try { channel.addEventListener('message', event => { state.messages.broadcast++; scan(event.data, 'broadcast'); }); } catch {}
+      try { channel.addEventListener('message', event => { state.messages.broadcast++; ingest(event.data, 'broadcast'); }); } catch {}
       return channel;
     };
     WrappedBroadcast.prototype = NativeBroadcast.prototype;
@@ -283,7 +336,7 @@
   try {
     navigator.serviceWorker?.addEventListener('message', event => {
       state.messages.serviceworker++;
-      scan(event.data, 'serviceworker');
+      ingest(event.data, 'serviceworker');
     });
   } catch {}
 
@@ -291,6 +344,6 @@
     const data = event.data;
     if (!data || data?.source === SOURCE || String(data?.source || '').startsWith('ATS_')) return;
     state.messages.window++;
-    scan(data, 'window');
+    ingest(data, 'window');
   }, true);
 })();
