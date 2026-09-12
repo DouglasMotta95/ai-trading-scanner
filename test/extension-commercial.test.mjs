@@ -41,11 +41,12 @@ test('platform detection is strict and returns null for unrelated hosts', async 
   assert.equal(detectPlatform('app.casatrade.com')?.id, 'casatrade');
 });
 
-test('sidepanel contains only the six requested functional sections', () => {
+test('sidepanel is focused on license, live candle analysis and next entry', () => {
   const html = read('src/sidepanel/index.html');
-  for (const heading of ['1. LICENÇA','2. CONEXÃO CASATRADE','3. CONFIGURAÇÃO','4. ESTADO DO SINAL','5. PREPARAR ENTRADA','6. HISTÓRICO DA SESSÃO']) assert.match(html, new RegExp(heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  for (const heading of ['1. LICENÇA','2. VELA EM ANÁLISE','3. PRÓXIMA VELA']) assert.match(html, new RegExp(heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   for (const removed of ['RSI','MACD','EMA 9','EMA 21','SUPORTE','RESISTÊNCIA','BACKTEST','RELATÓRIO SEMANAL','CORRELAÇÃO','CALENDÁRIO','NOTÍCIAS','MELHORES OPORTUNIDADES','RADAR MULTIATIVO','POR QUE A IA']) assert.doesNotMatch(html.toUpperCase(), standalone(removed));
-  for (const id of ['licenseCard','connectionTitle','tradeAmount','analysisTimeframe','targetExpiration','signalTitle','signalReason','prepareBuy','prepareSell','signalHistory']) assert.match(html, new RegExp(`id=["']${id}["']`));
+  for (const id of ['licenseCard','analysisTitle','asset','price','secondsRemaining','timeframe','expiration','signalTitle','signalReason','decisionText','targetTime']) assert.match(html, new RegExp(`id=["']${id}["']`));
+  assert.doesNotMatch(html, /tradeAmount|analysisTimeframe|targetExpiration|syncPlatformBtn|prepareBuy|prepareSell|signalHistory/);
 });
 
 test('removed unauthorized files are physically absent', () => {
@@ -78,15 +79,12 @@ test('background clears unsupported active-tab market state and blocks foreign s
   assert.match(background, /signal: null/);
 });
 
-test('platform sync and trade preparation remain wired to real CasaTrade controls', () => {
+test('platform readers remain wired to real CasaTrade controls', () => {
   const background = read('src/background.js');
   const content = read('src/content/platform-sync.js');
-  assert.match(background, /ATS_SYNC_PLATFORM_PREFERENCES/);
   assert.match(background, /ATS_READ_PLATFORM_CONTROLS/);
   assert.match(background, /platformControls/);
-  assert.match(background, /aligned/);
   assert.match(content, /ATS_PLATFORM_READ/);
-  assert.match(content, /ATS_PLATFORM_APPLY/);
   assert.match(content, /comprar\|vender\|buy\|sell/);
 });
 
