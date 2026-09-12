@@ -28,6 +28,28 @@ test('public portal exposes verification recovery, code copy, extension onboardi
   assert.match(css, /\[hidden\]\s*\{\s*display\s*:\s*none\s*!important\s*\}/i);
 });
 
+test('verification e-mail is resilient and frontend never claims success from configuration alone', () => {
+  const app = read('apps/customer-portal/app.js');
+  const server = read('backend/src/server.js');
+  const env = read('backend/.env.example');
+  assert.match(server, /new AbortController\(\)/);
+  assert.match(server, /setTimeout\(\(\) => controller\.abort\(\), 8000\)/);
+  assert.match(server, /email_not_configured/);
+  assert.match(server, /email_provider_rejected/);
+  assert.match(server, /email_provider_unreachable/);
+  assert.match(server, /email_timeout/);
+  assert.match(server, /emailDeliveryConfigured: delivery\.configured/);
+  assert.match(server, /emailSent: delivery\.sent/);
+  assert.match(server, /text: plain/);
+  assert.match(server, /CONFIRMAR MEU E-MAIL/);
+  assert.match(server, /Este link expira em 24 horas/);
+  assert.match(app, /if\(r\.emailSent===true\)return/);
+  assert.doesNotMatch(app, /emailSent===true\|\|r\.emailDeliveryConfigured===true/);
+  assert.match(app, /RESEND_API_KEY e EMAIL_FROM/);
+  assert.match(env, /RESEND_API_KEY=re_/);
+  assert.match(env, /EMAIL_FROM=AI Trading Scanner/);
+});
+
 test('customer portal security sanitizes auth fields, rate-limits customer routes and never accepts card data', () => {
   const app = read('apps/customer-portal/app.js');
   const server = read('backend/src/server.js');
