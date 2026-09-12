@@ -11,7 +11,7 @@
     <header class="topbar">
       <div>
         <span class="eyebrow">AI TRADING SCANNER</span>
-        <h1>CasaTrade</h1>
+        <h1>Próxima vela</h1>
       </div>
       <span id="extensionVersion" class="version">v—</span>
     </header>
@@ -31,101 +31,59 @@
       </div>
     </section>
 
-    <section class="card">
+    <section class="card live-card">
       <div class="section-head">
         <div>
-          <span class="eyebrow">2. CONEXÃO CASATRADE</span>
-          <h2 id="connectionTitle">Não conectado</h2>
+          <span class="eyebrow">2. VELA EM ANÁLISE</span>
+          <h2 id="analysisTitle">Aguardando CasaTrade</h2>
         </div>
-        <span id="connectionBadge" class="badge bad">OFFLINE</span>
+        <span id="connectionBadge" class="badge warn">CONECTANDO</span>
       </div>
-      <p id="connectionText" class="muted">Abra a CasaTrade para conectar o feed real.</p>
-      <div class="metrics two">
-        <div><span>Qualidade do feed</span><b id="feedQuality">—</b></div>
-        <div><span>Última leitura</span><b id="lastFeed">—</b></div>
-      </div>
-      <button id="connectBtn" class="secondary">CONECTAR CASATRADE</button>
-    </section>
 
-    <section class="card">
-      <div class="section-head">
-        <div>
-          <span class="eyebrow">3. CONFIGURAÇÃO</span>
-          <h2>Operação sincronizada</h2>
+      <div class="market-line">
+        <div><span>ATIVO</span><b id="asset">—</b></div>
+        <div><span>COTAÇÃO</span><b id="price">—</b></div>
+      </div>
+
+      <div class="candle-clock">
+        <div class="clock-value"><b id="secondsRemaining">—</b><span>seg restantes</span></div>
+        <div class="clock-meta">
+          <span>Vela <b id="timeframe">M1</b></span>
+          <span>Expiração <b id="expiration">—</b></span>
         </div>
-        <span id="syncBadge" class="badge">AGUARDANDO</span>
       </div>
-      <div class="form-grid">
-        <label>Valor
-          <input id="tradeAmount" inputmode="decimal" placeholder="0,00">
-        </label>
-        <label>Vela
-          <select id="analysisTimeframe">
-            <option value="AUTO">AUTO</option>
-            <option value="S5">S5</option>
-            <option value="S15">S15</option>
-            <option value="S30">S30</option>
-            <option value="M1">M1</option>
-            <option value="M2">M2</option>
-            <option value="M5">M5</option>
-          </select>
-        </label>
-        <label>Expiração
-          <select id="targetExpiration">
-            <option value="AUTO">AUTO</option>
-            <option value="30s">30s</option>
-            <option value="60s">60s</option>
-            <option value="2m">2m</option>
-            <option value="5m">5m</option>
-          </select>
-        </label>
-      </div>
-      <div class="sync-line">
-        <span id="platformObserved">CasaTrade ainda não lida.</span>
-        <button id="syncPlatformBtn" class="secondary compact">SINCRONIZAR</button>
+
+      <div class="progress-track"><div id="candleProgress" class="progress-fill"></div></div>
+      <p id="analysisReason" class="muted">A extensão acompanha as velas anteriores e a vela atual em tempo real.</p>
+
+      <div class="candle-ohlc">
+        <div><span>ABERTURA</span><b id="currentOpen">—</b></div>
+        <div><span>MÁXIMA</span><b id="currentHigh">—</b></div>
+        <div><span>MÍNIMA</span><b id="currentLow">—</b></div>
+        <div><span>ATUAL</span><b id="currentClose">—</b></div>
       </div>
     </section>
 
-    <section class="card signal-card">
+    <section id="decisionCard" class="card decision-card">
       <div class="section-head">
         <div>
-          <span class="eyebrow">4. ESTADO DO SINAL</span>
-          <h2 id="signalTitle">Aguardando</h2>
+          <span class="eyebrow">3. PRÓXIMA VELA</span>
+          <h2 id="signalTitle">ANALISANDO</h2>
         </div>
         <span id="signalBadge" class="badge">AGUARDANDO</span>
       </div>
+
+      <div id="decisionBanner" class="decision-banner waiting">
+        <strong id="decisionText">ANALISANDO</strong>
+        <span id="decisionSubtext">O pré-sinal aparece nos últimos 30s e a decisão final nos últimos 10s.</span>
+      </div>
+
       <p id="signalReason" class="signal-reason">Aguardando dados reais da CasaTrade.</p>
-      <div class="metrics two">
-        <div><span>Ativo</span><b id="asset">—</b></div>
-        <div><span>Cotação</span><b id="price">—</b></div>
+      <div class="decision-meta">
+        <span>Força do padrão <b id="signalScore">—</b></span>
+        <span>Entrada <b id="targetTime">—</b></span>
       </div>
-    </section>
-
-    <section class="card">
-      <div class="section-head">
-        <div>
-          <span class="eyebrow">5. PREPARAR ENTRADA</span>
-          <h2>Confirmação manual</h2>
-        </div>
-      </div>
-      <p id="entryText" class="muted">A entrada só é liberada quando houver sinal confirmado e configuração sincronizada.</p>
-      <div class="trade-actions">
-        <button id="prepareBuy" class="buy" disabled>BUY</button>
-        <button id="prepareSell" class="sell" disabled>SELL</button>
-      </div>
-    </section>
-
-    <section class="card">
-      <div class="section-head">
-        <div>
-          <span class="eyebrow">6. HISTÓRICO DA SESSÃO</span>
-          <h2>Sinais confirmados</h2>
-        </div>
-        <span id="historyCount" class="badge">0</span>
-      </div>
-      <div id="signalHistory" class="history-list">
-        <div class="empty-state">Nenhum sinal confirmado nesta sessão.</div>
-      </div>
+      <p class="manual-note">A extensão só informa a direção. A entrada continua manual na CasaTrade.</p>
     </section>
   </main>
 
