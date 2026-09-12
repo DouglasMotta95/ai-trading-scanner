@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "AI Trading Scanner",
-  "version": "0.9.5",
-  "description": "Scanner inteligente multi-plataforma com leitura real da plataforma, análise quantitativa, sincronização de operação e licenciamento seguro.",
+  "version": "0.9.6",
+  "description": "Scanner inteligente multi-plataforma com feed WebSocket robusto, radar multiativo, sincronização de operação e análise quantitativa em tempo real.",
   "permissions": ["storage", "activeTab", "scripting", "sidePanel"],
   "optional_host_permissions": ["http://*/*", "https://*/*"],
   "host_permissions": [
