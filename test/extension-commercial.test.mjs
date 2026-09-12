@@ -21,6 +21,9 @@ test('manifest has a single side-panel entry point', () => {
   assert.ok(manifest.host_permissions.includes('https://*.casatrade.io/*'));
   assert.ok(manifest.permissions.includes('sidePanel'));
   assert.ok(manifest.permissions.includes('scripting'));
+  const isolated = manifest.content_scripts.find(x => x.world !== 'MAIN');
+  assert.ok(isolated.js.includes('src/content/platform-sync.js'));
+  assert.ok(isolated.js.includes('src/content/history-adapter.js'));
   const background = read('src/background.js');
   assert.match(background, /setPanelBehavior\(\{openPanelOnActionClick:true\}\)/);
 });
@@ -28,8 +31,9 @@ test('manifest has a single side-panel entry point', () => {
 test('sidepanel primary controls exist and are wired', () => {
   const html = read('src/sidepanel/index.html');
   const app = read('src/sidepanel/app.js');
+  const experience = read('src/sidepanel/experience.js');
   const background = read('src/background.js');
-  for (const id of ['settingsBtn','connectBtn','toggleScanner','analysisTimeframe','targetExpiration','prepareBuy','prepareSell','activateLicense']) {
+  for (const id of ['settingsBtn','connectBtn','toggleScanner','tradeAmount','analysisTimeframe','targetExpiration','prepareBuy','prepareSell','activateLicense']) {
     assert.match(html, new RegExp(`id=["']${id}["']`), `missing #${id}`);
   }
   for (const msg of ['ATS_CONNECT_ACTIVE_TAB','ATS_SET_SCANNER','ATS_PREPARE_TRADE','ATS_ACTIVATE_LICENSE','ATS_GET_STATE']) {
@@ -41,20 +45,44 @@ test('sidepanel primary controls exist and are wired', () => {
   assert.match(app, /toggleBtn\.addEventListener\(['"]click['"]/);
   assert.match(app, /connectBtn\.addEventListener\(['"]click['"]/);
   assert.ok(app.includes("$('settingsBtn').addEventListener('click'"));
+  assert.match(experience, /SINCRONIZE PARA INICIAR/);
+  assert.match(experience, /state\.signal\?\.state!==['"]CONFIRM['"]/);
 });
 
-test('account login and preflight are explicitly loaded by the side panel', () => {
+test('account login and synchronized trading experience are explicitly loaded by the side panel', () => {
   const html = read('src/sidepanel/index.html');
   const account = read('src/sidepanel/account-login.js');
-  const preflight = read('src/sidepanel/preflight.js');
+  const experience = read('src/sidepanel/experience.js');
   assert.match(html, /<script src="account-login\.js"><\/script>/);
-  assert.match(html, /<script src="preflight\.js"><\/script>/);
+  assert.match(html, /<script src="experience\.js"><\/script>/);
+  assert.doesNotMatch(html, /preflight\.js/);
+  assert.equal(fs.existsSync(path.join(root, 'src/sidepanel/preflight.js')), false);
   assert.ok(account.includes('/v1/customer/extension/exchange'));
   assert.ok(account.includes('/v1/customer/extension/refresh'));
   assert.ok(account.includes('manualKeyToggle'));
-  assert.match(preflight, /VALOR PLANEJADO/);
-  assert.match(preflight, /TODOS OS ATIVOS DETECTADOS/);
-  assert.match(preflight, /ATS_SET_SCANNER/);
+  assert.match(html, /VALOR DA ENTRADA/);
+  assert.match(html, /M2 • 2 MIN/);
+  assert.match(html, /ENTRADA NA PLATAFORMA/);
+  assert.match(experience, /ATS_SYNC_PLATFORM_PREFERENCES/);
+  assert.match(experience, /CasaTrade sincronizada/);
+  assert.match(experience, /não vou inventar entrada/);
+});
+
+test('CasaTrade settings synchronizer reads back and safely applies non-financial controls', () => {
+  const content = read('src/content/platform-sync.js');
+  const background = read('src/background-platform-sync.js');
+  assert.match(content, /ATS_PLATFORM_READ/);
+  assert.match(content, /ATS_PLATFORM_APPLY/);
+  assert.match(content, /excludeFinancialAction/);
+  assert.match(content, /comprar\|vender\|buy\|sell/);
+  assert.match(content, /result\.matched/);
+  assert.match(content, /detectAsset/);
+  assert.match(background, /ATS_READ_PLATFORM_CONTROLS/);
+  assert.match(background, /ATS_SYNC_PLATFORM_PREFERENCES/);
+  assert.match(background, /platformControls/);
+  assert.match(background, /aligned/);
+  assert.match(background, /patch\.scanner = 'idle'/);
+  assert.match(background, /patch\.asset = observed\.asset/);
 });
 
 test('license API requests have an eight-second abort timeout', () => {
@@ -119,6 +147,25 @@ test('network probe intentionally excludes authentication/session fields', () =>
   assert.match(probe, /token\|auth\|cookie\|session\|password\|secret\|bearer/);
   assert.ok(probe.includes('request bodies'));
   assert.ok(probe.includes('auth/session fields'));
+});
+
+test('real recent candle history can seed analysis without inventing candles', () => {
+  const probe = read('src/content/network-probe.js');
+  const augment = read('src/background-augment.js');
+  const history = read('src/content/history-adapter.js');
+  const candles = read('src/core/candles.js');
+  const orchestrator = read('src/core/orchestrator.js');
+  assert.match(probe, /recentCandles/);
+  assert.match(probe, /recordCandle/);
+  assert.match(augment, /sanitizeRecentCandles/);
+  assert.match(augment, /marketHistory/);
+  assert.match(history, /seenCount \|\| 0\) >= 2/);
+  assert.match(history, /Date\.now\(\) - Number\(c\?\.observedAt \|\| 0\) <= 6000/);
+  assert.match(history, /structuredQuotes: structured/);
+  assert.match(candles, /seed\(candles=\[\]\)/);
+  assert.match(candles, /M2:120000/);
+  assert.match(orchestrator, /builder\.seed\(snapshot\.candles\)/);
+  assert.match(orchestrator, /recentFlow/);
 });
 
 test('network candidates can promote a matching quote into the structured feed', () => {
