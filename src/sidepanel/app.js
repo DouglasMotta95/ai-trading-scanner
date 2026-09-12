@@ -9,14 +9,13 @@ let lastState = {};
 let prefs = {};
 let syncBusy = false;
 let syncTimer = null;
-let sessionStartedAt = Date.now();
+let sessionHistory = [];
 
 if ($('extensionVersion')) $('extensionVersion').textContent = `v${chrome.runtime.getManifest().version}`;
 
 const num = v => v == null || v === '' ? null : Number.isFinite(Number(v)) ? Number(v) : null;
 const money = v => num(v) == null ? '—' : new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(v));
 const fresh = s => s.connection === 'online' && s.lastSeen && Date.now() - Number(s.lastSeen) < 8000;
-const activeLicense = s => s.license?.status === 'active';
 const configuredPrefs = p => {
   const amount = num(p.tradeAmount ?? p.stake);
   return amount != null && amount > 0 && p.timeframe && p.timeframe !== 'AUTO' && p.expiration && p.expiration !== 'AUTO';
@@ -58,7 +57,7 @@ function renderLicense(s = {}) {
     $('licenseText').textContent = active
       ? `${l.planLabel || l.plan || 'Plano'} ativo${l.expiresAt ? ` • vence ${new Date(l.expiresAt).toLocaleDateString('pt-BR')}` : ''}.`
       : l.error === 'backend_unreachable'
-        ? 'Servidor indisponível. Último acesso válido será mantido quando existir.'
+        ? 'Servidor indisponível. O último acesso válido será mantido quando existir.'
         : 'Ative sua licença para usar o scanner.';
   }
 }
@@ -122,12 +121,11 @@ function renderSignal(s = {}) {
   }
 }
 
-function renderHistory(s = {}) {
-  const all = Array.isArray(s.signalHistory) ? s.signalHistory : [];
-  const rows = all.filter(x => Number(x.at || 0) >= sessionStartedAt && ['BUY', 'SELL'].includes(x.direction));
-  if ($('historyCount')) $('historyCount').textContent = String(rows.length);
+function renderHistory(rows = []) {
+  const valid = Array.isArray(rows) ? rows.filter(x => ['BUY', 'SELL'].includes(x.direction)) : [];
+  if ($('historyCount')) $('historyCount').textContent = String(valid.length);
   if (!$('signalHistory')) return;
-  $('signalHistory').innerHTML = rows.length ? rows.slice(0, 20).map(x => `
+  $('signalHistory').innerHTML = valid.length ? valid.slice(0, 20).map(x => `
     <div class="history-row">
       <span class="history-dir ${x.direction === 'SELL' ? 'sell' : 'buy'}">${x.direction}</span>
       <div><b>${x.asset || '—'}</b><small>${x.timeframe || '—'} • ${x.expiration || '—'} • ${x.entryPrice ?? '—'}</small></div>
@@ -141,7 +139,7 @@ function render(s = {}) {
   renderConnection(s);
   renderConfig(s);
   renderSignal(s);
-  renderHistory(s);
+  renderHistory(sessionHistory);
 }
 
 async function loadSettings() {
@@ -166,10 +164,12 @@ async function savePrefs() {
 }
 
 async function getState() {
-  const [state, stored] = await Promise.all([
+  const [state, stored, history] = await Promise.all([
     chrome.runtime.sendMessage({ type: 'ATS_GET_STATE' }).catch(() => ({})),
-    chrome.storage.local.get(LAST_VALID_LICENSE_KEY).catch(() => ({}))
+    chrome.storage.local.get(LAST_VALID_LICENSE_KEY).catch(() => ({})),
+    chrome.runtime.sendMessage({ type: 'ATS_GET_SESSION_HISTORY' }).catch(() => ({ rows: [] }))
   ]);
+  sessionHistory = Array.isArray(history?.rows) ? history.rows : [];
   const license = effectiveLicense(state?.license || {}, stored[LAST_VALID_LICENSE_KEY] || null);
   render({ ...state, license });
 }
@@ -185,15 +185,15 @@ async function syncNow() {
     syncBusy = false;
   }
 }
-
 function scheduleSync() {
   clearTimeout(syncTimer);
   syncTimer = setTimeout(syncNow, 300);
 }
 
 $('connectBtn')?.addEventListener('click', async () => {
-  await chrome.runtime.sendMessage({ type: 'ATS_CONNECT_ACTIVE_TAB' }).catch(() => ({ ok: false }));
-  await getState();
+  const result = await chrome.runtime.sendMessage({ type: 'ATS_CONNECT_ACTIVE_TAB' }).catch(() => ({ ok: false }));
+  if (result?.ok && configuredPrefs(prefs)) await syncNow();
+  else await getState();
 });
 $('syncPlatformBtn')?.addEventListener('click', syncNow);
 amountInput?.addEventListener('change', scheduleSync);
@@ -204,8 +204,8 @@ expSelect?.addEventListener('change', scheduleSync);
 $('activateLicense')?.addEventListener('click', async () => {
   const key = $('licenseKey')?.value?.trim();
   if (!key) return;
-  const r = await chrome.runtime.sendMessage({ type: 'ATS_ACTIVATE_LICENSE', key }).catch(() => ({ ok: false }));
-  if (r?.ok && $('licenseKey')) $('licenseKey').value = '';
+  const result = await chrome.runtime.sendMessage({ type: 'ATS_ACTIVATE_LICENSE', key }).catch(() => ({ ok: false }));
+  if (result?.ok && $('licenseKey')) $('licenseKey').value = '';
   await getState();
 });
 
@@ -226,11 +226,11 @@ chrome.storage.onChanged.addListener(changes => {
 });
 
 (async () => {
-  const stored = await chrome.storage.local.get('atsSessionStartedAt');
-  sessionStartedAt = Number(stored.atsSessionStartedAt) || Date.now();
-  await chrome.storage.local.set({ atsSessionStartedAt: sessionStartedAt });
   await loadSettings();
   await getState();
   chrome.runtime.sendMessage({ type: 'ATS_VALIDATE_LICENSE' }).catch(() => {});
   setInterval(getState, 1000);
+  setInterval(() => {
+    if (fresh(lastState) && lastState.platformId === 'casatrade') chrome.runtime.sendMessage({ type: 'ATS_READ_PLATFORM_CONTROLS' }).catch(() => {});
+  }, 2500);
 })();
