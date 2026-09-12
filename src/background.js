@@ -21,48 +21,25 @@ const DEFAULT_STATE = { ...EMPTY_MARKET, scanner: 'idle', license: DEFAULT_LICEN
 
 let lastLicenseCheck = 0;
 let lastHeartbeatAt = 0;
+let lastDirectScanAt = 0;
+let directScanPromise = null;
+
 const clean = v => String(v ?? '').trim();
-const uniq = a => [...new Set(a.filter(Boolean))];
 const num = v => v == null || v === '' ? null : Number.isFinite(Number(v)) ? Number(v) : null;
 const sameTarget = (s, sender) => !s?.targetTabId || !sender?.tab?.id || s.targetTabId === sender.tab.id;
 const platformFromUrl = u => { try { return detectPlatform(new URL(u).hostname); } catch { return null; } };
 
-const merge = (state = {}, snapshot = {}) => ({
-  ...DEFAULT_STATE, ...state, ...snapshot,
-  license: { ...DEFAULT_LICENSE, ...(state.license || {}), ...(snapshot.license || {}) },
-  capabilities: { ...DEFAULT_STATE.capabilities, ...(state.capabilities || {}), ...(snapshot.capabilities || {}) },
-  diagnostics: { ...(state.diagnostics || {}), ...(snapshot.diagnostics || {}) },
-  telemetry: { ...DEFAULT_STATE.telemetry, ...(state.telemetry || {}), ...(snapshot.telemetry || {}) }
+const merge = (state = {}, patch = {}) => ({
+  ...DEFAULT_STATE, ...state, ...patch,
+  license: { ...DEFAULT_LICENSE, ...(state.license || {}), ...(patch.license || {}) },
+  capabilities: { ...DEFAULT_STATE.capabilities, ...(state.capabilities || {}), ...(patch.capabilities || {}) },
+  diagnostics: { ...(state.diagnostics || {}), ...(patch.diagnostics || {}) },
+  telemetry: { ...DEFAULT_STATE.telemetry, ...(state.telemetry || {}), ...(patch.telemetry || {}) }
 });
+
 const marketCleared = (state = {}, patch = {}) => ({
   ...state, ...EMPTY_MARKET, scanner: 'idle', license: state.license || DEFAULT_LICENSE, ...patch
 });
-
-function configuredPrefs(p = {}) {
-  const amount = num(p.tradeAmount ?? p.stake);
-  return amount != null && amount > 0 && p.timeframe && p.timeframe !== 'AUTO' && p.expiration && p.expiration !== 'AUTO';
-}
-
-function catalogFrom(candidates = [], prefs = {}) {
-  const lines = [], seen = new Set();
-  for (const c of candidates) {
-    const asset = clean(c?.asset);
-    if (!asset) continue;
-    const key = `${asset}|${clean(c.timeframe)}|${clean(c.expiration)}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    lines.push({
-      asset, price: num(c.price), bid: num(c.bid), ask: num(c.ask), payout: num(c.payout),
-      timeframe: clean(c.timeframe) || null, expiration: clean(c.expiration) || null,
-      transport: clean(c.transport) || null, source: clean(c.source) || 'observed'
-    });
-  }
-  const timeframes = uniq(lines.map(x => x.timeframe));
-  const expirations = uniq(lines.map(x => x.expiration));
-  if (prefs.timeframe && prefs.timeframe !== 'AUTO' && !timeframes.includes(prefs.timeframe)) timeframes.unshift(prefs.timeframe);
-  if (prefs.expiration && prefs.expiration !== 'AUTO' && !expirations.includes(prefs.expiration)) expirations.unshift(prefs.expiration);
-  return { assets: uniq(lines.map(x => x.asset)).sort(), timeframes, expirations, lines: lines.slice(0, 180) };
-}
 
 function licenseError(r) {
   const error = r?.error || 'license_required';
@@ -84,26 +61,25 @@ function feedQuality(state = {}) {
   const reported = Number(state.diagnostics?.network?.feedQuality);
   if (Number.isFinite(reported) && reported > 0) return Math.max(0, Math.min(100, reported));
   if (state.capabilities?.structuredQuotes) return 100;
-  const net = state.diagnostics?.network || {};
-  const ws = Number(net.connections?.ws) || 0;
-  const assets = state.marketCatalog?.assets?.length || Number(net.candidateCount) || 0;
-  if (ws && assets) return 72;
-  if (assets) return 58;
-  return state.price != null ? 42 : 0;
+  return state.asset && state.price != null ? 65 : 0;
 }
+
 function latencyOf(state = {}) {
   const t = Number(state.serverTime);
   if (!Number.isFinite(t) || t <= 1e12) return null;
   const delta = Math.abs(Date.now() - t);
   return delta < 600000 ? delta : null;
 }
+
 async function telemetryHeartbeat(state, settings, force = false) {
   if (!force && Date.now() - lastHeartbeatAt < 5000) return;
   lastHeartbeatAt = Date.now();
   await heartbeat(state, settings).catch(() => {});
 }
 const telemetryEvent = async (type, data, settings) => { await track(type, data, settings).catch(() => {}); };
-const telemetryState = state => merge(state, { telemetry: { feedQuality: feedQuality(state), latency: latencyOf(state), lastSync: Date.now() } });
+const telemetryState = state => merge(state, {
+  telemetry: { feedQuality: feedQuality(state), latency: latencyOf(state), lastSync: Date.now() }
+});
 
 function localSignalRecord(state) {
   const s = state.signal || {};
@@ -114,6 +90,7 @@ function localSignalRecord(state) {
     entryPrice: num(state.price), status: 'confirmed'
   };
 }
+
 async function appendSessionHistory(record) {
   const stored = await chrome.storage.session.get(SESSION_HISTORY_KEY);
   const rows = Array.isArray(stored[SESSION_HISTORY_KEY]) ? stored[SESSION_HISTORY_KEY] : [];
@@ -125,6 +102,7 @@ async function activeCasaTradeTab() {
   if (!tab?.id || !tab.url) return { tab: null, platform: null };
   return { tab, platform: platformFromUrl(tab.url) };
 }
+
 async function ensureSupportedActiveTab(scannerState = {}) {
   const { tab, platform } = await activeCasaTradeTab();
   if (tab?.id && platform) return { scannerState, tab, platform };
@@ -133,6 +111,22 @@ async function ensureSupportedActiveTab(scannerState = {}) {
   });
   await chrome.storage.local.set({ scannerState: cleared });
   return { scannerState: cleared, tab, platform: null };
+}
+
+async function injectReaders(tabId) {
+  const scripts = [
+    ['src/content/network-probe.js', 'MAIN'],
+    ['src/content/network-bridge.js', 'ISOLATED'],
+    ['src/content/generic-adapter.js', 'ISOLATED'],
+    ['src/content/platform-sync.js', 'ISOLATED']
+  ];
+  for (const [file, world] of scripts) {
+    await chrome.scripting.executeScript({
+      target: { tabId, allFrames: true },
+      files: [file],
+      world
+    }).catch(() => {});
+  }
 }
 
 async function connectActiveTab() {
@@ -145,17 +139,21 @@ async function connectActiveTab() {
     await chrome.storage.local.set({ scannerState: next });
     return { ok: false, error: 'platform_not_registered' };
   }
-  const scripts = [
-    ['src/content/network-probe.js', 'MAIN'],
-    ['src/content/network-bridge.js', 'ISOLATED'],
-    ['src/content/generic-adapter.js', 'ISOLATED'],
-    ['src/content/platform-sync.js', 'ISOLATED']
-  ];
-  for (const [file, world] of scripts) await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: [file], world }).catch(() => {});
+
+  await injectReaders(tab.id);
+
+  const sameTab = scannerState.targetTabId === tab.id;
   const next = merge(scannerState, {
-    connection: 'connecting', platformId: platform.id, platformName: platform.name, targetTabId: tab.id,
-    asset: null, price: null, signal: null, platformControls: null,
-    diagnostics: { target: { host: new URL(tab.url).hostname, tabId: tab.id, connectedAt: Date.now() } }
+    connection: sameTab && scannerState.connection === 'online' ? 'online' : 'connecting',
+    platformId: platform.id,
+    platformName: platform.name,
+    targetTabId: tab.id,
+    scanner: 'scanning',
+    ...(sameTab ? {} : { asset: null, price: null, signal: null, platformControls: null }),
+    diagnostics: {
+      ...(scannerState.diagnostics || {}),
+      target: { host: new URL(tab.url).hostname, tabId: tab.id, connectedAt: Date.now() }
+    }
   });
   await chrome.storage.local.set({ scannerState: next });
   const { settings = {} } = await chrome.storage.local.get('settings');
@@ -163,47 +161,366 @@ async function connectActiveTab() {
   return { ok: true, platform: { id: platform.id, name: platform.name }, tabId: tab.id };
 }
 
-async function readPlatformControls(tabId) {
-  if (!tabId) return { ok: false, error: 'platform_tab_not_connected' };
-  return chrome.tabs.sendMessage(tabId, { type: 'ATS_PLATFORM_READ' }).catch(() => ({ ok: false, error: 'platform_read_failed' }));
-}
-function controlAlignment(observed = {}, prefs = {}) {
-  const amount = num(prefs.tradeAmount ?? prefs.stake);
-  const amountOk = amount != null && num(observed.amount) === amount;
-  const timeframeOk = clean(observed.timeframe).toUpperCase() === clean(prefs.timeframe).toUpperCase();
-  const expirationOk = clean(observed.expiration).toLowerCase() === clean(prefs.expiration).toLowerCase();
-  return { amountOk, timeframeOk, expirationOk, aligned: !!(amountOk && timeframeOk && expirationOk) };
-}
-async function syncPlatformPreferences() {
-  const { scannerState = {}, settings = {} } = await chrome.storage.local.get(['scannerState', 'settings']);
-  const supported = await ensureSupportedActiveTab(scannerState);
-  if (!supported.platform || !supported.tab?.id) return { ok: false, error: 'platform_not_registered' };
-  const prefs = settings.scanPreferences || {};
-  if (!configuredPrefs(prefs)) return { ok: false, error: 'preferences_required' };
-  const preferences = {
-    tradeAmount: num(prefs.tradeAmount ?? prefs.stake), stake: num(prefs.tradeAmount ?? prefs.stake),
-    timeframe: prefs.timeframe, expiration: prefs.expiration
+function scanCasaTradeFrame() {
+  const host = String(location.hostname || '').toLowerCase().replace(/\.$/, '');
+  if (!(host === 'casatrade.com' || host.endsWith('.casatrade.com') || host === 'casatrade.io' || host.endsWith('.casatrade.io'))) return null;
+
+  const cleanText = v => String(v ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
+  const fold = v => cleanText(v).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const toNum = v => {
+    let s = cleanText(v).replace(/[^\d,.-]/g, '');
+    if (!s) return null;
+    if (s.includes(',') && s.includes('.')) s = s.lastIndexOf(',') > s.lastIndexOf('.') ? s.replace(/\./g, '').replace(',', '.') : s.replace(/,/g, '');
+    else s = s.replace(',', '.');
+    const n = Number(s);
+    return Number.isFinite(n) ? n : null;
   };
-  const result = await chrome.tabs.sendMessage(supported.tab.id, { type: 'ATS_PLATFORM_APPLY', preferences })
-    .catch(() => ({ ok: false, error: 'platform_sync_failed' }));
-  const observed = result?.after || result?.observed || (await readPlatformControls(supported.tab.id))?.observed || {};
-  const alignment = controlAlignment(observed, prefs);
-  const latest = (await chrome.storage.local.get('scannerState')).scannerState || supported.scannerState;
-  const next = merge(latest, { platformControls: { ...alignment, observed, checkedAt: Date.now() } });
-  if (!alignment.aligned) next.scanner = 'idle';
-  await chrome.storage.local.set({ scannerState: next });
-  return { ok: !!result?.ok, ...alignment, observed };
+  const visible = el => {
+    if (!el || !(el instanceof Element)) return false;
+    const r = el.getBoundingClientRect();
+    const s = getComputedStyle(el);
+    return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden' && Number(s.opacity || 1) > 0;
+  };
+
+  const roots = [document];
+  const seenRoots = new Set(roots);
+  for (let i = 0; i < roots.length && i < 300; i++) {
+    let nodes = [];
+    try { nodes = roots[i].querySelectorAll('*'); } catch {}
+    for (const el of nodes) {
+      if (el.shadowRoot && !seenRoots.has(el.shadowRoot)) {
+        seenRoots.add(el.shadowRoot);
+        roots.push(el.shadowRoot);
+      }
+    }
+  }
+
+  const elements = [];
+  for (const root of roots) {
+    let nodes = [];
+    try { nodes = root.querySelectorAll('button,[role="button"],[role="tab"],[aria-selected],input,select,span,strong,b,p,div,li,svg text'); } catch {}
+    for (const el of nodes) if (visible(el)) elements.push(el);
+  }
+
+  const texts = elements.map(el => cleanText(
+    el instanceof HTMLInputElement || el instanceof HTMLSelectElement
+      ? (el.value || el.selectedOptions?.[0]?.textContent || '')
+      : (el.innerText || el.textContent || '')
+  )).filter(Boolean);
+  const pageText = cleanText([document.body?.innerText || '', ...texts.slice(0, 2500)].join(' '));
+
+  const pairRe = /\b([A-Z0-9]{2,16})\s*\/\s*(USDT|USDC|USD|EUR|GBP|JPY|AUD|CAD|CHF|NZD|BRL|BTC|ETH)(?:\s*\(OTC\))?/i;
+  const assetRows = [];
+  for (const el of elements) {
+    const text = cleanText(el.innerText || el.textContent || '');
+    if (!text || text.length > 100) continue;
+    const m = text.toUpperCase().match(pairRe);
+    if (!m) continue;
+    const assetMatch = m[0].replace(/\s+/g, ' ').trim().toUpperCase();
+    const r = el.getBoundingClientRect();
+    let score = 30;
+    if (/\(OTC\)/i.test(assetMatch)) score += 20;
+    if (el.getAttribute?.('aria-selected') === 'true' || /active|selected|current/i.test(String(el.className || ''))) score += 45;
+    if (r.top >= 0 && r.top < innerHeight * .38) score += 20;
+    if (r.left >= 0 && r.left < innerWidth * .60) score += 12;
+    if (/portfolio|historico|histórico|chat|suporte|ranking|leader/i.test(fold(text))) score -= 35;
+    assetRows.push({ asset: assetMatch, score });
+  }
+  if (!assetRows.length) {
+    const m = pageText.toUpperCase().match(pairRe);
+    if (m) assetRows.push({ asset: m[0].replace(/\s+/g, ' ').trim().toUpperCase(), score: 15 });
+  }
+  assetRows.sort((a, b) => b.score - a.score);
+  const asset = assetRows[0]?.asset || null;
+
+  const decimals = text => {
+    const out = [];
+    for (const m of String(text || '').matchAll(/\b\d{1,6}[.,]\d{3,8}\b/g)) {
+      const n = toNum(m[0]);
+      if (n != null && n > 0) out.push(n);
+    }
+    return out;
+  };
+
+  let buy = null, sell = null;
+  for (const el of elements) {
+    const text = cleanText(el.innerText || el.textContent || '');
+    if (!text || text.length > 120) continue;
+    const f = fold(text);
+    const values = decimals(text);
+    if (!values.length) continue;
+    if (buy == null && /\b(comprar|buy)\b/.test(f)) buy = values[values.length - 1];
+    if (sell == null && /\b(vender|sell)\b/.test(f)) sell = values[values.length - 1];
+  }
+  let price = buy != null && sell != null ? (buy + sell) / 2 : (buy ?? sell ?? null);
+
+  if (price == null) {
+    const rows = [];
+    for (const el of elements) {
+      const text = cleanText(el.innerText || el.textContent || '');
+      if (!text || text.length > 35 || /%|\$|R\$/i.test(text)) continue;
+      const values = decimals(text);
+      if (!values.length) continue;
+      const r = el.getBoundingClientRect();
+      for (const value of values) {
+        let score = 0;
+        if (r.left > innerWidth * .55) score += 20;
+        if (r.top > innerHeight * .12 && r.top < innerHeight * .86) score += 15;
+        if (/price|quote|rate/i.test(String(el.className || ''))) score += 25;
+        rows.push({ value, score });
+      }
+    }
+    rows.sort((a, b) => b.score - a.score);
+    price = rows[0]?.value ?? null;
+  }
+
+  const normalizeTf = value => {
+    const s = fold(value).replace(/\s+/g, '');
+    let m = s.match(/^m(1|2|5|15|30)$/); if (m) return `M${m[1]}`;
+    m = s.match(/^(1|2|5|15|30)(?:m|min|minuto|minutos)$/); if (m) return `M${m[1]}`;
+    m = s.match(/^s(5|15|30)$/); if (m) return `S${m[1]}`;
+    m = s.match(/^(5|15|30)(?:s|seg|segundo|segundos)$/); if (m) return `S${m[1]}`;
+    return /^(h1|1h|60m|60min)$/.test(s) ? 'H1' : null;
+  };
+
+  const tfRows = [];
+  for (const el of elements) {
+    const text = cleanText(el.innerText || el.textContent || '');
+    if (!text || text.length > 20) continue;
+    const tf = normalizeTf(text);
+    if (!tf) continue;
+    const r = el.getBoundingClientRect();
+    let score = 5;
+    if (el.getAttribute?.('aria-selected') === 'true' || /active|selected|current/i.test(String(el.className || ''))) score += 50;
+    if (r.left < innerWidth * .35) score += 15;
+    if (r.top > innerHeight * .20 && r.top < innerHeight * .90) score += 8;
+    tfRows.push({ tf, score });
+  }
+  tfRows.sort((a, b) => b.score - a.score);
+  const timeframe = tfRows[0]?.tf || 'M1';
+
+  const expMatch = pageText.match(/(?:expira(?:ção|cao)|expiry|duration)\s*[:\-]?\s*(\d{1,4})\s*(s|seg|segundo|segundos|m|min|minuto|minutos)/i);
+  let expiration = null;
+  if (expMatch) {
+    const n = Number(expMatch[1]);
+    expiration = /^m|min/i.test(expMatch[2]) ? (n === 1 ? '60s' : `${n}m`) : `${n}s`;
+  }
+
+  const amountMatch = pageText.match(/\bvalor\b\s*(?:R\$|\$)?\s*([\d.]+(?:,\d+)?)/i);
+  const amount = amountMatch ? toNum(amountMatch[1]) : null;
+
+  const instrumentType = /\bblitz\b/i.test(pageText) ? 'blitz'
+    : /\bbin[aá]ri[ao]\b|\bbinary\b/i.test(pageText) ? 'binary'
+      : /\bturbo\b/i.test(pageText) ? 'turbo' : 'unknown';
+
+  const marketType = /\(OTC\)/i.test(asset || '') ? 'otc' : 'regular';
+  const score = (asset ? 55 : 0) + (price != null ? 45 : 0) + (expiration ? 8 : 0) + (amount != null ? 6 : 0);
+
+  return {
+    asset, price, buy, sell, timeframe, expiration, amount, instrumentType, marketType,
+    score, frameUrl: location.href
+  };
 }
+
+function historyForAsset(state = {}, asset = '') {
+  const history = state?.diagnostics?.network?.recentCandles || {};
+  const wanted = clean(asset).toUpperCase().replace(/\s*\(OTC\)\s*$/, '');
+  const key = Object.keys(history).find(k => clean(k).toUpperCase().replace(/\s*\(OTC\)\s*$/, '') === wanted);
+  return key && Array.isArray(history[key]) ? history[key].slice(-120) : [];
+}
+
+async function applySnapshot(snapshot, scannerState = {}, settings = {}, platform = { id: 'casatrade', name: 'CasaTrade' }) {
+  if (!snapshot?.asset || num(snapshot.price) == null) {
+    const waiting = merge(scannerState, {
+      platformId: platform.id, platformName: platform.name, connection: 'online', lastSeen: Date.now(),
+      signal: {
+        state: 'WAIT', direction: null, provisional: true,
+        hint: 'CasaTrade conectada. Aguardando ativo e cotação.',
+        reason: 'CasaTrade conectada. Aguardando ativo e cotação.'
+      }
+    });
+    await chrome.storage.local.set({ scannerState: waiting });
+    return waiting;
+  }
+
+  const analysisTimeframe = snapshot.timeframe || scannerState.analysisTimeframe || scannerState.timeframe || 'M1';
+  const targetExpiration = snapshot.expiration || scannerState.targetExpiration || scannerState.expiration || null;
+  const enriched = {
+    ...snapshot,
+    platformId: platform.id,
+    platformName: platform.name,
+    analysisTimeframe,
+    targetExpiration,
+    candles: Array.isArray(snapshot.candles) ? snapshot.candles : historyForAsset(scannerState, snapshot.asset)
+  };
+
+  const license = await syncLicense(settings, scannerState);
+  let activeScanner = 'scanning';
+  if (settings.runtimePaused || (licenseRequired(settings) && license.status !== 'active')) activeScanner = 'idle';
+
+  let next = merge(scannerState, {
+    ...enriched,
+    scanner: activeScanner,
+    license,
+    connection: 'online',
+    lastSeen: Date.now()
+  });
+  next = merge(next, processSnapshot(enriched, next));
+
+  const previousState = scannerState?.signal?.state || null;
+  const previousDirection = scannerState?.signal?.direction || null;
+  const becameConfirm = next.signal?.state === 'CONFIRM'
+    && (previousState !== 'CONFIRM' || previousDirection !== next.signal?.direction);
+
+  if (becameConfirm) {
+    const usage = await consumeSignal(settings);
+    if (!usage.ok) {
+      const hint = usage.error === 'daily_limit_reached'
+        ? 'Limite diário do plano atingido.'
+        : usage.error === 'trial_limit_reached'
+          ? 'O teste já utilizou todas as previsões disponíveis.'
+          : 'Licença inválida para liberar nova previsão.';
+      next = merge(next, {
+        license: { ...license, ...(usage.license || {}), ...licenseError(usage) },
+        signal: { ...next.signal, state: 'NO_TRADE', direction: null, hint, reason: hint, provisional: true }
+      });
+    } else {
+      next = merge(next, {
+        license: { ...license, ...(usage.license || {}), ...(usage.usage || {}), status: 'active', error: null }
+      });
+      const record = localSignalRecord(next);
+      await appendSessionHistory(record);
+      await telemetryEvent('signal_confirmed', record, settings);
+    }
+  }
+
+  next = telemetryState(next);
+  await chrome.storage.local.set({ scannerState: next });
+  telemetryHeartbeat(next, settings, becameConfirm);
+  return next;
+}
+
+async function directScanActiveTab(force = false) {
+  if (!force && directScanPromise) return directScanPromise;
+  if (!force && Date.now() - lastDirectScanAt < 650) {
+    const { scannerState = {} } = await chrome.storage.local.get('scannerState');
+    return scannerState;
+  }
+
+  directScanPromise = (async () => {
+    lastDirectScanAt = Date.now();
+    const { tab, platform } = await activeCasaTradeTab();
+    const { scannerState = {}, settings = {} } = await chrome.storage.local.get(['scannerState', 'settings']);
+
+    if (!tab?.id || !platform) {
+      const supported = await ensureSupportedActiveTab(scannerState);
+      return supported.scannerState;
+    }
+
+    if (scannerState.targetTabId !== tab.id || scannerState.platformId !== platform.id) {
+      await connectActiveTab();
+    }
+
+    const results = await chrome.scripting.executeScript({
+      target: { tabId: tab.id, allFrames: true },
+      func: scanCasaTradeFrame,
+      world: 'ISOLATED'
+    }).catch(() => []);
+
+    const rows = (Array.isArray(results) ? results : [])
+      .map(x => x?.result)
+      .filter(Boolean)
+      .sort((a, b) => Number(b.score || 0) - Number(a.score || 0));
+
+    const best = rows.find(x => x.asset && x.price != null) || rows[0] || null;
+    const latest = (await chrome.storage.local.get('scannerState')).scannerState || scannerState;
+
+    if (!best) {
+      const waiting = merge(latest, {
+        connection: 'online', platformId: platform.id, platformName: platform.name, targetTabId: tab.id,
+        lastSeen: Date.now(),
+        signal: {
+          state: 'WAIT', direction: null, provisional: true,
+          hint: 'CasaTrade conectada. Lendo o gráfico...',
+          reason: 'CasaTrade conectada. Lendo o gráfico...'
+        }
+      });
+      await chrome.storage.local.set({ scannerState: waiting });
+      return waiting;
+    }
+
+    const observed = {
+      amount: best.amount ?? null,
+      timeframe: best.timeframe || null,
+      expiration: best.expiration || null,
+      detected: {
+        amount: best.amount != null,
+        timeframe: !!best.timeframe,
+        expiration: !!best.expiration
+      },
+      sources: { amount: 'direct', timeframe: 'direct', expiration: 'direct' },
+      at: Date.now()
+    };
+
+    const snapshot = {
+      platformId: platform.id,
+      platformName: platform.name,
+      connection: 'online',
+      asset: best.asset || null,
+      price: num(best.price),
+      timeframe: best.timeframe || 'M1',
+      expiration: best.expiration || null,
+      instrumentType: best.instrumentType || 'unknown',
+      marketType: best.marketType || 'regular',
+      serverTime: null,
+      capabilities: {
+        structuredQuotes: false,
+        candles: historyForAsset(latest, best.asset).length >= 3,
+        expiration: !!best.expiration,
+        multiAsset: false
+      },
+      diagnostics: {
+        ...(latest.diagnostics || {}),
+        directScan: {
+          frameUrl: best.frameUrl || null,
+          score: Number(best.score || 0),
+          buy: best.buy ?? null,
+          sell: best.sell ?? null,
+          framesSeen: rows.length,
+          at: Date.now()
+        }
+      },
+      platformControls: {
+        aligned: false,
+        observed,
+        checkedAt: Date.now()
+      }
+    };
+
+    return applySnapshot(snapshot, latest, settings, platform);
+  })();
+
+  try {
+    return await directScanPromise;
+  } finally {
+    directScanPromise = null;
+  }
+}
+
+async function readPlatformControls() {
+  const state = await directScanActiveTab(true);
+  const observed = state?.platformControls?.observed || {};
+  return { ok: !!(observed.amount != null || observed.timeframe || observed.expiration), observed };
+}
+
 async function refreshPlatformControls() {
-  const { scannerState = {}, settings = {} } = await chrome.storage.local.get(['scannerState', 'settings']);
-  const supported = await ensureSupportedActiveTab(scannerState);
-  if (!supported.platform || !supported.tab?.id) return { ok: false, error: 'platform_not_registered' };
-  const result = await readPlatformControls(supported.tab.id);
-  const observed = result?.observed || {};
-  const alignment = controlAlignment(observed, settings.scanPreferences || {});
-  const latest = (await chrome.storage.local.get('scannerState')).scannerState || supported.scannerState;
-  await chrome.storage.local.set({ scannerState: merge(latest, { platformControls: { ...alignment, observed, checkedAt: Date.now() } }) });
-  return { ...result, ...alignment, observed };
+  const state = await directScanActiveTab(true);
+  const observed = state?.platformControls?.observed || {};
+  return { ok: true, aligned: !!state?.platformControls?.aligned, observed };
+}
+
+async function syncPlatformPreferences() {
+  return refreshPlatformControls();
 }
 
 async function prepareTrade(direction) {
@@ -211,19 +528,33 @@ async function prepareTrade(direction) {
   const { scannerState = {}, settings = {} } = await chrome.storage.local.get(['scannerState', 'settings']);
   const supported = await ensureSupportedActiveTab(scannerState);
   if (!supported.platform || !supported.tab?.id || supported.tab.id !== scannerState.targetTabId) return { ok: false, error: 'platform_tab_not_connected' };
+
   const sig = scannerState.signal || {};
   if (sig.state !== 'CONFIRM' || sig.direction !== direction || sig.provisional) return { ok: false, error: 'signal_not_confirmed' };
-  if (!scannerState.platformControls?.aligned) return { ok: false, error: 'platform_not_aligned' };
+
+  if (!scannerState.platformControls?.observed) return { ok: false, error: 'platform_not_aligned' };
+
   const intent = {
-    direction, asset: scannerState.asset || null,
+    direction,
+    asset: scannerState.asset || null,
     timeframe: scannerState.analysisTimeframe || scannerState.timeframe || null,
     expiration: scannerState.targetExpiration || scannerState.expiration || null,
-    stake: num(settings.scanPreferences?.tradeAmount ?? settings.scanPreferences?.stake),
-    createdAt: Date.now(), status: 'prepared'
+    stake: num(scannerState.platformControls?.observed?.amount) ?? num(settings.scanPreferences?.tradeAmount ?? settings.scanPreferences?.stake),
+    createdAt: Date.now(),
+    status: 'prepared'
   };
+
   await chrome.tabs.update(supported.tab.id, { active: true }).catch(() => {});
-  await chrome.scripting.executeScript({ target: { tabId: supported.tab.id }, files: ['src/content/trade-handoff.js'], world: 'ISOLATED' }).catch(() => {});
-  const handoff = await chrome.tabs.sendMessage(supported.tab.id, { type: 'ATS_HIGHLIGHT_TRADE', ...intent }).catch(() => ({ found: false }));
+  await chrome.scripting.executeScript({
+    target: { tabId: supported.tab.id, allFrames: true },
+    files: ['src/content/trade-handoff.js'],
+    world: 'ISOLATED'
+  }).catch(() => {});
+
+  const handoff = await chrome.tabs.sendMessage(supported.tab.id, {
+    type: 'ATS_HIGHLIGHT_TRADE', ...intent
+  }).catch(() => ({ found: false }));
+
   const nextIntent = { ...intent, handoff: { found: !!handoff?.found, label: handoff?.label || null } };
   await chrome.storage.local.set({ scannerState: merge(scannerState, { tradeIntent: nextIntent }) });
   telemetryEvent('trade_handoff_prepared', { ...intent, found: !!handoff?.found }, settings);
@@ -241,151 +572,210 @@ chrome.runtime.onInstalled.addListener(async () => {
   await chrome.storage.local.set(updates);
   await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
 });
+
 chrome.tabs?.onActivated?.addListener(async () => {
+  const { tab, platform } = await activeCasaTradeTab();
+  if (tab?.id && platform) {
+    await connectActiveTab().catch(() => {});
+    await directScanActiveTab(true).catch(() => {});
+    return;
+  }
   const { scannerState = {} } = await chrome.storage.local.get('scannerState');
   await ensureSupportedActiveTab(scannerState);
 });
+
 chrome.tabs?.onUpdated?.addListener(async (tabId, changeInfo, tab) => {
-  if (!changeInfo.url && !changeInfo.status) return;
+  if (!changeInfo.url && changeInfo.status !== 'complete') return;
+  const platform = tab?.url ? platformFromUrl(tab.url) : null;
+  if (tab?.active && platform && tabId) {
+    await connectActiveTab().catch(() => {});
+    await directScanActiveTab(true).catch(() => {});
+    return;
+  }
   const { scannerState = {} } = await chrome.storage.local.get('scannerState');
   if (scannerState.targetTabId === tabId || tab?.active) await ensureSupportedActiveTab(scannerState);
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === 'ATS_CONNECT_ACTIVE_TAB') {
-    connectActiveTab().then(sendResponse).catch(e => sendResponse({ ok: false, error: String(e?.message || e) })); return true;
+    (async () => {
+      const connected = await connectActiveTab();
+      if (!connected.ok) return connected;
+      const state = await directScanActiveTab(true);
+      return { ...connected, state };
+    })().then(sendResponse).catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
+    return true;
   }
+
   if (message?.type === 'ATS_ACTIVATE_LICENSE') {
     chrome.storage.local.get(['scannerState', 'settings']).then(async ({ scannerState, settings = {} }) => {
-      const r = await activateLicense(settings, message.key); lastLicenseCheck = 0;
+      const r = await activateLicense(settings, message.key);
+      lastLicenseCheck = 0;
       const license = r.ok ? { ...r.license, error: null } : { ...DEFAULT_LICENSE, ...licenseError(r), ...(r.license || {}) };
-      const next = merge(scannerState, { license }); await chrome.storage.local.set({ scannerState: next });
-      if (r.ok) { await telemetryEvent('license_activated', { plan: license.plan, planLabel: license.planLabel }, settings); await telemetryHeartbeat(telemetryState(next), settings, true); }
+      const next = merge(scannerState, { license });
+      await chrome.storage.local.set({ scannerState: next });
+      if (r.ok) {
+        await telemetryEvent('license_activated', { plan: license.plan, planLabel: license.planLabel }, settings);
+        await telemetryHeartbeat(telemetryState(next), settings, true);
+      }
       sendResponse({ ...r, license });
-    }).catch(e => sendResponse({ ok: false, error: String(e?.message || e) })); return true;
+    }).catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
+    return true;
   }
+
   if (message?.type === 'ATS_VALIDATE_LICENSE') {
     chrome.storage.local.get(['scannerState', 'settings']).then(async ({ scannerState, settings = {} }) => {
-      const license = await syncLicense(settings, scannerState, true); const next = merge(scannerState, { license });
+      const license = await syncLicense(settings, scannerState, true);
+      const next = merge(scannerState, { license });
       await chrome.storage.local.set({ scannerState: next });
       if (license.status === 'active') telemetryHeartbeat(telemetryState(next), settings, true);
       sendResponse({ ok: license.status === 'active', license });
-    }).catch(e => sendResponse({ ok: false, error: String(e?.message || e) })); return true;
+    }).catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
+    return true;
   }
+
   if (message?.type === 'ATS_CLEAR_LICENSE') {
     chrome.storage.local.get('scannerState').then(async ({ scannerState }) => {
       await clearLicense();
       const next = merge(scannerState, { scanner: 'idle', license: DEFAULT_LICENSE, signal: null });
-      await chrome.storage.local.set({ scannerState: next }); sendResponse({ ok: true });
-    }); return true;
+      await chrome.storage.local.set({ scannerState: next });
+      sendResponse({ ok: true });
+    });
+    return true;
   }
+
   if (message?.type === 'ATS_GET_PLATFORM_CONFIG') {
-    let host = message.host || ''; if (!host && sender?.url) try { host = new URL(sender.url).hostname; } catch {}
-    const platform = detectPlatform(host); sendResponse({ ok: !!platform, platform: platform ? { ...platform } : null }); return;
+    let host = message.host || '';
+    if (!host && sender?.url) try { host = new URL(sender.url).hostname; } catch {}
+    const platform = detectPlatform(host);
+    sendResponse({ ok: !!platform, platform: platform ? { ...platform } : null });
+    return;
   }
+
   if (message?.type === 'ATS_READ_PLATFORM_CONTROLS') {
-    refreshPlatformControls().then(sendResponse).catch(e => sendResponse({ ok: false, error: String(e?.message || e) })); return true;
+    refreshPlatformControls().then(sendResponse).catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
+    return true;
   }
+
   if (message?.type === 'ATS_SYNC_PLATFORM_PREFERENCES') {
-    syncPlatformPreferences().then(sendResponse).catch(e => sendResponse({ ok: false, error: String(e?.message || e) })); return true;
+    syncPlatformPreferences().then(sendResponse).catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
+    return true;
   }
+
   if (message?.type === 'ATS_PREPARE_TRADE') {
-    prepareTrade(String(message.direction || '').toUpperCase()).then(sendResponse).catch(e => sendResponse({ ok: false, error: String(e?.message || e) })); return true;
+    prepareTrade(String(message.direction || '').toUpperCase()).then(sendResponse).catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
+    return true;
   }
+
   if (message?.type === 'ATS_GET_SESSION_HISTORY') {
-    chrome.storage.session.get(SESSION_HISTORY_KEY).then(x => sendResponse({ ok: true, rows: Array.isArray(x[SESSION_HISTORY_KEY]) ? x[SESSION_HISTORY_KEY] : [] })); return true;
+    chrome.storage.session.get(SESSION_HISTORY_KEY).then(x => sendResponse({
+      ok: true,
+      rows: Array.isArray(x[SESSION_HISTORY_KEY]) ? x[SESSION_HISTORY_KEY] : []
+    }));
+    return true;
   }
+
   if (message?.type === 'ATS_DOM_CATALOG') {
     const p = message.payload || {};
-    chrome.storage.local.get(['scannerState', 'settings']).then(async ({ scannerState = {}, settings = {} }) => {
-      let host = ''; try { host = new URL(sender?.url || '').hostname; } catch {}
+    chrome.storage.local.get('scannerState').then(async ({ scannerState = {} }) => {
+      let host = '';
+      try { host = new URL(sender?.url || '').hostname; } catch {}
       if (!detectPlatform(host) || !sameTarget(scannerState, sender)) return sendResponse({ ok: true, ignored: true });
-      const prefs = settings.scanPreferences || {};
-      const domCatalog = { candidates: Array.isArray(p.candidates) ? p.candidates.slice(0, 180) : [], assetCount: Number(p.assetCount) || 0, timeframe: p.timeframe || null, expiration: p.expiration || null, instrumentType: p.instrumentType || 'unknown', lastSeen: Date.now() };
-      const net = scannerState?.diagnostics?.network?.candidates || [];
-      const marketCatalog = catalogFrom([...net, ...domCatalog.candidates], prefs);
-      await chrome.storage.local.set({ scannerState: merge(scannerState, { marketCatalog, diagnostics: { ...(scannerState.diagnostics || {}), domCatalog } }) });
+      const candidate = Array.isArray(p.candidates) ? p.candidates.find(x => x?.asset && num(x?.price) != null) : null;
+      const marketCatalog = candidate ? {
+        assets: [candidate.asset],
+        timeframes: p.timeframe ? [p.timeframe] : [],
+        expirations: p.expiration ? [p.expiration] : [],
+        lines: [candidate]
+      } : scannerState.marketCatalog || { assets: [], timeframes: [], expirations: [], lines: [] };
+      await chrome.storage.local.set({
+        scannerState: merge(scannerState, {
+          marketCatalog,
+          diagnostics: {
+            ...(scannerState.diagnostics || {}),
+            domCatalog: { ...p, lastSeen: Date.now() }
+          }
+        })
+      });
       sendResponse({ ok: true, catalog: marketCatalog });
-    }); return true;
+    });
+    return true;
   }
+
   if (message?.type === 'ATS_NETWORK_DIAGNOSTIC') {
     const p = message.payload || {};
-    chrome.storage.local.get(['scannerState', 'settings']).then(async ({ scannerState = {}, settings = {} }) => {
-      let host = ''; try { host = new URL(sender?.url || '').hostname; } catch {}
+    chrome.storage.local.get('scannerState').then(async ({ scannerState = {} }) => {
+      let host = '';
+      try { host = new URL(sender?.url || '').hostname; } catch {}
       const platform = detectPlatform(host);
       if (!platform || !sameTarget(scannerState, sender)) return sendResponse({ ok: true, ignored: true });
-      const prefs = settings.scanPreferences || {};
       const network = {
-        messages: p.messages || {}, connections: p.connections || {}, endpoints: Array.isArray(p.endpoints) ? p.endpoints.slice(-30) : [],
-        keys: Array.isArray(p.keys) ? p.keys.slice(0, 180) : [], candidates: Array.isArray(p.candidates) ? p.candidates.slice(0, 180).map(x => ({ ...x, source: 'network' })) : [],
-        candidateCount: Number(p.candidateCount) || 0, recentCandles: p.recentCandles || {}, feedQuality: Number(p.feedQuality || 0),
-        parser: p.parser || {}, primaryTransport: p.primaryTransport || null, lastSeen: Date.now()
+        messages: p.messages || {},
+        connections: p.connections || {},
+        endpoints: Array.isArray(p.endpoints) ? p.endpoints.slice(-30) : [],
+        keys: Array.isArray(p.keys) ? p.keys.slice(0, 180) : [],
+        candidates: Array.isArray(p.candidates) ? p.candidates.slice(0, 180).map(x => ({ ...x, source: 'network' })) : [],
+        candidateCount: Number(p.candidateCount) || 0,
+        recentCandles: p.recentCandles || {},
+        feedQuality: Number(p.feedQuality || 0),
+        parser: p.parser || {},
+        primaryTransport: p.primaryTransport || null,
+        lastSeen: Date.now()
       };
-      const dom = scannerState?.diagnostics?.domCatalog?.candidates || [];
-      const marketCatalog = catalogFrom([...network.candidates, ...dom], prefs);
-      const next = merge(scannerState, { platformId: platform.id, platformName: platform.name, marketCatalog, diagnostics: { ...(scannerState.diagnostics || {}), network } });
-      await chrome.storage.local.set({ scannerState: next }); sendResponse({ ok: true, catalog: marketCatalog });
-    }); return true;
+      await chrome.storage.local.set({
+        scannerState: merge(scannerState, {
+          platformId: platform.id,
+          platformName: platform.name,
+          diagnostics: { ...(scannerState.diagnostics || {}), network }
+        })
+      });
+      sendResponse({ ok: true });
+    });
+    return true;
   }
+
   if (message?.type === 'ATS_PLATFORM_SNAPSHOT') {
     const snapshot = message.payload || {};
     chrome.storage.local.get(['scannerState', 'settings']).then(async ({ scannerState = {}, settings = {} }) => {
-      let host = ''; try { host = new URL(sender?.url || '').hostname; } catch {}
+      let host = '';
+      try { host = new URL(sender?.url || '').hostname; } catch {}
       const platform = detectPlatform(host);
       if (!platform || !sameTarget(scannerState, sender)) return sendResponse({ ok: true, ignored: true });
-      const prefs = settings.scanPreferences || {};
-      const analysisTimeframe = prefs.timeframe && prefs.timeframe !== 'AUTO' ? prefs.timeframe : (snapshot.timeframe || null);
-      const targetExpiration = prefs.expiration && prefs.expiration !== 'AUTO' ? prefs.expiration : (snapshot.expiration || null);
-      const enriched = { ...snapshot, platformId: platform.id, platformName: platform.name, analysisTimeframe, targetExpiration };
-      const license = await syncLicense(settings, scannerState);
-      let activeScanner = scannerState.scanner;
-      if (settings.runtimePaused || (licenseRequired(settings) && license.status !== 'active')) activeScanner = 'idle';
-      let next = merge(scannerState, { ...enriched, scanner: activeScanner, license, connection: 'online', lastSeen: Date.now() });
-      next = merge(next, processSnapshot(enriched, next));
-      const previousState = scannerState?.signal?.state || null;
-      const becameConfirm = next.signal?.state === 'CONFIRM' && previousState !== 'CONFIRM';
-      if (becameConfirm) {
-        const usage = await consumeSignal(settings);
-        if (!usage.ok) {
-          const hint = usage.error === 'daily_limit_reached' ? 'Limite diário do plano atingido.' : usage.error === 'trial_limit_reached' ? 'O teste já utilizou todas as entradas disponíveis.' : 'Licença inválida para liberar novo sinal.';
-          next = merge(next, { license: { ...license, ...(usage.license || {}), ...licenseError(usage) }, signal: { ...next.signal, state: 'NO_TRADE', direction: null, hint, reason: hint, provisional: true } });
-        } else {
-          next = merge(next, { license: { ...license, ...(usage.license || {}), ...(usage.usage || {}), status: 'active', error: null } });
-          const record = localSignalRecord(next);
-          await appendSessionHistory(record);
-          await telemetryEvent('signal_confirmed', record, settings);
-        }
-      }
-      next = telemetryState(next);
-      await chrome.storage.local.set({ scannerState: next });
-      telemetryHeartbeat(next, settings, becameConfirm);
+      const next = await applySnapshot(snapshot, scannerState, settings, platform);
       sendResponse({ ok: true, signal: next.signal, license: next.license });
-    }).catch(e => sendResponse({ ok: false, error: String(e?.message || e) })); return true;
+    }).catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
+    return true;
   }
+
   if (message?.type === 'ATS_GET_STATE') {
-    chrome.storage.local.get('scannerState').then(async ({ scannerState = {} }) => {
+    directScanActiveTab().then(state => sendResponse(merge(state))).catch(async () => {
+      const { scannerState = {} } = await chrome.storage.local.get('scannerState');
       const supported = await ensureSupportedActiveTab(scannerState);
       sendResponse(merge(supported.scannerState));
-    }); return true;
+    });
+    return true;
   }
+
   if (message?.type === 'ATS_SET_SCANNER') {
     chrome.storage.local.get(['scannerState', 'settings']).then(async ({ scannerState = {}, settings = {} }) => {
       const supported = await ensureSupportedActiveTab(scannerState);
       if (!supported.platform) return sendResponse({ ok: false, error: 'platform_not_registered', state: supported.scannerState });
       const scanning = !!message.enabled;
       const license = await syncLicense(settings, supported.scannerState, true);
-      const prefs = settings.scanPreferences || {};
       if (scanning && licenseRequired(settings) && license.status !== 'active') return sendResponse({ ok: false, error: 'license_required' });
-      if (scanning && (!configuredPrefs(prefs) || !supported.scannerState?.platformControls?.aligned)) return sendResponse({ ok: false, error: 'preflight_required' });
       const next = merge(supported.scannerState, { scanner: scanning ? 'scanning' : 'idle', license });
       await chrome.storage.local.set({ scannerState: next });
       sendResponse({ ok: true, state: next });
-    }); return true;
+    });
+    return true;
   }
+
   if (message?.type === 'ATS_RESET_STATE') {
     resetOrchestrator();
-    Promise.all([chrome.storage.local.set({ scannerState: DEFAULT_STATE }), chrome.storage.session.remove(SESSION_HISTORY_KEY)])
-      .then(() => sendResponse({ ok: true }));
+    Promise.all([
+      chrome.storage.local.set({ scannerState: DEFAULT_STATE }),
+      chrome.storage.session.remove(SESSION_HISTORY_KEY)
+    ]).then(() => sendResponse({ ok: true }));
     return true;
   }
 });
