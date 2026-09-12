@@ -2,12 +2,17 @@
   "manifest_version": 3,
   "name": "AI Trading Scanner",
   "version": "0.10.1",
-  "description": "Scanner inteligente multi-plataforma com WebSocket de baixa latência, análise prática de 3–5 velas, IA ponderada, gestão de risco e terminal profissional.",
+  "description": "Scanner de sinais para CasaTrade com leitura de mercado real, sincronização de operação e confirmação manual.",
   "permissions": ["storage", "activeTab", "scripting", "sidePanel"],
-  "optional_host_permissions": ["http://*/*", "https://*/*"],
   "host_permissions": [
-    "https://*.casatrade.com/*",
-    "https://*.casatrade.io/*",
+    "https://casatrade.com/*",
+    "https://www.casatrade.com/*",
+    "https://app.casatrade.com/*",
+    "https://trade.casatrade.com/*",
+    "https://casatrade.io/*",
+    "https://www.casatrade.io/*",
+    "https://app.casatrade.io/*",
+    "https://trade.casatrade.io/*",
     "https://ats-control-center-v07-production.up.railway.app/*"
   ],
   "background": { "service_worker": "src/background-entry.js", "type": "module" },
@@ -16,14 +21,32 @@
   "side_panel": { "default_path": "src/sidepanel/index.html" },
   "content_scripts": [
     {
-      "matches": ["https://*.casatrade.com/*", "https://*.casatrade.io/*"],
+      "matches": [
+        "https://casatrade.com/*",
+        "https://www.casatrade.com/*",
+        "https://app.casatrade.com/*",
+        "https://trade.casatrade.com/*",
+        "https://casatrade.io/*",
+        "https://www.casatrade.io/*",
+        "https://app.casatrade.io/*",
+        "https://trade.casatrade.io/*"
+      ],
       "js": ["src/content/network-probe.js"],
       "run_at": "document_start",
       "world": "MAIN"
     },
     {
-      "matches": ["https://*.casatrade.com/*", "https://*.casatrade.io/*"],
-      "js": ["src/content/network-bridge.js", "src/content/generic-adapter.js", "src/content/platform-sync.js", "src/content/history-adapter.js", "src/content/chart-overlay.js"],
+      "matches": [
+        "https://casatrade.com/*",
+        "https://www.casatrade.com/*",
+        "https://app.casatrade.com/*",
+        "https://trade.casatrade.com/*",
+        "https://casatrade.io/*",
+        "https://www.casatrade.io/*",
+        "https://app.casatrade.io/*",
+        "https://trade.casatrade.io/*"
+      ],
+      "js": ["src/content/network-bridge.js", "src/content/generic-adapter.js", "src/content/platform-sync.js"],
       "run_at": "document_start"
     }
   ]
