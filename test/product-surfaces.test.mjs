@@ -86,13 +86,22 @@ test('lifetime plan is a one-time commercial plan with unlimited entitlement', (
   assert.match(portal, /sem vencimento/i);
 });
 
-test('preflight continuously protects candle and expiration alignment', () => {
-  const preflight = read('src/sidepanel/preflight.js');
-  assert.match(preflight, /enforceRuntimeAlignment/);
-  assert.match(preflight, /SCANNER PAUSADO/);
-  assert.match(preflight, /ATS_SET_SCANNER/);
-  assert.match(preflight, /expiração .* é menor que a vela/);
-  assert.match(preflight, /CasaTrade está com expiração/);
+test('synchronized operation setup replaces duplicate preflight and blocks mismatched platform state', () => {
+  const html = read('src/sidepanel/index.html');
+  const experience = read('src/sidepanel/experience.js');
+  const sync = read('src/background-platform-sync.js');
+  assert.equal(fs.existsSync(path.join(root, 'src/sidepanel/preflight.js')), false);
+  assert.match(html, /id="tradeAmount"/);
+  assert.match(html, /VALOR NA CASATRADE/);
+  assert.match(html, /VELA NA CASATRADE/);
+  assert.match(html, /EXPIRAÇÃO NA CASATRADE/);
+  assert.match(experience, /ATS_SYNC_PLATFORM_PREFERENCES/);
+  assert.match(experience, /SINCRONIZE PARA INICIAR/);
+  assert.match(sync, /patch\.scanner = 'idle'/);
+  assert.match(sync, /Leitura pausada:/);
+  assert.match(sync, /amountOk/);
+  assert.match(sync, /timeframeOk/);
+  assert.match(sync, /expirationOk/);
 });
 
 test('admin ops documents its global override debt without loading CRM', () => {
@@ -135,15 +144,19 @@ test('extension sync indicator is based on a confirmed heartbeat response', () =
   assert.match(panel, /telemetryError\?'ERRO'/);
 });
 
-test('structured feed requires repeated recent network observations', () => {
+test('structured feed requires repeated recent network observations and active-asset matching', () => {
   const probe = read('src/content/network-probe.js');
   const adapter = read('src/content/generic-adapter.js');
+  const history = read('src/content/history-adapter.js');
   assert.match(probe, /seenCount/);
   assert.match(probe, /transport/);
+  assert.match(probe, /recentCandles/);
   assert.match(probe, /trimSet\(stats\.endpoints, 100\)/);
   assert.match(adapter, /seenCount \|\| 0\) >= 2/);
   assert.match(adapter, /allowedTransports/);
   assert.match(adapter, /Date\.now\(\) - Number\(c\.observedAt \|\| 0\) <= 6000/);
+  assert.match(history, /normAsset\(c\?\.asset\) === asset/);
+  assert.match(history, /structuredQuotes: structured/);
 });
 
 test('extension account refresh clears expired account tokens instead of showing stale connected state', () => {
