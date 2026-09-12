@@ -45,13 +45,14 @@
   </section>
 
   <section class="panel risk-panel">
-    <div class="section-head"><div><span class="eyebrow">GESTÃO DE RISCO</span><h2>Proteção de banca e valor sugerido</h2></div><span id="riskBadge" class="mini-tag">MODERADO</span></div>
+    <div class="section-head"><div><span class="eyebrow">GESTÃO DE RISCO AUTOMÁTICA</span><h2>Banca, valor sugerido, meta e stop</h2></div><span id="riskBadge" class="mini-tag">MODERADO</span></div>
     <div class="risk-grid">
       <label><small>PERFIL</small><select id="riskProfile"><option value="conservative">Conservador</option><option value="moderate" selected>Moderado</option><option value="aggressive">Agressivo</option></select></label>
-      <label><small>BANCA ATUAL</small><input id="bankroll" inputmode="decimal" placeholder="Ex.: 1000"></label>
-      <label><small>META DIÁRIA</small><input id="dailyTarget" inputmode="decimal" placeholder="Ex.: 50"></label>
+      <label><small>BANCA ATUAL</small><input id="bankroll" inputmode="decimal" placeholder="Ex.: 500"></label>
+      <label><small>META MANUAL (OPCIONAL)</small><input id="dailyTarget" inputmode="decimal" placeholder="Auto pelo perfil"></label>
       <div class="risk-stat"><small>ENTRADA SUGERIDA</small><strong id="suggestedStake">—</strong></div>
     </div>
+    <div class="risk-kpis"><div><span>RESULTADO HOJE</span><b id="dailyPnl">R$ 0,00</b></div><div><span>META / STOP</span><b id="dailyLimits">—</b></div><div><span>STATUS</span><b id="riskStatus">DENTRO DO RISCO</b></div></div>
     <div class="goal-row"><div><span>Progresso da meta</span><b id="goalProgressText">0%</b></div><div class="progress"><i id="goalProgress"></i></div></div>
     <div id="riskWarnings" class="risk-warnings"><p>Informe sua banca para receber um valor proporcional ao perfil escolhido.</p></div>
   </section>
@@ -77,17 +78,17 @@
     <div class="section-head"><div><span class="eyebrow">INTELIGÊNCIA DE MERCADO</span><h2>Melhores oportunidades monitoradas</h2></div><span id="intelligenceBadge" class="mini-tag">IA PONDERADA</span></div>
     <p id="intelligenceSummary" class="intelligence-summary">Assim que o feed chegar, o ATS classifica automaticamente os mercados.</p>
     <div id="intelligenceList" class="intelligence-list"><div class="empty-state">Aguardando ativos e cotações reais da plataforma.</div></div>
-    <p id="intelligenceNote" class="truth-note">Pesos: Price Action 25% • Indicadores 20% • EMAs 15% • Volatilidade 10% • Correlação 10% • Notícias 10% • Momentum 10%.</p>
+    <p id="intelligenceNote" class="truth-note">A decisão rápida nasce das últimas 3–5 velas; indicadores longos entram como contexto quando disponíveis.</p>
   </section>
 
   <section class="panel indicators-panel">
-    <div class="section-head"><div><span class="eyebrow">INDICADORES E GRÁFICO</span><h2>Leitura técnica + linhas sobre a CasaTrade</h2></div><span id="scalpingBadge" class="mini-tag">NORMAL</span></div>
-    <div class="indicator-grid"><div><span>RSI 14</span><b id="rsiValue">—</b></div><div><span>MACD</span><b id="macdValue">—</b></div><div><span>EMA 9</span><b id="ema9Value">—</b></div><div><span>EMA 21</span><b id="ema21Value">—</b></div><div><span>SUPORTE</span><b id="supportValue">—</b></div><div><span>RESISTÊNCIA</span><b id="resistanceValue">—</b></div></div>
+    <div class="section-head"><div><span class="eyebrow">INDICADORES E GRÁFICO</span><h2>Price action recente + apoio técnico</h2></div><span id="scalpingBadge" class="mini-tag">NORMAL</span></div>
+    <div class="indicator-grid"><div><span>RSI 14</span><b id="rsiValue">—</b></div><div><span>MACD</span><b id="macdValue">—</b></div><div><span>EMA 9</span><b id="ema9Value">—</b></div><div><span>EMA 21</span><b id="ema21Value">—</b></div><div><span>SUPORTE 3–5</span><b id="supportValue">—</b></div><div><span>RESISTÊNCIA 3–5</span><b id="resistanceValue">—</b></div></div>
     <div class="toggle-grid">
       <label><input id="chartLinesToggle" type="checkbox" checked><span>Linhas no gráfico</span></label>
-      <label><input id="emaOverlayToggle" type="checkbox" checked><span>EMAs</span></label>
+      <label><input id="emaOverlayToggle" type="checkbox" checked><span>EMAs quando houver histórico</span></label>
       <label><input id="supportToggle" type="checkbox" checked><span>Suporte / resistência</span></label>
-      <label><input id="trendToggle" type="checkbox" checked><span>Tendência</span></label>
+      <label><input id="trendToggle" type="checkbox" checked><span>Tendência curta</span></label>
       <label><input id="soundToggle" type="checkbox" checked><span>Alertas sonoros</span></label>
       <label><input id="pulseToggle" type="checkbox" checked><span>Alerta por pulso</span></label>
       <label><input id="onlyAToggle" type="checkbox"><span>Somente setups A+</span></label>
@@ -97,11 +98,12 @@
   </section>
 
   <section class="panel analysis-panel">
-    <div class="section-head"><div><span class="eyebrow">ANÁLISE TÉCNICA</span><h2>Por que a IA aprovou ou recusou?</h2></div><span id="setup" class="grade-badge">—</span></div>
-    <div class="progress-wrap"><div><span>Histórico para análise</span><b id="warmupText">0 / 21 velas</b></div><div class="progress"><i id="warmupBar"></i></div></div>
-    <div class="analysis-grid"><div><span>CRITÉRIOS</span><b id="confirmations">0 de 6</b></div><div><span>REGIME</span><b id="regime">—</b></div><div><span>DADOS</span><b id="structureState">AGUARDANDO</b></div></div>
+    <div class="section-head"><div><span class="eyebrow">ANÁLISE DAS ÚLTIMAS VELAS</span><h2>O que aconteceu nas últimas 3–5 velas?</h2></div><span id="setup" class="grade-badge">—</span></div>
+    <div class="progress-wrap"><div><span>Velas fechadas necessárias</span><b id="warmupText">0 / 5 velas</b></div><div class="progress"><i id="warmupBar"></i></div></div>
+    <div class="recent-candles-card"><div><span>DIREÇÃO RECENTE</span><b id="recentDirection">AGUARDANDO</b></div><div><span>PROJEÇÃO</span><b id="recentProjection">—</b></div><div><span>ALINHAMENTO</span><b id="recentAlignment">—</b></div></div>
+    <div class="analysis-grid"><div><span>CRITÉRIOS</span><b id="confirmations">0 de 4</b></div><div><span>REGIME</span><b id="regime">—</b></div><div><span>DADOS</span><b id="structureState">AGUARDANDO</b></div></div>
     <div class="ai-breakdown"><div><span>PRICE ACTION</span><b id="aiPriceAction">—</b></div><div><span>INDICADORES</span><b id="aiIndicators">—</b></div><div><span>EMAs</span><b id="aiEma">—</b></div><div><span>VOLATILIDADE</span><b id="aiVolatility">—</b></div><div><span>CORRELAÇÃO</span><b id="aiCorrelation">—</b></div><div><span>NOTÍCIAS</span><b id="aiNews">—</b></div><div><span>MOMENTUM</span><b id="aiMomentum">—</b></div></div>
-    <div class="reason-box"><span>PARECER DA IA</span><p id="aiOpinion">Aguardando dados suficientes.</p><div id="signalReasons" class="reason-list"></div></div>
+    <div class="reason-box"><span>PARECER DA IA</span><p id="aiOpinion">Aguardando de 3 a 5 velas fechadas reais.</p><div id="signalReasons" class="reason-list"></div></div>
   </section>
 
   <section class="panel backtest-panel">
