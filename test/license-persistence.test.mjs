@@ -28,7 +28,7 @@ async function loadLicenseModule(storage, fetchImpl) {
   globalThis.crypto ||= webcrypto;
   globalThis.chrome = {
     storage: { local: storage.api },
-    runtime: { getManifest: () => ({ version: '0.10.1' }) }
+    runtime: { getManifest: () => ({ version: '0.10.2' }) }
   };
   globalThis.fetch = fetchImpl;
   const url = new URL(`../src/services/license.js?test=${Date.now()}-${Math.random()}`, import.meta.url);
@@ -62,24 +62,29 @@ test('reopening extension restores active license from chrome.storage.local befo
     atsLicenseKey: license.key,
     atsLastValidLicense: { license, licenseKey: license.key, validatedAt: Date.now() }
   });
+  let requests = 0;
 
-  const mod = await loadLicenseModule(storage, async () => { throw new Error('offline'); });
+  const mod = await loadLicenseModule(storage, async () => {
+    requests++;
+    throw new Error('offline');
+  });
   const cached = await mod.restoreCachedLicense();
   assert.equal(cached?.status, 'active');
   assert.equal(cached?.plan, 'pro');
 
   const result = await mod.validateLicense({});
   assert.equal(result.ok, true);
-  assert.equal(result.offlineFallback, true);
+  assert.equal(result.cacheHit, true);
   assert.equal(result.license.status, 'active');
-  assert.equal(result.license.syncPending, true);
+  assert.equal(result.license.syncPending, false);
+  assert.equal(requests, 0, 'recent cached session must be restored before any backend request');
 });
 
 test('cache repairs a missing atsLicenseKey on reopen and validation continues normally', async () => {
   const license = { key: 'ATS-RECOVER-002', status: 'active', plan: 'starter', planLabel: 'Starter', expiresAt: future() };
   const storage = storageMock({
     atsInstallationId: 'install-3',
-    atsLastValidLicense: { license, licenseKey: license.key, validatedAt: Date.now() }
+    atsLastValidLicense: { license, licenseKey: license.key, validatedAt: Date.now() - 10 * 60 * 1000 }
   });
   let requestedKey = null;
   const mod = await loadLicenseModule(storage, async (_url, options) => {
@@ -92,4 +97,40 @@ test('cache repairs a missing atsLicenseKey on reopen and validation continues n
   assert.equal(requestedKey, license.key);
   assert.equal(storage.data.get('atsLicenseKey'), license.key);
   assert.equal(storage.data.get('atsLastValidLicense')?.license?.status, 'active');
+});
+
+test('temporary or malformed validation response never erases a previously valid license cache', async () => {
+  const license = { key: 'ATS-SAFE-003', status: 'active', plan: 'pro', planLabel: 'Pro', expiresAt: future() };
+  const cached = { license, licenseKey: license.key, validatedAt: Date.now() - 10 * 60 * 1000 };
+  const storage = storageMock({
+    atsInstallationId: 'install-4',
+    atsLicenseKey: license.key,
+    atsLastValidLicense: cached
+  });
+  const mod = await loadLicenseModule(storage, async () => jsonResponse({ ok: false, error: 'invalid_license_request' }, 422));
+
+  const result = await mod.validateLicense({});
+  assert.equal(result.ok, true);
+  assert.equal(result.offlineFallback, true);
+  assert.equal(result.license.status, 'active');
+  assert.equal(result.license.error, 'invalid_license_request');
+  assert.equal(storage.data.get('atsLastValidLicense')?.licenseKey, license.key);
+});
+
+test('authoritative revocation still removes cached license state', async () => {
+  const license = { key: 'ATS-REVOKED-004', status: 'active', plan: 'starter', planLabel: 'Starter', expiresAt: future() };
+  const storage = storageMock({
+    atsInstallationId: 'install-5',
+    atsLicenseKey: license.key,
+    atsLastValidLicense: { license, licenseKey: license.key, validatedAt: Date.now() - 10 * 60 * 1000 },
+    atsClientToken: 'client-token',
+    atsClientTokenExpiresAt: Date.now() + 60000
+  });
+  const mod = await loadLicenseModule(storage, async () => jsonResponse({ ok: false, error: 'license_inactive' }, 403));
+
+  const result = await mod.validateLicense({});
+  assert.equal(result.ok, false);
+  assert.equal(result.error, 'license_inactive');
+  assert.equal(storage.data.has('atsLastValidLicense'), false);
+  assert.equal(storage.data.has('atsClientToken'), false);
 });
