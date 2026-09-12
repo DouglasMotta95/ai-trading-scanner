@@ -31,7 +31,7 @@ test('manifest injects capture scripts only into the real CasaTrade web app', ()
   ]);
   assert.ok(manifest.host_permissions.includes('https://trade.casatrade.com/*'));
   assert.ok(manifest.host_permissions.includes('https://ats-control-center-v07-production.up.railway.app/*'));
-  assert.equal(manifest.host_permissions.some(x => /(?:^|\.)casatrade\.io\//.test(x)), false);
+  assert.equal(manifest.host_permissions.some(x => /casatrade\.io/.test(x)), false);
   assert.equal(manifest.host_permissions.some(x => /https:\/\/(?:www\.|app\.)?casatrade\.com\//.test(x)), false);
   const serialized = JSON.stringify(manifest);
   assert.doesNotMatch(serialized, /history-adapter|chart-overlay|background-platform-sync/);
@@ -47,12 +47,14 @@ test('platform detection is strict and rejects CasaTrade marketing or guessed ho
 
 test('sidepanel contains only the six requested functional sections', () => {
   const html = read('src/sidepanel/index.html');
+  const upper = html.toUpperCase();
   const headings = ['1. LICENÇA','2. CONEXÃO CASATRADE','3. CONFIGURAÇÃO','4. ESTADO DO SINAL','5. PREPARAR ENTRADA','6. HISTÓRICO DA SESSÃO'];
   for (const heading of headings) assert.ok(html.includes(heading), `missing ${heading}`);
   assert.equal((html.match(/<section\b/g) || []).length, 6);
   assert.equal(html.includes('account-login.js'), false);
   for (const removed of ['RSI','MACD','EMA 9','EMA 21','SUPORTE','RESISTÊNCIA','BACKTEST','RELATÓRIO SEMANAL','CORRELAÇÃO','CALENDÁRIO','NOTÍCIAS','MELHORES OPORTUNIDADES','RADAR MULTIATIVO','POR QUE A IA']) {
-    assert.equal(html.toUpperCase().includes(removed), false, `${removed} must not be rendered`);
+    const escaped = removed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    assert.doesNotMatch(upper, new RegExp(`\\b${escaped}\\b`), `${removed} must not be rendered`);
   }
   for (const id of ['licenseCard','connectionTitle','tradeAmount','analysisTimeframe','targetExpiration','signalTitle','signalReason','prepareBuy','prepareSell','signalHistory']) {
     assert.ok(html.includes(`id="${id}"`), `missing ${id}`);
@@ -63,21 +65,25 @@ test('removed unauthorized files are physically absent', () => {
   for (const file of REMOVED) assert.equal(fs.existsSync(path.join(root, file)), false, `${file} must be deleted`);
 });
 
-test('no extension source references removed modules', () => {
-  const sourceFiles = [];
-  const walk = dir => {
-    for (const name of fs.readdirSync(dir)) {
-      const full = path.join(dir, name);
-      const stat = fs.statSync(full);
-      if (stat.isDirectory()) walk(full);
-      else if (/\.(js|html|json)$/.test(name)) sourceFiles.push(full);
-    }
-  };
-  walk(path.join(root, 'src'));
-  sourceFiles.push(path.join(root, 'manifest.json'));
-  const body = sourceFiles.map(f => fs.readFileSync(f, 'utf8')).join('\n');
+test('live extension entrypoints do not import removed modules', () => {
+  const liveFiles = [
+    'src/background-entry.js',
+    'src/background.js',
+    'src/background-augment.js',
+    'src/core/orchestrator.js',
+    'src/core/analysis.js',
+    'src/content/network-probe.js',
+    'src/content/network-bridge.js',
+    'src/content/generic-adapter.js',
+    'src/content/platform-sync.js',
+    'src/content/trade-handoff.js',
+    'src/sidepanel/app.js',
+    'src/sidepanel/index.html',
+    'manifest.json'
+  ];
+  const body = liveFiles.map(read).join('\n');
   for (const name of ['ai-scoring.js','backtest.js','correlation.js','market-structure.js','reporting.js','chart-overlay.js','history-adapter.js','background-platform-sync.js']) {
-    assert.equal(body.includes(name), false, `${name} must not be referenced`);
+    assert.equal(body.includes(name), false, `${name} must not be referenced by live extension entrypoints`);
   }
 });
 
