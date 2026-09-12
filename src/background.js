@@ -3,11 +3,11 @@ import { detectPlatform } from './platforms/registry.js';
 import { activateLicense, validateLicense, consumeSignal, clearLicense, licenseRequired } from './services/license.js';
 import { heartbeat, track } from './services/telemetry.js';
 
+const SESSION_HISTORY_KEY = 'atsSessionSignalHistory';
 const DEFAULT_LICENSE = {
   status: 'unconfigured', plan: null, planLabel: null, dailyLimit: null, usedToday: 0,
   remainingToday: null, totalLimit: null, usedTotal: 0, remainingTotal: null, error: null
 };
-
 const EMPTY_MARKET = {
   connection: 'offline', platformId: null, platformName: null, targetTabId: null,
   asset: null, marketType: 'unknown', instrumentType: 'unknown', timeframe: null,
@@ -17,61 +17,26 @@ const EMPTY_MARKET = {
   marketHistory: {}, platformControls: null, signal: null, tradeIntent: null, lastSeen: null,
   telemetry: { feedQuality: 0, latency: null, lastSync: null }
 };
-
-const DEFAULT_STATE = {
-  ...EMPTY_MARKET,
-  scanner: 'idle',
-  license: DEFAULT_LICENSE,
-  signalHistory: []
-};
+const DEFAULT_STATE = { ...EMPTY_MARKET, scanner: 'idle', license: DEFAULT_LICENSE };
 
 let lastLicenseCheck = 0;
 let lastHeartbeatAt = 0;
 const clean = v => String(v ?? '').trim();
 const uniq = a => [...new Set(a.filter(Boolean))];
 const num = v => v == null || v === '' ? null : Number.isFinite(Number(v)) ? Number(v) : null;
-const normAsset = v => clean(v).toUpperCase().replace(/\s+/g, '').replace(/-/g, '/');
 const sameTarget = (s, sender) => !s?.targetTabId || !sender?.tab?.id || s.targetTabId === sender.tab.id;
 const platformFromUrl = u => { try { return detectPlatform(new URL(u).hostname); } catch { return null; } };
 
 const merge = (state = {}, snapshot = {}) => ({
   ...DEFAULT_STATE, ...state, ...snapshot,
   license: { ...DEFAULT_LICENSE, ...(state.license || {}), ...(snapshot.license || {}) },
-  capabilities: { ...DEFAULT_STATE.capabilities, ...state.capabilities, ...snapshot.capabilities },
+  capabilities: { ...DEFAULT_STATE.capabilities, ...(state.capabilities || {}), ...(snapshot.capabilities || {}) },
   diagnostics: { ...(state.diagnostics || {}), ...(snapshot.diagnostics || {}) },
-  telemetry: { ...DEFAULT_STATE.telemetry, ...(state.telemetry || {}), ...(snapshot.telemetry || {}) },
-  signalHistory: Array.isArray(snapshot.signalHistory) ? snapshot.signalHistory : Array.isArray(state.signalHistory) ? state.signalHistory : []
+  telemetry: { ...DEFAULT_STATE.telemetry, ...(state.telemetry || {}), ...(snapshot.telemetry || {}) }
 });
-
 const marketCleared = (state = {}, patch = {}) => ({
-  ...state,
-  ...EMPTY_MARKET,
-  scanner: 'idle',
-  license: state.license || DEFAULT_LICENSE,
-  signalHistory: Array.isArray(state.signalHistory) ? state.signalHistory : [],
-  ...patch
+  ...state, ...EMPTY_MARKET, scanner: 'idle', license: state.license || DEFAULT_LICENSE, ...patch
 });
-
-function findContext(map = {}, asset = '') {
-  const wanted = normAsset(asset).replace(/\(OTC\)$/, '');
-  for (const [k, v] of Object.entries(map || {})) {
-    if (normAsset(k).replace(/\(OTC\)$/, '') === wanted) return v;
-  }
-  return null;
-}
-
-function riskFrom(settings = {}, license = {}, state = {}, asset = '') {
-  return {
-    ...settings?.risk,
-    signalsToday: license.usedToday ?? settings?.risk?.signalsToday ?? 0,
-    maxSignals: license.dailyLimit ?? settings?.risk?.maxSignals ?? settings?.maxSignals ?? 20,
-    maxConsecutiveLosses: settings?.risk?.maxConsecutiveLosses ?? settings?.maxConsecutiveLosses,
-    cooldownMs: settings?.risk?.cooldownMs ?? settings?.cooldownMs,
-    requestedStake: settings?.scanPreferences?.tradeAmount ?? settings?.risk?.requestedStake,
-    correlation: findContext(state?.correlationByAsset, asset),
-    newsRisk: findContext(state?.newsRiskByAsset, asset)
-  };
-}
 
 function configuredPrefs(p = {}) {
   const amount = num(p.tradeAmount ?? p.stake);
@@ -79,8 +44,7 @@ function configuredPrefs(p = {}) {
 }
 
 function catalogFrom(candidates = [], prefs = {}) {
-  const lines = [];
-  const seen = new Set();
+  const lines = [], seen = new Set();
   for (const c of candidates) {
     const asset = clean(c?.asset);
     if (!asset) continue;
@@ -125,19 +89,14 @@ function feedQuality(state = {}) {
   const assets = state.marketCatalog?.assets?.length || Number(net.candidateCount) || 0;
   if (ws && assets) return 72;
   if (assets) return 58;
-  if (state.price != null) return 42;
-  return 20;
+  return state.price != null ? 42 : 0;
 }
-
 function latencyOf(state = {}) {
   const t = Number(state.serverTime);
-  if (Number.isFinite(t) && t > 1e12) {
-    const d = Math.abs(Date.now() - t);
-    if (d < 600000) return d;
-  }
-  return null;
+  if (!Number.isFinite(t) || t <= 1e12) return null;
+  const delta = Math.abs(Date.now() - t);
+  return delta < 600000 ? delta : null;
 }
-
 async function telemetryHeartbeat(state, settings, force = false) {
   if (!force && Date.now() - lastHeartbeatAt < 5000) return;
   lastHeartbeatAt = Date.now();
@@ -149,12 +108,16 @@ const telemetryState = state => merge(state, { telemetry: { feedQuality: feedQua
 function localSignalRecord(state) {
   const s = state.signal || {};
   return {
-    id: crypto.randomUUID(), at: Date.now(), asset: state.asset || '—', platform: state.platformName || 'CasaTrade',
-    direction: s.direction, score: s.score ?? null, grade: s.grade || null,
+    id: crypto.randomUUID(), at: Date.now(), asset: state.asset || '—', platform: 'CasaTrade', direction: s.direction,
     timeframe: state.analysisTimeframe || s.timeframe || state.timeframe || null,
     expiration: state.targetExpiration || s.targetExpiration || state.expiration || null,
-    entryPrice: num(state.price), confirmations: s.confirmations || null, status: 'confirmed'
+    entryPrice: num(state.price), status: 'confirmed'
   };
+}
+async function appendSessionHistory(record) {
+  const stored = await chrome.storage.session.get(SESSION_HISTORY_KEY);
+  const rows = Array.isArray(stored[SESSION_HISTORY_KEY]) ? stored[SESSION_HISTORY_KEY] : [];
+  await chrome.storage.session.set({ [SESSION_HISTORY_KEY]: [record, ...rows].slice(0, 50) });
 }
 
 async function activeCasaTradeTab() {
@@ -162,7 +125,6 @@ async function activeCasaTradeTab() {
   if (!tab?.id || !tab.url) return { tab: null, platform: null };
   return { tab, platform: platformFromUrl(tab.url) };
 }
-
 async function ensureSupportedActiveTab(scannerState = {}) {
   const { tab, platform } = await activeCasaTradeTab();
   if (tab?.id && platform) return { scannerState, tab, platform };
@@ -192,7 +154,7 @@ async function connectActiveTab() {
   for (const [file, world] of scripts) await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: [file], world }).catch(() => {});
   const next = merge(scannerState, {
     connection: 'connecting', platformId: platform.id, platformName: platform.name, targetTabId: tab.id,
-    asset: null, price: null, signal: null,
+    asset: null, price: null, signal: null, platformControls: null,
     diagnostics: { target: { host: new URL(tab.url).hostname, tabId: tab.id, connectedAt: Date.now() } }
   });
   await chrome.storage.local.set({ scannerState: next });
@@ -205,30 +167,43 @@ async function readPlatformControls(tabId) {
   if (!tabId) return { ok: false, error: 'platform_tab_not_connected' };
   return chrome.tabs.sendMessage(tabId, { type: 'ATS_PLATFORM_READ' }).catch(() => ({ ok: false, error: 'platform_read_failed' }));
 }
-
+function controlAlignment(observed = {}, prefs = {}) {
+  const amount = num(prefs.tradeAmount ?? prefs.stake);
+  const amountOk = amount != null && num(observed.amount) === amount;
+  const timeframeOk = clean(observed.timeframe).toUpperCase() === clean(prefs.timeframe).toUpperCase();
+  const expirationOk = clean(observed.expiration).toLowerCase() === clean(prefs.expiration).toLowerCase();
+  return { amountOk, timeframeOk, expirationOk, aligned: !!(amountOk && timeframeOk && expirationOk) };
+}
 async function syncPlatformPreferences() {
   const { scannerState = {}, settings = {} } = await chrome.storage.local.get(['scannerState', 'settings']);
   const supported = await ensureSupportedActiveTab(scannerState);
   if (!supported.platform || !supported.tab?.id) return { ok: false, error: 'platform_not_registered' };
   const prefs = settings.scanPreferences || {};
   if (!configuredPrefs(prefs)) return { ok: false, error: 'preferences_required' };
-  const result = await chrome.tabs.sendMessage(supported.tab.id, {
-    type: 'ATS_PLATFORM_APPLY',
-    amount: num(prefs.tradeAmount ?? prefs.stake),
-    timeframe: prefs.timeframe,
-    expiration: prefs.expiration
-  }).catch(() => ({ ok: false, error: 'platform_sync_failed' }));
-  const observed = result?.observed || (await readPlatformControls(supported.tab.id))?.observed || {};
-  const amount = num(prefs.tradeAmount ?? prefs.stake);
-  const amountOk = amount != null && num(observed.amount) === amount;
-  const timeframeOk = clean(observed.timeframe).toUpperCase() === clean(prefs.timeframe).toUpperCase();
-  const expirationOk = clean(observed.expiration).toLowerCase() === clean(prefs.expiration).toLowerCase();
-  const aligned = !!(amountOk && timeframeOk && expirationOk);
+  const preferences = {
+    tradeAmount: num(prefs.tradeAmount ?? prefs.stake), stake: num(prefs.tradeAmount ?? prefs.stake),
+    timeframe: prefs.timeframe, expiration: prefs.expiration
+  };
+  const result = await chrome.tabs.sendMessage(supported.tab.id, { type: 'ATS_PLATFORM_APPLY', preferences })
+    .catch(() => ({ ok: false, error: 'platform_sync_failed' }));
+  const observed = result?.after || result?.observed || (await readPlatformControls(supported.tab.id))?.observed || {};
+  const alignment = controlAlignment(observed, prefs);
   const latest = (await chrome.storage.local.get('scannerState')).scannerState || supported.scannerState;
-  const next = merge(latest, { platformControls: { aligned, amountOk, timeframeOk, expirationOk, observed, checkedAt: Date.now() } });
-  if (!aligned) next.scanner = 'idle';
+  const next = merge(latest, { platformControls: { ...alignment, observed, checkedAt: Date.now() } });
+  if (!alignment.aligned) next.scanner = 'idle';
   await chrome.storage.local.set({ scannerState: next });
-  return { ok: !!result?.ok, aligned, observed, amountOk, timeframeOk, expirationOk };
+  return { ok: !!result?.ok, ...alignment, observed };
+}
+async function refreshPlatformControls() {
+  const { scannerState = {}, settings = {} } = await chrome.storage.local.get(['scannerState', 'settings']);
+  const supported = await ensureSupportedActiveTab(scannerState);
+  if (!supported.platform || !supported.tab?.id) return { ok: false, error: 'platform_not_registered' };
+  const result = await readPlatformControls(supported.tab.id);
+  const observed = result?.observed || {};
+  const alignment = controlAlignment(observed, settings.scanPreferences || {});
+  const latest = (await chrome.storage.local.get('scannerState')).scannerState || supported.scannerState;
+  await chrome.storage.local.set({ scannerState: merge(latest, { platformControls: { ...alignment, observed, checkedAt: Date.now() } }) });
+  return { ...result, ...alignment, observed };
 }
 
 async function prepareTrade(direction) {
@@ -266,7 +241,6 @@ chrome.runtime.onInstalled.addListener(async () => {
   await chrome.storage.local.set(updates);
   await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
 });
-
 chrome.tabs?.onActivated?.addListener(async () => {
   const { scannerState = {} } = await chrome.storage.local.get('scannerState');
   await ensureSupportedActiveTab(scannerState);
@@ -310,21 +284,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const platform = detectPlatform(host); sendResponse({ ok: !!platform, platform: platform ? { ...platform } : null }); return;
   }
   if (message?.type === 'ATS_READ_PLATFORM_CONTROLS') {
-    chrome.storage.local.get('scannerState').then(async ({ scannerState = {} }) => {
-      const supported = await ensureSupportedActiveTab(scannerState);
-      if (!supported.platform || !supported.tab?.id) return sendResponse({ ok: false, error: 'platform_not_registered' });
-      const result = await readPlatformControls(supported.tab.id);
-      const latest = (await chrome.storage.local.get('scannerState')).scannerState || supported.scannerState;
-      const next = merge(latest, { platformControls: { ...(latest.platformControls || {}), observed: result?.observed || {}, checkedAt: Date.now() } });
-      await chrome.storage.local.set({ scannerState: next });
-      sendResponse(result || { ok: false });
-    }); return true;
+    refreshPlatformControls().then(sendResponse).catch(e => sendResponse({ ok: false, error: String(e?.message || e) })); return true;
   }
   if (message?.type === 'ATS_SYNC_PLATFORM_PREFERENCES') {
     syncPlatformPreferences().then(sendResponse).catch(e => sendResponse({ ok: false, error: String(e?.message || e) })); return true;
   }
   if (message?.type === 'ATS_PREPARE_TRADE') {
     prepareTrade(String(message.direction || '').toUpperCase()).then(sendResponse).catch(e => sendResponse({ ok: false, error: String(e?.message || e) })); return true;
+  }
+  if (message?.type === 'ATS_GET_SESSION_HISTORY') {
+    chrome.storage.session.get(SESSION_HISTORY_KEY).then(x => sendResponse({ ok: true, rows: Array.isArray(x[SESSION_HISTORY_KEY]) ? x[SESSION_HISTORY_KEY] : [] })); return true;
   }
   if (message?.type === 'ATS_DOM_CATALOG') {
     const p = message.payload || {};
@@ -372,18 +341,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       let activeScanner = scannerState.scanner;
       if (settings.runtimePaused || (licenseRequired(settings) && license.status !== 'active')) activeScanner = 'idle';
       let next = merge(scannerState, { ...enriched, scanner: activeScanner, license, connection: 'online', lastSeen: Date.now() });
-      next = merge(next, processSnapshot(enriched, next, riskFrom(settings, license, next, snapshot.asset)));
+      next = merge(next, processSnapshot(enriched, next));
       const previousState = scannerState?.signal?.state || null;
       const becameConfirm = next.signal?.state === 'CONFIRM' && previousState !== 'CONFIRM';
       if (becameConfirm) {
         const usage = await consumeSignal(settings);
         if (!usage.ok) {
           const hint = usage.error === 'daily_limit_reached' ? 'Limite diário do plano atingido.' : usage.error === 'trial_limit_reached' ? 'O teste já utilizou todas as entradas disponíveis.' : 'Licença inválida para liberar novo sinal.';
-          next = merge(next, { license: { ...license, ...(usage.license || {}), ...licenseError(usage) }, signal: { ...next.signal, state: 'NO_TRADE', direction: null, hint } });
+          next = merge(next, { license: { ...license, ...(usage.license || {}), ...licenseError(usage) }, signal: { ...next.signal, state: 'NO_TRADE', direction: null, hint, reason: hint, provisional: true } });
         } else {
           next = merge(next, { license: { ...license, ...(usage.license || {}), ...(usage.usage || {}), status: 'active', error: null } });
           const record = localSignalRecord(next);
-          next = merge(next, { signalHistory: [record, ...(next.signalHistory || [])].slice(0, 30) });
+          await appendSessionHistory(record);
           await telemetryEvent('signal_confirmed', record, settings);
         }
       }
@@ -414,6 +383,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }); return true;
   }
   if (message?.type === 'ATS_RESET_STATE') {
-    resetOrchestrator(); chrome.storage.local.set({ scannerState: DEFAULT_STATE }).then(() => sendResponse({ ok: true })); return true;
+    resetOrchestrator();
+    Promise.all([chrome.storage.local.set({ scannerState: DEFAULT_STATE }), chrome.storage.session.remove(SESSION_HISTORY_KEY)])
+      .then(() => sendResponse({ ok: true }));
+    return true;
   }
 });
