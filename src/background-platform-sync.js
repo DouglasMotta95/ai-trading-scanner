@@ -27,6 +27,15 @@ async function target() {
   const { scannerState = {}, settings = {} } = await chrome.storage.local.get(['scannerState', 'settings']);
   return { scannerState, settings, tabId: scannerState.targetTabId || null, prefs: settings.scanPreferences || {} };
 }
+async function ensureScript(tabId) {
+  if (!tabId) return false;
+  try {
+    const ping = await chrome.tabs.sendMessage(tabId, { type: 'ATS_PLATFORM_READ' }).catch(() => null);
+    if (ping?.ok) return true;
+    await chrome.scripting.executeScript({ target: { tabId }, files: ['src/content/platform-sync.js'], world: 'ISOLATED' });
+    return true;
+  } catch { return false; }
+}
 async function mergePlatformState(observed = {}, extra = {}) {
   const { scannerState = {} } = await chrome.storage.local.get('scannerState');
   const { settings = {} } = await chrome.storage.local.get('settings');
@@ -43,22 +52,14 @@ async function mergePlatformState(observed = {}, extra = {}) {
       ...extra
     }
   };
-  if (observed.timeframe) {
-    patch.timeframe = observed.timeframe;
-    patch.analysisTimeframe = observed.timeframe;
-  }
-  if (observed.expiration) {
-    patch.expiration = observed.expiration;
-    patch.targetExpiration = observed.expiration;
-  }
+  if (observed.timeframe) { patch.timeframe = observed.timeframe; patch.analysisTimeframe = observed.timeframe; }
+  if (observed.expiration) { patch.expiration = observed.expiration; patch.targetExpiration = observed.expiration; }
   if (observed.amount != null) patch.tradeAmount = observed.amount;
   if (patch.scanner === 'scanning' && configured(prefs) && !aligned.aligned) {
     patch.scanner = 'idle';
     patch.signal = {
-      ...(patch.signal || {}),
-      state: 'WAIT', direction: null, score: 0, grade: '—', confirmations: '0 / 6',
-      hint: 'Leitura pausada: valor, vela e expiração da CasaTrade precisam ser iguais à configuração do ATS.',
-      provisional: true
+      ...(patch.signal || {}), state: 'WAIT', direction: null, score: 0, grade: '—', confirmations: '0 / 6',
+      hint: 'Leitura pausada: valor, vela e expiração da CasaTrade precisam ser iguais à configuração do ATS.', provisional: true
     };
   }
   await chrome.storage.local.set({ scannerState: patch });
@@ -67,18 +68,18 @@ async function mergePlatformState(observed = {}, extra = {}) {
 async function readPlatform() {
   const { tabId } = await target();
   if (!tabId) return { ok: false, error: 'platform_tab_not_connected' };
+  if (!(await ensureScript(tabId))) return { ok: false, error: 'platform_controls_unavailable' };
   try {
     const r = await chrome.tabs.sendMessage(tabId, { type: 'ATS_PLATFORM_READ' });
     if (!r?.ok) return r || { ok: false, error: 'platform_read_failed' };
     const platformControls = await mergePlatformState(r.observed || {}, { lastAction: 'read' });
     return { ok: true, observed: r.observed || {}, platformControls };
-  } catch {
-    return { ok: false, error: 'platform_controls_unavailable' };
-  }
+  } catch { return { ok: false, error: 'platform_controls_unavailable' }; }
 }
 async function syncPlatform() {
   const { tabId, prefs } = await target();
   if (!tabId) return { ok: false, error: 'platform_tab_not_connected' };
+  if (!(await ensureScript(tabId))) return { ok: false, error: 'platform_controls_unavailable' };
   if (!configured(prefs)) {
     const r = await readPlatform();
     return { ...r, ok: false, error: 'scan_preferences_incomplete' };
@@ -91,9 +92,7 @@ async function syncPlatform() {
       applied: r?.applied || {}, attempted: r?.attempted || {}, hints: observed.hints || r?.after?.hints || {}
     });
     return { ...(r || {}), platformControls };
-  } catch {
-    return { ok: false, error: 'platform_controls_unavailable' };
-  }
+  } catch { return { ok: false, error: 'platform_controls_unavailable' }; }
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -104,6 +103,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === 'ATS_SYNC_PLATFORM_PREFERENCES') {
     syncPlatform().then(sendResponse).catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
     return true;
+  }
+  if (message?.type === 'ATS_CONNECT_ACTIVE_TAB') {
+    setTimeout(() => syncPlatform().catch(() => {}), 600);
   }
 });
 
