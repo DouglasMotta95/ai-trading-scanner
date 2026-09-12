@@ -3,17 +3,19 @@ import { installationId, saveClientToken, clearClientToken } from './telemetry.j
 const LICENSE_KEY = 'atsLicenseKey';
 const LAST_VALID_LICENSE_KEY = 'atsLastValidLicense';
 const REQUEST_TIMEOUT_MS = 8000;
-const AUTHORITATIVE_LICENSE_ERRORS = new Set([
-  'license_required',
+const REOPEN_CACHE_GRACE_MS = 5 * 60 * 1000;
+
+// Only errors that conclusively invalidate the license itself may erase the last
+// known-good local session. Request/protocol errors, temporary quota errors and
+// backend outages must never make a previously active license disappear.
+const CACHE_INVALIDATING_LICENSE_ERRORS = new Set([
   'license_not_found',
   'license_inactive',
   'license_expired',
   'device_locked',
-  'device_limit_reached',
-  'daily_limit_reached',
-  'trial_limit_reached',
-  'invalid_license_request'
+  'device_limit_reached'
 ]);
+
 export const PUBLIC_LICENSE_API = 'https://ats-control-center-v07-production.up.railway.app';
 
 // Commercial builds must never trust an endpoint supplied by local settings.
@@ -42,6 +44,23 @@ function licenseStillValid(license = {}) {
   if (!license.expiresAt) return true;
   const expiresAt = Date.parse(license.expiresAt);
   return Number.isFinite(expiresAt) && expiresAt > Date.now();
+}
+
+function cachedResponse(cached, { syncPending = false, error = null } = {}) {
+  if (!cached?.license || !licenseStillValid(cached.license)) return null;
+  return {
+    ok: true,
+    cacheHit: true,
+    offlineFallback: !!syncPending,
+    error,
+    license: {
+      ...cached.license,
+      status: 'active',
+      error,
+      syncPending: !!syncPending
+    },
+    clientTokenExpiresAt: Number(cached.clientTokenExpiresAt) || 0
+  };
 }
 
 export async function cachedLicenseSession() {
@@ -83,7 +102,7 @@ async function saveValidLicenseSession(r, licenseKey = '') {
 }
 
 async function invalidateCachedLicense(r, licenseKey = '') {
-  if (!AUTHORITATIVE_LICENSE_ERRORS.has(String(r?.error || ''))) return false;
+  if (!CACHE_INVALIDATING_LICENSE_ERRORS.has(String(r?.error || ''))) return false;
   const cached = await cachedLicenseSession();
   const attempted = String(licenseKey || '').trim().toUpperCase();
   const cachedKey = String(cached?.licenseKey || '').trim().toUpperCase();
@@ -122,16 +141,10 @@ async function acceptSession(r, licenseKey = '') {
 
 async function withCachedFallback(r, cached = null) {
   if (r?.ok) return r;
-  if (AUTHORITATIVE_LICENSE_ERRORS.has(String(r?.error || ''))) return r;
+  if (CACHE_INVALIDATING_LICENSE_ERRORS.has(String(r?.error || ''))) return r;
   cached ||= await cachedLicenseSession();
   if (!cached) return r;
-  return {
-    ok: true,
-    offlineFallback: true,
-    error: 'backend_unreachable',
-    license: { ...cached.license, status: 'active', error: 'backend_unreachable', syncPending: true },
-    clientTokenExpiresAt: cached.clientTokenExpiresAt || 0
-  };
+  return cachedResponse(cached, { syncPending: true, error: r?.error || 'backend_unreachable' }) || r;
 }
 
 export async function activateLicense(settings = {}, key = '') {
@@ -149,26 +162,41 @@ export async function activateLicense(settings = {}, key = '') {
 }
 
 export async function validateLicense(settings = {}) {
-  // Cache-first: reopening the side panel must restore the last valid session immediately.
-  // The backend is still consulted afterwards so expiry/revocation/device locks remain authoritative.
+  // Cache-first is intentional. Reopening the side panel must restore the last
+  // valid local session before any network validation is allowed to change UI state.
   const cached = await cachedLicenseSession();
   let licenseKey = await savedLicenseKey();
   if (!licenseKey && cached?.licenseKey) {
     licenseKey = await saveLicenseKey(cached.licenseKey);
   }
+
   if (!licenseKey) {
-    return cached ? withCachedFallback({ ok: false, error: 'backend_unreachable' }, cached) : { ok: false, error: 'license_required' };
+    return cached
+      ? cachedResponse(cached, { syncPending: true, error: 'license_key_recovered' })
+      : { ok: false, error: 'license_required' };
   }
+
+  // A just-validated session is authoritative enough for the reopen path. This
+  // prevents close/reopen races from replacing an active UI with activation state.
+  const validatedAt = Number(cached?.validatedAt) || 0;
+  if (cached && validatedAt > 0 && Date.now() - validatedAt < REOPEN_CACHE_GRACE_MS) {
+    return cachedResponse(cached);
+  }
+
   const r = await call(settings, '/v1/license/validate', {
     licenseKey,
     installationId: await installationId(),
     version: chrome.runtime.getManifest().version
   });
   if (r.ok) return acceptSession(r, licenseKey);
-  if (AUTHORITATIVE_LICENSE_ERRORS.has(String(r?.error || ''))) {
+
+  if (CACHE_INVALIDATING_LICENSE_ERRORS.has(String(r?.error || ''))) {
     await invalidateCachedLicense(r, licenseKey);
     return r;
   }
+
+  // Malformed requests, quota responses and temporary backend/protocol failures
+  // do not revoke a license. Keep the last server-validated session visible.
   return withCachedFallback(r, cached);
 }
 
