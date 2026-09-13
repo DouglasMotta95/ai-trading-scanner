@@ -1,6 +1,16 @@
+import { rsi, macd } from './indicators.js';
+
 const finite = v => Number.isFinite(Number(v)) ? Number(v) : null;
 const clamp = (v, min = 0, max = 100) => Math.max(min, Math.min(max, Number(v) || 0));
 const avg = a => a.length ? a.reduce((s, v) => s + v, 0) / a.length : 0;
+
+export const INDICATOR_SCORE_WEIGHTS = Object.freeze({
+  rsiFavor: 8,
+  macdFavor: 10,
+  macdAgainst: -10,
+  ema: 0,
+  bollinger: 0
+});
 
 function shape(c) {
   const open = finite(c?.open), high = finite(c?.high), low = finite(c?.low), close = finite(c?.close);
@@ -15,6 +25,38 @@ function shape(c) {
     upperRatio: upper / range,
     lowerRatio: lower / range,
     direction: close > open ? 'BUY' : close < open ? 'SELL' : null
+  };
+}
+
+function indicatorReinforcement(candles = [], direction = null) {
+  const closes = (Array.isArray(candles) ? candles : [])
+    .map(c => finite(c?.close))
+    .filter(v => v != null);
+  const rsiValue = rsi(closes);
+  const macdValue = macd(closes);
+  let rsiEffect = 0;
+  let macdEffect = 0;
+  const reasons = [];
+
+  if (direction === 'BUY' && rsiValue != null && rsiValue > 50) rsiEffect = INDICATOR_SCORE_WEIGHTS.rsiFavor;
+  if (direction === 'SELL' && rsiValue != null && rsiValue < 50) rsiEffect = INDICATOR_SCORE_WEIGHTS.rsiFavor;
+  if (rsiEffect) reasons.push(`RSI ${rsiValue.toFixed(1)} reforça ${direction} (+${rsiEffect})`);
+
+  const histogram = finite(macdValue?.histogram);
+  if (direction && histogram != null && histogram !== 0) {
+    const favorsDirection = direction === 'BUY' ? histogram > 0 : histogram < 0;
+    macdEffect = favorsDirection ? INDICATOR_SCORE_WEIGHTS.macdFavor : INDICATOR_SCORE_WEIGHTS.macdAgainst;
+    reasons.push(`MACD ${favorsDirection ? 'a favor' : 'contra'} ${direction} (${macdEffect > 0 ? '+' : ''}${macdEffect})`);
+  }
+
+  return {
+    weights: { ...INDICATOR_SCORE_WEIGHTS },
+    rsi: { value: rsiValue, effect: rsiEffect },
+    macd: { ...(macdValue || { macd: null, signal: null, histogram: null }), effect: macdEffect },
+    ema: { effect: INDICATOR_SCORE_WEIGHTS.ema },
+    bollinger: { effect: INDICATOR_SCORE_WEIGHTS.bollinger },
+    adjustment: rsiEffect + macdEffect,
+    reasons
   };
 }
 
@@ -79,16 +121,22 @@ export function recentPriceAction(candles = []) {
   };
 }
 
-export function analyzeCandles(candles = []) {
+export function analyzeCandles(candles = [], indicatorCandles = candles) {
   const rows = (Array.isArray(candles) ? candles : []).filter(c => [c?.open, c?.high, c?.low, c?.close].every(v => finite(v) != null));
+  const indicatorRows = (Array.isArray(indicatorCandles) ? indicatorCandles : []).filter(c => finite(c?.close) != null);
   const recent = recentPriceAction(rows);
-  if (!recent.ready) return { state: 'WAIT', score: 0, direction: null, reasons: [recent.opinion], recent };
-  if (!recent.direction) return { state: 'NO_TRADE', score: recent.score, direction: null, reasons: recent.reasons, recent };
+  if (!recent.ready) return { state: 'WAIT', score: 0, baseScore: 0, direction: null, reasons: [recent.opinion], recent, indicators: indicatorReinforcement(indicatorRows, null) };
+  if (!recent.direction) return { state: 'NO_TRADE', score: recent.score, baseScore: recent.score, direction: null, reasons: recent.reasons, recent, indicators: indicatorReinforcement(indicatorRows, null) };
+
+  const indicators = indicatorReinforcement(indicatorRows, recent.direction);
+  const score = clamp(recent.score + indicators.adjustment);
   return {
-    state: recent.score >= 70 ? 'WATCH' : 'WAIT',
-    score: recent.score,
+    state: score >= 70 ? 'WATCH' : 'WAIT',
+    score,
+    baseScore: recent.score,
     direction: recent.direction,
-    reasons: recent.reasons,
-    recent
+    reasons: [...recent.reasons, ...indicators.reasons],
+    recent,
+    indicators
   };
 }

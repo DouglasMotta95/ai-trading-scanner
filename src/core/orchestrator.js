@@ -132,7 +132,8 @@ export function processSnapshot(snapshot = {}, state = {}) {
   const closed = shot.closed.slice(-120);
   const current = currentFromSnapshot(snapshot.candles, currentBucket, tfMs, analysisTimeframe, price) || shot.current;
   const combined = current ? [...closed.slice(-9), current] : closed.slice(-10);
-  const liveResult = analyzeCandles(combined);
+  const indicatorHistory = current ? [...closed, current] : closed;
+  const liveResult = analyzeCandles(combined, indicatorHistory);
   const candleCount = closed.length;
 
   const clockRemaining = num(snapshot.secondsRemaining);
