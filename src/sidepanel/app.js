@@ -129,7 +129,7 @@ function renderAnalysis(s = {}) {
       ? (sig.phase === 'POSSIBLE'
         ? 'Padrão encontrado. Ainda não entrar: a extensão continua acompanhando a vela até a confirmação final.'
         : sig.phase === 'FINAL'
-          ? 'Janela final: decisão travada para a próxima vela.'
+          ? 'Janela final: o score continua sendo recalculado a cada novo tick até o fechamento.'
           : sig.reason || 'Analisando as últimas velas + a vela atual em tempo real.')
       : 'Abra a CasaTrade e mantenha a aba ativa. A conexão é automática.';
   }
@@ -159,10 +159,62 @@ function renderTradeActions(s = {}, online = false) {
 
   if ($('tradeActionStatus')) {
     $('tradeActionStatus').textContent = confirmed
-      ? `Sinal confirmado: ${sig.direction === 'BUY' ? 'COMPRA' : 'VENDA'} na próxima vela.`
+      ? `Janela final: ${sig.direction === 'BUY' ? 'COMPRA' : 'VENDA'} indicada para a próxima vela; o cálculo continua até o fechamento.`
       : possible
         ? `Pré-sinal de ${sig.direction === 'BUY' ? 'COMPRA' : 'VENDA'}; aguarde os últimos 10s.`
         : 'COMPRA/VENDA só libera quando a confirmação final estiver pronta.';
+  }
+}
+
+function decisionTime(value) {
+  const t = Number(value);
+  if (!Number.isFinite(t) || t <= 0) return '';
+  return new Date(t).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+function renderSeparatedSignalState(s = {}, online = false) {
+  const sig = online ? (s.signal || {}) : {};
+  const last = s.lastConfirmed || null;
+
+  if ($('lastConfirmed')) {
+    if (!last) {
+      $('lastConfirmed').textContent = 'Nenhuma decisão finalizada nesta sessão.';
+    } else {
+      const result = last.state === 'CONFIRM'
+        ? (last.direction === 'SELL' ? 'VENDA' : 'COMPRA')
+        : 'SEM ENTRADA';
+      const at = decisionTime(last.time || last.targetStart);
+      $('lastConfirmed').textContent = `${result}${at ? ` • ${at}` : ''}${num(last.score) != null ? ` • ${Math.round(Number(last.score))}/100` : ''}`;
+    }
+  }
+
+  if (!$('analyzingNow')) return;
+  if (!online) {
+    $('analyzingNow').textContent = 'Aguardando dados reais da CasaTrade.';
+    return;
+  }
+
+  const count = Math.max(0, Number(sig.candleCount || 0));
+  const required = Math.max(1, Number(sig.warmup?.required || 3));
+  const windowCount = Math.min(10, count);
+  const liveDirection = ['BUY', 'SELL'].includes(sig.analysisDirection)
+    ? sig.analysisDirection
+    : ['BUY', 'SELL'].includes(sig.direction) ? sig.direction : null;
+  const liveScore = num(sig.analysisScore) != null ? Number(sig.analysisScore) : num(sig.score);
+  const scoreText = liveScore != null ? ` • ${Math.round(liveScore)}/100` : '';
+
+  if (count < required || sig.state === 'SEARCHING') {
+    $('analyzingNow').textContent = `Aguardando histórico mínimo: ${count}/${required} velas fechadas • janela atual ${windowCount}/10.`;
+    return;
+  }
+
+  const lean = liveDirection === 'BUY' ? 'Pendendo para COMPRA' : liveDirection === 'SELL' ? 'Pendendo para VENDA' : 'Sem direção firme';
+  if (sig.phase === 'FINAL') {
+    $('analyzingNow').textContent = `${lean}${scoreText} • últimos ${Math.max(0, Math.ceil(Number(sig.secondsRemaining || 0)))}s, recalculando a cada tick até fechar.`;
+  } else if (sig.phase === 'POSSIBLE') {
+    $('analyzingNow').textContent = `${lean}${scoreText} • pré-sinal em formação • ${windowCount}/10 velas fechadas.`;
+  } else {
+    $('analyzingNow').textContent = `${lean}${scoreText} • cálculo em tempo real • ${windowCount}/10 velas fechadas.`;
   }
 }
 
@@ -179,7 +231,7 @@ function renderDecision(s = {}) {
   let badge = 'AGUARDANDO';
   let badgeClass = 'badge';
   let decision = 'ANALISANDO';
-  let sub = 'O pré-sinal aparece nos últimos 30s e a decisão final nos últimos 10s.';
+  let sub = 'O pré-sinal aparece nos últimos 30s e a decisão final é recalculada até o fechamento.';
   let bannerClass = 'waiting';
 
   if (!online) {
@@ -197,18 +249,18 @@ function renderDecision(s = {}) {
   } else if (sig.state === 'CONFIRM' && sig.direction) {
     const buy = sig.direction === 'BUY';
     title = `${buy ? 'COMPRA' : 'VENDA'} NA PRÓXIMA VELA`;
-    badge = 'CONFIRMADO';
+    badge = 'JANELA FINAL';
     badgeClass = 'badge ok';
     decision = `${buy ? '🟢 ENTRAR EM COMPRA' : '🔴 ENTRAR EM VENDA'}`;
-    sub = `Entrada manual na próxima vela${sig.targetLabel ? ` • ${sig.targetLabel}` : ''}.`;
+    sub = `Indicação atual para a próxima vela${sig.targetLabel ? ` • ${sig.targetLabel}` : ''}; recalculando até o fechamento.`;
     bannerClass = buy ? 'buy' : 'sell';
     card?.classList.add(buy ? 'buy' : 'sell');
   } else if (sig.state === 'NO_TRADE' && sig.phase === 'FINAL') {
     title = 'NÃO ENTRAR';
-    badge = 'SEM ENTRADA';
+    badge = 'JANELA FINAL';
     badgeClass = 'badge warn';
     decision = '⛔ NÃO ENTRAR';
-    sub = 'A confirmação final não manteve força suficiente. Aguarde a próxima análise.';
+    sub = 'A indicação atual não tem força suficiente; o cálculo continua até a vela fechar.';
     bannerClass = 'no-trade';
     card?.classList.add('no-trade');
   } else if (sig.state === 'SEARCHING') {
@@ -227,6 +279,7 @@ function renderDecision(s = {}) {
   if (banner) banner.classList.add(bannerClass);
   if ($('decisionText')) $('decisionText').textContent = decision;
   if ($('decisionSubtext')) $('decisionSubtext').textContent = sub;
+  renderSeparatedSignalState(s, online);
   if ($('signalReason')) $('signalReason').textContent = online ? (sig.reason || sig.hint || 'Analisando o mercado.') : 'Plataforma não suportada/não conectado.';
   if ($('signalScore')) $('signalScore').textContent = online && num(sig.score) != null ? `${Math.round(Number(sig.score))}/100` : '—';
   if ($('targetTime')) $('targetTime').textContent = online && sig.targetLabel ? sig.targetLabel : '—';
