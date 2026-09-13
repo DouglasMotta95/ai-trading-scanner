@@ -66,23 +66,31 @@ test('activation only clears the key after a genuinely active response', () => {
   assert.doesNotMatch(failureBranch, /input\.value\s*=/);
 });
 
-test('analysis is locked to the focused CasaTrade asset and waits for focus stability', () => {
+test('analysis prioritizes reliable focused CasaTrade asset and allows safe corroborated fallback', () => {
   const focus = read('src/content/focused-asset.js');
   const generic = read('src/content/generic-adapter.js');
   const augment = read('src/background-augment.js');
   const background = read('src/background.js');
 
-  assert.match(focus, /__ATS_FOCUSED_ASSET_VALUE__ = asset/);
+  assert.match(focus, /globalThis\.__ATS_FOCUSED_ASSET_META__ =/);
+  assert.match(focus, /const reliable = Number\(candidate\.score \|\| 0\) >= RELIABLE_SCORE/);
+  assert.match(focus, /candidateSamples >= CONSISTENT_SAMPLES/);
+  assert.match(focus, /if \(reliable \|\| sameAsset\(previousGlobal, candidate\.asset\)\)/);
+  assert.match(focus, /globalThis\.__ATS_FOCUSED_ASSET_VALUE__ = candidate\.asset/);
+
   assert.match(generic, /explicitFocus = canonicalAsset\(globalThis\.__ATS_FOCUSED_ASSET_VALUE__/);
-  assert.match(generic, /if \(!explicitFocus\) return;/);
-  assert.match(generic, /const priceRows = sameAssetRows/);
-  assert.match(generic, /rows\.filter\(r => r\.asset && sameAsset\(r\.asset, explicitFocus\)\)/);
+  assert.match(generic, /const focusMeta = globalThis\.__ATS_FOCUSED_ASSET_META__ \|\| \{\}/);
+  assert.match(generic, /const focusSupported = !!explicitFocus/);
+  assert.match(generic, /const anyNetwork = bestNetworkQuote\(''\)/);
 
   assert.match(augment, /const FOCUS_STABLE_MS = 2000/);
-  assert.match(augment, /stableSince/);
-  assert.match(augment, /Date\.now\(\) - stableSince < FOCUS_STABLE_MS/);
-  assert.match(augment, /resetOrchestrator\(\)/);
+  assert.match(augment, /const FOCUS_CHANGE_MIN_SCORE = 70/);
+  assert.match(augment, /return updateScannerState\(scannerState =>/);
+  assert.match(augment, /const focusedCandidate = focus \? chooseCandidate\(payload, focus\) : null/);
+  assert.match(augment, /const fallbackCandidate = focusedCandidate \|\| chooseCandidate\(payload, ''\)/);
 
-  assert.match(background, /const matchedRows = focus \? rows\.filter\(x => sameAsset\(x\.asset, focus\)\) : \[\]/);
-  assert.match(background, /focusStableFor\(scannerState, focus\)/);
+  assert.match(background, /resolveMarketEvidence\(snapshot, scannerState/);
+  assert.match(background, /const next = await updateScannerState\(async scannerState =>/);
+  assert.match(background, /function evidenceFocusGate\(/);
+  assert.match(background, /return marketHistoryFor\(state, asset\)/);
 });

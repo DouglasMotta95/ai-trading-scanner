@@ -272,18 +272,24 @@
     seenCount: Number(c.seenCount || 0)
   })).filter(c => c.asset && c.price != null && c.price > 0 && Date.now() - c.observedAt < 15000);
 
+  const strongNetworkCandidate = candidate => !!candidate && (
+    candidate.selected === true
+    || Number(candidate.confidence || 0) >= 82
+    || Number(candidate.seenCount || 0) >= 2
+  );
+
   function bestNetworkQuote(preferredAsset = '') {
     const wanted = canonicalAsset(preferredAsset);
-    if (!wanted) return null;
-    let rows = networkCandidates().filter(c => sameAsset(c.asset, wanted));
-    if (!rows.length) return null;
+    let rows = networkCandidates();
+    if (wanted) rows = rows.filter(c => sameAsset(c.asset, wanted));
     rows.sort((a, b) =>
       Number(b.selected === true) - Number(a.selected === true)
       || b.confidence - a.confidence
       || b.seenCount - a.seenCount
       || b.observedAt - a.observedAt
     );
-    return rows[0] || null;
+    const candidate = rows[0] || null;
+    return wanted || strongNetworkCandidate(candidate) ? candidate : null;
   }
 
   const historyFor = asset => {
@@ -329,28 +335,72 @@
     return [...frameObservations.values()];
   }
 
+  function bestDomAsset(rows = []) {
+    const candidates = rows
+      .filter(row => row?.asset)
+      .sort((a, b) => Number(b.assetScore || 0) - Number(a.assetScore || 0) || Number(b.at || 0) - Number(a.at || 0));
+    const top = candidates[0] || null;
+    if (!top) return null;
+    const matching = candidates.filter(row => sameAsset(row.asset, top.asset));
+    const consistent = matching.length >= 2 || Number(top.assetScore || 0) >= 70;
+    return consistent ? top : null;
+  }
+
   async function emitAggregated() {
     if (!isTop || !platform) return;
     const now = Date.now();
     if (now - lastEmitAt < 180) return;
     lastEmitAt = now;
 
-    const explicitFocus = canonicalAsset(globalThis.__ATS_FOCUSED_ASSET_VALUE__ || '');
-    if (!explicitFocus) return;
-
     const rows = recentFrameRows();
-    const sameAssetRows = rows.filter(r => r.asset && sameAsset(r.asset, explicitFocus));
-    const net = bestNetworkQuote(explicitFocus);
-    const priceRows = sameAssetRows
+    const explicitFocus = canonicalAsset(globalThis.__ATS_FOCUSED_ASSET_VALUE__ || '');
+    const focusMeta = globalThis.__ATS_FOCUSED_ASSET_META__ || {};
+    const domChoice = bestDomAsset(rows);
+    const anyNetwork = bestNetworkQuote('');
+    const focusRows = explicitFocus ? rows.filter(r => r.asset && sameAsset(r.asset, explicitFocus)) : [];
+    const focusNet = explicitFocus ? bestNetworkQuote(explicitFocus) : null;
+    const focusSupported = !!explicitFocus && (
+      focusRows.some(row => num(row.price) != null)
+      || !!focusNet
+      || focusMeta.reliable === true
+      || Number(focusMeta.score || 0) >= 90
+    );
+
+    let asset = focusSupported
+      ? explicitFocus
+      : canonicalAsset(domChoice?.asset || anyNetwork?.asset || explicitFocus || '');
+    if (!asset) return;
+
+    let sameAssetRows = rows.filter(r => r.asset && sameAsset(r.asset, asset));
+    let net = bestNetworkQuote(asset);
+    let priceRows = sameAssetRows
       .filter((r, i, arr) => r.price != null && arr.indexOf(r) === i)
       .sort((a, b) => Number(b.priceSource === 'buttons') - Number(a.priceSource === 'buttons') || b.at - a.at);
 
     let price = priceRows[0]?.price ?? net?.price ?? null;
+    if (price == null && focusSupported && domChoice?.asset && !sameAsset(domChoice.asset, asset)) {
+      const fallbackAsset = canonicalAsset(domChoice.asset);
+      const fallbackRows = rows.filter(r => r.asset && sameAsset(r.asset, fallbackAsset));
+      const fallbackNet = bestNetworkQuote(fallbackAsset);
+      const fallbackPriceRows = fallbackRows
+        .filter(r => r.price != null)
+        .sort((a, b) => Number(b.priceSource === 'buttons') - Number(a.priceSource === 'buttons') || b.at - a.at);
+      const fallbackPrice = fallbackPriceRows[0]?.price ?? fallbackNet?.price ?? null;
+      if (fallbackPrice != null) {
+        asset = fallbackAsset;
+        sameAssetRows = fallbackRows;
+        net = fallbackNet;
+        priceRows = fallbackPriceRows;
+        price = fallbackPrice;
+      }
+    }
+
     if (net?.price != null && price != null) {
       const scale = Math.max(Math.abs(net.price), Math.abs(price), 1e-9);
       if (Math.abs(net.price - price) / scale > 0.08) price = net.price;
     }
     if (price == null && net?.price != null) price = net.price;
+    if (price == null) return;
 
     const timeframe = sameAssetRows.map(r => r.timeframe).find(Boolean) || net?.timeframe || 'M1';
     const expiration = sameAssetRows.map(r => r.expiration).find(Boolean) || net?.expiration || null;
@@ -358,8 +408,12 @@
       || net?.instrumentType
       || 'unknown';
 
-    if (price == null) return;
-    const asset = explicitFocus;
+    const assetSource = explicitFocus && sameAsset(asset, explicitFocus) && focusSupported
+      ? 'focused-screen'
+      : domChoice?.asset && sameAsset(asset, domChoice.asset)
+        ? 'dom-fallback'
+        : 'network-fallback';
+    const priceSource = priceRows[0]?.priceSource || (net ? `network:${net.transport || 'quote'}` : 'unknown');
     lastAsset = asset;
 
     const history = historyFor(asset);
@@ -371,7 +425,7 @@
       expiration,
       transport: net?.transport || priceRows[0]?.priceSource || 'dom',
       source: net ? 'network+cross-frame-dom' : 'cross-frame-dom',
-      confidence: net ? Math.max(75, Number(net.confidence || 0)) : 78,
+      confidence: net ? Math.max(75, Number(net.confidence || 0)) : Math.max(70, Number(domChoice?.assetScore || 0)),
       seenCount: Number(net?.seenCount || 1),
       observedAt: Date.now()
     };
@@ -406,13 +460,17 @@
         },
         diagnostics: {
           capture: net ? 'rede-validada+cross-frame-dom' : 'cross-frame-dom-casatrade',
+          assetSource,
+          priceSource,
+          focusReliable: focusMeta.reliable === true,
+          focusScore: Number(focusMeta.score || 0),
           frameCount: rows.length,
           structuredSource: net?.transport || null,
           networkQuoteMatched: !!net,
           networkConfidence: Number(net?.confidence || 0),
           networkQuality: Number(networkState?.feedQuality || 0),
           candleHistory: history.length,
-          filteredTo: explicitFocus,
+          filteredTo: asset,
           host: trustedHost,
           privacy: 'Sem cookies, credenciais, tokens, headers ou saldo.'
         }

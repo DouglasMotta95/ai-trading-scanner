@@ -26,12 +26,13 @@ test('sidepanel exposes only the focused license, candle and next-entry surface'
   assert.match(app, /ATS_ACTIVATE_LICENSE/);
   assert.match(app, /ATS_CONNECT_ACTIVE_TAB/);
   assert.match(app, /ATS_PREPARE_TRADE/);
-  assert.match(app, /POSSÍVEL/);
-  assert.match(app, /COMPRA/);
-  assert.match(app, /VENDA/);
-  assert.match(app, /ENTRAR EM COMPRA/);
-  assert.match(app, /ENTRAR EM VENDA/);
-  assert.match(app, /NÃO ENTRAR/);
+  assert.match(app, /DIAGNÓSTICO: AGUARDAR/);
+  assert.match(app, /DIAGNÓSTICO: \$\{buy \? 'COMPRA' : 'VENDA'\}/);
+  assert.match(app, /AGUARDE CONFIRMAÇÃO/);
+  assert.match(app, /NA PRÓXIMA VELA/);
+  assert.match(app, /Entrada bloqueada enquanto o diagnóstico não atingir a confirmação mínima/);
+  assert.match(app, /buy\.disabled = !\(confirmed && sig\.direction === 'BUY'\)/);
+  assert.match(app, /sell\.disabled = !\(confirmed && sig\.direction === 'SELL'\)/);
   assert.doesNotMatch(app, /ATS_RUN_BACKTEST|ATS_GET_WEEKLY_REPORT|renderIndicators|renderAI|renderIntelligence/);
 
   for (const removed of [
@@ -40,11 +41,17 @@ test('sidepanel exposes only the focused license, candle and next-entry surface'
   ]) assert.doesNotMatch(html.toUpperCase(), standalone(removed));
 });
 
-test('unsupported platform text is explicit and market values stay empty', () => {
+test('panel exposes acquisition reason while keeping unavailable market values empty', () => {
   const app = read('src/sidepanel/app.js');
-  assert.match(app, /Plataforma não suportada\/não conectado/);
-  assert.match(app, /online && s\.asset \? s\.asset : '—'/);
+  assert.match(app, /Plataforma não suportada\/não conectada/);
+  assert.match(app, /function marketStep\(s = \{\}\)/);
+  assert.match(app, /confirming_asset/);
+  assert.match(app, /reading_price/);
+  assert.match(app, /reading_history/);
+  assert.match(app, /analyzing_current/);
+  assert.match(app, /diagnosing_next_candle/);
   assert.match(app, /online && s\.price != null \? String\(s\.price\) : '—'/);
+  assert.match(app, /active && s\.asset \? s\.asset : '—'/);
 });
 
 test('background keeps session-scoped confirmed decisions without exposing extra history page', () => {

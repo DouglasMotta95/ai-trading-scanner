@@ -129,7 +129,7 @@ test('asset identity ignores OTC label only, preserving display labels and rejec
   assert.notEqual(normalizeForIdentity('EUR/USD (OTC)'), normalizeForIdentity('GBP/USD'));
 });
 
-test('every snapshot publisher is gated by the focused asset', () => {
+test('snapshot publishers prefer focused asset and only fall back to corroborated evidence', () => {
   const network = read('src/content/network-bridge.js');
   const generic = read('src/content/generic-adapter.js');
   const augment = read('src/background-augment.js');
@@ -139,12 +139,19 @@ test('every snapshot publisher is gated by the focused asset', () => {
   assert.match(network, /!sameAsset\(cleanAsset, focus\)/);
   assert.match(network, /const candidate = bestCandidate\(payload, focus\)/);
 
-  assert.match(generic, /const explicitFocus = canonicalAsset\(globalThis\.__ATS_FOCUSED_ASSET_VALUE__ \|\| ''\);\s*if \(!explicitFocus\) return;/);
-  assert.match(generic, /rows\.filter\(r => r\.asset && sameAsset\(r\.asset, explicitFocus\)\)/);
-  assert.match(generic, /const net = bestNetworkQuote\(explicitFocus\)/);
-  assert.match(generic, /const asset = explicitFocus/);
+  assert.match(generic, /const explicitFocus = canonicalAsset\(globalThis\.__ATS_FOCUSED_ASSET_VALUE__ \|\| ''\)/);
+  assert.match(generic, /const focusMeta = globalThis\.__ATS_FOCUSED_ASSET_META__ \|\| \{\}/);
+  assert.match(generic, /const domChoice = bestDomAsset\(rows\)/);
+  assert.match(generic, /const anyNetwork = bestNetworkQuote\(''\)/);
+  assert.match(generic, /const focusSupported = !!explicitFocus/);
+  assert.match(generic, /canonicalAsset\(domChoice\?\.asset \|\| anyNetwork\?\.asset \|\| explicitFocus \|\| ''\)/);
+  assert.match(generic, /let sameAssetRows = rows\.filter\(r => r\.asset && sameAsset\(r\.asset, asset\)\)/);
+  assert.match(generic, /let net = bestNetworkQuote\(asset\)/);
 
-  assert.match(augment, /const focusedAsset = focusedAssetFor\(sender\.tab\.id, scannerState\)/);
-  assert.match(augment, /const candidate = chooseCandidate\(payload, focusedAsset\)/);
-  assert.match(augment, /if \(!sameAsset\(focusMeta\?\.asset, focusedAsset\)\) return/);
+  assert.match(augment, /return updateScannerState\(scannerState =>/);
+  assert.match(augment, /const focus = focusedAssetFor\(sender\.tab\.id, scannerState\)/);
+  assert.match(augment, /const focusedCandidate = focus \? chooseCandidate\(payload, focus\) : null/);
+  assert.match(augment, /const fallbackCandidate = focusedCandidate \|\| chooseCandidate\(payload, ''\)/);
+  assert.match(augment, /const focusCorroborated = !!focus && sameAsset\(fallbackCandidate\.asset, focus\)/);
+  assert.match(augment, /if \(!asset \|\| !candidate \|\| !sameAsset\(candidate\.asset, asset\)\) return/);
 });

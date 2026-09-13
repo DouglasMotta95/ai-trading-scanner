@@ -92,18 +92,34 @@ test('platform readers remain wired to real CasaTrade controls', () => {
   assert.match(content, /comprar\|vender\|buy\|sell/);
 });
 
-test('network feed is strictly filtered to the asset focused in the CasaTrade chart', () => {
+test('market feed prefers focused asset but can recover from corroborated real DOM/network evidence', () => {
   const manifest = JSON.parse(read('manifest.json'));
   const focus = read('src/content/focused-asset.js');
   const augment = read('src/background-augment.js');
+  const generic = read('src/content/generic-adapter.js');
+  const evidence = read('src/core/market-evidence.js');
+
   assert.ok(manifest.content_scripts.some(x => (x.js || []).includes('src/content/focused-asset.js')));
   assert.match(focus, /ATS_FOCUSED_ASSET/);
   assert.match(focus, /aria-selected/);
+  assert.match(focus, /reliable/);
+
   assert.match(augment, /focusedAssets/);
-  assert.match(augment, /chooseCandidate\(payload = \{\}, focusedAsset = ''\)/);
+  assert.match(augment, /function chooseCandidate\(payload = \{\}, preferredAsset = ''\)/);
   assert.match(augment, /filter\(row => sameAsset\(row\.asset, focus\)\)/);
-  assert.match(augment, /if \(!focusedAsset\) return;/);
-  assert.match(augment, /historyKey = Object\.keys\(allHistory\)\.find\(k => sameAsset\(k, focusedAsset\)\)/);
+  assert.match(augment, /strongCandidate/);
+  assert.match(augment, /network-fallback/);
+  assert.doesNotMatch(augment, /if \(!focusedAsset\) return;/);
+
+  assert.match(generic, /bestDomAsset/);
+  assert.match(generic, /bestNetworkQuote\(''\)/);
+  assert.match(generic, /dom-fallback/);
+  assert.match(generic, /network-fallback/);
+
+  assert.match(evidence, /resolveMarketEvidence/);
+  assert.match(evidence, /focusCorroborated/);
+  assert.match(evidence, /confidence \|\| 0\) >= 82/);
+  assert.match(evidence, /seenCount \|\| 0\) >= 2/);
 });
 
 test('trade handoff highlights but never executes financial action automatically', () => {
