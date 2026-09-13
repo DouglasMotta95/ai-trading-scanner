@@ -31,9 +31,10 @@ const normAsset = v => {
   return `${m[1]}/${m[2]}${otc ? ' (OTC)' : ''}`;
 };
 
+const assetIdentity = value => normAsset(value).replace(/\s*\(OTC\)\s*$/, '');
 const sameAsset = (a, b) => {
-  const left = normAsset(a);
-  const right = normAsset(b);
+  const left = assetIdentity(a);
+  const right = assetIdentity(b);
   return !!left && !!right && left === right;
 };
 

@@ -27,6 +27,11 @@
   }
 
   const assetBase = value => canonicalAsset(value).replace(/\s*\(OTC\)\s*$/, '');
+  const sameAsset = (a, b) => {
+    const left = assetBase(a);
+    const right = assetBase(b);
+    return !!left && !!right && left === right;
+  };
   const visible = el => {
     if (!el || !(el instanceof Element)) return false;
     const r = el.getBoundingClientRect();
@@ -76,6 +81,10 @@
     }
     rows.sort((a, b) => b.score - a.score);
     return rows[0]?.asset || '';
+  }
+
+  function focusedAsset() {
+    return canonicalAsset(globalThis.__ATS_FOCUSED_ASSET_VALUE__ || selectedAssetFromDom());
   }
 
   function selectedTimeframeFromDom() {
@@ -144,13 +153,13 @@
 
   function bestCandidate(payload = {}, preferredAsset = '') {
     const wanted = assetBase(preferredAsset);
+    if (!wanted) return null;
     let rows = (Array.isArray(payload.candidates) ? payload.candidates : []).map(c => {
       const asset = canonicalAsset(c?.asset);
       const price = num(c?.price) ?? (num(c?.bid) != null && num(c?.ask) != null ? (num(c.bid) + num(c.ask)) / 2 : null);
       return { ...c, asset, price };
-    }).filter(c => c.asset && c.price != null && c.price > 0);
+    }).filter(c => c.asset && c.price != null && c.price > 0 && sameAsset(c.asset, preferredAsset));
 
-    if (wanted) rows = rows.filter(c => assetBase(c.asset) === wanted);
     rows.sort((a, b) =>
       Number(b?.selected === true) - Number(a?.selected === true)
       || Number(b?.confidence || 0) - Number(a?.confidence || 0)
@@ -190,22 +199,23 @@
   }
 
   function sendSnapshot({ asset, price, timeframe = 'M1', expiration = null, secondsRemaining = null, candles = [], source = 'market', feedQuality = 0, structured = false }) {
+    const focus = focusedAsset();
     const cleanAsset = canonicalAsset(asset);
-    if (!cleanAsset || price == null) return;
+    if (!focus || !cleanAsset || !sameAsset(cleanAsset, focus) || price == null) return;
     chrome.runtime.sendMessage({
       type: 'ATS_PLATFORM_SNAPSHOT',
       payload: {
         platformId: 'casatrade',
         platformName: 'CasaTrade',
         connection: 'online',
-        asset: cleanAsset,
+        asset: focus,
         price: Number(price),
         timeframe,
         analysisTimeframe: timeframe,
         expiration,
         secondsRemaining: Number.isFinite(Number(secondsRemaining)) ? Number(secondsRemaining) : null,
         instrumentType: 'unknown',
-        marketType: /\(OTC\)/i.test(cleanAsset) ? 'otc' : 'regular',
+        marketType: /\(OTC\)/i.test(focus) ? 'otc' : 'regular',
         serverTime: null,
         candles: Array.isArray(candles) ? candles.slice(-120) : [],
         ticks: [{ price: Number(price), at: Date.now() }],
@@ -218,7 +228,8 @@
         diagnostics: {
           capture: source,
           feedQuality: Number(feedQuality || 0),
-          relayed: true
+          relayed: true,
+          filteredTo: focus
         }
       }
     }).catch(() => {});
@@ -227,21 +238,21 @@
   function publishToExtension(payload = {}) {
     chrome.runtime.sendMessage({ type: 'ATS_NETWORK_DIAGNOSTIC', payload }).catch(() => {});
 
-    const domAsset = selectedAssetFromDom();
-    const candidate = bestCandidate(payload, domAsset);
-    if (!candidate) return;
+    const focus = focusedAsset();
+    if (!focus) return;
+    const candidate = bestCandidate(payload, focus);
+    if (!candidate || !sameAsset(candidate.asset, focus)) return;
 
-    const asset = canonicalAsset(candidate.asset);
     const price = Number(candidate.price);
-    const networkHistory = historyFor(payload, asset);
+    const networkHistory = historyFor(payload, focus);
     const timeframe = selectedTimeframeFromDom() || candidate.timeframe || networkHistory.at(-1)?.timeframe || 'M1';
     const expiration = selectedExpirationFromDom() || candidate.expiration || null;
     const secondsRemaining = countdownFromDom(timeframe);
-    const localHistory = updateLocalCandle(asset, price, timeframe);
+    const localHistory = updateLocalCandle(focus, price, timeframe);
     const candles = networkHistory.length >= 2 ? networkHistory : localHistory;
 
     sendSnapshot({
-      asset,
+      asset: focus,
       price,
       timeframe,
       expiration,
@@ -304,9 +315,8 @@
     const text = deepText();
     if (!text) return;
 
-    const firstPair = text.match(/\b([A-Z0-9]{2,16})\s*\/\s*(USDT|USDC|USD|EUR|GBP|JPY|AUD|CAD|CHF|NZD|BRL|BTC|ETH)(?:\s*\(\s*OTC\s*\))?/i)?.[0] || '';
-    const asset = selectedAssetFromDom() || canonicalAsset(firstPair);
-    if (!asset) return;
+    const focus = focusedAsset();
+    if (!focus) return;
 
     const buy = labeledPrice('COMPRAR|BUY') ?? parsePrice(text.match(/(?:COMPRAR|BUY)[^0-9]{0,60}([0-9]{1,6}[.,][0-9]{3,8})/i)?.[1]);
     const sell = labeledPrice('VENDER|SELL') ?? parsePrice(text.match(/(?:VENDER|SELL)[^0-9]{0,60}([0-9]{1,6}[.,][0-9]{3,8})/i)?.[1]);
@@ -316,14 +326,16 @@
     const timeframe = selectedTimeframeFromDom() || 'M1';
     const expiration = selectedExpirationFromDom();
     const secondsRemaining = countdownFromDom(timeframe);
-    const candles = updateLocalCandle(asset, price, timeframe);
-    sendSnapshot({ asset, price, timeframe, expiration, secondsRemaining, candles, source: 'top-frame-dom-fallback', feedQuality: 60, structured: false });
+    const candles = updateLocalCandle(focus, price, timeframe);
+    sendSnapshot({ asset: focus, price, timeframe, expiration, secondsRemaining, candles, source: 'top-frame-dom-fallback', feedQuality: 60, structured: false });
   }
 
   function markConnected() {
+    const focus = focusedAsset();
+    if (!focus) return;
     chrome.runtime.sendMessage({
       type: 'ATS_PLATFORM_SNAPSHOT',
-      payload: { platformId: 'casatrade', platformName: 'CasaTrade', connection: 'online', asset: null, price: null }
+      payload: { platformId: 'casatrade', platformName: 'CasaTrade', connection: 'online', asset: focus, price: null }
     }).catch(() => {});
   }
 

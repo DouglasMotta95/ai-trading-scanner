@@ -97,6 +97,13 @@
     return `${m[1]}/${m[2]}${otc ? ' (OTC)' : ''}`;
   };
 
+  const assetIdentity = value => canonicalAsset(value).replace(/\s*\(OTC\)\s*$/, '');
+  const sameAsset = (a, b) => {
+    const left = assetIdentity(a);
+    const right = assetIdentity(b);
+    return !!left && !!right && left === right;
+  };
+
   const assetRegex = /\b(?:[A-Z0-9]{2,16}\s*[\/_-]\s*(?:USDT|USDC|USD|EUR|GBP|JPY|AUD|CAD|CHF|NZD|BRL|BTC|ETH)|[A-Z]{6})(?:\s*\(\s*OTC\s*\)|\s+OTC)?/gi;
   const assetsIn = text => {
     const out = [];
@@ -267,13 +274,9 @@
 
   function bestNetworkQuote(preferredAsset = '') {
     const wanted = canonicalAsset(preferredAsset);
-    const noOtc = wanted.replace(/ \(OTC\)$/, '');
-    let rows = networkCandidates();
-    if (wanted) {
-      const matching = rows.filter(c => c.asset === wanted || c.asset.replace(/ \(OTC\)$/, '') === noOtc);
-      if (!matching.length) return null;
-      rows = matching;
-    }
+    if (!wanted) return null;
+    let rows = networkCandidates().filter(c => sameAsset(c.asset, wanted));
+    if (!rows.length) return null;
     rows.sort((a, b) =>
       Number(b.selected === true) - Number(a.selected === true)
       || b.confidence - a.confidence
@@ -286,12 +289,8 @@
   const historyFor = asset => {
     const wanted = canonicalAsset(asset);
     if (!wanted) return [];
-    const noOtc = wanted.replace(/ \(OTC\)$/, '');
     const history = networkState?.recentCandles || {};
-    const key = Object.keys(history).find(k => {
-      const c = canonicalAsset(k);
-      return c && (c === wanted || c.replace(/ \(OTC\)$/, '') === noOtc);
-    });
+    const key = Object.keys(history).find(k => sameAsset(k, wanted));
     return key && Array.isArray(history[key]) ? history[key].slice(-120) : [];
   };
 
@@ -336,17 +335,13 @@
     if (now - lastEmitAt < 180) return;
     lastEmitAt = now;
 
-    const rows = recentFrameRows();
-    const assetRows = rows.filter(r => r.asset).sort((a, b) => b.assetScore - a.assetScore || b.at - a.at);
     const explicitFocus = canonicalAsset(globalThis.__ATS_FOCUSED_ASSET_VALUE__ || '');
-    const domAsset = explicitFocus || assetRows[0]?.asset || lastAsset || '';
-    const net = bestNetworkQuote(domAsset) || (!domAsset ? bestNetworkQuote('') : null);
-    const asset = domAsset || net?.asset || null;
+    if (!explicitFocus) return;
 
-    const sameAssetRows = asset
-      ? rows.filter(r => r.asset && canonicalAsset(r.asset).replace(/ \(OTC\)$/, '') === canonicalAsset(asset).replace(/ \(OTC\)$/, ''))
-      : [];
-    const priceRows = (asset ? sameAssetRows : rows)
+    const rows = recentFrameRows();
+    const sameAssetRows = rows.filter(r => r.asset && sameAsset(r.asset, explicitFocus));
+    const net = bestNetworkQuote(explicitFocus);
+    const priceRows = sameAssetRows
       .filter((r, i, arr) => r.price != null && arr.indexOf(r) === i)
       .sort((a, b) => Number(b.priceSource === 'buttons') - Number(a.priceSource === 'buttons') || b.at - a.at);
 
@@ -357,14 +352,14 @@
     }
     if (price == null && net?.price != null) price = net.price;
 
-    const timeframe = rows.map(r => r.timeframe).find(Boolean) || net?.timeframe || 'M1';
-    const expiration = rows.map(r => r.expiration).find(Boolean) || net?.expiration || null;
+    const timeframe = sameAssetRows.map(r => r.timeframe).find(Boolean) || net?.timeframe || 'M1';
+    const expiration = sameAssetRows.map(r => r.expiration).find(Boolean) || net?.expiration || null;
     const type = sameAssetRows.map(r => r.instrumentType).find(x => x && x !== 'unknown')
-      || rows.map(r => r.instrumentType).find(x => x && x !== 'unknown')
       || net?.instrumentType
       || 'unknown';
 
-    if (!asset || price == null) return;
+    if (price == null) return;
+    const asset = explicitFocus;
     lastAsset = asset;
 
     const history = historyFor(asset);
@@ -417,6 +412,7 @@
           networkConfidence: Number(net?.confidence || 0),
           networkQuality: Number(networkState?.feedQuality || 0),
           candleHistory: history.length,
+          filteredTo: explicitFocus,
           host: trustedHost,
           privacy: 'Sem cookies, credenciais, tokens, headers ou saldo.'
         }

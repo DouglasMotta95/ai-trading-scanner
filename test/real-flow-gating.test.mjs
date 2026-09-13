@@ -72,8 +72,9 @@ test('analysis is locked to the focused CasaTrade asset and waits for focus stab
 
   assert.match(focus, /__ATS_FOCUSED_ASSET_VALUE__ = asset/);
   assert.match(generic, /explicitFocus = canonicalAsset\(globalThis\.__ATS_FOCUSED_ASSET_VALUE__/);
-  assert.match(generic, /if \(!matching\.length\) return null;/);
-  assert.match(generic, /const priceRows = \(asset \? sameAssetRows : rows\)/);
+  assert.match(generic, /if \(!explicitFocus\) return;/);
+  assert.match(generic, /const priceRows = sameAssetRows/);
+  assert.match(generic, /rows\.filter\(r => r\.asset && sameAsset\(r\.asset, explicitFocus\)\)/);
 
   assert.match(augment, /const FOCUS_STABLE_MS = 2000/);
   assert.match(augment, /stableSince/);

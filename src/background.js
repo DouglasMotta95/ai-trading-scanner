@@ -47,8 +47,9 @@ const normAsset = value => clean(value).toUpperCase()
   .replace(/\s+/g, ' ')
   .replace(/\s*\(\s*OTC\s*\)\s*$/, ' (OTC)')
   .trim();
+const assetIdentity = value => normAsset(value).replace(/\s*\(OTC\)\s*$/, '');
 const sameAsset = (a, b) => {
-  const left = normAsset(a), right = normAsset(b);
+  const left = assetIdentity(a), right = assetIdentity(b);
   return !!left && !!right && left === right;
 };
 const focusedAssetMeta = state => state?.diagnostics?.focusedAsset || null;
