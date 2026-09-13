@@ -21,6 +21,7 @@ const EMPTY_MARKET = {
   serverTime: null, capabilities: { structuredQuotes: false, candles: false, expiration: false, multiAsset: false },
   diagnostics: {}, marketCatalog: { assets: [], timeframes: [], expirations: [], lines: [] },
   marketHistory: {}, platformControls: null, signal: null, tradeIntent: null, lastSeen: null,
+  candles: [], currentCandle: null, lastConfirmed: null,
   telemetry: { feedQuality: 0, latency: null, lastSync: null }
 };
 const DEFAULT_STATE = { ...EMPTY_MARKET, scanner: 'idle', license: DEFAULT_LICENSE };
@@ -34,6 +35,24 @@ const clean = v => String(v ?? '').trim();
 const num = v => v == null || v === '' ? null : Number.isFinite(Number(v)) ? Number(v) : null;
 const sameTarget = (s, sender) => !s?.targetTabId || !sender?.tab?.id || s.targetTabId === sender.tab.id;
 const platformFromUrl = u => { try { return detectPlatform(new URL(u).hostname); } catch { return null; } };
+
+const FOCUS_STABLE_MS = 2000;
+const licenseActive = license => ['active', 'valid'].includes(String(license?.status || '').toLowerCase());
+const normAsset = value => clean(value).toUpperCase()
+  .replace(/\s+/g, ' ')
+  .replace(/\s*\(\s*OTC\s*\)\s*$/, ' (OTC)')
+  .trim();
+const sameAsset = (a, b) => {
+  const left = normAsset(a), right = normAsset(b);
+  return !!left && !!right && left === right;
+};
+const focusedAssetMeta = state => state?.diagnostics?.focusedAsset || null;
+const focusedAsset = state => normAsset(focusedAssetMeta(state)?.asset);
+const focusStableFor = (state, asset) => {
+  const meta = focusedAssetMeta(state);
+  const since = Number(meta?.stableSince || meta?.at || 0);
+  return sameAsset(meta?.asset, asset) && Number.isFinite(since) && since > 0 && Date.now() - since >= FOCUS_STABLE_MS;
+};
 
 const merge = (state = {}, patch = {}) => ({
   ...DEFAULT_STATE, ...state, ...patch,
@@ -124,14 +143,18 @@ async function ensureSupportedActiveTab(scannerState = {}) {
 
 async function injectReaders(tabId) {
   const scripts = [
-    ['src/content/network-probe.js', 'MAIN'],
-    ['src/content/network-bridge.js', 'ISOLATED'],
-    ['src/content/generic-adapter.js', 'ISOLATED'],
-    ['src/content/platform-sync.js', 'ISOLATED']
+    { file: 'src/content/focused-asset.js', world: 'ISOLATED', allFrames: false },
+    { file: 'src/content/worker-probe.js', world: 'MAIN', allFrames: true },
+    { file: 'src/content/canvas-probe.js', world: 'MAIN', allFrames: true },
+    { file: 'src/content/network-probe.js', world: 'MAIN', allFrames: true },
+    { file: 'src/content/network-bridge.js', world: 'ISOLATED', allFrames: true },
+    { file: 'src/content/embedded-feed-bridge.js', world: 'ISOLATED', allFrames: true },
+    { file: 'src/content/generic-adapter.js', world: 'ISOLATED', allFrames: true },
+    { file: 'src/content/platform-sync.js', world: 'ISOLATED', allFrames: true }
   ];
-  for (const [file, world] of scripts) {
+  for (const { file, world, allFrames } of scripts) {
     await chrome.scripting.executeScript({
-      target: { tabId, allFrames: true },
+      target: { tabId, allFrames },
       files: [file],
       world
     }).catch(() => {});
@@ -139,8 +162,17 @@ async function injectReaders(tabId) {
 }
 
 async function connectActiveTab() {
-  const { tab, platform } = await activeCasaTradeTab();
   const { scannerState = {} } = await chrome.storage.local.get('scannerState');
+  if (!licenseActive(scannerState.license)) {
+    const locked = marketCleared(scannerState, {
+      license: scannerState.license || DEFAULT_LICENSE,
+      diagnostics: { ...(scannerState.diagnostics || {}), access: { state: 'license_required', at: Date.now() } }
+    });
+    await chrome.storage.local.set({ scannerState: locked });
+    return { ok: false, error: 'license_required', state: locked };
+  }
+
+  const { tab, platform } = await activeCasaTradeTab();
   if (!tab?.id || !tab.url || !platform) {
     const next = marketCleared(scannerState, {
       diagnostics: { unsupportedHost: (() => { try { return new URL(tab?.url || '').hostname || null; } catch { return null; } })() }
@@ -339,14 +371,66 @@ function historyForAsset(state = {}, asset = '') {
 }
 
 async function applySnapshot(snapshot, scannerState = {}, settings = {}, platform = { id: 'casatrade', name: 'CasaTrade' }) {
-  if (!snapshot?.asset || num(snapshot.price) == null) {
+  if (licenseRequired(settings) && !licenseActive(scannerState.license)) {
+    const locked = marketCleared(scannerState, {
+      license: scannerState.license || DEFAULT_LICENSE,
+      diagnostics: { ...(scannerState.diagnostics || {}), access: { state: 'license_required', at: Date.now() } }
+    });
+    await chrome.storage.local.set({ scannerState: locked });
+    return locked;
+  }
+
+  const license = await syncLicense(settings, scannerState);
+  if (licenseRequired(settings) && !licenseActive(license)) {
+    const locked = marketCleared(scannerState, {
+      license,
+      diagnostics: { ...(scannerState.diagnostics || {}), access: { state: 'license_required', at: Date.now() } }
+    });
+    await chrome.storage.local.set({ scannerState: locked });
+    return locked;
+  }
+
+  const focus = focusedAsset(scannerState);
+  const focusReady = !!focus && !!snapshot?.asset && sameAsset(snapshot.asset, focus) && focusStableFor(scannerState, focus);
+  if (!focusReady) {
     const waiting = merge(scannerState, {
-      platformId: platform.id, platformName: platform.name, connection: 'online', lastSeen: Date.now(),
-      signal: {
-        state: 'WAIT', direction: null, provisional: true,
-        hint: 'CasaTrade conectada. Aguardando ativo e cotação.',
-        reason: 'CasaTrade conectada. Aguardando ativo e cotação.'
+      license,
+      scanner: 'scanning',
+      platformId: platform.id,
+      platformName: platform.name,
+      connection: 'connecting',
+      asset: focus || null,
+      price: null,
+      candles: [],
+      currentCandle: null,
+      signal: null,
+      lastConfirmed: null,
+      lastSeen: Date.now(),
+      diagnostics: {
+        ...(scannerState.diagnostics || {}),
+        focusGate: {
+          focusedAsset: focus || null,
+          receivedAsset: normAsset(snapshot?.asset),
+          stable: !!focus && focusStableFor(scannerState, focus),
+          at: Date.now()
+        }
       }
+    });
+    await chrome.storage.local.set({ scannerState: waiting });
+    return waiting;
+  }
+
+  if (num(snapshot.price) == null) {
+    const waiting = merge(scannerState, {
+      license,
+      scanner: 'scanning',
+      platformId: platform.id,
+      platformName: platform.name,
+      connection: 'connecting',
+      asset: focus,
+      price: null,
+      signal: null,
+      lastSeen: Date.now()
     });
     await chrome.storage.local.set({ scannerState: waiting });
     return waiting;
@@ -356,20 +440,26 @@ async function applySnapshot(snapshot, scannerState = {}, settings = {}, platfor
   const targetExpiration = snapshot.expiration || scannerState.targetExpiration || scannerState.expiration || null;
   const enriched = {
     ...snapshot,
+    asset: focus,
     platformId: platform.id,
     platformName: platform.name,
     analysisTimeframe,
     targetExpiration,
-    candles: Array.isArray(snapshot.candles) ? snapshot.candles : historyForAsset(scannerState, snapshot.asset)
+    candles: Array.isArray(snapshot.candles) ? snapshot.candles : historyForAsset(scannerState, focus)
   };
 
-  const license = await syncLicense(settings, scannerState);
-  let activeScanner = 'scanning';
-  if (settings.runtimePaused || (licenseRequired(settings) && license.status !== 'active')) activeScanner = 'idle';
+  const activeScanner = settings.runtimePaused ? 'idle' : 'scanning';
+  if (activeScanner !== 'scanning') {
+    const paused = merge(scannerState, {
+      license, scanner: 'idle', connection: 'offline', signal: null, price: null, lastSeen: null
+    });
+    await chrome.storage.local.set({ scannerState: paused });
+    return paused;
+  }
 
   let next = merge(scannerState, {
     ...enriched,
-    scanner: activeScanner,
+    scanner: 'scanning',
     license,
     connection: 'online',
     lastSeen: Date.now()
@@ -424,16 +514,26 @@ async function directScanActiveTab(force = false) {
 
   directScanPromise = (async () => {
     lastDirectScanAt = Date.now();
-    const { tab, platform } = await activeCasaTradeTab();
     const { scannerState = {}, settings = {} } = await chrome.storage.local.get(['scannerState', 'settings']);
 
+    if (!licenseActive(scannerState.license)) {
+      const locked = marketCleared(scannerState, {
+        license: scannerState.license || DEFAULT_LICENSE,
+        diagnostics: { ...(scannerState.diagnostics || {}), access: { state: 'license_required', at: Date.now() } }
+      });
+      await chrome.storage.local.set({ scannerState: locked });
+      return locked;
+    }
+
+    const { tab, platform } = await activeCasaTradeTab();
     if (!tab?.id || !platform) {
       const supported = await ensureSupportedActiveTab(scannerState);
       return supported.scannerState;
     }
 
     if (scannerState.targetTabId !== tab.id || scannerState.platformId !== platform.id) {
-      await connectActiveTab();
+      const connected = await connectActiveTab();
+      if (!connected?.ok) return connected?.state || scannerState;
     }
 
     const results = await chrome.scripting.executeScript({
@@ -447,21 +547,19 @@ async function directScanActiveTab(force = false) {
       .filter(Boolean)
       .sort((a, b) => Number(b.score || 0) - Number(a.score || 0));
 
-    const best = rows.find(x => x.asset && x.price != null) || rows[0] || null;
     const latest = (await chrome.storage.local.get('scannerState')).scannerState || scannerState;
+    const focus = focusedAsset(latest);
+    const matchedRows = focus ? rows.filter(x => sameAsset(x.asset, focus)) : [];
+    const best = matchedRows.find(x => x.asset && x.price != null) || matchedRows[0] || null;
 
-    if (!best) {
-      const waiting = merge(latest, {
-        connection: 'online', platformId: platform.id, platformName: platform.name, targetTabId: tab.id,
-        lastSeen: Date.now(),
-        signal: {
-          state: 'WAIT', direction: null, provisional: true,
-          hint: 'CasaTrade conectada. Lendo o gráfico...',
-          reason: 'CasaTrade conectada. Lendo o gráfico...'
-        }
-      });
-      await chrome.storage.local.set({ scannerState: waiting });
-      return waiting;
+    if (!focus || !best) {
+      return applySnapshot({
+        platformId: platform.id,
+        platformName: platform.name,
+        connection: 'connecting',
+        asset: focus || null,
+        price: null
+      }, latest, settings, platform);
     }
 
     const observed = {
@@ -481,16 +579,16 @@ async function directScanActiveTab(force = false) {
       platformId: platform.id,
       platformName: platform.name,
       connection: 'online',
-      asset: best.asset || null,
+      asset: focus,
       price: num(best.price),
       timeframe: best.timeframe || 'M1',
       expiration: best.expiration || null,
       instrumentType: best.instrumentType || 'unknown',
-      marketType: best.marketType || 'regular',
+      marketType: /\(OTC\)$/i.test(focus) ? 'otc' : (best.marketType || 'regular'),
       serverTime: null,
       capabilities: {
         structuredQuotes: false,
-        candles: historyForAsset(latest, best.asset).length >= 3,
+        candles: historyForAsset(latest, focus).length >= 3,
         expiration: !!best.expiration,
         multiAsset: false
       },
@@ -502,6 +600,7 @@ async function directScanActiveTab(force = false) {
           buy: best.buy ?? null,
           sell: best.sell ?? null,
           framesSeen: rows.length,
+          filteredTo: focus,
           at: Date.now()
         }
       },
@@ -541,6 +640,7 @@ async function syncPlatformPreferences() {
 async function prepareTrade(direction) {
   if (!['BUY', 'SELL'].includes(direction)) return { ok: false, error: 'invalid_direction' };
   const { scannerState = {}, settings = {} } = await chrome.storage.local.get(['scannerState', 'settings']);
+  if (!licenseActive(scannerState.license)) return { ok: false, error: 'license_required' };
   const supported = await ensureSupportedActiveTab(scannerState);
   if (!supported.platform || !supported.tab?.id || supported.tab.id !== scannerState.targetTabId) return { ok: false, error: 'platform_tab_not_connected' };
 
@@ -580,6 +680,10 @@ chrome.runtime.onInstalled.addListener(async () => {
   const { scannerState, settings = {} } = await chrome.storage.local.get(['scannerState', 'settings']);
   const updates = {};
   if (!scannerState) updates.scannerState = DEFAULT_STATE;
+  else if (!licenseActive(scannerState.license)) updates.scannerState = marketCleared(scannerState, {
+    license: scannerState.license || DEFAULT_LICENSE,
+    diagnostics: {}
+  });
   updates.settings = {
     ...settings,
     scanPreferences: { tradeAmount: null, stake: null, timeframe: 'AUTO', expiration: 'AUTO', ...(settings.scanPreferences || {}) }
@@ -589,25 +693,27 @@ chrome.runtime.onInstalled.addListener(async () => {
 });
 
 chrome.tabs?.onActivated?.addListener(async () => {
+  const { scannerState = {} } = await chrome.storage.local.get('scannerState');
+  if (!licenseActive(scannerState.license)) return;
   const { tab, platform } = await activeCasaTradeTab();
   if (tab?.id && platform) {
     await connectActiveTab().catch(() => {});
     await directScanActiveTab(true).catch(() => {});
     return;
   }
-  const { scannerState = {} } = await chrome.storage.local.get('scannerState');
   await ensureSupportedActiveTab(scannerState);
 });
 
 chrome.tabs?.onUpdated?.addListener(async (tabId, changeInfo, tab) => {
   if (!changeInfo.url && changeInfo.status !== 'complete') return;
+  const { scannerState = {} } = await chrome.storage.local.get('scannerState');
+  if (!licenseActive(scannerState.license)) return;
   const platform = tab?.url ? platformFromUrl(tab.url) : null;
   if (tab?.active && platform && tabId) {
     await connectActiveTab().catch(() => {});
     await directScanActiveTab(true).catch(() => {});
     return;
   }
-  const { scannerState = {} } = await chrome.storage.local.get('scannerState');
   if (scannerState.targetTabId === tabId || tab?.active) await ensureSupportedActiveTab(scannerState);
 });
 
@@ -623,19 +729,30 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type === 'ATS_ACTIVATE_LICENSE') {
-    chrome.storage.local.get(['scannerState', 'settings']).then(async ({ scannerState, settings = {} }) => {
+    chrome.storage.local.get(['scannerState', 'settings']).then(async ({ scannerState = {}, settings = {} }) => {
       const r = await activateLicense(settings, message.key);
       lastLicenseCheck = 0;
-      const license = r.ok
-        ? { ...r.license, error: null }
-        : licenseError(r, scannerState?.license || DEFAULT_LICENSE);
-      const next = merge(scannerState, { license });
+      const activated = !!r?.ok && licenseActive(r.license);
+      const activationError = activated ? null : (r?.error || 'license_inactive');
+      const license = activated
+        ? { ...r.license, status: 'active', error: null, syncPending: false }
+        : licenseError({ ...r, error: activationError }, scannerState?.license || DEFAULT_LICENSE);
+
+      resetOrchestrator();
+      let next = marketCleared(scannerState, {
+        license,
+        diagnostics: { access: { state: activated ? 'licensed' : 'license_required', at: Date.now() } }
+      });
       await chrome.storage.local.set({ scannerState: next });
-      if (r.ok) {
+
+      if (activated) {
         await telemetryEvent('license_activated', { plan: license.plan, planLabel: license.planLabel }, settings);
         await telemetryHeartbeat(telemetryState(next), settings, true);
+        const connected = await connectActiveTab().catch(() => ({ ok: false }));
+        if (connected?.ok) next = await directScanActiveTab(true).catch(() => next);
       }
-      sendResponse({ ...r, license });
+
+      sendResponse({ ...r, ok: activated, error: activationError, license, state: next });
     }).catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
     return true;
   }
@@ -652,9 +769,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type === 'ATS_CLEAR_LICENSE') {
-    chrome.storage.local.get('scannerState').then(async ({ scannerState }) => {
+    chrome.storage.local.get('scannerState').then(async ({ scannerState = {} }) => {
       await clearLicense();
-      const next = merge(scannerState, { scanner: 'idle', license: DEFAULT_LICENSE, signal: null });
+      resetOrchestrator();
+      const next = marketCleared(scannerState, { license: DEFAULT_LICENSE, diagnostics: {} });
       await chrome.storage.local.set({ scannerState: next });
       sendResponse({ ok: true });
     });
@@ -695,6 +813,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === 'ATS_DOM_CATALOG') {
     const p = message.payload || {};
     chrome.storage.local.get('scannerState').then(async ({ scannerState = {} }) => {
+      if (!licenseActive(scannerState.license)) return sendResponse({ ok: true, ignored: true, reason: 'license_required' });
       let host = '';
       try { host = new URL(sender?.url || '').hostname; } catch {}
       if (!detectPlatform(host) || !sameTarget(scannerState, sender)) return sendResponse({ ok: true, ignored: true });
@@ -722,6 +841,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === 'ATS_NETWORK_DIAGNOSTIC') {
     const p = message.payload || {};
     chrome.storage.local.get('scannerState').then(async ({ scannerState = {} }) => {
+      if (!licenseActive(scannerState.license)) return sendResponse({ ok: true, ignored: true, reason: 'license_required' });
       let host = '';
       try { host = new URL(sender?.url || '').hostname; } catch {}
       const platform = detectPlatform(host);
@@ -765,21 +885,36 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type === 'ATS_GET_STATE') {
-    directScanActiveTab().then(state => sendResponse(merge(state))).catch(async () => {
-      const { scannerState = {} } = await chrome.storage.local.get('scannerState');
-      const supported = await ensureSupportedActiveTab(scannerState);
-      sendResponse(merge(supported.scannerState));
+    chrome.storage.local.get('scannerState').then(async ({ scannerState = {} }) => {
+      if (!licenseActive(scannerState.license)) {
+        const locked = marketCleared(scannerState, {
+          license: scannerState.license || DEFAULT_LICENSE,
+          diagnostics: { ...(scannerState.diagnostics || {}), access: { state: 'license_required', at: Date.now() } }
+        });
+        await chrome.storage.local.set({ scannerState: locked });
+        return sendResponse(merge(locked));
+      }
+      try {
+        const state = await directScanActiveTab();
+        sendResponse(merge(state));
+      } catch {
+        const supported = await ensureSupportedActiveTab(scannerState);
+        sendResponse(merge(supported.scannerState));
+      }
     });
     return true;
   }
 
   if (message?.type === 'ATS_SET_SCANNER') {
     chrome.storage.local.get(['scannerState', 'settings']).then(async ({ scannerState = {}, settings = {} }) => {
+      const scanning = !!message.enabled;
+      if (scanning && licenseRequired(settings) && !licenseActive(scannerState.license)) {
+        return sendResponse({ ok: false, error: 'license_required', state: marketCleared(scannerState, { license: scannerState.license || DEFAULT_LICENSE }) });
+      }
       const supported = await ensureSupportedActiveTab(scannerState);
       if (!supported.platform) return sendResponse({ ok: false, error: 'platform_not_registered', state: supported.scannerState });
-      const scanning = !!message.enabled;
-      const license = await syncLicense(settings, supported.scannerState, true);
-      if (scanning && licenseRequired(settings) && license.status !== 'active') return sendResponse({ ok: false, error: 'license_required' });
+      const license = scanning ? await syncLicense(settings, supported.scannerState, true) : supported.scannerState.license;
+      if (scanning && licenseRequired(settings) && !licenseActive(license)) return sendResponse({ ok: false, error: 'license_required' });
       const next = merge(supported.scannerState, { scanner: scanning ? 'scanning' : 'idle', license });
       await chrome.storage.local.set({ scannerState: next });
       sendResponse({ ok: true, state: next });

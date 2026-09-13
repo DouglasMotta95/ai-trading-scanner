@@ -2,7 +2,7 @@
 
 Extensão Chrome/Edge Manifest V3 + backend Node para leitura e análise de mercado. A CasaTrade é a primeira integração real; captura, normalização, análise, risco e interface permanecem desacoplados por adapters para suportar outras plataformas.
 
-## Versão atual — 0.10.1
+## Versão atual — 0.10.2
 
 Fluxo principal do produto:
 

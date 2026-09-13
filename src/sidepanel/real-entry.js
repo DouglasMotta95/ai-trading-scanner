@@ -6,7 +6,9 @@ function renderRealEntry(state = {}) {
   if (!target) return;
 
   const signal = state.signal || {};
-  const online = state.connection === 'online' && state.platformId === 'casatrade' && !!state.asset && atsEntryNum(state.price) != null;
+  const licenseStatus = String(state.license?.status || '').toLowerCase();
+  const licensed = licenseStatus === 'active' || licenseStatus === 'valid';
+  const online = licensed && state.connection === 'online' && state.platformId === 'casatrade' && !!state.asset && atsEntryNum(state.price) != null;
   const realEntry = atsEntryNum(state.lastConfirmed?.entryPrice);
 
   target.textContent = !online

@@ -1,4 +1,4 @@
-import { processSnapshot } from './core/orchestrator.js';
+import { processSnapshot, resetOrchestrator } from './core/orchestrator.js';
 import { isCasaTradeHost } from './platforms/registry.js';
 
 const allowedTransports = new Set(['ws', 'fetch', 'xhr', 'rendered', 'worker', 'sharedworker', 'broadcast', 'serviceworker', 'window']);
@@ -7,6 +7,8 @@ const focusedAssets = new Map();
 let lastRun = 0;
 const num = v => v == null || v === '' ? null : Number.isFinite(Number(v)) ? Number(v) : null;
 const clean = v => String(v ?? '').trim();
+const FOCUS_STABLE_MS = 2000;
+const licenseActive = state => ['active', 'valid'].includes(String(state?.license?.status || '').toLowerCase());
 
 const trustedEmbeddedHost = host => {
   const h = clean(host).toLowerCase().replace(/\.$/, '');
@@ -106,7 +108,7 @@ async function keepRealFeedContext(payload = {}, sender = {}) {
   if (Date.now() - lastRun < 80) return;
   lastRun = Date.now();
   const { scannerState = {}, settings = {} } = await chrome.storage.local.get(['scannerState', 'settings']);
-  if (settings.runtimePaused) return;
+  if (!licenseActive(scannerState) || settings.runtimePaused) return;
   if (scannerState.targetTabId && sender?.tab?.id && scannerState.targetTabId !== sender.tab.id) return;
 
   const recentCandles = sanitizeRecentCandles(payload.recentCandles || {});
@@ -166,10 +168,17 @@ async function setFocusedAsset(asset, sender = {}) {
   focusedAssets.set(tabId, focused);
 
   const { scannerState = {} } = await chrome.storage.local.get('scannerState');
+  if (!licenseActive(scannerState)) return;
   if (scannerState.targetTabId && scannerState.targetTabId !== tabId) return;
 
-  const changed = !!previousFocus && !sameAsset(previousFocus, focused);
+  const previousStored = scannerState.diagnostics?.focusedAsset || null;
+  const sameStoredFocus = sameAsset(previousStored?.asset, focused);
+  const changed = (!!previousFocus && !sameAsset(previousFocus, focused)) || (!!previousStored?.asset && !sameStoredFocus);
   const stateAssetMismatch = scannerState.asset && !sameAsset(scannerState.asset, focused);
+  const stableSince = sameStoredFocus
+    ? Number(previousStored?.stableSince || previousStored?.at || Date.now())
+    : Date.now();
+  if (changed || stateAssetMismatch) resetOrchestrator();
   const next = {
     ...scannerState,
     targetTabId: tabId,
@@ -183,7 +192,7 @@ async function setFocusedAsset(asset, sender = {}) {
     } : {}),
     diagnostics: {
       ...(scannerState.diagnostics || {}),
-      focusedAsset: { asset: focused, at: Date.now(), source: 'chart-header' }
+      focusedAsset: { asset: focused, at: Date.now(), stableSince, source: 'chart-header' }
     }
   };
   await chrome.storage.local.set({ scannerState: next });
@@ -198,11 +207,15 @@ async function applyEmbeddedFeed(payload = {}, sender = {}) {
 
   await keepRealFeedContext(payload, sender).catch(() => {});
   const { scannerState = {}, settings = {} } = await chrome.storage.local.get(['scannerState', 'settings']);
-  if (settings.runtimePaused) return;
+  if (!licenseActive(scannerState) || settings.runtimePaused) return;
   if (scannerState.targetTabId && scannerState.targetTabId !== sender.tab.id) return;
 
   const focusedAsset = focusedAssetFor(sender.tab.id, scannerState);
   if (!focusedAsset) return;
+  const focusMeta = scannerState.diagnostics?.focusedAsset || null;
+  const stableSince = Number(focusMeta?.stableSince || focusMeta?.at || 0);
+  if (!sameAsset(focusMeta?.asset, focusedAsset)) return;
+  if (!Number.isFinite(stableSince) || Date.now() - stableSince < FOCUS_STABLE_MS) return;
 
   const candidate = chooseCandidate(payload, focusedAsset);
   if (!candidate) return;
@@ -253,7 +266,12 @@ async function applyEmbeddedFeed(payload = {}, sender = {}) {
     },
     diagnostics: {
       ...(scannerState.diagnostics || {}),
-      focusedAsset: { asset: focusedAsset, at: scannerState.diagnostics?.focusedAsset?.at || Date.now(), source: 'chart-header' },
+      focusedAsset: {
+        asset: focusedAsset,
+        at: Date.now(),
+        stableSince: Number(scannerState.diagnostics?.focusedAsset?.stableSince || scannerState.diagnostics?.focusedAsset?.at || Date.now()),
+        source: 'chart-header'
+      },
       embeddedFeed: {
         frameHost,
         transport: candidate.transport || payload.primaryTransport || null,
