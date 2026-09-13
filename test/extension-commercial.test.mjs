@@ -92,6 +92,20 @@ test('platform readers remain wired to real CasaTrade controls', () => {
   assert.match(content, /comprar\|vender\|buy\|sell/);
 });
 
+test('network feed is strictly filtered to the asset focused in the CasaTrade chart', () => {
+  const manifest = JSON.parse(read('manifest.json'));
+  const focus = read('src/content/focused-asset.js');
+  const augment = read('src/background-augment.js');
+  assert.ok(manifest.content_scripts.some(x => (x.js || []).includes('src/content/focused-asset.js')));
+  assert.match(focus, /ATS_FOCUSED_ASSET/);
+  assert.match(focus, /aria-selected/);
+  assert.match(augment, /focusedAssets/);
+  assert.match(augment, /chooseCandidate\(payload = \{\}, focusedAsset = ''\)/);
+  assert.match(augment, /filter\(row => sameAsset\(row\.asset, focus\)\)/);
+  assert.match(augment, /if \(!focusedAsset\) return;/);
+  assert.match(augment, /historyKey = Object\.keys\(allHistory\)\.find\(k => sameAsset\(k, focusedAsset\)\)/);
+});
+
 test('trade handoff highlights but never executes financial action automatically', () => {
   const handoff = read('src/content/trade-handoff.js');
   assert.match(handoff, /ATS_HIGHLIGHT_TRADE/);
