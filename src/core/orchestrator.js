@@ -156,29 +156,26 @@ export function processSnapshot(snapshot = {}, state = {}) {
   }
 
   if (secondsRemaining <= 10) {
-    let locked = finalDecisions.get(key);
-    if (!locked || locked.bucket !== currentBucket) {
-      const confirmed = !!direction && score >= 58;
-      locked = {
-        bucket: currentBucket,
-        state: confirmed ? 'CONFIRM' : 'NO_TRADE',
-        direction: confirmed ? direction : null,
-        provisional: false,
-        reason: confirmed
-          ? reasonFor(liveResult, direction, true)
-          : 'Confirmação final sem força suficiente. Não entrar na próxima vela.',
-        score
-      };
-      finalDecisions.set(key, locked);
-    }
+    const confirmed = !!direction && score >= 58;
+    const latestDecision = {
+      bucket: currentBucket,
+      state: confirmed ? 'CONFIRM' : 'NO_TRADE',
+      direction: confirmed ? direction : null,
+      provisional: false,
+      reason: confirmed
+        ? reasonFor(liveResult, direction, true)
+        : 'Confirmação final sem força suficiente. Não entrar na próxima vela.',
+      score
+    };
+    finalDecisions.set(key, latestDecision);
     return {
       candles: closed,
       currentCandle: current,
       signal: baseSignal({
         ...common,
-        ...locked,
+        ...latestDecision,
         phase: 'FINAL',
-        score: locked.score,
+        score: latestDecision.score,
         targetStart
       })
     };
