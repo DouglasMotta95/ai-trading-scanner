@@ -9,7 +9,6 @@ const AUTHORITATIVE_LICENSE_ERRORS = new Set([
   'license_not_found',
   'license_inactive',
   'license_expired',
-  'device_locked',
   'device_limit_reached'
 ]);
 
@@ -56,6 +55,13 @@ function licenseStillValid(license = {}) {
   if (!normalized.expiresAt) return true;
   const expiresAt = expiryMs(normalized.expiresAt);
   return expiresAt != null && expiresAt > Date.now();
+}
+
+function cacheInsideReopenGrace(cached = null) {
+  const validatedAt = Number(cached?.validatedAt);
+  if (!Number.isFinite(validatedAt) || validatedAt <= 0) return false;
+  const age = Date.now() - validatedAt;
+  return age >= 0 && age <= REOPEN_CACHE_GRACE_MS;
 }
 
 function cachedResponse(cached, { syncPending = false, error = null } = {}) {
@@ -188,7 +194,7 @@ export async function validateLicense(settings = {}) {
     licenseKey = await saveLicenseKey(cached.licenseKey);
   }
 
-  if (cached) return cachedResponse(cached);
+  if (cached && cacheInsideReopenGrace(cached)) return cachedResponse(cached);
   if (!licenseKey) return { ok: false, error: 'license_required' };
 
   const r = await call(settings, '/v1/license/validate', {
@@ -227,5 +233,3 @@ export async function clearLicense() {
   await chrome.storage.local.remove([LICENSE_KEY, LAST_VALID_LICENSE_KEY]);
   await clearClientToken();
 }
-
-void REOPEN_CACHE_GRACE_MS;
