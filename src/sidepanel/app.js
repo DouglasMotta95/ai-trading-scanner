@@ -1,5 +1,4 @@
 const LAST_VALID_LICENSE_KEY = 'atsLastValidLicense';
-const LICENSE_KEY = 'atsLicenseKey';
 const $ = id => document.getElementById(id);
 let lastState = {};
 let reconnectBusy = false;
@@ -7,7 +6,7 @@ let reconnectBusy = false;
 if ($('extensionVersion')) $('extensionVersion').textContent = `v${chrome.runtime.getManifest().version}`;
 
 const num = v => v == null || v === '' ? null : Number.isFinite(Number(v)) ? Number(v) : null;
-const fresh = s => s.connection === 'online' && !!s.asset && num(s.price) != null && s.lastSeen && Date.now() - Number(s.lastSeen) < 8000;
+const fresh = s => licenseStillValid(s?.license) && s.connection === 'online' && !!s.asset && num(s.price) != null && s.lastSeen && Date.now() - Number(s.lastSeen) < 8000;
 const priceText = v => num(v) == null ? '—' : String(v);
 
 function expiryMs(value) {
@@ -38,6 +37,15 @@ const effectiveLicense = (stateLicense = {}, cachedEntry = null) => {
   return stateLicense;
 };
 
+const licenseErrorText = error => ({
+  license_required: 'Digite sua chave ATS para ativar.',
+  license_not_found: 'Chave não encontrada. Confira e tente novamente.',
+  license_inactive: 'Essa chave está inativa.',
+  license_expired: 'Essa chave está expirada.',
+  device_limit_reached: 'Essa chave atingiu o limite de dispositivos.',
+  backend_unreachable: 'Não foi possível falar com o servidor de licenças. A chave não foi ativada.'
+}[String(error || '')] || 'Não foi possível ativar a chave. Ela foi mantida no campo para você conferir.');
+
 function renderLicense(s = {}) {
   const l = s.license || {};
   const active = licenseStillValid(l);
@@ -52,9 +60,9 @@ function renderLicense(s = {}) {
     const expiry = expiryMs(l.expiresAt);
     $('licenseText').textContent = active
       ? `${l.planLabel || l.plan || 'Plano'} ativo${expiry ? ` • vence ${new Date(expiry).toLocaleDateString('pt-BR')}` : ''}.`
-      : l.error === 'backend_unreachable'
-        ? 'Servidor indisponível. O último acesso válido será mantido quando existir.'
-        : 'Ative sua licença para usar o scanner.';
+      : l.error
+        ? licenseErrorText(l.error)
+        : 'Ative sua licença para usar o scanner. O mercado só conecta depois da ativação.';
   }
 }
 
@@ -95,50 +103,55 @@ function renderRecentCandles(s = {}) {
 }
 
 function renderAnalysis(s = {}) {
-  const online = fresh(s) && s.platformId === 'casatrade';
+  const active = licenseStillValid(s.license);
+  const online = active && fresh(s) && s.platformId === 'casatrade';
   const sig = online ? (s.signal || {}) : {};
-  const current = sig.currentCandle || s.currentCandle || {};
+  const current = online ? (sig.currentCandle || s.currentCandle || {}) : {};
   const phase = sig.phase || 'ANALYZING';
 
   if ($('connectionBadge')) {
-    $('connectionBadge').textContent = online ? 'CONECTADO' : 'CONECTANDO';
+    $('connectionBadge').textContent = !active ? 'BLOQUEADO' : online ? 'CONECTADO' : 'CONECTANDO';
     $('connectionBadge').className = `badge ${online ? 'ok' : 'warn'}`;
   }
 
   if ($('analysisTitle')) {
-    $('analysisTitle').textContent = !online
-      ? 'Conectando à CasaTrade'
-      : !s.asset || s.price == null
-        ? 'Lendo mercado real…'
-        : phase === 'POSSIBLE'
-          ? `Pré-sinal: possível ${sig.direction === 'SELL' ? 'VENDA' : 'COMPRA'}`
-          : phase === 'FINAL'
-            ? 'Confirmação final da vela'
-            : 'Analisando vela atual';
+    $('analysisTitle').textContent = !active
+      ? 'Ative a licença para conectar'
+      : !online
+        ? 'Confirmando ativo aberto na CasaTrade…'
+        : !s.asset || s.price == null
+          ? 'Lendo mercado real…'
+          : phase === 'POSSIBLE'
+            ? `Pré-sinal: possível ${sig.direction === 'SELL' ? 'VENDA' : 'COMPRA'}`
+            : phase === 'FINAL'
+              ? 'Confirmação final da vela'
+              : 'Analisando vela atual';
   }
 
   if ($('asset')) $('asset').textContent = online && s.asset ? s.asset : '—';
   if ($('price')) $('price').textContent = online && s.price != null ? String(s.price) : '—';
   if ($('secondsRemaining')) $('secondsRemaining').textContent = online && num(sig.secondsRemaining) != null ? String(Math.max(0, Math.ceil(Number(sig.secondsRemaining)))) : '—';
-  if ($('timeframe')) $('timeframe').textContent = s.analysisTimeframe || sig.timeframe || s.timeframe || 'M1';
-  if ($('expiration')) $('expiration').textContent = s.targetExpiration || sig.targetExpiration || s.expiration || '—';
+  if ($('timeframe')) $('timeframe').textContent = online ? (s.analysisTimeframe || sig.timeframe || s.timeframe || 'M1') : '—';
+  if ($('expiration')) $('expiration').textContent = online ? (s.targetExpiration || sig.targetExpiration || s.expiration || '—') : '—';
   if ($('candleProgress')) $('candleProgress').style.width = `${online && num(sig.progress) != null ? Math.max(0, Math.min(100, Number(sig.progress))) : 0}%`;
 
   if ($('analysisReason')) {
-    $('analysisReason').textContent = online
-      ? (sig.phase === 'POSSIBLE'
-        ? 'Padrão encontrado. Ainda não entrar: a extensão continua acompanhando a vela até a confirmação final.'
-        : sig.phase === 'FINAL'
-          ? 'Janela final: o score continua sendo recalculado a cada novo tick até o fechamento.'
-          : sig.reason || 'Analisando as últimas velas + a vela atual em tempo real.')
-      : 'Abra a CasaTrade e mantenha a aba ativa. A conexão é automática.';
+    $('analysisReason').textContent = !active
+      ? 'Nenhum dado de mercado é analisado antes da licença ficar ATIVA.'
+      : online
+        ? (sig.phase === 'POSSIBLE'
+          ? 'Padrão encontrado. Ainda não entrar: a extensão continua acompanhando a vela até a confirmação final.'
+          : sig.phase === 'FINAL'
+            ? 'Janela final: o score continua sendo recalculado a cada novo tick até o fechamento.'
+            : sig.reason || 'Analisando somente o ativo realmente aberto na tela.')
+        : 'Aguardando confirmar o ativo selecionado e receber cotações correspondentes.';
   }
 
   if ($('currentOpen')) $('currentOpen').textContent = priceText(current.open);
   if ($('currentHigh')) $('currentHigh').textContent = priceText(current.high);
   if ($('currentLow')) $('currentLow').textContent = priceText(current.low);
-  if ($('currentClose')) $('currentClose').textContent = priceText(current.close ?? s.price);
-  renderRecentCandles(s);
+  if ($('currentClose')) $('currentClose').textContent = priceText(current.close);
+  renderRecentCandles(online ? s : { candles: [] });
 }
 
 function renderTradeActions(s = {}, online = false) {
@@ -174,7 +187,7 @@ function decisionTime(value) {
 
 function renderSeparatedSignalState(s = {}, online = false) {
   const sig = online ? (s.signal || {}) : {};
-  const last = s.lastConfirmed || null;
+  const last = online ? (s.lastConfirmed || null) : null;
 
   if ($('lastConfirmed')) {
     if (!last) {
@@ -219,7 +232,8 @@ function renderSeparatedSignalState(s = {}, online = false) {
 }
 
 function renderDecision(s = {}) {
-  const online = fresh(s) && s.platformId === 'casatrade';
+  const active = licenseStillValid(s.license);
+  const online = active && fresh(s) && s.platformId === 'casatrade';
   const sig = online ? (s.signal || {}) : {};
   const card = $('decisionCard');
   const banner = $('decisionBanner');
@@ -234,10 +248,16 @@ function renderDecision(s = {}) {
   let sub = 'O pré-sinal aparece nos últimos 30s e a decisão final é recalculada até o fechamento.';
   let bannerClass = 'waiting';
 
-  if (!online) {
-    title = 'AGUARDANDO CASATRADE';
-    decision = 'SEM LEITURA';
-    sub = 'A extensão conecta automaticamente quando a CasaTrade estiver ativa.';
+  if (!active) {
+    title = 'ATIVAÇÃO NECESSÁRIA';
+    badge = 'BLOQUEADO';
+    badgeClass = 'badge warn';
+    decision = '🔒 ATIVE A LICENÇA';
+    sub = 'O scanner só conecta e começa a analisar depois que a chave for validada.';
+  } else if (!online) {
+    title = 'CONFIRMANDO ATIVO';
+    decision = 'AGUARDANDO LEITURA REAL';
+    sub = 'Aguardando o ativo aberto na tela ficar estável e a cotação correspondente chegar.';
   } else if (sig.state === 'WATCH' && sig.direction) {
     const buy = sig.direction === 'BUY';
     title = `POSSÍVEL ${buy ? 'COMPRA' : 'VENDA'}`;
@@ -280,9 +300,22 @@ function renderDecision(s = {}) {
   if ($('decisionText')) $('decisionText').textContent = decision;
   if ($('decisionSubtext')) $('decisionSubtext').textContent = sub;
   renderSeparatedSignalState(s, online);
-  if ($('signalReason')) $('signalReason').textContent = online ? (sig.reason || sig.hint || 'Analisando o mercado.') : 'Plataforma não suportada/não conectado.';
+  if ($('signalReason')) $('signalReason').textContent = !active
+    ? 'Ative a licença para liberar a conexão com a CasaTrade.'
+    : online
+      ? (sig.reason || sig.hint || 'Analisando o mercado.')
+      : s.platformId && s.platformId !== 'casatrade'
+        ? 'Plataforma não suportada/não conectado.'
+        : 'Aguardando leitura real do ativo aberto.';
   if ($('signalScore')) $('signalScore').textContent = online && num(sig.score) != null ? `${Math.round(Number(sig.score))}/100` : '—';
-  if ($('targetTime')) $('targetTime').textContent = online && sig.targetLabel ? sig.targetLabel : '—';
+  if ($('targetTime')) {
+    const realEntry = num(s.lastConfirmed?.entryPrice);
+    $('targetTime').textContent = !online
+      ? '—'
+      : sig.state === 'CONFIRM'
+        ? 'AGUARDANDO ABERTURA REAL'
+        : realEntry != null ? String(realEntry) : '—';
+  }
   renderTradeActions(s, online);
 }
 
@@ -303,7 +336,7 @@ async function getState() {
 }
 
 async function autoConnect(force = false) {
-  if (reconnectBusy) return;
+  if (reconnectBusy || !licenseStillValid(lastState.license)) return;
   if (!force && fresh(lastState) && lastState.platformId === 'casatrade') return;
   reconnectBusy = true;
   try {
@@ -315,22 +348,36 @@ async function autoConnect(force = false) {
 }
 
 $('activateLicense')?.addEventListener('click', async () => {
-  const key = $('licenseKey')?.value?.trim();
-  if (!key) return;
-  const result = await chrome.runtime.sendMessage({ type: 'ATS_ACTIVATE_LICENSE', key }).catch(() => ({ ok: false }));
-  if (result?.ok && result?.license) {
-    await chrome.storage.local.set({
-      [LICENSE_KEY]: key,
-      [LAST_VALID_LICENSE_KEY]: {
-        license: { ...result.license, status: 'active', error: null, syncPending: false },
-        licenseKey: key,
-        clientTokenExpiresAt: Number(result.clientTokenExpiresAt) || 0,
-        validatedAt: Date.now()
-      }
-    }).catch(() => {});
-    if ($('licenseKey')) $('licenseKey').value = '';
+  const input = $('licenseKey');
+  const button = $('activateLicense');
+  const key = input?.value?.trim();
+  if (!key || button?.disabled) return;
+
+  if (button) {
+    button.disabled = true;
+    button.textContent = 'ATIVANDO…';
   }
-  await getState();
+  if ($('licenseText')) $('licenseText').textContent = 'Validando chave no servidor…';
+
+  try {
+    const result = await chrome.runtime.sendMessage({ type: 'ATS_ACTIVATE_LICENSE', key })
+      .catch(() => ({ ok: false, error: 'backend_unreachable' }));
+    const activated = !!result?.ok && licenseStillValid(result?.license);
+
+    if (activated) {
+      if (input) input.value = '';
+      await getState();
+      await autoConnect(true);
+    } else {
+      await getState();
+      if ($('licenseText')) $('licenseText').textContent = licenseErrorText(result?.error);
+    }
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = 'ATIVAR';
+    }
+  }
 });
 
 async function prepare(direction) {
@@ -350,10 +397,12 @@ chrome.storage.onChanged.addListener(changes => {
 });
 
 (async () => {
-  await autoConnect(true);
   await getState();
+  if (licenseStillValid(lastState.license)) await autoConnect(true);
   setInterval(() => getState().catch(() => {}), 500);
   setInterval(() => {
-    if (!fresh(lastState) || lastState.platformId !== 'casatrade') autoConnect().catch(() => {});
+    if (licenseStillValid(lastState.license) && (!fresh(lastState) || lastState.platformId !== 'casatrade')) {
+      autoConnect().catch(() => {});
+    }
   }, 2000);
 })();

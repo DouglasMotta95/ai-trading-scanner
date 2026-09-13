@@ -90,12 +90,26 @@ function baseSignal({ state = 'WAIT', direction = null, provisional = true, reas
 function completedDecision(decision = {}, fallback = {}) {
   const state = decision.state === 'CONFIRM' ? 'CONFIRM' : 'NO_TRADE';
   const targetStart = Number(decision.targetStart) || Number(decision.bucket) + Number(fallback.timeframeMs || 0) || null;
+  const candidateEntryPrice = state === 'CONFIRM' ? num(fallback.entryPrice) : null;
+  const entryConfirmed = state === 'CONFIRM'
+    ? fallback.entryConfirmed !== false && candidateEntryPrice != null
+    : null;
+  const entryPrice = entryConfirmed ? candidateEntryPrice : null;
+  const entryTime = entryConfirmed ? (Number(fallback.entryTime) || targetStart) : null;
   return {
     state,
     direction: state === 'CONFIRM' && ['BUY', 'SELL'].includes(decision.direction) ? decision.direction : null,
     score: Number(decision.score || 0),
     time: targetStart,
     targetStart,
+    entryPrice,
+    entryTime,
+    entryConfirmed,
+    entryStatus: state === 'CONFIRM' ? (entryConfirmed ? 'confirmed' : 'unconfirmed') : 'not_applicable',
+    entryReason: state === 'CONFIRM' && !entryConfirmed
+      ? (fallback.entryReason || 'Preço de entrada não confirmado: a vela-alvo não foi observada.')
+      : null,
+    capturedAt: entryConfirmed ? (Number(fallback.capturedAt) || null) : null,
     asset: decision.asset || fallback.asset || null,
     timeframe: decision.timeframe || fallback.timeframe || null
   };
@@ -105,7 +119,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
   const price = num(snapshot.price);
   if (!snapshot.asset || price == null) {
     return {
-      lastConfirmed: state.lastConfirmed || null,
+      lastConfirmed: null,
       signal: baseSignal({
         state: 'WAIT',
         reason: 'CasaTrade conectada. Aguardando ativo e cotação reais.'
@@ -160,16 +174,26 @@ export function processSnapshot(snapshot = {}, state = {}) {
     targetStart
   };
 
-  const stateLastConfirmed = state.lastConfirmed?.asset === snapshot.asset && state.lastConfirmed?.timeframe === analysisTimeframe
-    ? state.lastConfirmed
-    : null;
-  let lastConfirmed = completedDecisions.get(key) || stateLastConfirmed || null;
+  let lastConfirmed = completedDecisions.get(key) || null;
   const previousDecision = finalDecisions.get(key);
-  if (previousDecision && previousDecision.bucket !== currentBucket) {
+  if (previousDecision && currentBucket > previousDecision.bucket) {
+    const expectedBucket = Number(previousDecision.bucket) + tfMs;
+    const rawTarget = Number(previousDecision.targetStart);
+    const targetBucket = Number.isFinite(rawTarget) && rawTarget > 0
+      ? Math.round(rawTarget / tfMs) * tfMs
+      : expectedBucket;
+    const targetObserved = currentBucket === expectedBucket && targetBucket === expectedBucket;
+    const realEntryPrice = targetObserved ? (num(current?.open) ?? price) : null;
+
     lastConfirmed = completedDecision(previousDecision, {
       asset: snapshot.asset,
       timeframe: analysisTimeframe,
-      timeframeMs: tfMs
+      timeframeMs: tfMs,
+      entryPrice: realEntryPrice,
+      entryTime: targetObserved ? currentBucket : null,
+      capturedAt: targetObserved ? sampleAt : null,
+      entryConfirmed: targetObserved,
+      entryReason: targetObserved ? null : 'Preço de entrada não confirmado: a vela-alvo não foi observada.'
     });
     completedDecisions.set(key, lastConfirmed);
     finalDecisions.delete(key);
@@ -250,6 +274,23 @@ export function processSnapshot(snapshot = {}, state = {}) {
         : 'Analisando a vela atual. Aguardando padrão mais forte.'
     })
   };
+}
+
+export function serializeCompletedDecisions() {
+  return [...completedDecisions.entries()].slice(-50).map(([key, decision]) => ({
+    key,
+    decision: { ...decision }
+  }));
+}
+
+export function restoreCompletedDecisions(rows = []) {
+  completedDecisions.clear();
+  for (const row of Array.isArray(rows) ? rows.slice(-50) : []) {
+    const key = clean(row?.key);
+    const decision = row?.decision;
+    if (!key || !decision || typeof decision !== 'object') continue;
+    completedDecisions.set(key, { ...decision });
+  }
 }
 
 export function resetOrchestrator() {

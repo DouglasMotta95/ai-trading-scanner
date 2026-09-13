@@ -271,7 +271,8 @@
     let rows = networkCandidates();
     if (wanted) {
       const matching = rows.filter(c => c.asset === wanted || c.asset.replace(/ \(OTC\)$/, '') === noOtc);
-      if (matching.length) rows = matching;
+      if (!matching.length) return null;
+      rows = matching;
     }
     rows.sort((a, b) =>
       Number(b.selected === true) - Number(a.selected === true)
@@ -337,14 +338,15 @@
 
     const rows = recentFrameRows();
     const assetRows = rows.filter(r => r.asset).sort((a, b) => b.assetScore - a.assetScore || b.at - a.at);
-    const domAsset = assetRows[0]?.asset || lastAsset || '';
+    const explicitFocus = canonicalAsset(globalThis.__ATS_FOCUSED_ASSET_VALUE__ || '');
+    const domAsset = explicitFocus || assetRows[0]?.asset || lastAsset || '';
     const net = bestNetworkQuote(domAsset) || (!domAsset ? bestNetworkQuote('') : null);
     const asset = domAsset || net?.asset || null;
 
     const sameAssetRows = asset
       ? rows.filter(r => r.asset && canonicalAsset(r.asset).replace(/ \(OTC\)$/, '') === canonicalAsset(asset).replace(/ \(OTC\)$/, ''))
       : [];
-    const priceRows = [...sameAssetRows, ...rows]
+    const priceRows = (asset ? sameAssetRows : rows)
       .filter((r, i, arr) => r.price != null && arr.indexOf(r) === i)
       .sort((a, b) => Number(b.priceSource === 'buttons') - Number(a.priceSource === 'buttons') || b.at - a.at);
 

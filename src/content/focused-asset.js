@@ -118,6 +118,7 @@
     if (!force && asset === lastAsset && now - lastSentAt < 1000) return;
     lastAsset = asset;
     lastSentAt = now;
+    globalThis.__ATS_FOCUSED_ASSET_VALUE__ = asset;
     chrome.runtime.sendMessage({ type: 'ATS_FOCUSED_ASSET', asset, at: now }).catch(() => {});
   }
 
