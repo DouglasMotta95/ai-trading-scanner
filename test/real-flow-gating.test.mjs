@@ -14,14 +14,19 @@ function section(source, start, end) {
   return source.slice(a, b);
 }
 
-test('market connection and analysis are hard-gated by an active license', () => {
+test('market connection restores or validates cached license before rejecting access', () => {
   const background = read('src/background.js');
   const augment = read('src/background-augment.js');
   const panel = read('src/sidepanel/app.js');
 
   const connect = section(background, 'async function connectActiveTab()', 'function scanCasaTradeFrame');
-  assert.match(connect, /if \(!licenseActive\(scannerState\.license\)\)/);
-  assert.ok(connect.indexOf('licenseActive(scannerState.license)') < connect.indexOf('injectReaders(tab.id)'));
+  assert.match(connect, /restoreCachedLicense\(\)/);
+  assert.match(connect, /syncLicense\(settings, scannerState, true\)/);
+  assert.match(connect, /NON_RESTORABLE_LICENSE_STATUSES/);
+  const restoreIndex = connect.indexOf('restoreCachedLicense()');
+  const finalGateIndex = connect.lastIndexOf('if (!licenseActive(scannerState.license))');
+  assert.ok(restoreIndex >= 0 && restoreIndex < finalGateIndex);
+  assert.ok(finalGateIndex < connect.indexOf('injectReaders(tab.id)'));
 
   const apply = section(background, 'async function applySnapshot', 'async function directScanActiveTab');
   assert.match(apply, /licenseRequired\(settings\) && !licenseActive\(scannerState\.license\)/);
@@ -30,6 +35,23 @@ test('market connection and analysis are hard-gated by an active license', () =>
   assert.match(augment, /if \(!licenseActive\(scannerState\) \|\| settings\.runtimePaused\) return;/);
   assert.match(panel, /if \(reconnectBusy \|\| !licenseStillValid\(lastState\.license\)\) return;/);
   assert.match(panel, /Nenhum dado de mercado é analisado antes da licença ficar ATIVA/);
+});
+
+test('completed decisions persist in local storage but are scoped to the browser session', () => {
+  const background = read('src/background.js');
+  const orchestrator = read('src/core/orchestrator.js');
+
+  assert.match(background, /COMPLETED_DECISIONS_KEY = 'atsCompletedDecisions'/);
+  assert.match(background, /RUNTIME_SESSION_KEY = 'atsRuntimeSessionId'/);
+  assert.match(background, /chrome\.storage\.session\.get\(RUNTIME_SESSION_KEY\)/);
+  assert.match(background, /chrome\.storage\.local\.get\(COMPLETED_DECISIONS_KEY\)/);
+  assert.match(background, /\[COMPLETED_DECISIONS_KEY\]: \{ sessionId, rows, updatedAt: Date\.now\(\) \}/);
+  assert.match(background, /restoreCompletedDecisions\(cached\.rows\)/);
+  assert.match(background, /serializeCompletedDecisions\(\)/);
+  assert.match(background, /await ensureCompletedDecisionCache\(\)/);
+  assert.match(background, /await persistCompletedDecisionCache\(\)\.catch/);
+  assert.match(orchestrator, /export function serializeCompletedDecisions/);
+  assert.match(orchestrator, /export function restoreCompletedDecisions/);
 });
 
 test('activation only clears the key after a genuinely active response', () => {
