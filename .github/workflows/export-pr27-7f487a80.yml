@@ -1,0 +1,37 @@
+name: Export PR27 exact ZIP
+
+on:
+  push:
+    branches:
+      - artifact/pr27-7f487a80
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 7f487a80a1e9c91037c5432b6cce2aa2a103eb1e
+          fetch-depth: 0
+      - name: Build immutable repository ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "7f487a80a1e9c91037c5432b6cce2aa2a103eb1e"
+          git archive \
+            --format=zip \
+            --prefix=ai-trading-scanner-7f487a80/ \
+            --output=ai-trading-scanner-PR27-7f487a80.zip \
+            7f487a80a1e9c91037c5432b6cce2aa2a103eb1e
+          sha256sum ai-trading-scanner-PR27-7f487a80.zip > ai-trading-scanner-PR27-7f487a80.zip.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ai-trading-scanner-PR27-7f487a80
+          path: |
+            ai-trading-scanner-PR27-7f487a80.zip
+            ai-trading-scanner-PR27-7f487a80.zip.sha256
+          if-no-files-found: error
+          compression-level: 0
