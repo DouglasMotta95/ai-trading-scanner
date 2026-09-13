@@ -8,6 +8,12 @@ const DEFAULT_LICENSE = {
   status: 'unconfigured', plan: null, planLabel: null, dailyLimit: null, usedToday: 0,
   remainingToday: null, totalLimit: null, usedTotal: 0, remainingTotal: null, error: null
 };
+const AUTHORITATIVE_BACKGROUND_LICENSE_ERRORS = new Set([
+  'license_not_found',
+  'license_inactive',
+  'license_expired',
+  'device_limit_reached'
+]);
 const EMPTY_MARKET = {
   connection: 'offline', platformId: null, platformName: null, targetTabId: null,
   asset: null, marketType: 'unknown', instrumentType: 'unknown', timeframe: null,
@@ -41,19 +47,22 @@ const marketCleared = (state = {}, patch = {}) => ({
   ...state, ...EMPTY_MARKET, scanner: 'idle', license: state.license || DEFAULT_LICENSE, ...patch
 });
 
-function licenseError(r) {
+function licenseError(r, currentLicense = DEFAULT_LICENSE) {
   const error = r?.error || 'license_required';
+  if (!AUTHORITATIVE_BACKGROUND_LICENSE_ERRORS.has(error)) {
+    return { ...currentLicense, error, syncPending: true };
+  }
   const status = error === 'license_expired' ? 'expired'
-    : error === 'daily_limit_reached' || error === 'trial_limit_reached' ? 'limit'
-      : error === 'device_locked' || error === 'device_limit_reached' ? 'device_locked' : 'inactive';
-  return { status, error };
+    : error === 'device_limit_reached' ? 'device_locked'
+      : 'inactive';
+  return { ...currentLicense, status, error, syncPending: false };
 }
 
 async function syncLicense(settings = {}, state = {}, force = false) {
   if (!force && state.license?.status === 'active' && Date.now() - lastLicenseCheck < 30000) return state.license;
   const r = await validateLicense(settings);
   lastLicenseCheck = Date.now();
-  return r.ok ? { ...r.license, error: r.license?.error || null } : { ...DEFAULT_LICENSE, ...licenseError(r), ...(r.license || {}) };
+  return r.ok ? { ...r.license, error: r.license?.error || null } : licenseError(r, state.license || DEFAULT_LICENSE);
 }
 
 function feedQuality(state = {}) {
@@ -379,14 +388,20 @@ async function applySnapshot(snapshot, scannerState = {}, settings = {}, platfor
         ? 'Limite diário do plano atingido.'
         : usage.error === 'trial_limit_reached'
           ? 'O teste já utilizou todas as previsões disponíveis.'
-          : 'Licença inválida para liberar nova previsão.';
+          : 'Não foi possível registrar o uso desta previsão. O status da licença foi mantido.';
       next = merge(next, {
-        license: { ...license, ...(usage.license || {}), ...licenseError(usage) },
+        license,
         signal: { ...next.signal, state: 'NO_TRADE', direction: null, hint, reason: hint, provisional: true }
       });
     } else {
       next = merge(next, {
-        license: { ...license, ...(usage.license || {}), ...(usage.usage || {}), status: 'active', error: null }
+        license: {
+          ...license,
+          ...(usage.license || {}),
+          ...(usage.usage || {}),
+          status: license.status,
+          error: license.error || null
+        }
       });
       const record = localSignalRecord(next);
       await appendSessionHistory(record);
@@ -611,7 +626,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     chrome.storage.local.get(['scannerState', 'settings']).then(async ({ scannerState, settings = {} }) => {
       const r = await activateLicense(settings, message.key);
       lastLicenseCheck = 0;
-      const license = r.ok ? { ...r.license, error: null } : { ...DEFAULT_LICENSE, ...licenseError(r), ...(r.license || {}) };
+      const license = r.ok
+        ? { ...r.license, error: null }
+        : licenseError(r, scannerState?.license || DEFAULT_LICENSE);
       const next = merge(scannerState, { license });
       await chrome.storage.local.set({ scannerState: next });
       if (r.ok) {
