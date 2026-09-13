@@ -1,0 +1,787 @@
+name: Apply explicit scanner state queue migration
+
+on:
+  push:
+    branches: [fix/atomic-focused-signal-state-v2]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/atomic-focused-signal-state-v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Migrate every scannerState writer to the central queue
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          def replace_once(text, pattern, replacement, label):
+              out, count = re.subn(pattern, replacement, text, count=1, flags=re.S)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected one match, got {count}')
+              return out
+
+          # background-augment.js: all three writers execute inside updateScannerState(mutator).
+          p = Path('src/background-augment.js')
+          s = p.read_text()
+          s = s.replace(
+              "import { isCasaTradeHost } from './platforms/registry.js';",
+              "import { isCasaTradeHost } from './platforms/registry.js';\nimport { updateScannerState } from './services/scanner-state-atomic.js';"
+          )
+
+          keep = r'''async function keepRealFeedContext(payload = {}, sender = {}) {
+            if (Date.now() - lastRun < 80) return;
+            lastRun = Date.now();
+            const { settings = {} } = await chrome.storage.local.get('settings');
+            if (settings.runtimePaused) return;
+
+            return updateScannerState(scannerState => {
+              if (!licenseActive(scannerState)) return;
+              if (scannerState.targetTabId && sender?.tab?.id && scannerState.targetTabId !== sender.tab.id) return;
+
+              const recentCandles = sanitizeRecentCandles(payload.recentCandles || {});
+              const candidates = normalizedCandidates(payload);
+              const previousNetwork = scannerState.diagnostics?.network || {};
+              const mergedHistory = { ...(previousNetwork.recentCandles || {}) };
+              for (const [asset, rows] of Object.entries(recentCandles)) {
+                const previous = Array.isArray(mergedHistory[asset]) ? mergedHistory[asset] : [];
+                const byTime = new Map([...previous, ...rows].map(row => [`${row.time}|${row.timeframe || ''}`, row]));
+                mergedHistory[asset] = [...byTime.values()].sort((a, b) => a.time - b.time).slice(-240);
+              }
+
+              const previousCandidates = Array.isArray(previousNetwork.candidates) ? previousNetwork.candidates : [];
+              const mergedCandidates = [...candidates, ...previousCandidates].filter((c, index, arr) => {
+                const asset = normAsset(c?.asset);
+                const price = num(c?.price) ?? ((num(c?.bid) != null && num(c?.ask) != null) ? (num(c.bid) + num(c.ask)) / 2 : null);
+                if (!asset || price == null || price <= 0) return false;
+                return arr.findIndex(x => normAsset(x?.asset) === asset && clean(x?.transport) === clean(c?.transport)) === index;
+              }).slice(0, 180);
+
+              return {
+                ...scannerState,
+                marketHistory: mergedHistory,
+                diagnostics: {
+                  ...(scannerState.diagnostics || {}),
+                  network: {
+                    ...previousNetwork,
+                    messages: payload.messages || previousNetwork.messages || {},
+                    connections: payload.connections || previousNetwork.connections || {},
+                    endpoints: Array.isArray(payload.endpoints) ? payload.endpoints.slice(-30) : (previousNetwork.endpoints || []),
+                    keys: Array.isArray(payload.keys) ? payload.keys.slice(0, 180) : (previousNetwork.keys || []),
+                    candidates: mergedCandidates,
+                    candidateCount: mergedCandidates.length,
+                    recentCandles: mergedHistory,
+                    feedQuality: Math.max(Number(previousNetwork.feedQuality || 0), Number(payload.feedQuality || 0)),
+                    parser: { ...(previousNetwork.parser || {}), ...(payload.parser || {}) },
+                    primaryTransport: payload.primaryTransport || previousNetwork.primaryTransport || null,
+                    lastSeen: Date.now()
+                  }
+                }
+              };
+            });
+          }
+
+          '''
+          s = replace_once(s, r"async function keepRealFeedContext\(.*?\nasync function setFocusedAsset", keep + 'async function setFocusedAsset', 'keepRealFeedContext')
+
+          focus = r'''async function setFocusedAsset(asset, sender = {}) {
+            const focused = normAsset(asset);
+            if (!focused || !sender?.tab?.id || sender.frameId !== 0) return;
+
+            let senderHost = '';
+            try { senderHost = new URL(sender.url || sender.tab.url || '').hostname; } catch {}
+            if (!isCasaTradeHost(senderHost)) return;
+
+            const tabId = sender.tab.id;
+            const previousFocus = focusedAssets.get(tabId) || '';
+            focusedAssets.set(tabId, focused);
+
+            return updateScannerState(scannerState => {
+              if (!licenseActive(scannerState)) return;
+              if (scannerState.targetTabId && scannerState.targetTabId !== tabId) return;
+
+              const previousStored = scannerState.diagnostics?.focusedAsset || null;
+              const sameStoredFocus = sameAsset(previousStored?.asset, focused);
+              const changed = (!!previousFocus && !sameAsset(previousFocus, focused)) || (!!previousStored?.asset && !sameStoredFocus);
+              const stateAssetMismatch = scannerState.asset && !sameAsset(scannerState.asset, focused);
+              const stableSince = sameStoredFocus
+                ? Number(previousStored?.stableSince || previousStored?.at || Date.now())
+                : Date.now();
+              if (changed || stateAssetMismatch) resetOrchestrator();
+
+              return {
+                ...scannerState,
+                targetTabId: tabId,
+                ...(changed || stateAssetMismatch ? {
+                  asset: focused,
+                  price: null,
+                  candles: [],
+                  currentCandle: null,
+                  signal: null,
+                  lastSeen: Date.now()
+                } : {}),
+                diagnostics: {
+                  ...(scannerState.diagnostics || {}),
+                  focusedAsset: { asset: focused, at: Date.now(), stableSince, source: 'chart-header' }
+                }
+              };
+            });
+          }
+
+          '''
+          s = replace_once(s, r"async function setFocusedAsset\(.*?\nasync function applyEmbeddedFeed", focus + 'async function applyEmbeddedFeed', 'setFocusedAsset')
+
+          embedded = r'''async function applyEmbeddedFeed(payload = {}, sender = {}) {
+            let frameHost = '';
+            let topHost = '';
+            try { frameHost = new URL(sender?.url || '').hostname; } catch {}
+            try { topHost = new URL(sender?.tab?.url || '').hostname; } catch {}
+            if (!trustedEmbeddedHost(frameHost) || !isCasaTradeHost(topHost) || !sender?.tab?.id) return;
+
+            await keepRealFeedContext(payload, sender).catch(() => {});
+            const { settings = {} } = await chrome.storage.local.get('settings');
+            if (settings.runtimePaused) return;
+
+            return updateScannerState(scannerState => {
+              if (!licenseActive(scannerState)) return;
+              if (scannerState.targetTabId && scannerState.targetTabId !== sender.tab.id) return;
+
+              const focusedAsset = focusedAssetFor(sender.tab.id, scannerState);
+              if (!focusedAsset) return;
+              const focusMeta = scannerState.diagnostics?.focusedAsset || null;
+              const stableSince = Number(focusMeta?.stableSince || focusMeta?.at || 0);
+              if (!sameAsset(focusMeta?.asset, focusedAsset)) return;
+              if (!Number.isFinite(stableSince) || Date.now() - stableSince < FOCUS_STABLE_MS) return;
+
+              const candidate = chooseCandidate(payload, focusedAsset);
+              if (!candidate) return;
+
+              const allHistory = sanitizeRecentCandles(payload.recentCandles || {});
+              const historyKey = Object.keys(allHistory).find(k => sameAsset(k, focusedAsset));
+              const candles = historyKey ? allHistory[historyKey] : [];
+              const timeframe = normTf(candidate.timeframe) || candles.at(-1)?.timeframe || scannerState.analysisTimeframe || scannerState.timeframe || 'M1';
+              const expiration = normExp(candidate.expiration) || scannerState.targetExpiration || scannerState.expiration || null;
+              const secondsRemaining = num(candidate.secondsRemaining ?? payload.secondsRemaining);
+
+              const snapshot = {
+                platformId: 'casatrade',
+                platformName: 'CasaTrade',
+                connection: 'online',
+                asset: focusedAsset,
+                price: Number(candidate.price),
+                timeframe,
+                analysisTimeframe: timeframe,
+                expiration,
+                targetExpiration: expiration,
+                secondsRemaining,
+                serverTime: num(candidate.timestamp) || null,
+                candles,
+                capabilities: {
+                  structuredQuotes: true,
+                  candles: candles.length >= 3,
+                  expiration: !!expiration,
+                  multiAsset: false
+                }
+              };
+
+              const base = {
+                ...scannerState,
+                ...snapshot,
+                targetTabId: sender.tab.id,
+                scanner: 'scanning',
+                lastSeen: Date.now(),
+                platformControls: {
+                  ...(scannerState.platformControls || {}),
+                  observed: {
+                    ...(scannerState.platformControls?.observed || {}),
+                    timeframe,
+                    expiration,
+                    detected: { timeframe: !!timeframe, expiration: !!expiration },
+                    at: Date.now()
+                  }
+                },
+                diagnostics: {
+                  ...(scannerState.diagnostics || {}),
+                  focusedAsset: {
+                    asset: focusedAsset,
+                    at: Date.now(),
+                    stableSince: Number(scannerState.diagnostics?.focusedAsset?.stableSince || scannerState.diagnostics?.focusedAsset?.at || Date.now()),
+                    source: 'chart-header'
+                  },
+                  embeddedFeed: {
+                    frameHost,
+                    transport: candidate.transport || payload.primaryTransport || null,
+                    candidateCount: normalizedCandidates(payload).length,
+                    filteredTo: focusedAsset,
+                    candleCount: candles.length,
+                    at: Date.now()
+                  }
+                }
+              };
+
+              const processed = processSnapshot(snapshot, base);
+              return { ...base, ...processed, license: scannerState.license };
+            });
+          }
+
+          '''
+          s = replace_once(s, r"async function applyEmbeddedFeed\(.*?\nchrome\.runtime\.onMessage", embedded + 'chrome.runtime.onMessage', 'applyEmbeddedFeed')
+          p.write_text(s)
+
+          # background.js: explicit central reads/writes.
+          p = Path('src/background.js')
+          s = p.read_text()
+          s = s.replace(
+              "import { heartbeat, track } from './services/telemetry.js';",
+              "import { heartbeat, track } from './services/telemetry.js';\nimport { readScannerState, updateScannerState, replaceScannerState } from './services/scanner-state-atomic.js';"
+          )
+
+          supported = r'''async function ensureSupportedActiveTab() {
+            const { tab, platform } = await activeCasaTradeTab();
+            if (tab?.id && platform) return { scannerState: await readScannerState(), tab, platform };
+            const unsupportedHost = (() => { try { return new URL(tab?.url || '').hostname || null; } catch { return null; } })();
+            const cleared = await updateScannerState(current => marketCleared(current, {
+              diagnostics: { unsupportedHost }
+            }));
+            return { scannerState: cleared, tab, platform: null };
+          }
+
+          '''
+          s = replace_once(s, r"async function ensureSupportedActiveTab\(.*?\nasync function injectReaders", supported + 'async function injectReaders', 'ensureSupportedActiveTab')
+
+          connect = r'''async function connectActiveTab() {
+            const [{ settings = {} }, initialState] = await Promise.all([
+              chrome.storage.local.get('settings'),
+              readScannerState()
+            ]);
+            let scannerState = initialState;
+            const currentLicenseStatus = String(scannerState.license?.status || '').toLowerCase();
+            if (!licenseActive(scannerState.license) && !NON_RESTORABLE_LICENSE_STATUSES.has(currentLicenseStatus)) {
+              const restored = await restoreCachedLicense().catch(() => null);
+              let recoveredLicense = restored;
+              if (!licenseActive(recoveredLicense)) {
+                recoveredLicense = await syncLicense(settings, scannerState, true).catch(() => scannerState.license || DEFAULT_LICENSE);
+              }
+              if (licenseActive(recoveredLicense)) {
+                scannerState = await updateScannerState(current => merge(current, { license: recoveredLicense }));
+              }
+            }
+
+            if (!licenseActive(scannerState.license)) {
+              const locked = await updateScannerState(current => marketCleared(current, {
+                license: current.license || DEFAULT_LICENSE,
+                diagnostics: { ...(current.diagnostics || {}), access: { state: 'license_required', at: Date.now() } }
+              }));
+              return { ok: false, error: 'license_required', state: locked };
+            }
+
+            const { tab, platform } = await activeCasaTradeTab();
+            if (!tab?.id || !tab.url || !platform) {
+              const unsupportedHost = (() => { try { return new URL(tab?.url || '').hostname || null; } catch { return null; } })();
+              const next = await updateScannerState(current => marketCleared(current, {
+                diagnostics: { unsupportedHost }
+              }));
+              return { ok: false, error: 'platform_not_registered', state: next };
+            }
+
+            await injectReaders(tab.id);
+
+            const next = await updateScannerState(current => {
+              const sameTab = current.targetTabId === tab.id;
+              return merge(current, {
+                connection: sameTab && current.connection === 'online' ? 'online' : 'connecting',
+                platformId: platform.id,
+                platformName: platform.name,
+                targetTabId: tab.id,
+                scanner: 'scanning',
+                ...(sameTab ? {} : { asset: null, price: null, signal: null, platformControls: null }),
+                diagnostics: {
+                  ...(current.diagnostics || {}),
+                  target: { host: new URL(tab.url).hostname, tabId: tab.id, connectedAt: Date.now() }
+                }
+              });
+            });
+            telemetryEvent('platform_connected', { platformId: platform.id, platformName: platform.name }, settings);
+            return { ok: true, platform: { id: platform.id, name: platform.name }, tabId: tab.id, state: next };
+          }
+
+          '''
+          s = replace_once(s, r"async function connectActiveTab\(\) \{.*?\nfunction scanCasaTradeFrame", connect + 'function scanCasaTradeFrame', 'connectActiveTab')
+
+          apply = r'''async function applySnapshot(snapshot, _scannerState = {}, settings = {}, platform = { id: 'casatrade', name: 'CasaTrade' }) {
+            await ensureCompletedDecisionCache();
+            let becameConfirm = false;
+            let confirmedRecord = null;
+            let processedSnapshot = false;
+
+            const next = await updateScannerState(async scannerState => {
+              if (licenseRequired(settings) && !licenseActive(scannerState.license)) {
+                return marketCleared(scannerState, {
+                  license: scannerState.license || DEFAULT_LICENSE,
+                  diagnostics: { ...(scannerState.diagnostics || {}), access: { state: 'license_required', at: Date.now() } }
+                });
+              }
+
+              const license = await syncLicense(settings, scannerState);
+              if (licenseRequired(settings) && !licenseActive(license)) {
+                return marketCleared(scannerState, {
+                  license,
+                  diagnostics: { ...(scannerState.diagnostics || {}), access: { state: 'license_required', at: Date.now() } }
+                });
+              }
+
+              const focus = focusedAsset(scannerState);
+              const focusReady = !!focus && !!snapshot?.asset && sameAsset(snapshot.asset, focus) && focusStableFor(scannerState, focus);
+              if (!focusReady) {
+                return merge(scannerState, {
+                  license,
+                  scanner: 'scanning',
+                  platformId: platform.id,
+                  platformName: platform.name,
+                  connection: 'connecting',
+                  asset: focus || null,
+                  price: null,
+                  candles: [],
+                  currentCandle: null,
+                  signal: null,
+                  lastConfirmed: null,
+                  lastSeen: Date.now(),
+                  diagnostics: {
+                    ...(scannerState.diagnostics || {}),
+                    focusGate: {
+                      focusedAsset: focus || null,
+                      receivedAsset: normAsset(snapshot?.asset),
+                      stable: !!focus && focusStableFor(scannerState, focus),
+                      at: Date.now()
+                    }
+                  }
+                });
+              }
+
+              if (num(snapshot.price) == null) {
+                return merge(scannerState, {
+                  license,
+                  scanner: 'scanning',
+                  platformId: platform.id,
+                  platformName: platform.name,
+                  connection: 'connecting',
+                  asset: focus,
+                  price: null,
+                  signal: null,
+                  lastSeen: Date.now()
+                });
+              }
+
+              const analysisTimeframe = snapshot.timeframe || scannerState.analysisTimeframe || scannerState.timeframe || 'M1';
+              const targetExpiration = snapshot.expiration || scannerState.targetExpiration || scannerState.expiration || null;
+              const enriched = {
+                ...snapshot,
+                asset: focus,
+                platformId: platform.id,
+                platformName: platform.name,
+                analysisTimeframe,
+                targetExpiration,
+                candles: Array.isArray(snapshot.candles) ? snapshot.candles : historyForAsset(scannerState, focus)
+              };
+
+              const activeScanner = settings.runtimePaused ? 'idle' : 'scanning';
+              if (activeScanner !== 'scanning') {
+                return merge(scannerState, {
+                  license, scanner: 'idle', connection: 'offline', signal: null, price: null, lastSeen: null
+                });
+              }
+
+              processedSnapshot = true;
+              let candidate = merge(scannerState, {
+                ...enriched,
+                scanner: 'scanning',
+                license,
+                connection: 'online',
+                lastSeen: Date.now()
+              });
+              candidate = merge(candidate, processSnapshot(enriched, candidate));
+
+              const previousState = scannerState?.signal?.state || null;
+              const previousDirection = scannerState?.signal?.direction || null;
+              becameConfirm = candidate.signal?.state === 'CONFIRM'
+                && (previousState !== 'CONFIRM' || previousDirection !== candidate.signal?.direction);
+
+              if (becameConfirm) {
+                const usage = await consumeSignal(settings);
+                if (!usage.ok) {
+                  const hint = usage.error === 'daily_limit_reached'
+                    ? 'Limite diário do plano atingido.'
+                    : usage.error === 'trial_limit_reached'
+                      ? 'O teste já utilizou todas as previsões disponíveis.'
+                      : 'Não foi possível registrar o uso desta previsão. O status da licença foi mantido.';
+                  candidate = merge(candidate, {
+                    license,
+                    signal: { ...candidate.signal, state: 'NO_TRADE', direction: null, hint, reason: hint, provisional: true }
+                  });
+                } else {
+                  candidate = merge(candidate, {
+                    license: {
+                      ...license,
+                      ...(usage.license || {}),
+                      ...(usage.usage || {}),
+                      status: license.status,
+                      error: license.error || null
+                    }
+                  });
+                  confirmedRecord = localSignalRecord(candidate);
+                }
+              }
+
+              return telemetryState(candidate);
+            });
+
+            if (processedSnapshot) await persistCompletedDecisionCache().catch(() => {});
+            if (confirmedRecord) {
+              await appendSessionHistory(confirmedRecord);
+              await telemetryEvent('signal_confirmed', confirmedRecord, settings);
+            }
+            telemetryHeartbeat(next, settings, becameConfirm);
+            return next;
+          }
+
+          '''
+          s = replace_once(s, r"async function applySnapshot\(.*?\nasync function directScanActiveTab", apply + 'async function directScanActiveTab', 'applySnapshot')
+
+          # Direct scan reads wait behind the same state queue; its only direct write becomes queued.
+          s = s.replace("const { scannerState = {} } = await chrome.storage.local.get('scannerState');\n    return scannerState;", "return readScannerState();")
+          s = s.replace(
+              "const { scannerState = {}, settings = {} } = await chrome.storage.local.get(['scannerState', 'settings']);",
+              "const [{ settings = {} }, scannerState] = await Promise.all([chrome.storage.local.get('settings'), readScannerState()]);",
+              1
+          )
+          s = s.replace(
+              "      await chrome.storage.local.set({ scannerState: locked });\n      return locked;",
+              "      return updateScannerState(current => marketCleared(current, {\n        license: current.license || DEFAULT_LICENSE,\n        diagnostics: { ...(current.diagnostics || {}), access: { state: 'license_required', at: Date.now() } }\n      }));",
+              1
+          )
+          s = s.replace("const supported = await ensureSupportedActiveTab(scannerState);", "const supported = await ensureSupportedActiveTab();")
+          s = s.replace("const latest = (await chrome.storage.local.get('scannerState')).scannerState || scannerState;", "const latest = await readScannerState();")
+
+          # Trade intent is committed against the latest serialized state.
+          s = s.replace(
+              "const { scannerState = {}, settings = {} } = await chrome.storage.local.get(['scannerState', 'settings']);\n  if (!licenseActive(scannerState.license)) return { ok: false, error: 'license_required' };",
+              "const [{ settings = {} }, scannerState] = await Promise.all([chrome.storage.local.get('settings'), readScannerState()]);\n  if (!licenseActive(scannerState.license)) return { ok: false, error: 'license_required' };",
+              1
+          )
+          s = s.replace("const supported = await ensureSupportedActiveTab(scannerState);", "const supported = await ensureSupportedActiveTab();", 1)
+          s = s.replace(
+              "await chrome.storage.local.set({ scannerState: merge(scannerState, { tradeIntent: nextIntent }) });",
+              "await updateScannerState(current => merge(current, { tradeIntent: nextIntent }));"
+          )
+
+          install = r'''chrome.runtime.onInstalled.addListener(async () => {
+            const { settings = {} } = await chrome.storage.local.get('settings');
+            await updateScannerState(current => {
+              if (!Object.keys(current || {}).length) return DEFAULT_STATE;
+              if (!licenseActive(current.license)) return marketCleared(current, {
+                license: current.license || DEFAULT_LICENSE,
+                diagnostics: {}
+              });
+              return;
+            });
+            await chrome.storage.local.set({
+              settings: {
+                ...settings,
+                scanPreferences: { tradeAmount: null, stake: null, timeframe: 'AUTO', expiration: 'AUTO', ...(settings.scanPreferences || {}) }
+              }
+            });
+            await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
+          });
+
+          '''
+          s = replace_once(s, r"chrome\.runtime\.onInstalled\.addListener\(async \(\) => \{.*?\nchrome\.tabs\?\.onActivated", install + 'chrome.tabs?.onActivated', 'onInstalled')
+
+          # Listener reads are synchronized with the queue.
+          s = s.replace("const { scannerState = {} } = await chrome.storage.local.get('scannerState');", "const scannerState = await readScannerState();")
+          s = s.replace("await ensureSupportedActiveTab(scannerState);", "await ensureSupportedActiveTab();")
+          s = s.replace("if (scannerState.targetTabId === tabId || tab?.active) await ensureSupportedActiveTab(scannerState);", "if (scannerState.targetTabId === tabId || tab?.active) await ensureSupportedActiveTab();")
+
+          # Activation handler.
+          s = s.replace(
+              "chrome.storage.local.get(['scannerState', 'settings']).then(async ({ scannerState = {}, settings = {} }) => {\n      const r = await activateLicense(settings, message.key);",
+              "Promise.all([readScannerState(), chrome.storage.local.get('settings')]).then(async ([scannerState, { settings = {} }]) => {\n      const r = await activateLicense(settings, message.key);"
+          )
+          s = s.replace(
+              "      let next = marketCleared(scannerState, {\n        license,\n        diagnostics: { access: { state: activated ? 'licensed' : 'license_required', at: Date.now() } }\n      });\n      await chrome.storage.local.set({ scannerState: next });",
+              "      let next = await updateScannerState(current => marketCleared(current, {\n        license,\n        diagnostics: { access: { state: activated ? 'licensed' : 'license_required', at: Date.now() } }\n      }));"
+          )
+
+          # Validate license handler.
+          s = s.replace(
+              "chrome.storage.local.get(['scannerState', 'settings']).then(async ({ scannerState, settings = {} }) => {\n      const license = await syncLicense(settings, scannerState, true);\n      const next = merge(scannerState, { license });\n      await chrome.storage.local.set({ scannerState: next });",
+              "Promise.all([readScannerState(), chrome.storage.local.get('settings')]).then(async ([scannerState, { settings = {} }]) => {\n      const license = await syncLicense(settings, scannerState, true);\n      const next = await updateScannerState(current => merge(current, { license }));"
+          )
+
+          # Clear license handler.
+          clear = r'''if (message?.type === 'ATS_CLEAR_LICENSE') {
+            (async () => {
+              await clearLicense();
+              await clearCompletedDecisionCache();
+              await updateScannerState(current => marketCleared(current, { license: DEFAULT_LICENSE, diagnostics: {} }));
+              sendResponse({ ok: true });
+            })().catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
+            return true;
+          }
+
+          '''
+          s = replace_once(s, r"if \(message\?\.type === 'ATS_CLEAR_LICENSE'\) \{.*?\n  if \(message\?\.type === 'ATS_GET_PLATFORM_CONFIG'\)", clear + "  if (message?.type === 'ATS_GET_PLATFORM_CONFIG')", 'clear license handler')
+
+          # DOM catalog handler.
+          dom = r'''if (message?.type === 'ATS_DOM_CATALOG') {
+            const p = message.payload || {};
+            (async () => {
+              let host = '';
+              try { host = new URL(sender?.url || '').hostname; } catch {}
+              const platform = detectPlatform(host);
+              let response = { ok: true, ignored: true };
+              await updateScannerState(current => {
+                if (!licenseActive(current.license)) {
+                  response = { ok: true, ignored: true, reason: 'license_required' };
+                  return;
+                }
+                if (!platform || !sameTarget(current, sender)) return;
+                const candidate = Array.isArray(p.candidates) ? p.candidates.find(x => x?.asset && num(x?.price) != null) : null;
+                const marketCatalog = candidate ? {
+                  assets: [candidate.asset],
+                  timeframes: p.timeframe ? [p.timeframe] : [],
+                  expirations: p.expiration ? [p.expiration] : [],
+                  lines: [candidate]
+                } : current.marketCatalog || { assets: [], timeframes: [], expirations: [], lines: [] };
+                response = { ok: true, catalog: marketCatalog };
+                return merge(current, {
+                  marketCatalog,
+                  diagnostics: {
+                    ...(current.diagnostics || {}),
+                    domCatalog: { ...p, lastSeen: Date.now() }
+                  }
+                });
+              });
+              sendResponse(response);
+            })().catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
+            return true;
+          }
+
+          '''
+          s = replace_once(s, r"if \(message\?\.type === 'ATS_DOM_CATALOG'\) \{.*?\n  if \(message\?\.type === 'ATS_NETWORK_DIAGNOSTIC'\)", dom + "  if (message?.type === 'ATS_NETWORK_DIAGNOSTIC')", 'DOM catalog handler')
+
+          network = r'''if (message?.type === 'ATS_NETWORK_DIAGNOSTIC') {
+            const p = message.payload || {};
+            (async () => {
+              let host = '';
+              try { host = new URL(sender?.url || '').hostname; } catch {}
+              const platform = detectPlatform(host);
+              let response = { ok: true, ignored: true };
+              await updateScannerState(current => {
+                if (!licenseActive(current.license)) {
+                  response = { ok: true, ignored: true, reason: 'license_required' };
+                  return;
+                }
+                if (!platform || !sameTarget(current, sender)) return;
+                const network = {
+                  messages: p.messages || {},
+                  connections: p.connections || {},
+                  endpoints: Array.isArray(p.endpoints) ? p.endpoints.slice(-30) : [],
+                  keys: Array.isArray(p.keys) ? p.keys.slice(0, 180) : [],
+                  candidates: Array.isArray(p.candidates) ? p.candidates.slice(0, 180).map(x => ({ ...x, source: 'network' })) : [],
+                  candidateCount: Number(p.candidateCount) || 0,
+                  recentCandles: p.recentCandles || {},
+                  feedQuality: Number(p.feedQuality || 0),
+                  parser: p.parser || {},
+                  primaryTransport: p.primaryTransport || null,
+                  lastSeen: Date.now()
+                };
+                response = { ok: true };
+                return merge(current, {
+                  platformId: platform.id,
+                  platformName: platform.name,
+                  diagnostics: { ...(current.diagnostics || {}), network }
+                });
+              });
+              sendResponse(response);
+            })().catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
+            return true;
+          }
+
+          '''
+          s = replace_once(s, r"if \(message\?\.type === 'ATS_NETWORK_DIAGNOSTIC'\) \{.*?\n  if \(message\?\.type === 'ATS_PLATFORM_SNAPSHOT'\)", network + "  if (message?.type === 'ATS_PLATFORM_SNAPSHOT')", 'network diagnostic handler')
+
+          # Platform snapshot reads the state through the queue before sender validation.
+          s = s.replace(
+              "chrome.storage.local.get(['scannerState', 'settings']).then(async ({ scannerState = {}, settings = {} }) => {",
+              "Promise.all([readScannerState(), chrome.storage.local.get('settings')]).then(async ([scannerState, { settings = {} }]) => {",
+              1
+          )
+
+          # GET_STATE lock is a serialized update.
+          get_state = r'''if (message?.type === 'ATS_GET_STATE') {
+            readScannerState().then(async scannerState => {
+              if (!licenseActive(scannerState.license)) {
+                const locked = await updateScannerState(current => marketCleared(current, {
+                  license: current.license || DEFAULT_LICENSE,
+                  diagnostics: { ...(current.diagnostics || {}), access: { state: 'license_required', at: Date.now() } }
+                }));
+                return sendResponse(merge(locked));
+              }
+              try {
+                const state = await directScanActiveTab();
+                sendResponse(merge(state));
+              } catch {
+                const supported = await ensureSupportedActiveTab();
+                sendResponse(merge(supported.scannerState));
+              }
+            });
+            return true;
+          }
+
+          '''
+          s = replace_once(s, r"if \(message\?\.type === 'ATS_GET_STATE'\) \{.*?\n  if \(message\?\.type === 'ATS_SET_SCANNER'\)", get_state + "  if (message?.type === 'ATS_SET_SCANNER')", 'get state handler')
+
+          set_scanner = r'''if (message?.type === 'ATS_SET_SCANNER') {
+            Promise.all([readScannerState(), chrome.storage.local.get('settings')]).then(async ([scannerState, { settings = {} }]) => {
+              const scanning = !!message.enabled;
+              if (scanning && licenseRequired(settings) && !licenseActive(scannerState.license)) {
+                return sendResponse({ ok: false, error: 'license_required', state: marketCleared(scannerState, { license: scannerState.license || DEFAULT_LICENSE }) });
+              }
+              const supported = await ensureSupportedActiveTab();
+              if (!supported.platform) return sendResponse({ ok: false, error: 'platform_not_registered', state: supported.scannerState });
+              const license = scanning ? await syncLicense(settings, supported.scannerState, true) : supported.scannerState.license;
+              if (scanning && licenseRequired(settings) && !licenseActive(license)) return sendResponse({ ok: false, error: 'license_required' });
+              const next = await updateScannerState(current => merge(current, { scanner: scanning ? 'scanning' : 'idle', license }));
+              sendResponse({ ok: true, state: next });
+            }).catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
+            return true;
+          }
+
+          '''
+          s = replace_once(s, r"if \(message\?\.type === 'ATS_SET_SCANNER'\) \{.*?\n  if \(message\?\.type === 'ATS_RESET_STATE'\)", set_scanner + "  if (message?.type === 'ATS_RESET_STATE')", 'set scanner handler')
+
+          reset = r'''if (message?.type === 'ATS_RESET_STATE') {
+            Promise.all([
+              clearCompletedDecisionCache(),
+              replaceScannerState(DEFAULT_STATE),
+              chrome.storage.session.remove(SESSION_HISTORY_KEY)
+            ]).then(() => sendResponse({ ok: true }));
+            return true;
+          }
+          '''
+          s = replace_once(s, r"if \(message\?\.type === 'ATS_RESET_STATE'\) \{.*?\n  \}\n\}\);", reset + '\n});', 'reset handler')
+
+          p.write_text(s)
+
+          # Rewrite atomic tests around the explicit queue and add static enforcement.
+          p = Path('test/atomic-focused-state.test.mjs')
+          s = p.read_text()
+          first_three = r'''test('scannerState updates are serialized and each mutator reads the latest committed state', async () => {
+            const { backing, local } = makeStorage({
+              scannerState: {
+                asset: 'EUR/USD (OTC)',
+                candles: [{ time: 1, close: 1.1 }],
+                signal: { state: 'WAIT', direction: null },
+                diagnostics: { seed: true }
+              }
+            });
+
+            const atomic = await loadAtomic(local, 'serialized');
+            const firstWrite = atomic.updateScannerState(async current => {
+              await new Promise(resolve => setTimeout(resolve, 10));
+              return {
+                ...current,
+                candles: [{ time: 2, close: 1.2 }],
+                signal: { state: 'CONFIRM', direction: 'BUY' }
+              };
+            });
+            const secondWrite = atomic.updateScannerState(current => ({
+              ...current,
+              diagnostics: { ...current.diagnostics, network: { lastSeen: 2 } }
+            }));
+
+            await Promise.all([firstWrite, secondWrite]);
+            assert.deepEqual(backing.scannerState.candles, [{ time: 2, close: 1.2 }]);
+            assert.deepEqual(backing.scannerState.signal, { state: 'CONFIRM', direction: 'BUY' });
+            assert.deepEqual(backing.scannerState.diagnostics, { seed: true, network: { lastSeen: 2 } });
+          });
+
+          test('explicit state replacement can delete properties without stale patch reconstruction', async () => {
+            const { backing, local } = makeStorage({
+              scannerState: {
+                asset: 'EUR/USD (OTC)',
+                diagnostics: {
+                  focusedAsset: { asset: 'EUR/USD (OTC)' },
+                  network: { lastSeen: 1 },
+                  access: { state: 'licensed' }
+                }
+              }
+            });
+            const atomic = await loadAtomic(local, 'deletions');
+            await atomic.updateScannerState(current => ({ ...current, diagnostics: {} }));
+            assert.deepEqual(backing.scannerState.diagnostics, {});
+          });
+
+          test('all scannerState writers use one explicit central queue without monkey-patching storage', () => {
+            const atomic = read('src/services/scanner-state-atomic.js');
+            assert.match(atomic, /let scannerStateWriteQueue = Promise\.resolve\(\)/);
+            assert.match(atomic, /export function updateScannerState\(mutator\)/);
+            assert.match(atomic, /const task = scannerStateWriteQueue\.then/);
+            assert.match(atomic, /const current = await storedScannerState\(\)/);
+            assert.match(atomic, /const proposed = await mutator\(clone\(current\)\)/);
+            assert.doesNotMatch(atomic, /chrome\.storage\.local\.get\s*=/);
+            assert.doesNotMatch(atomic, /chrome\.storage\.local\.set\s*=/);
+
+            for (const file of ['src/background.js', 'src/background-augment.js']) {
+              const source = read(file);
+              assert.match(source, /updateScannerState/);
+              assert.doesNotMatch(source, /chrome\.storage\.local\.set\s*\(\s*\{\s*scannerState\b/);
+              assert.doesNotMatch(source, /updates\.scannerState\s*=/);
+            }
+
+            const augment = read('src/background-augment.js');
+            for (const fn of ['keepRealFeedContext', 'setFocusedAsset', 'applyEmbeddedFeed']) {
+              const start = augment.indexOf(`async function ${fn}`);
+              assert.ok(start >= 0);
+              const end = augment.indexOf('\nasync function ', start + 1) >= 0
+                ? augment.indexOf('\nasync function ', start + 1)
+                : augment.indexOf('\nchrome.runtime.onMessage', start + 1);
+              assert.match(augment.slice(start, end), /updateScannerState\(scannerState =>/);
+            }
+          });
+
+          '''
+          s = replace_once(s, r"test\('scannerState writes are serialized patches.*?\n(?=test\('asset identity ignores OTC label only)", first_three, 'atomic first tests')
+          p.write_text(s)
+
+          # Static hard-fail: after migration no direct scannerState write may survive in either background module.
+          for file in ['src/background.js', 'src/background-augment.js']:
+              source = Path(file).read_text()
+              if re.search(r"chrome\.storage\.local\.set\s*\(\s*\{\s*scannerState\b", source):
+                  raise SystemExit(f'direct scannerState write remains in {file}')
+              if 'updates.scannerState =' in source:
+                  raise SystemExit(f'indirect scannerState write remains in {file}')
+      - name: Validate syntax
+        run: |
+          node --check src/services/scanner-state-atomic.js
+          node --check src/background-augment.js
+          node --check src/background.js
+      - name: Run full tests
+        run: cd backend && npm test
+      - name: Commit migration
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add src/services/scanner-state-atomic.js src/background-augment.js src/background.js test/atomic-focused-state.test.mjs
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "fix: serialize all scanner state writers through one queue"
+          git push origin HEAD:fix/atomic-focused-signal-state-v2
