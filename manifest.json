@@ -67,6 +67,7 @@
       ],
       "js": [
         "src/content/network-bridge.js",
+        "src/content/embedded-feed-bridge.js",
         "src/content/generic-adapter.js",
         "src/content/platform-sync.js"
       ],
