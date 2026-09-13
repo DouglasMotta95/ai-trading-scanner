@@ -90,12 +90,17 @@ function baseSignal({ state = 'WAIT', direction = null, provisional = true, reas
 function completedDecision(decision = {}, fallback = {}) {
   const state = decision.state === 'CONFIRM' ? 'CONFIRM' : 'NO_TRADE';
   const targetStart = Number(decision.targetStart) || Number(decision.bucket) + Number(fallback.timeframeMs || 0) || null;
+  const entryPrice = state === 'CONFIRM' ? num(fallback.entryPrice) : null;
+  const entryTime = state === 'CONFIRM' ? (Number(fallback.entryTime) || targetStart) : null;
   return {
     state,
     direction: state === 'CONFIRM' && ['BUY', 'SELL'].includes(decision.direction) ? decision.direction : null,
     score: Number(decision.score || 0),
     time: targetStart,
     targetStart,
+    entryPrice,
+    entryTime,
+    capturedAt: state === 'CONFIRM' ? (Number(fallback.capturedAt) || null) : null,
     asset: decision.asset || fallback.asset || null,
     timeframe: decision.timeframe || fallback.timeframe || null
   };
@@ -105,7 +110,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
   const price = num(snapshot.price);
   if (!snapshot.asset || price == null) {
     return {
-      lastConfirmed: state.lastConfirmed || null,
+      lastConfirmed: null,
       signal: baseSignal({
         state: 'WAIT',
         reason: 'CasaTrade conectada. Aguardando ativo e cotação reais.'
@@ -160,16 +165,21 @@ export function processSnapshot(snapshot = {}, state = {}) {
     targetStart
   };
 
-  const stateLastConfirmed = state.lastConfirmed?.asset === snapshot.asset && state.lastConfirmed?.timeframe === analysisTimeframe
-    ? state.lastConfirmed
-    : null;
-  let lastConfirmed = completedDecisions.get(key) || stateLastConfirmed || null;
+  // lastConfirmed is runtime-only. Never revive a decision persisted by an older browser/extension session.
+  let lastConfirmed = completedDecisions.get(key) || null;
   const previousDecision = finalDecisions.get(key);
   if (previousDecision && previousDecision.bucket !== currentBucket) {
+    // The entry becomes real only after the target candle actually opens. Prefer the
+    // opening price supplied by CasaTrade for the new candle; fall back to the first
+    // real quote observed in that candle when the feed does not expose OHLC yet.
+    const realEntryPrice = num(current?.open) ?? price;
     lastConfirmed = completedDecision(previousDecision, {
       asset: snapshot.asset,
       timeframe: analysisTimeframe,
-      timeframeMs: tfMs
+      timeframeMs: tfMs,
+      entryPrice: realEntryPrice,
+      entryTime: currentBucket,
+      capturedAt: sampleAt
     });
     completedDecisions.set(key, lastConfirmed);
     finalDecisions.delete(key);
