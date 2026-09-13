@@ -1,4 +1,5 @@
 import { processSnapshot, resetOrchestrator, serializeCompletedDecisions, restoreCompletedDecisions } from './core/orchestrator.js';
+import { resolveMarketEvidence, marketHistoryFor, acquisitionStage } from './core/market-evidence.js';
 import { detectPlatform } from './platforms/registry.js';
 import { activateLicense, validateLicense, consumeSignal, clearLicense, licenseRequired, restoreCachedLicense } from './services/license.js';
 import { heartbeat, track } from './services/telemetry.js';
@@ -269,7 +270,12 @@ async function connectActiveTab() {
       ...(sameTab ? {} : { asset: null, price: null, signal: null, platformControls: null }),
       diagnostics: {
         ...(current.diagnostics || {}),
-        target: { host: new URL(tab.url).hostname, tabId: tab.id, connectedAt: Date.now() }
+        target: { host: new URL(tab.url).hostname, tabId: tab.id, connectedAt: Date.now() },
+        acquisition: {
+          stage: 'confirming_asset',
+          reason: 'CasaTrade conectada. Confirmando o ativo aberto.',
+          at: Date.now()
+        }
       }
     });
   });
@@ -369,6 +375,7 @@ function scanCasaTradeFrame() {
     if (sell == null && /\b(vender|sell)\b/.test(f)) sell = values[values.length - 1];
   }
   let price = buy != null && sell != null ? (buy + sell) / 2 : (buy ?? sell ?? null);
+  let priceSource = price != null ? 'buttons' : null;
 
   if (price == null) {
     const rows = [];
@@ -388,6 +395,7 @@ function scanCasaTradeFrame() {
     }
     rows.sort((a, b) => b.score - a.score);
     price = rows[0]?.value ?? null;
+    if (price != null) priceSource = 'chart';
   }
 
   const normalizeTf = value => {
@@ -433,16 +441,34 @@ function scanCasaTradeFrame() {
   const score = (asset ? 55 : 0) + (price != null ? 45 : 0) + (expiration ? 8 : 0) + (amount != null ? 6 : 0);
 
   return {
-    asset, price, buy, sell, timeframe, expiration, amount, instrumentType, marketType,
+    asset, price, priceSource, buy, sell, timeframe, expiration, amount, instrumentType, marketType,
     score, frameUrl: location.href
   };
 }
 
 function historyForAsset(state = {}, asset = '') {
-  const history = state?.diagnostics?.network?.recentCandles || {};
-  const wanted = clean(asset).toUpperCase().replace(/\s*\(OTC\)\s*$/, '');
-  const key = Object.keys(history).find(k => clean(k).toUpperCase().replace(/\s*\(OTC\)\s*$/, '') === wanted);
-  return key && Array.isArray(history[key]) ? history[key].slice(-120) : [];
+  return marketHistoryFor(state, asset);
+}
+
+function evidenceFocusGate(evidence = {}, snapshot = {}) {
+  const focused = evidence.assetSource?.startsWith('focused');
+  return {
+    state: evidence.asset ? (focused ? 'ready' : 'fallback') : 'blocked',
+    focusedAsset: evidence.focusAsset || null,
+    receivedAsset: normAsset(snapshot?.asset) || null,
+    resolvedAsset: evidence.asset || null,
+    assetSource: evidence.assetSource || null,
+    priceSource: evidence.priceSource || null,
+    stable: evidence.focusStable === true,
+    reliable: evidence.focusReliable === true,
+    corroborated: evidence.focusCorroborated === true,
+    reason: !evidence.asset
+      ? evidence.reason
+      : focused
+        ? (evidence.focusStable ? null : 'Foco liberado por evidência consistente do mesmo ativo; aguardando 2s não bloqueia a leitura.')
+        : `FocusGate em fallback seguro: usando ${evidence.assetSource || 'evidência alternativa'} sem inventar ativo.`,
+    at: Date.now()
+  };
 }
 
 async function applySnapshot(snapshot, _scannerState = {}, settings = {}, platform = { id: 'casatrade', name: 'CasaTrade' }) {
@@ -467,16 +493,18 @@ async function applySnapshot(snapshot, _scannerState = {}, settings = {}, platfo
       });
     }
 
-    const focus = focusedAsset(scannerState);
-    const focusReady = !!focus && !!snapshot?.asset && sameAsset(snapshot.asset, focus) && focusStableFor(scannerState, focus);
-    if (!focusReady) {
+    const evidence = resolveMarketEvidence(snapshot, scannerState, { focusStableMs: FOCUS_STABLE_MS });
+    const focusGate = evidenceFocusGate(evidence, snapshot);
+    const resolvedAsset = normAsset(evidence.asset);
+
+    if (!resolvedAsset) {
       return merge(scannerState, {
         license,
         scanner: 'scanning',
         platformId: platform.id,
         platformName: platform.name,
         connection: 'connecting',
-        asset: focus || null,
+        asset: null,
         price: null,
         candles: [],
         currentCandle: null,
@@ -485,40 +513,70 @@ async function applySnapshot(snapshot, _scannerState = {}, settings = {}, platfo
         lastSeen: Date.now(),
         diagnostics: {
           ...(scannerState.diagnostics || {}),
-          focusGate: {
-            focusedAsset: focus || null,
-            receivedAsset: normAsset(snapshot?.asset),
-            stable: !!focus && focusStableFor(scannerState, focus),
+          ...(snapshot?.diagnostics || {}),
+          focusGate,
+          acquisition: {
+            stage: 'confirming_asset',
+            reason: evidence.reason || 'Ativo não confirmado: aguardando foco, DOM ou feed de rede.',
+            assetSource: null,
+            priceSource: null,
+            candleCount: 0,
+            requiredCandles: 3,
             at: Date.now()
           }
         }
       });
     }
 
-    if (num(snapshot.price) == null) {
+    const fallbackHistory = historyForAsset(scannerState, resolvedAsset);
+    if (num(evidence.price) == null) {
       return merge(scannerState, {
         license,
         scanner: 'scanning',
         platformId: platform.id,
         platformName: platform.name,
         connection: 'connecting',
-        asset: focus,
+        asset: resolvedAsset,
         price: null,
+        candles: fallbackHistory,
+        currentCandle: null,
         signal: null,
-        lastSeen: Date.now()
+        lastSeen: Date.now(),
+        diagnostics: {
+          ...(scannerState.diagnostics || {}),
+          ...(snapshot?.diagnostics || {}),
+          focusGate,
+          acquisition: {
+            stage: 'reading_price',
+            reason: evidence.reason || `Ativo ${resolvedAsset} confirmado. Aguardando preço real.`,
+            assetSource: evidence.assetSource,
+            priceSource: null,
+            candleCount: fallbackHistory.length,
+            requiredCandles: 3,
+            at: Date.now()
+          }
+        }
       });
     }
 
+    if (scannerState.asset && !sameAsset(scannerState.asset, resolvedAsset)) resetOrchestrator();
+
     const analysisTimeframe = snapshot.timeframe || scannerState.analysisTimeframe || scannerState.timeframe || 'M1';
     const targetExpiration = snapshot.expiration || scannerState.targetExpiration || scannerState.expiration || null;
+    const snapshotAsset = normAsset(snapshot?.asset);
+    const snapshotCandles = (!snapshotAsset || sameAsset(snapshotAsset, resolvedAsset)) && Array.isArray(snapshot.candles)
+      ? snapshot.candles
+      : [];
+    const candles = snapshotCandles.length ? snapshotCandles : fallbackHistory;
     const enriched = {
       ...snapshot,
-      asset: focus,
+      asset: resolvedAsset,
+      price: Number(evidence.price),
       platformId: platform.id,
       platformName: platform.name,
       analysisTimeframe,
       targetExpiration,
-      candles: Array.isArray(snapshot.candles) ? snapshot.candles : historyForAsset(scannerState, focus)
+      candles
     };
 
     const activeScanner = settings.runtimePaused ? 'idle' : 'scanning';
@@ -534,9 +592,47 @@ async function applySnapshot(snapshot, _scannerState = {}, settings = {}, platfo
       scanner: 'scanning',
       license,
       connection: 'online',
-      lastSeen: Date.now()
+      lastSeen: Date.now(),
+      diagnostics: {
+        ...(scannerState.diagnostics || {}),
+        ...(snapshot?.diagnostics || {}),
+        focusGate,
+        acquisition: {
+          stage: candles.length >= 3 ? 'analyzing_current' : 'reading_history',
+          reason: candles.length >= 3
+            ? 'Ativo e preço confirmados. Analisando a vela atual.'
+            : `Lendo histórico de velas (${candles.length}/3).`,
+          assetSource: evidence.assetSource,
+          priceSource: evidence.priceSource,
+          candleCount: candles.length,
+          requiredCandles: 3,
+          at: Date.now()
+        }
+      }
     });
     candidate = merge(candidate, processSnapshot(enriched, candidate));
+    const processedCount = Math.max(0, Number(candidate.signal?.candleCount ?? candidate.candles?.length ?? 0));
+    const stage = acquisitionStage(candidate.signal, processedCount);
+    candidate = merge(candidate, {
+      diagnostics: {
+        ...(candidate.diagnostics || {}),
+        focusGate,
+        acquisition: {
+          ...(candidate.diagnostics?.acquisition || {}),
+          stage,
+          reason: stage === 'reading_history'
+            ? `Lendo histórico de velas (${processedCount}/3).`
+            : stage === 'analyzing_current'
+              ? 'Histórico mínimo pronto. Analisando a vela atual.'
+              : 'Analisando a vela atual e calculando o diagnóstico da próxima vela.',
+          assetSource: evidence.assetSource,
+          priceSource: evidence.priceSource,
+          candleCount: processedCount,
+          requiredCandles: 3,
+          at: Date.now()
+        }
+      }
+    });
 
     const previousState = scannerState?.signal?.state || null;
     const previousDirection = scannerState?.signal?.direction || null;
@@ -553,7 +649,7 @@ async function applySnapshot(snapshot, _scannerState = {}, settings = {}, platfo
             : 'Não foi possível registrar o uso desta previsão. O status da licença foi mantido.';
         candidate = merge(candidate, {
           license,
-          signal: { ...candidate.signal, state: 'NO_TRADE', direction: null, hint, reason: hint, provisional: true }
+          signal: { ...candidate.signal, state: 'NO_TRADE', direction: null, diagnosis: 'WAIT', hint, reason: hint, provisional: true }
         });
       } else {
         candidate = merge(candidate, {
@@ -583,19 +679,13 @@ async function applySnapshot(snapshot, _scannerState = {}, settings = {}, platfo
 
 async function directScanActiveTab(force = false) {
   if (!force && directScanPromise) return directScanPromise;
-  if (!force && Date.now() - lastDirectScanAt < 650) {
-    return readScannerState();
-  }
+  if (!force && Date.now() - lastDirectScanAt < 650) return readScannerState();
 
   directScanPromise = (async () => {
     lastDirectScanAt = Date.now();
     const [{ settings = {} }, scannerState] = await Promise.all([chrome.storage.local.get('settings'), readScannerState()]);
 
     if (!licenseActive(scannerState.license)) {
-      const locked = marketCleared(scannerState, {
-        license: scannerState.license || DEFAULT_LICENSE,
-        diagnostics: { ...(scannerState.diagnostics || {}), access: { state: 'license_required', at: Date.now() } }
-      });
       return updateScannerState(current => marketCleared(current, {
         license: current.license || DEFAULT_LICENSE,
         diagnostics: { ...(current.diagnostics || {}), access: { state: 'license_required', at: Date.now() } }
@@ -626,66 +716,74 @@ async function directScanActiveTab(force = false) {
 
     const latest = await readScannerState();
     const focus = focusedAsset(latest);
-    const matchedRows = focus ? rows.filter(x => sameAsset(x.asset, focus)) : [];
-    const best = matchedRows.find(x => x.asset && x.price != null) || matchedRows[0] || null;
+    const focusRows = focus ? rows.filter(x => x.asset && sameAsset(x.asset, focus)) : [];
+    const bestFocused = focusRows.find(x => x.asset && num(x.price) != null) || null;
+    const bestFallback = rows.find(x => x.asset && num(x.price) != null) || rows.find(x => x.asset) || null;
+    const priceOnly = rows.find(x => num(x.price) != null) || null;
+    const best = bestFocused || bestFallback || priceOnly;
+    const observedAsset = normAsset(best?.asset || focus || '');
+    const observedPrice = num(best?.price) ?? (focus && priceOnly ? num(priceOnly.price) : null);
+    const history = historyForAsset(latest, observedAsset || focus);
 
-    if (!focus || !best) {
+    if (!observedAsset && observedPrice == null) {
       return applySnapshot({
         platformId: platform.id,
         platformName: platform.name,
         connection: 'connecting',
-        asset: focus || null,
-        price: null
+        asset: null,
+        price: null,
+        diagnostics: { directScan: { framesSeen: rows.length, at: Date.now() } }
       }, latest, settings, platform);
     }
 
     const observed = {
-      amount: best.amount ?? null,
-      timeframe: best.timeframe || null,
-      expiration: best.expiration || null,
+      amount: best?.amount ?? null,
+      timeframe: best?.timeframe || null,
+      expiration: best?.expiration || null,
       detected: {
-        amount: best.amount != null,
-        timeframe: !!best.timeframe,
-        expiration: !!best.expiration
+        amount: best?.amount != null,
+        timeframe: !!best?.timeframe,
+        expiration: !!best?.expiration
       },
       sources: { amount: 'direct', timeframe: 'direct', expiration: 'direct' },
       at: Date.now()
     };
 
+    const assetSource = bestFocused ? 'focused-dom' : best?.asset ? 'dom-fallback' : focus ? 'focused-price-fallback' : null;
+    const priceSource = best?.priceSource || (best?.buy != null || best?.sell != null ? 'buttons' : observedPrice != null ? 'chart' : null);
     const snapshot = {
       platformId: platform.id,
       platformName: platform.name,
-      connection: 'online',
-      asset: focus,
-      price: num(best.price),
-      timeframe: best.timeframe || 'M1',
-      expiration: best.expiration || null,
-      instrumentType: best.instrumentType || 'unknown',
-      marketType: /\(OTC\)$/i.test(focus) ? 'otc' : (best.marketType || 'regular'),
+      connection: observedAsset && observedPrice != null ? 'online' : 'connecting',
+      asset: observedAsset || null,
+      price: observedPrice,
+      timeframe: best?.timeframe || 'M1',
+      expiration: best?.expiration || null,
+      instrumentType: best?.instrumentType || 'unknown',
+      marketType: /\(OTC\)$/i.test(observedAsset) ? 'otc' : (best?.marketType || 'regular'),
       serverTime: null,
+      candles: history,
       capabilities: {
         structuredQuotes: false,
-        candles: historyForAsset(latest, focus).length >= 3,
-        expiration: !!best.expiration,
+        candles: history.length >= 3,
+        expiration: !!best?.expiration,
         multiAsset: false
       },
       diagnostics: {
-        ...(latest.diagnostics || {}),
+        assetSource,
+        priceSource,
         directScan: {
-          frameUrl: best.frameUrl || null,
-          score: Number(best.score || 0),
-          buy: best.buy ?? null,
-          sell: best.sell ?? null,
+          frameUrl: best?.frameUrl || null,
+          score: Number(best?.score || 0),
+          buy: best?.buy ?? null,
+          sell: best?.sell ?? null,
           framesSeen: rows.length,
-          filteredTo: focus,
+          filteredTo: observedAsset || focus || null,
+          usedFocusFallback: !!focus && !bestFocused,
           at: Date.now()
         }
       },
-      platformControls: {
-        aligned: false,
-        observed,
-        checkedAt: Date.now()
-      }
+      platformControls: { aligned: false, observed, checkedAt: Date.now() }
     };
 
     return applySnapshot(snapshot, latest, settings, platform);

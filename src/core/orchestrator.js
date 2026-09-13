@@ -56,18 +56,22 @@ function currentFromSnapshot(candles = [], bucket, timeframeMsValue, timeframeLa
 }
 
 function reasonFor(result = {}, direction = null, final = false) {
-  if (!result?.recent?.ready) return 'Lendo as velas anteriores e a vela atual.';
-  if (!direction) return final ? 'Padrão perdeu força. Não entrar na próxima vela.' : 'Sem direção firme ainda. Continuando a análise.';
-  const side = direction === 'BUY' ? 'compra' : 'venda';
-  if (result.recent?.breakout === direction) return `${final ? 'Confirmado' : 'Possível'} ${side}: rompimento + vela atual favorecem a direção.`;
-  if (result.recent?.rejection === direction) return `${final ? 'Confirmado' : 'Possível'} ${side}: rejeição + vela atual favorecem a direção.`;
-  return `${final ? 'Confirmado' : 'Possível'} ${side}: sequência das últimas velas + vela atual mantêm a direção.`;
+  if (!result?.recent?.ready) return 'AGUARDAR — ainda faltam velas suficientes para avaliar a próxima vela.';
+  if (!direction) return final ? 'AGUARDAR — o padrão perdeu força. Não entrar na próxima vela.' : 'AGUARDAR — ainda não há direção firme para a próxima vela.';
+  const side = direction === 'BUY' ? 'COMPRA' : 'VENDA';
+  if (result.recent?.breakout === direction) return `${side} — ${final ? 'rompimento confirmado' : 'rompimento em formação'} e a vela atual favorece a direção.`;
+  if (result.recent?.rejection === direction) return `${side} — ${final ? 'rejeição confirmada' : 'rejeição em formação'} e a vela atual favorece a direção.`;
+  return `${side} — a sequência das últimas velas e a vela atual mantêm a direção.`;
 }
 
 function baseSignal({ state = 'WAIT', direction = null, provisional = true, reason, timeframe = 'M1', expiration = null, candleCount = 0, secondsRemaining = null, progress = null, currentCandle = null, score = 0, analysisDirection = null, analysisScore = null, phase = 'ANALYZING', targetStart = null } = {}) {
+  const diagnosis = ['WATCH', 'CONFIRM'].includes(state) && ['BUY', 'SELL'].includes(direction)
+    ? direction
+    : 'WAIT';
   return {
     state,
     direction,
+    diagnosis,
     provisional,
     phase,
     hint: reason,
@@ -122,7 +126,8 @@ export function processSnapshot(snapshot = {}, state = {}) {
       lastConfirmed: null,
       signal: baseSignal({
         state: 'WAIT',
-        reason: 'CasaTrade conectada. Aguardando ativo e cotação reais.'
+        phase: 'CONNECTING',
+        reason: 'AGUARDAR — confirmando ativo e cotação reais da CasaTrade.'
       })
     };
   }
@@ -207,8 +212,8 @@ export function processSnapshot(snapshot = {}, state = {}) {
       signal: baseSignal({
         ...common,
         state: 'SEARCHING',
-        phase: 'ANALYZING',
-        reason: `Lendo histórico real: ${candleCount}/3 velas fechadas disponíveis.`
+        phase: 'HISTORY',
+        reason: `Lendo histórico de velas fechadas: ${candleCount}/3 disponíveis.`
       })
     };
   }
@@ -222,7 +227,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
       provisional: false,
       reason: confirmed
         ? reasonFor(liveResult, direction, true)
-        : 'Confirmação final sem força suficiente. Não entrar na próxima vela.',
+        : 'AGUARDAR — confirmação final sem força suficiente. Não entrar na próxima vela.',
       score,
       targetStart,
       asset: snapshot.asset,
@@ -270,8 +275,8 @@ export function processSnapshot(snapshot = {}, state = {}) {
       provisional: true,
       phase: 'ANALYZING',
       reason: secondsRemaining > 30
-        ? `Analisando até 9 velas fechadas + a vela atual. Pré-sinal abre nos últimos 30s.`
-        : 'Analisando a vela atual. Aguardando padrão mais forte.'
+        ? 'AGUARDAR — analisando as velas fechadas e a vela atual. O pré-sinal abre nos últimos 30s.'
+        : 'AGUARDAR — a vela atual ainda não formou um padrão forte o suficiente.'
     })
   };
 }
