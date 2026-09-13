@@ -3,6 +3,7 @@ import { analyzeCandles } from './analysis.js';
 
 const builders = new Map();
 const finalDecisions = new Map();
+const completedDecisions = new Map();
 const num = v => v == null || v === '' ? null : Number.isFinite(Number(v)) ? Number(v) : null;
 const clean = v => String(v ?? '').trim();
 
@@ -63,7 +64,7 @@ function reasonFor(result = {}, direction = null, final = false) {
   return `${final ? 'Confirmado' : 'Possível'} ${side}: sequência das últimas velas + vela atual mantêm a direção.`;
 }
 
-function baseSignal({ state = 'WAIT', direction = null, provisional = true, reason, timeframe = 'M1', expiration = null, candleCount = 0, secondsRemaining = null, progress = null, currentCandle = null, score = 0, phase = 'ANALYZING', targetStart = null } = {}) {
+function baseSignal({ state = 'WAIT', direction = null, provisional = true, reason, timeframe = 'M1', expiration = null, candleCount = 0, secondsRemaining = null, progress = null, currentCandle = null, score = 0, analysisDirection = null, analysisScore = null, phase = 'ANALYZING', targetStart = null } = {}) {
   return {
     state,
     direction,
@@ -79,8 +80,24 @@ function baseSignal({ state = 'WAIT', direction = null, provisional = true, reas
     progress,
     currentCandle,
     score,
+    analysisDirection,
+    analysisScore: analysisScore == null ? score : analysisScore,
     targetStart,
     targetLabel: targetStart ? new Date(targetStart).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : null
+  };
+}
+
+function completedDecision(decision = {}, fallback = {}) {
+  const state = decision.state === 'CONFIRM' ? 'CONFIRM' : 'NO_TRADE';
+  const targetStart = Number(decision.targetStart) || Number(decision.bucket) + Number(fallback.timeframeMs || 0) || null;
+  return {
+    state,
+    direction: state === 'CONFIRM' && ['BUY', 'SELL'].includes(decision.direction) ? decision.direction : null,
+    score: Number(decision.score || 0),
+    time: targetStart,
+    targetStart,
+    asset: decision.asset || fallback.asset || null,
+    timeframe: decision.timeframe || fallback.timeframe || null
   };
 }
 
@@ -88,6 +105,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
   const price = num(snapshot.price);
   if (!snapshot.asset || price == null) {
     return {
+      lastConfirmed: state.lastConfirmed || null,
       signal: baseSignal({
         state: 'WAIT',
         reason: 'CasaTrade conectada. Aguardando ativo e cotação reais.'
@@ -136,16 +154,31 @@ export function processSnapshot(snapshot = {}, state = {}) {
     progress,
     currentCandle: current ? { ...current } : null,
     score,
+    analysisDirection: direction,
+    analysisScore: score,
     targetStart
   };
 
+  const stateLastConfirmed = state.lastConfirmed?.asset === snapshot.asset && state.lastConfirmed?.timeframe === analysisTimeframe
+    ? state.lastConfirmed
+    : null;
+  let lastConfirmed = completedDecisions.get(key) || stateLastConfirmed || null;
   const previousDecision = finalDecisions.get(key);
-  if (previousDecision && previousDecision.bucket !== currentBucket) finalDecisions.delete(key);
+  if (previousDecision && previousDecision.bucket !== currentBucket) {
+    lastConfirmed = completedDecision(previousDecision, {
+      asset: snapshot.asset,
+      timeframe: analysisTimeframe,
+      timeframeMs: tfMs
+    });
+    completedDecisions.set(key, lastConfirmed);
+    finalDecisions.delete(key);
+  }
 
   if (candleCount < 3 || !current) {
     return {
       candles: closed,
       currentCandle: current || null,
+      lastConfirmed,
       signal: baseSignal({
         ...common,
         state: 'SEARCHING',
@@ -165,12 +198,16 @@ export function processSnapshot(snapshot = {}, state = {}) {
       reason: confirmed
         ? reasonFor(liveResult, direction, true)
         : 'Confirmação final sem força suficiente. Não entrar na próxima vela.',
-      score
+      score,
+      targetStart,
+      asset: snapshot.asset,
+      timeframe: analysisTimeframe
     };
     finalDecisions.set(key, latestDecision);
     return {
       candles: closed,
       currentCandle: current,
+      lastConfirmed,
       signal: baseSignal({
         ...common,
         ...latestDecision,
@@ -185,6 +222,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
     return {
       candles: closed,
       currentCandle: current,
+      lastConfirmed,
       signal: baseSignal({
         ...common,
         state: 'WATCH',
@@ -199,6 +237,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
   return {
     candles: closed,
     currentCandle: current,
+    lastConfirmed,
     signal: baseSignal({
       ...common,
       state: 'WAIT',
@@ -215,4 +254,5 @@ export function processSnapshot(snapshot = {}, state = {}) {
 export function resetOrchestrator() {
   builders.clear();
   finalDecisions.clear();
+  completedDecisions.clear();
 }
