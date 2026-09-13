@@ -117,6 +117,65 @@ test('final decision recalculates on every new tick inside the last 10 seconds',
   assert.equal(stronger.signal.targetStart, bucket + minute);
 });
 
+test('live analysis direction remains visible before the pre-signal window', () => {
+  resetOrchestrator();
+  const minute = 60_000;
+  const bucket = Math.floor(1_700_175_000_000 / minute) * minute;
+  const candles = [
+    { time: bucket - 4 * minute, open: 1.00, high: 1.02, low: .99, close: 1.018, timeframe: 'M1' },
+    { time: bucket - 3 * minute, open: 1.018, high: 1.04, low: 1.01, close: 1.038, timeframe: 'M1' },
+    { time: bucket - 2 * minute, open: 1.038, high: 1.06, low: 1.03, close: 1.058, timeframe: 'M1' },
+    { time: bucket - minute, open: 1.058, high: 1.08, low: 1.05, close: 1.078, timeframe: 'M1' },
+    { time: bucket, open: 1.078, high: 1.10, low: 1.075, close: 1.098, timeframe: 'M1' }
+  ];
+  const out = processSnapshot({
+    platformId: 'casatrade', asset: 'EUR/USD (OTC)', price: 1.098,
+    timeframe: 'M1', analysisTimeframe: 'M1', connection: 'online',
+    serverTime: bucket + 15_000, candles
+  }, { connection: 'online' });
+  assert.equal(out.signal.phase, 'ANALYZING');
+  assert.equal(out.signal.direction, null);
+  assert.equal(out.signal.analysisDirection, 'BUY');
+  assert.equal(out.signal.analysisScore, out.signal.score);
+});
+
+test('completed final decision is exposed as last confirmed after candle rollover', () => {
+  resetOrchestrator();
+  const minute = 60_000;
+  const bucket = Math.floor(1_700_190_000_000 / minute) * minute;
+  const closed = [
+    { time: bucket - 4 * minute, open: 1.00, high: 1.02, low: .99, close: 1.018, timeframe: 'M1' },
+    { time: bucket - 3 * minute, open: 1.018, high: 1.04, low: 1.01, close: 1.038, timeframe: 'M1' },
+    { time: bucket - 2 * minute, open: 1.038, high: 1.06, low: 1.03, close: 1.058, timeframe: 'M1' },
+    { time: bucket - minute, open: 1.058, high: 1.08, low: 1.05, close: 1.078, timeframe: 'M1' }
+  ];
+
+  const final = processSnapshot({
+    platformId: 'casatrade', asset: 'EUR/USD (OTC)', price: 1.11,
+    timeframe: 'M1', analysisTimeframe: 'M1', connection: 'online',
+    serverTime: bucket + 55_000,
+    candles: [...closed, { time: bucket, open: 1.078, high: 1.115, low: 1.075, close: 1.11, timeframe: 'M1' }]
+  }, { connection: 'online' });
+  assert.equal(final.signal.state, 'CONFIRM');
+
+  const next = processSnapshot({
+    platformId: 'casatrade', asset: 'EUR/USD (OTC)', price: 1.112,
+    timeframe: 'M1', analysisTimeframe: 'M1', connection: 'online',
+    serverTime: bucket + minute + 5_000,
+    candles: [
+      ...closed,
+      { time: bucket, open: 1.078, high: 1.115, low: 1.075, close: 1.11, timeframe: 'M1' },
+      { time: bucket + minute, open: 1.11, high: 1.113, low: 1.109, close: 1.112, timeframe: 'M1' }
+    ]
+  }, { connection: 'online' });
+
+  assert.equal(next.lastConfirmed.state, 'CONFIRM');
+  assert.equal(next.lastConfirmed.direction, 'BUY');
+  assert.equal(next.lastConfirmed.time, bucket + minute);
+  assert.equal(next.lastConfirmed.asset, 'EUR/USD (OTC)');
+  assert.equal(next.lastConfirmed.timeframe, 'M1');
+});
+
 test('CasaTrade countdown overrides wall-clock countdown when provided', () => {
   resetOrchestrator();
   const minute = 60_000;
