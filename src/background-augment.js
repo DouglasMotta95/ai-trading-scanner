@@ -3,6 +3,7 @@ import { isCasaTradeHost } from './platforms/registry.js';
 
 const allowedTransports = new Set(['ws', 'fetch', 'xhr', 'rendered', 'worker', 'sharedworker', 'broadcast', 'serviceworker', 'window']);
 const quotes = new Set(['USDT','USDC','USD','EUR','GBP','JPY','AUD','CAD','CHF','NZD','BRL','BTC','ETH']);
+const focusedAssets = new Map();
 let lastRun = 0;
 const num = v => v == null || v === '' ? null : Number.isFinite(Number(v)) ? Number(v) : null;
 const clean = v => String(v ?? '').trim();
@@ -26,6 +27,12 @@ const normAsset = v => {
   const m = s.match(/^([A-Z0-9]{2,16})\/([A-Z0-9]{2,12})$/);
   if (!m || !quotes.has(m[2])) return '';
   return `${m[1]}/${m[2]}${otc ? ' (OTC)' : ''}`;
+};
+
+const sameAsset = (a, b) => {
+  const left = normAsset(a);
+  const right = normAsset(b);
+  return !!left && !!right && left === right;
 };
 
 const normTf = v => {
@@ -75,8 +82,10 @@ function normalizedCandidates(payload = {}) {
   }).filter(c => c.asset && c.price != null && c.price > 0 && (!c.transport || allowedTransports.has(c.transport)));
 }
 
-function chooseCandidate(payload = {}) {
-  const rows = normalizedCandidates(payload);
+function chooseCandidate(payload = {}, focusedAsset = '') {
+  const focus = normAsset(focusedAsset);
+  if (!focus) return null;
+  const rows = normalizedCandidates(payload).filter(row => sameAsset(row.asset, focus));
   rows.sort((a, b) =>
     Number(b?.selected === true) - Number(a?.selected === true)
     || Number(b?.confidence || 0) - Number(a?.confidence || 0)
@@ -84,6 +93,13 @@ function chooseCandidate(payload = {}) {
     || Number(b?.observedAt || 0) - Number(a?.observedAt || 0)
   );
   return rows[0] || null;
+}
+
+function focusedAssetFor(tabId, scannerState = {}) {
+  const inMemory = normAsset(focusedAssets.get(tabId));
+  if (inMemory) return inMemory;
+  const stored = normAsset(scannerState?.diagnostics?.focusedAsset?.asset);
+  return stored || '';
 }
 
 async function keepRealFeedContext(payload = {}, sender = {}) {
@@ -137,6 +153,42 @@ async function keepRealFeedContext(payload = {}, sender = {}) {
   });
 }
 
+async function setFocusedAsset(asset, sender = {}) {
+  const focused = normAsset(asset);
+  if (!focused || !sender?.tab?.id || sender.frameId !== 0) return;
+
+  let senderHost = '';
+  try { senderHost = new URL(sender.url || sender.tab.url || '').hostname; } catch {}
+  if (!isCasaTradeHost(senderHost)) return;
+
+  const tabId = sender.tab.id;
+  const previousFocus = focusedAssets.get(tabId) || '';
+  focusedAssets.set(tabId, focused);
+
+  const { scannerState = {} } = await chrome.storage.local.get('scannerState');
+  if (scannerState.targetTabId && scannerState.targetTabId !== tabId) return;
+
+  const changed = !!previousFocus && !sameAsset(previousFocus, focused);
+  const stateAssetMismatch = scannerState.asset && !sameAsset(scannerState.asset, focused);
+  const next = {
+    ...scannerState,
+    targetTabId: tabId,
+    ...(changed || stateAssetMismatch ? {
+      asset: focused,
+      price: null,
+      candles: [],
+      currentCandle: null,
+      signal: null,
+      lastSeen: Date.now()
+    } : {}),
+    diagnostics: {
+      ...(scannerState.diagnostics || {}),
+      focusedAsset: { asset: focused, at: Date.now(), source: 'chart-header' }
+    }
+  };
+  await chrome.storage.local.set({ scannerState: next });
+}
+
 async function applyEmbeddedFeed(payload = {}, sender = {}) {
   let frameHost = '';
   let topHost = '';
@@ -149,12 +201,14 @@ async function applyEmbeddedFeed(payload = {}, sender = {}) {
   if (settings.runtimePaused) return;
   if (scannerState.targetTabId && scannerState.targetTabId !== sender.tab.id) return;
 
-  const candidate = chooseCandidate(payload);
+  const focusedAsset = focusedAssetFor(sender.tab.id, scannerState);
+  if (!focusedAsset) return;
+
+  const candidate = chooseCandidate(payload, focusedAsset);
   if (!candidate) return;
 
   const allHistory = sanitizeRecentCandles(payload.recentCandles || {});
-  const wanted = candidate.asset.replace(/\s*\(OTC\)\s*$/, '');
-  const historyKey = Object.keys(allHistory).find(k => k.replace(/\s*\(OTC\)\s*$/, '') === wanted);
+  const historyKey = Object.keys(allHistory).find(k => sameAsset(k, focusedAsset));
   const candles = historyKey ? allHistory[historyKey] : [];
   const timeframe = normTf(candidate.timeframe) || candles.at(-1)?.timeframe || scannerState.analysisTimeframe || scannerState.timeframe || 'M1';
   const expiration = normExp(candidate.expiration) || scannerState.targetExpiration || scannerState.expiration || null;
@@ -164,7 +218,7 @@ async function applyEmbeddedFeed(payload = {}, sender = {}) {
     platformId: 'casatrade',
     platformName: 'CasaTrade',
     connection: 'online',
-    asset: candidate.asset,
+    asset: focusedAsset,
     price: Number(candidate.price),
     timeframe,
     analysisTimeframe: timeframe,
@@ -199,10 +253,12 @@ async function applyEmbeddedFeed(payload = {}, sender = {}) {
     },
     diagnostics: {
       ...(scannerState.diagnostics || {}),
+      focusedAsset: { asset: focusedAsset, at: scannerState.diagnostics?.focusedAsset?.at || Date.now(), source: 'chart-header' },
       embeddedFeed: {
         frameHost,
         transport: candidate.transport || payload.primaryTransport || null,
         candidateCount: normalizedCandidates(payload).length,
+        filteredTo: focusedAsset,
         candleCount: candles.length,
         at: Date.now()
       }
@@ -214,6 +270,9 @@ async function applyEmbeddedFeed(payload = {}, sender = {}) {
 }
 
 chrome.runtime.onMessage.addListener((message, sender) => {
+  if (message?.type === 'ATS_FOCUSED_ASSET') {
+    setTimeout(() => setFocusedAsset(message.asset, sender).catch(() => {}), 0);
+  }
   if (message?.type === 'ATS_NETWORK_DIAGNOSTIC') {
     setTimeout(() => keepRealFeedContext(message.payload || {}, sender).catch(() => {}), 30);
   }
