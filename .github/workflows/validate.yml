@@ -25,3 +25,15 @@ jobs:
         run: find apps/customer-portal -name '*.js' -print0 | xargs -0 -n1 node --check
       - name: Core unit tests
         run: cd backend && npm test
+      - name: Package merged main source
+        run: |
+          mkdir -p package/ai-trading-scanner
+          rsync -a --exclude '.git' --exclude 'package' ./ package/ai-trading-scanner/
+          cd package
+          zip -qr ai-trading-scanner-main-pr22.zip ai-trading-scanner
+      - name: Upload source ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-trading-scanner-main-pr22
+          path: package/ai-trading-scanner-main-pr22.zip
+          if-no-files-found: error
