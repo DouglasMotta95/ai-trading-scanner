@@ -1,9 +1,12 @@
-import { processSnapshot, resetOrchestrator } from './core/orchestrator.js';
+import { processSnapshot, resetOrchestrator, serializeCompletedDecisions, restoreCompletedDecisions } from './core/orchestrator.js';
 import { detectPlatform } from './platforms/registry.js';
-import { activateLicense, validateLicense, consumeSignal, clearLicense, licenseRequired } from './services/license.js';
+import { activateLicense, validateLicense, consumeSignal, clearLicense, licenseRequired, restoreCachedLicense } from './services/license.js';
 import { heartbeat, track } from './services/telemetry.js';
 
 const SESSION_HISTORY_KEY = 'atsSessionSignalHistory';
+const COMPLETED_DECISIONS_KEY = 'atsCompletedDecisions';
+const RUNTIME_SESSION_KEY = 'atsRuntimeSessionId';
+const NON_RESTORABLE_LICENSE_STATUSES = new Set(['limit', 'expired', 'device_locked']);
 const DEFAULT_LICENSE = {
   status: 'unconfigured', plan: null, planLabel: null, dailyLimit: null, usedToday: 0,
   remainingToday: null, totalLimit: null, usedTotal: 0, remainingTotal: null, error: null
@@ -30,6 +33,8 @@ let lastLicenseCheck = 0;
 let lastHeartbeatAt = 0;
 let lastDirectScanAt = 0;
 let directScanPromise = null;
+let completedDecisionRestorePromise = null;
+let runtimeSessionPromise = null;
 
 const clean = v => String(v ?? '').trim();
 const num = v => v == null || v === '' ? null : Number.isFinite(Number(v)) ? Number(v) : null;
@@ -65,6 +70,59 @@ const merge = (state = {}, patch = {}) => ({
 const marketCleared = (state = {}, patch = {}) => ({
   ...state, ...EMPTY_MARKET, scanner: 'idle', license: state.license || DEFAULT_LICENSE, ...patch
 });
+
+async function runtimeSessionId() {
+  if (!runtimeSessionPromise) {
+    runtimeSessionPromise = (async () => {
+      const stored = await chrome.storage.session.get(RUNTIME_SESSION_KEY);
+      let sessionId = clean(stored[RUNTIME_SESSION_KEY]);
+      if (!sessionId) {
+        sessionId = crypto.randomUUID();
+        await chrome.storage.session.set({ [RUNTIME_SESSION_KEY]: sessionId });
+      }
+      return sessionId;
+    })();
+  }
+  return runtimeSessionPromise;
+}
+
+async function restoreCompletedDecisionCache() {
+  const sessionId = await runtimeSessionId();
+  const stored = await chrome.storage.local.get(COMPLETED_DECISIONS_KEY);
+  const cached = stored[COMPLETED_DECISIONS_KEY];
+  if (cached?.sessionId === sessionId && Array.isArray(cached.rows)) {
+    restoreCompletedDecisions(cached.rows);
+    return;
+  }
+  restoreCompletedDecisions([]);
+  if (cached) await chrome.storage.local.remove(COMPLETED_DECISIONS_KEY);
+}
+
+async function ensureCompletedDecisionCache() {
+  if (!completedDecisionRestorePromise) {
+    completedDecisionRestorePromise = restoreCompletedDecisionCache().catch(() => {
+      restoreCompletedDecisions([]);
+    });
+  }
+  await completedDecisionRestorePromise;
+}
+
+async function persistCompletedDecisionCache() {
+  const rows = serializeCompletedDecisions();
+  if (!rows.length) {
+    await chrome.storage.local.remove(COMPLETED_DECISIONS_KEY);
+    return;
+  }
+  const sessionId = await runtimeSessionId();
+  await chrome.storage.local.set({
+    [COMPLETED_DECISIONS_KEY]: { sessionId, rows, updatedAt: Date.now() }
+  });
+}
+
+async function clearCompletedDecisionCache() {
+  resetOrchestrator();
+  await chrome.storage.local.remove(COMPLETED_DECISIONS_KEY);
+}
 
 function licenseError(r, currentLicense = DEFAULT_LICENSE) {
   const error = r?.error || 'license_required';
@@ -162,7 +220,20 @@ async function injectReaders(tabId) {
 }
 
 async function connectActiveTab() {
-  const { scannerState = {} } = await chrome.storage.local.get('scannerState');
+  let { scannerState = {}, settings = {} } = await chrome.storage.local.get(['scannerState', 'settings']);
+  const currentLicenseStatus = String(scannerState.license?.status || '').toLowerCase();
+  if (!licenseActive(scannerState.license) && !NON_RESTORABLE_LICENSE_STATUSES.has(currentLicenseStatus)) {
+    const restored = await restoreCachedLicense().catch(() => null);
+    let recoveredLicense = restored;
+    if (!licenseActive(recoveredLicense)) {
+      recoveredLicense = await syncLicense(settings, scannerState, true).catch(() => scannerState.license || DEFAULT_LICENSE);
+    }
+    if (licenseActive(recoveredLicense)) {
+      scannerState = merge(scannerState, { license: recoveredLicense });
+      await chrome.storage.local.set({ scannerState });
+    }
+  }
+
   if (!licenseActive(scannerState.license)) {
     const locked = marketCleared(scannerState, {
       license: scannerState.license || DEFAULT_LICENSE,
@@ -197,7 +268,6 @@ async function connectActiveTab() {
     }
   });
   await chrome.storage.local.set({ scannerState: next });
-  const { settings = {} } = await chrome.storage.local.get('settings');
   telemetryEvent('platform_connected', { platformId: platform.id, platformName: platform.name }, settings);
   return { ok: true, platform: { id: platform.id, name: platform.name }, tabId: tab.id };
 }
@@ -457,6 +527,7 @@ async function applySnapshot(snapshot, scannerState = {}, settings = {}, platfor
     return paused;
   }
 
+  await ensureCompletedDecisionCache();
   let next = merge(scannerState, {
     ...enriched,
     scanner: 'scanning',
@@ -465,6 +536,7 @@ async function applySnapshot(snapshot, scannerState = {}, settings = {}, platfor
     lastSeen: Date.now()
   });
   next = merge(next, processSnapshot(enriched, next));
+  await persistCompletedDecisionCache().catch(() => {});
 
   const previousState = scannerState?.signal?.state || null;
   const previousDirection = scannerState?.signal?.direction || null;
@@ -738,7 +810,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         ? { ...r.license, status: 'active', error: null, syncPending: false }
         : licenseError({ ...r, error: activationError }, scannerState?.license || DEFAULT_LICENSE);
 
-      resetOrchestrator();
+      await clearCompletedDecisionCache();
       let next = marketCleared(scannerState, {
         license,
         diagnostics: { access: { state: activated ? 'licensed' : 'license_required', at: Date.now() } }
@@ -771,7 +843,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === 'ATS_CLEAR_LICENSE') {
     chrome.storage.local.get('scannerState').then(async ({ scannerState = {} }) => {
       await clearLicense();
-      resetOrchestrator();
+      await clearCompletedDecisionCache();
       const next = marketCleared(scannerState, { license: DEFAULT_LICENSE, diagnostics: {} });
       await chrome.storage.local.set({ scannerState: next });
       sendResponse({ ok: true });
@@ -923,8 +995,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type === 'ATS_RESET_STATE') {
-    resetOrchestrator();
     Promise.all([
+      clearCompletedDecisionCache(),
       chrome.storage.local.set({ scannerState: DEFAULT_STATE }),
       chrome.storage.session.remove(SESSION_HISTORY_KEY)
     ]).then(() => sendResponse({ ok: true }));
