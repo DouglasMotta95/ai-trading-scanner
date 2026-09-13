@@ -30,9 +30,11 @@ test('market connection restores or validates cached license before rejecting ac
 
   const apply = section(background, 'async function applySnapshot', 'async function directScanActiveTab');
   assert.match(apply, /licenseRequired\(settings\) && !licenseActive\(scannerState\.license\)/);
-  assert.ok(apply.indexOf('!licenseActive(scannerState.license)') < apply.indexOf('processSnapshot(enriched, next)'));
+  assert.ok(apply.indexOf('!licenseActive(scannerState.license)') < apply.indexOf('processSnapshot(enriched, candidate)'));
+  assert.match(apply, /updateScannerState\(async scannerState =>/);
 
-  assert.match(augment, /if \(!licenseActive\(scannerState\) \|\| settings\.runtimePaused\) return;/);
+  assert.match(augment, /if \(settings\.runtimePaused\) return;/);
+  assert.match(augment, /updateScannerState\(scannerState => \{[\s\S]*?if \(!licenseActive\(scannerState\)\) return;/);
   assert.match(panel, /if \(reconnectBusy \|\| !licenseStillValid\(lastState\.license\)\) return;/);
   assert.match(panel, /Nenhum dado de mercado é analisado antes da licença ficar ATIVA/);
 });
@@ -72,8 +74,9 @@ test('analysis is locked to the focused CasaTrade asset and waits for focus stab
 
   assert.match(focus, /__ATS_FOCUSED_ASSET_VALUE__ = asset/);
   assert.match(generic, /explicitFocus = canonicalAsset\(globalThis\.__ATS_FOCUSED_ASSET_VALUE__/);
-  assert.match(generic, /if \(!matching\.length\) return null;/);
-  assert.match(generic, /const priceRows = \(asset \? sameAssetRows : rows\)/);
+  assert.match(generic, /if \(!explicitFocus\) return;/);
+  assert.match(generic, /const priceRows = sameAssetRows/);
+  assert.match(generic, /rows\.filter\(r => r\.asset && sameAsset\(r\.asset, explicitFocus\)\)/);
 
   assert.match(augment, /const FOCUS_STABLE_MS = 2000/);
   assert.match(augment, /stableSince/);

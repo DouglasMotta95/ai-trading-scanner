@@ -28,7 +28,8 @@ test('only authoritative server errors may change license status in background',
 });
 
 test('consume signal failure never routes through licenseError or changes license status', () => {
-  const block = between('if (becameConfirm)', 'next = telemetryState');
+  const block = between('const next = await updateScannerState(async scannerState => {', 'if (processedSnapshot)');
+  assert.match(block, /if \(becameConfirm\)/);
   assert.doesNotMatch(block, /licenseError\(usage\)/);
   assert.match(block, /if \(!usage\.ok\)[\s\S]*?license,/);
   assert.match(block, /status: license\.status/);

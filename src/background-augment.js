@@ -1,5 +1,6 @@
 import { processSnapshot, resetOrchestrator } from './core/orchestrator.js';
 import { isCasaTradeHost } from './platforms/registry.js';
+import { updateScannerState } from './services/scanner-state-atomic.js';
 
 const allowedTransports = new Set(['ws', 'fetch', 'xhr', 'rendered', 'worker', 'sharedworker', 'broadcast', 'serviceworker', 'window']);
 const quotes = new Set(['USDT','USDC','USD','EUR','GBP','JPY','AUD','CAD','CHF','NZD','BRL','BTC','ETH']);
@@ -31,9 +32,10 @@ const normAsset = v => {
   return `${m[1]}/${m[2]}${otc ? ' (OTC)' : ''}`;
 };
 
+const assetIdentity = value => normAsset(value).replace(/\s*\(OTC\)\s*$/, '');
 const sameAsset = (a, b) => {
-  const left = normAsset(a);
-  const right = normAsset(b);
+  const left = assetIdentity(a);
+  const right = assetIdentity(b);
   return !!left && !!right && left === right;
 };
 
@@ -107,35 +109,36 @@ function focusedAssetFor(tabId, scannerState = {}) {
 async function keepRealFeedContext(payload = {}, sender = {}) {
   if (Date.now() - lastRun < 80) return;
   lastRun = Date.now();
-  const { scannerState = {}, settings = {} } = await chrome.storage.local.get(['scannerState', 'settings']);
-  if (!licenseActive(scannerState) || settings.runtimePaused) return;
-  if (scannerState.targetTabId && sender?.tab?.id && scannerState.targetTabId !== sender.tab.id) return;
+  const { settings = {} } = await chrome.storage.local.get('settings');
+  if (settings.runtimePaused) return;
 
-  const recentCandles = sanitizeRecentCandles(payload.recentCandles || {});
-  const candidates = normalizedCandidates(payload);
-  const previousNetwork = scannerState.diagnostics?.network || {};
-  const mergedHistory = { ...(previousNetwork.recentCandles || {}) };
-  for (const [asset, rows] of Object.entries(recentCandles)) {
-    const previous = Array.isArray(mergedHistory[asset]) ? mergedHistory[asset] : [];
-    const byTime = new Map([...previous, ...rows].map(row => [`${row.time}|${row.timeframe || ''}`, row]));
-    mergedHistory[asset] = [...byTime.values()].sort((a, b) => a.time - b.time).slice(-240);
-  }
+  return updateScannerState(scannerState => {
+    if (!licenseActive(scannerState)) return;
+    if (scannerState.targetTabId && sender?.tab?.id && scannerState.targetTabId !== sender.tab.id) return;
 
-  const previousCandidates = Array.isArray(previousNetwork.candidates) ? previousNetwork.candidates : [];
-  const mergedCandidates = [...candidates, ...previousCandidates].filter((c, index, arr) => {
-    const asset = normAsset(c?.asset);
-    const price = num(c?.price) ?? ((num(c?.bid) != null && num(c?.ask) != null) ? (num(c.bid) + num(c.ask)) / 2 : null);
-    if (!asset || price == null || price <= 0) return false;
-    return arr.findIndex(x => normAsset(x?.asset) === asset && clean(x?.transport) === clean(c?.transport)) === index;
-  }).slice(0, 180);
+    const recentCandles = sanitizeRecentCandles(payload.recentCandles || {});
+    const candidates = normalizedCandidates(payload);
+    const previousNetwork = scannerState.diagnostics?.network || {};
+    const mergedHistory = { ...(previousNetwork.recentCandles || {}) };
+    for (const [asset, rows] of Object.entries(recentCandles)) {
+      const previous = Array.isArray(mergedHistory[asset]) ? mergedHistory[asset] : [];
+      const byTime = new Map([...previous, ...rows].map(row => [`${row.time}|${row.timeframe || ''}`, row]));
+      mergedHistory[asset] = [...byTime.values()].sort((a, b) => a.time - b.time).slice(-240);
+    }
 
-  const latest = (await chrome.storage.local.get('scannerState')).scannerState || scannerState;
-  await chrome.storage.local.set({
-    scannerState: {
-      ...latest,
+    const previousCandidates = Array.isArray(previousNetwork.candidates) ? previousNetwork.candidates : [];
+    const mergedCandidates = [...candidates, ...previousCandidates].filter((c, index, arr) => {
+      const asset = normAsset(c?.asset);
+      const price = num(c?.price) ?? ((num(c?.bid) != null && num(c?.ask) != null) ? (num(c.bid) + num(c.ask)) / 2 : null);
+      if (!asset || price == null || price <= 0) return false;
+      return arr.findIndex(x => normAsset(x?.asset) === asset && clean(x?.transport) === clean(c?.transport)) === index;
+    }).slice(0, 180);
+
+    return {
+      ...scannerState,
       marketHistory: mergedHistory,
       diagnostics: {
-        ...(latest.diagnostics || {}),
+        ...(scannerState.diagnostics || {}),
         network: {
           ...previousNetwork,
           messages: payload.messages || previousNetwork.messages || {},
@@ -151,7 +154,7 @@ async function keepRealFeedContext(payload = {}, sender = {}) {
           lastSeen: Date.now()
         }
       }
-    }
+    };
   });
 }
 
@@ -167,35 +170,36 @@ async function setFocusedAsset(asset, sender = {}) {
   const previousFocus = focusedAssets.get(tabId) || '';
   focusedAssets.set(tabId, focused);
 
-  const { scannerState = {} } = await chrome.storage.local.get('scannerState');
-  if (!licenseActive(scannerState)) return;
-  if (scannerState.targetTabId && scannerState.targetTabId !== tabId) return;
+  return updateScannerState(scannerState => {
+    if (!licenseActive(scannerState)) return;
+    if (scannerState.targetTabId && scannerState.targetTabId !== tabId) return;
 
-  const previousStored = scannerState.diagnostics?.focusedAsset || null;
-  const sameStoredFocus = sameAsset(previousStored?.asset, focused);
-  const changed = (!!previousFocus && !sameAsset(previousFocus, focused)) || (!!previousStored?.asset && !sameStoredFocus);
-  const stateAssetMismatch = scannerState.asset && !sameAsset(scannerState.asset, focused);
-  const stableSince = sameStoredFocus
-    ? Number(previousStored?.stableSince || previousStored?.at || Date.now())
-    : Date.now();
-  if (changed || stateAssetMismatch) resetOrchestrator();
-  const next = {
-    ...scannerState,
-    targetTabId: tabId,
-    ...(changed || stateAssetMismatch ? {
-      asset: focused,
-      price: null,
-      candles: [],
-      currentCandle: null,
-      signal: null,
-      lastSeen: Date.now()
-    } : {}),
-    diagnostics: {
-      ...(scannerState.diagnostics || {}),
-      focusedAsset: { asset: focused, at: Date.now(), stableSince, source: 'chart-header' }
-    }
-  };
-  await chrome.storage.local.set({ scannerState: next });
+    const previousStored = scannerState.diagnostics?.focusedAsset || null;
+    const sameStoredFocus = sameAsset(previousStored?.asset, focused);
+    const changed = (!!previousFocus && !sameAsset(previousFocus, focused)) || (!!previousStored?.asset && !sameStoredFocus);
+    const stateAssetMismatch = scannerState.asset && !sameAsset(scannerState.asset, focused);
+    const stableSince = sameStoredFocus
+      ? Number(previousStored?.stableSince || previousStored?.at || Date.now())
+      : Date.now();
+    if (changed || stateAssetMismatch) resetOrchestrator();
+
+    return {
+      ...scannerState,
+      targetTabId: tabId,
+      ...(changed || stateAssetMismatch ? {
+        asset: focused,
+        price: null,
+        candles: [],
+        currentCandle: null,
+        signal: null,
+        lastSeen: Date.now()
+      } : {}),
+      diagnostics: {
+        ...(scannerState.diagnostics || {}),
+        focusedAsset: { asset: focused, at: Date.now(), stableSince, source: 'chart-header' }
+      }
+    };
+  });
 }
 
 async function applyEmbeddedFeed(payload = {}, sender = {}) {
@@ -206,85 +210,89 @@ async function applyEmbeddedFeed(payload = {}, sender = {}) {
   if (!trustedEmbeddedHost(frameHost) || !isCasaTradeHost(topHost) || !sender?.tab?.id) return;
 
   await keepRealFeedContext(payload, sender).catch(() => {});
-  const { scannerState = {}, settings = {} } = await chrome.storage.local.get(['scannerState', 'settings']);
-  if (!licenseActive(scannerState) || settings.runtimePaused) return;
-  if (scannerState.targetTabId && scannerState.targetTabId !== sender.tab.id) return;
+  const { settings = {} } = await chrome.storage.local.get('settings');
+  if (settings.runtimePaused) return;
 
-  const focusedAsset = focusedAssetFor(sender.tab.id, scannerState);
-  if (!focusedAsset) return;
-  const focusMeta = scannerState.diagnostics?.focusedAsset || null;
-  const stableSince = Number(focusMeta?.stableSince || focusMeta?.at || 0);
-  if (!sameAsset(focusMeta?.asset, focusedAsset)) return;
-  if (!Number.isFinite(stableSince) || Date.now() - stableSince < FOCUS_STABLE_MS) return;
+  return updateScannerState(scannerState => {
+    if (!licenseActive(scannerState)) return;
+    if (scannerState.targetTabId && scannerState.targetTabId !== sender.tab.id) return;
 
-  const candidate = chooseCandidate(payload, focusedAsset);
-  if (!candidate) return;
+    const focusedAsset = focusedAssetFor(sender.tab.id, scannerState);
+    if (!focusedAsset) return;
+    const focusMeta = scannerState.diagnostics?.focusedAsset || null;
+    const stableSince = Number(focusMeta?.stableSince || focusMeta?.at || 0);
+    if (!sameAsset(focusMeta?.asset, focusedAsset)) return;
+    if (!Number.isFinite(stableSince) || Date.now() - stableSince < FOCUS_STABLE_MS) return;
 
-  const allHistory = sanitizeRecentCandles(payload.recentCandles || {});
-  const historyKey = Object.keys(allHistory).find(k => sameAsset(k, focusedAsset));
-  const candles = historyKey ? allHistory[historyKey] : [];
-  const timeframe = normTf(candidate.timeframe) || candles.at(-1)?.timeframe || scannerState.analysisTimeframe || scannerState.timeframe || 'M1';
-  const expiration = normExp(candidate.expiration) || scannerState.targetExpiration || scannerState.expiration || null;
-  const secondsRemaining = num(candidate.secondsRemaining ?? payload.secondsRemaining);
+    const candidate = chooseCandidate(payload, focusedAsset);
+    if (!candidate) return;
 
-  const snapshot = {
-    platformId: 'casatrade',
-    platformName: 'CasaTrade',
-    connection: 'online',
-    asset: focusedAsset,
-    price: Number(candidate.price),
-    timeframe,
-    analysisTimeframe: timeframe,
-    expiration,
-    targetExpiration: expiration,
-    secondsRemaining,
-    serverTime: num(candidate.timestamp) || null,
-    candles,
-    capabilities: {
-      structuredQuotes: true,
-      candles: candles.length >= 3,
-      expiration: !!expiration,
-      multiAsset: false
-    }
-  };
+    const allHistory = sanitizeRecentCandles(payload.recentCandles || {});
+    const historyKey = Object.keys(allHistory).find(k => sameAsset(k, focusedAsset));
+    const candles = historyKey ? allHistory[historyKey] : [];
+    const timeframe = normTf(candidate.timeframe) || candles.at(-1)?.timeframe || scannerState.analysisTimeframe || scannerState.timeframe || 'M1';
+    const expiration = normExp(candidate.expiration) || scannerState.targetExpiration || scannerState.expiration || null;
+    const secondsRemaining = num(candidate.secondsRemaining ?? payload.secondsRemaining);
 
-  const base = {
-    ...scannerState,
-    ...snapshot,
-    targetTabId: sender.tab.id,
-    scanner: 'scanning',
-    lastSeen: Date.now(),
-    platformControls: {
-      ...(scannerState.platformControls || {}),
-      observed: {
-        ...(scannerState.platformControls?.observed || {}),
-        timeframe,
-        expiration,
-        detected: { timeframe: !!timeframe, expiration: !!expiration },
-        at: Date.now()
+    const snapshot = {
+      platformId: 'casatrade',
+      platformName: 'CasaTrade',
+      connection: 'online',
+      asset: focusedAsset,
+      price: Number(candidate.price),
+      timeframe,
+      analysisTimeframe: timeframe,
+      expiration,
+      targetExpiration: expiration,
+      secondsRemaining,
+      serverTime: num(candidate.timestamp) || null,
+      candles,
+      capabilities: {
+        structuredQuotes: true,
+        candles: candles.length >= 3,
+        expiration: !!expiration,
+        multiAsset: false
       }
-    },
-    diagnostics: {
-      ...(scannerState.diagnostics || {}),
-      focusedAsset: {
-        asset: focusedAsset,
-        at: Date.now(),
-        stableSince: Number(scannerState.diagnostics?.focusedAsset?.stableSince || scannerState.diagnostics?.focusedAsset?.at || Date.now()),
-        source: 'chart-header'
+    };
+
+    const base = {
+      ...scannerState,
+      ...snapshot,
+      targetTabId: sender.tab.id,
+      scanner: 'scanning',
+      lastSeen: Date.now(),
+      platformControls: {
+        ...(scannerState.platformControls || {}),
+        observed: {
+          ...(scannerState.platformControls?.observed || {}),
+          timeframe,
+          expiration,
+          detected: { timeframe: !!timeframe, expiration: !!expiration },
+          at: Date.now()
+        }
       },
-      embeddedFeed: {
-        frameHost,
-        transport: candidate.transport || payload.primaryTransport || null,
-        candidateCount: normalizedCandidates(payload).length,
-        filteredTo: focusedAsset,
-        candleCount: candles.length,
-        at: Date.now()
+      diagnostics: {
+        ...(scannerState.diagnostics || {}),
+        focusedAsset: {
+          asset: focusedAsset,
+          at: Date.now(),
+          stableSince: Number(scannerState.diagnostics?.focusedAsset?.stableSince || scannerState.diagnostics?.focusedAsset?.at || Date.now()),
+          source: 'chart-header'
+        },
+        embeddedFeed: {
+          frameHost,
+          transport: candidate.transport || payload.primaryTransport || null,
+          candidateCount: normalizedCandidates(payload).length,
+          filteredTo: focusedAsset,
+          candleCount: candles.length,
+          at: Date.now()
+        }
       }
-    }
-  };
+    };
 
-  const processed = processSnapshot(snapshot, base);
-  await chrome.storage.local.set({ scannerState: { ...base, ...processed, license: scannerState.license } });
+    const processed = processSnapshot(snapshot, base);
+    return { ...base, ...processed, license: scannerState.license };
+  });
 }
 
 chrome.runtime.onMessage.addListener((message, sender) => {
