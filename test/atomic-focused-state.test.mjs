@@ -38,7 +38,7 @@ async function loadAtomic(local, suffix) {
   return import(`${moduleUrl}?atomic-regression=${suffix}-${Date.now()}-${Math.random()}`);
 }
 
-test('scannerState writes are serialized patches and stale writers cannot erase newer candles/signal', async () => {
+test('scannerState updates are serialized and each mutator reads the latest committed state', async () => {
   const { backing, local } = makeStorage({
     scannerState: {
       asset: 'EUR/USD (OTC)',
@@ -48,39 +48,30 @@ test('scannerState writes are serialized patches and stale writers cannot erase 
     }
   });
 
-  await loadAtomic(local, 'serialized');
-
-  const first = (await chrome.storage.local.get('scannerState')).scannerState;
-  const stale = (await chrome.storage.local.get('scannerState')).scannerState;
-
-  const firstWrite = chrome.storage.local.set({
-    scannerState: {
-      ...first,
+  const atomic = await loadAtomic(local, 'serialized');
+  const firstWrite = atomic.updateScannerState(async current => {
+    await new Promise(resolve => setTimeout(resolve, 10));
+    return {
+      ...current,
       candles: [{ time: 2, close: 1.2 }],
       signal: { state: 'CONFIRM', direction: 'BUY' }
-    }
+    };
   });
+  const secondWrite = atomic.updateScannerState(current => ({
+    ...current,
+    diagnostics: { ...current.diagnostics, network: { lastSeen: 2 } }
+  }));
 
-  const staleWrite = chrome.storage.local.set({
-    scannerState: {
-      ...stale,
-      diagnostics: { ...stale.diagnostics, network: { lastSeen: 2 } }
-    }
-  });
-
-  await Promise.all([firstWrite, staleWrite]);
-
+  await Promise.all([firstWrite, secondWrite]);
   assert.deepEqual(backing.scannerState.candles, [{ time: 2, close: 1.2 }]);
   assert.deepEqual(backing.scannerState.signal, { state: 'CONFIRM', direction: 'BUY' });
   assert.deepEqual(backing.scannerState.diagnostics, { seed: true, network: { lastSeen: 2 } });
 });
 
-test('atomic patches preserve explicit property deletions from stale reads', async () => {
+test('explicit state replacement can delete properties without stale patch reconstruction', async () => {
   const { backing, local } = makeStorage({
     scannerState: {
       asset: 'EUR/USD (OTC)',
-      candles: [{ time: 1, close: 1.1 }],
-      signal: { state: 'WAIT', direction: null },
       diagnostics: {
         focusedAsset: { asset: 'EUR/USD (OTC)' },
         network: { lastSeen: 1 },
@@ -88,35 +79,37 @@ test('atomic patches preserve explicit property deletions from stale reads', asy
       }
     }
   });
-
-  await loadAtomic(local, 'deletions');
-  const base = (await chrome.storage.local.get('scannerState')).scannerState;
-
-  await chrome.storage.local.set({
-    scannerState: {
-      ...base,
-      diagnostics: {}
-    }
-  });
-
+  const atomic = await loadAtomic(local, 'deletions');
+  await atomic.updateScannerState(current => ({ ...current, diagnostics: {} }));
   assert.deepEqual(backing.scannerState.diagnostics, {});
-  assert.equal(Object.prototype.hasOwnProperty.call(backing.scannerState.diagnostics, 'focusedAsset'), false);
-  assert.equal(Object.prototype.hasOwnProperty.call(backing.scannerState.diagnostics, 'network'), false);
-  assert.equal(Object.prototype.hasOwnProperty.call(backing.scannerState.diagnostics, 'access'), false);
 });
 
-test('atomic store always couples candles and signal in the same patch', () => {
-  const source = read('src/services/scanner-state-atomic.js');
-  assert.match(source, /let writeQueue = Promise\.resolve\(\)/);
-  assert.match(source, /const task = writeQueue\.then/);
-  assert.match(source, /const pairTouched = Object\.prototype\.hasOwnProperty\.call\(patch, 'candles'\)[\s\S]*?'signal'/);
-  assert.match(source, /candles: clone\(cleanProposed\.candles \?\? \[\]\),[\s\S]*?signal: clone\(cleanProposed\.signal \?\? null\)/);
-  assert.match(source, /const DELETE = Symbol\('atsScannerStateDelete'\)/);
-  assert.match(source, /if \(!Object\.prototype\.hasOwnProperty\.call\(next, key\)\)[\s\S]*?patch\[key\] = DELETE/);
-  assert.match(source, /if \(value === DELETE\)[\s\S]*?delete next\[key\]/);
+test('all scannerState writers use one explicit central queue without monkey-patching storage', () => {
+  const atomic = read('src/services/scanner-state-atomic.js');
+  assert.match(atomic, /let scannerStateWriteQueue = Promise\.resolve\(\)/);
+  assert.match(atomic, /export function updateScannerState\(mutator\)/);
+  assert.match(atomic, /const task = scannerStateWriteQueue\.then/);
+  assert.match(atomic, /const current = await storedScannerState\(\)/);
+  assert.match(atomic, /const proposed = await mutator\(clone\(current\)\)/);
+  assert.doesNotMatch(atomic, /chrome\.storage\.local\.get\s*=/);
+  assert.doesNotMatch(atomic, /chrome\.storage\.local\.set\s*=/);
 
-  const entry = read('src/background-entry.js');
-  assert.equal(entry.trim().split('\n')[0], "import './services/scanner-state-atomic.js';");
+  for (const file of ['src/background.js', 'src/background-augment.js']) {
+    const source = read(file);
+    assert.match(source, /updateScannerState/);
+    assert.doesNotMatch(source, /chrome\.storage\.local\.set\s*\(\s*\{\s*scannerState\b/);
+    assert.doesNotMatch(source, /updates\.scannerState\s*=/);
+  }
+
+  const augment = read('src/background-augment.js');
+  for (const fn of ['keepRealFeedContext', 'setFocusedAsset', 'applyEmbeddedFeed']) {
+    const start = augment.indexOf(`async function ${fn}`);
+    assert.ok(start >= 0);
+    const end = augment.indexOf('\nasync function ', start + 1) >= 0
+      ? augment.indexOf('\nasync function ', start + 1)
+      : augment.indexOf('\nchrome.runtime.onMessage', start + 1);
+    assert.match(augment.slice(start, end), /updateScannerState\(scannerState =>/);
+  }
 });
 
 test('asset identity ignores OTC label only, preserving display labels and rejecting other pairs', () => {
