@@ -6,7 +6,9 @@
   const PREF_KEY = 'atsScannerUiPreferences';
   const DEFAULT_PREFS = { overlayEnabled: false, possibleSoundEnabled: false, confirmSoundEnabled: false };
   const host = String(location.hostname || '').toLowerCase().replace(/\.$/, '');
-  const allowed = value => value === 'casatrade.com' || value.endsWith('.casatrade.com') || value === 'casatrade.io' || value.endsWith('.casatrade.io') || value === 'casatraders.online' || value.endsWith('.casatraders.online') || value === 'ivcasatraders.online' || value.endsWith('.ivcasatraders.online');
+  const traderHost = value => value === 'casatraders.online' || value.endsWith('.casatraders.online') || value === 'ivcasatraders.online' || value.endsWith('.ivcasatraders.online');
+  const allowed = value => value === 'casatrade.com' || value.endsWith('.casatrade.com') || value === 'casatrade.io' || value.endsWith('.casatrade.io') || traderHost(value);
+  const inTraderFrame = traderHost(host);
   if (!allowed(host)) return;
 
   const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
@@ -19,7 +21,7 @@
     return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden' && Number(s.opacity || 1) > 0;
   };
 
-  function deepElements(limit = 5500) {
+  function deepElements(limit = 6500) {
     const out = [];
     const roots = [document];
     const seen = new Set();
@@ -38,22 +40,32 @@
     return out;
   }
 
+  function fallbackChartRect() {
+    if (!inTraderFrame) return null;
+    const left = Math.max(40, innerWidth * .045);
+    const top = Math.max(55, innerHeight * .08);
+    const right = Math.max(left + 280, innerWidth * .82);
+    const bottom = Math.max(top + 190, innerHeight * .90);
+    return { left, top, right, bottom, width: right - left, height: bottom - top };
+  }
+
   function chartRect() {
     const rows = [];
     for (const el of deepElements()) {
       if (!visible(el)) continue;
       const tag = String(el.tagName || '').toLowerCase();
       const meta = `${el.className || ''} ${el.id || ''} ${el.getAttribute?.('data-testid') || ''}`.toLowerCase();
-      if (tag !== 'canvas' && tag !== 'svg' && !/chart|candle|graph|trading/.test(meta)) continue;
+      if (tag !== 'canvas' && tag !== 'svg' && !/chart|candle|graph|trading|plot/.test(meta)) continue;
       const r = el.getBoundingClientRect();
-      if (r.width < 260 || r.height < 160) continue;
+      if (r.width < 240 || r.height < 150) continue;
       let score = r.width * r.height;
-      if (tag === 'canvas') score *= 1.8;
-      if (/chart|candle|trading/.test(meta)) score *= 1.3;
+      if (tag === 'canvas') score *= 2.2;
+      if (/chart|candle|trading|plot/.test(meta)) score *= 1.45;
+      if (r.left < innerWidth * .15) score *= 1.15;
       rows.push({ rect: r, score });
     }
     rows.sort((a, b) => b.score - a.score);
-    return rows[0]?.rect || null;
+    return rows[0]?.rect || fallbackChartRect();
   }
 
   function priceMapper(rect, state) {
@@ -68,7 +80,7 @@
       if (currentPrice != null && (price < currentPrice * .15 || price > currentPrice * 6)) continue;
       const r = el.getBoundingClientRect();
       const y = r.top + r.height / 2;
-      if (r.left < rect.right - 180 || r.left > rect.right + 120 || y < rect.top - 10 || y > rect.bottom + 10) continue;
+      if (r.left < rect.right - 190 || r.left > rect.right + 140 || y < rect.top - 12 || y > rect.bottom + 12) continue;
       labels.push({ price, y });
     }
     const unique = labels.filter((row, i, arr) => arr.findIndex(other => Math.abs(other.price - row.price) < 1e-12) === i);
@@ -81,14 +93,18 @@
         if (Number.isFinite(slope) && Math.abs(slope) > 1e-9) return price => meanY + slope * (price - meanP) - rect.top;
       }
     }
-    const candles = [...(Array.isArray(state?.candles) ? state.candles.slice(-10) : [])];
+
+    const candles = [...(Array.isArray(state?.candles) ? state.candles.slice(-12) : [])];
     if (state?.currentCandle) candles.push(state.currentCandle);
     const lows = candles.map(c => num(c?.low)).filter(v => v != null);
     const highs = candles.map(c => num(c?.high)).filter(v => v != null);
+    if (currentPrice != null) { lows.push(currentPrice); highs.push(currentPrice); }
     if (!lows.length || !highs.length) return null;
     let low = Math.min(...lows), high = Math.max(...highs);
-    const span = Math.max(1e-12, high - low);
-    low -= span * .12; high += span * .12;
+    let span = high - low;
+    if (!Number.isFinite(span) || span <= 0) span = Math.max(Math.abs(currentPrice || 1) * .001, 1e-8);
+    low -= span * .16;
+    high += span * .16;
     return price => ((high - price) / Math.max(1e-12, high - low)) * rect.height;
   }
 
@@ -101,17 +117,24 @@
     if (root?.isConnected) return root;
     root = document.createElement('div');
     root.id = 'ats-analysis-visual-overlay-v2';
-    Object.assign(root.style, { position: 'fixed', zIndex: '2147483000', pointerEvents: 'none', userSelect: 'none', contain: 'layout style paint' });
+    Object.assign(root.style, {
+      position: 'fixed',
+      zIndex: '2147483646',
+      pointerEvents: 'none',
+      userSelect: 'none',
+      contain: 'layout style paint',
+      overflow: 'visible'
+    });
     document.documentElement.appendChild(root);
     return root;
   }
 
   function integrityOk() {
-    if (!state || state.platformId !== 'casatrade' || state.connection !== 'online' || !state.asset || num(state.price) == null) return false;
+    if (!state || state.connection !== 'online' || !state.asset || num(state.price) == null) return false;
     const focus = state.diagnostics?.focusedAsset;
     if (!focus?.asset || !sameAsset(focus.asset, state.asset)) return false;
-    if (!focus.at || Date.now() - Number(focus.at) > 4000) return false;
-    if (!state.lastSeen || Date.now() - Number(state.lastSeen) > 8000) return false;
+    if (focus.at && Date.now() - Number(focus.at) > 10000) return false;
+    if (!state.lastSeen || Date.now() - Number(state.lastSeen) > 10000) return false;
     return true;
   }
 
@@ -123,44 +146,77 @@
     if (!yFor) { if (root) root.hidden = true; return; }
     const hostRoot = ensureRoot();
     hostRoot.hidden = false;
-    Object.assign(hostRoot.style, { left: `${Math.round(rect.left)}px`, top: `${Math.round(rect.top)}px`, width: `${Math.round(rect.width)}px`, height: `${Math.round(rect.height)}px` });
+    Object.assign(hostRoot.style, {
+      left: `${Math.round(rect.left)}px`,
+      top: `${Math.round(rect.top)}px`,
+      width: `${Math.round(rect.width)}px`,
+      height: `${Math.round(rect.height)}px`
+    });
     hostRoot.replaceChildren();
 
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svg.setAttribute('width', '100%'); svg.setAttribute('height', '100%'); svg.setAttribute('viewBox', `0 0 ${Math.max(1, rect.width)} ${Math.max(1, rect.height)}`);
-    svg.style.pointerEvents = 'none'; svg.style.overflow = 'visible';
+    svg.setAttribute('width', '100%');
+    svg.setAttribute('height', '100%');
+    svg.setAttribute('viewBox', `0 0 ${Math.max(1, rect.width)} ${Math.max(1, rect.height)}`);
+    svg.style.pointerEvents = 'none';
+    svg.style.overflow = 'visible';
     hostRoot.appendChild(svg);
 
     const analytics = state.signal?.analytics || {};
     const waiting = state.signal?.waitingFor || {};
     const drawn = [];
     const addLine = (price, label, stroke, dash = '', active = false) => {
-      const value = num(price); if (value == null) return;
+      const value = num(price);
+      if (value == null) return;
       const tolerance = Math.max(Math.abs(value) * .000002, 1e-10);
       if (drawn.some(v => Math.abs(v - value) <= tolerance)) return;
       drawn.push(value);
-      const y = yFor(value); if (!Number.isFinite(y) || y < -20 || y > rect.height + 20) return;
+      const y = yFor(value);
+      if (!Number.isFinite(y) || y < -20 || y > rect.height + 20) return;
       const line = document.createElementNS(svg.namespaceURI, 'line');
-      line.setAttribute('x1', '0'); line.setAttribute('x2', String(rect.width)); line.setAttribute('y1', String(y)); line.setAttribute('y2', String(y));
-      line.setAttribute('stroke', stroke); line.setAttribute('stroke-width', active ? '3' : '1.5'); line.setAttribute('opacity', active ? '.98' : '.8');
-      if (dash) line.setAttribute('stroke-dasharray', dash); svg.appendChild(line);
+      line.setAttribute('x1', '0');
+      line.setAttribute('x2', String(rect.width));
+      line.setAttribute('y1', String(y));
+      line.setAttribute('y2', String(y));
+      line.setAttribute('stroke', stroke);
+      line.setAttribute('stroke-width', active ? '4' : '2.5');
+      line.setAttribute('opacity', active ? '1' : '.92');
+      if (dash) line.setAttribute('stroke-dasharray', dash);
+      svg.appendChild(line);
+
       const text = document.createElementNS(svg.namespaceURI, 'text');
-      text.setAttribute('x', '8'); text.setAttribute('y', String(Math.max(13, y - 5))); text.setAttribute('fill', stroke); text.setAttribute('font-size', active ? '12' : '11'); text.setAttribute('font-weight', '800');
-      text.textContent = `${active ? '▶ ' : ''}${label} ${String(value)}`; svg.appendChild(text);
+      text.setAttribute('x', '10');
+      text.setAttribute('y', String(Math.max(15, y - 6)));
+      text.setAttribute('fill', stroke);
+      text.setAttribute('font-size', active ? '13' : '12');
+      text.setAttribute('font-weight', '900');
+      text.setAttribute('paint-order', 'stroke');
+      text.setAttribute('stroke', '#10151d');
+      text.setAttribute('stroke-width', '3');
+      text.setAttribute('stroke-linejoin', 'round');
+      text.textContent = `${active ? '▶ ' : ''}${label} ${String(value)}`;
+      svg.appendChild(text);
     };
 
-    addLine(state.price, 'Preço atual', '#f4f4f4', '2 5');
-    addLine(analytics.resistance, 'Resistência', '#f0b56d', '4 5');
-    addLine(analytics.support, 'Suporte', '#79bfff', '4 5');
-    addLine(analytics.breakoutHigh, 'Gatilho compra ↑', '#58d6ad', '7 5', waiting.type === 'breakout' && waiting.direction === 'BUY');
-    addLine(analytics.breakoutLow, 'Gatilho venda ↓', '#f07b94', '7 5', waiting.type === 'breakout' && waiting.direction === 'SELL');
+    addLine(state.price, 'Preço atual', '#ffffff', '2 5');
+    addLine(analytics.resistance, 'Resistência', '#f0b56d', '5 5');
+    addLine(analytics.support, 'Suporte', '#79bfff', '5 5');
+    addLine(analytics.breakoutHigh, 'Gatilho compra ↑', '#58d6ad', '8 5', waiting.type === 'breakout' && waiting.direction === 'BUY');
+    addLine(analytics.breakoutLow, 'Gatilho venda ↓', '#f07b94', '8 5', waiting.type === 'breakout' && waiting.direction === 'SELL');
     const waitLevel = num(waiting.level);
     if (waitLevel != null) addLine(waitLevel, 'Aguardando', '#d8c36a', '3 4');
 
     const status = document.createElementNS(svg.namespaceURI, 'text');
-    status.setAttribute('x', '10'); status.setAttribute('y', '19'); status.setAttribute('fill', '#fff'); status.setAttribute('font-size', '12'); status.setAttribute('font-weight', '900');
+    status.setAttribute('x', '12');
+    status.setAttribute('y', '20');
+    status.setAttribute('fill', '#fff');
+    status.setAttribute('font-size', '13');
+    status.setAttribute('font-weight', '900');
+    status.setAttribute('paint-order', 'stroke');
+    status.setAttribute('stroke', '#10151d');
+    status.setAttribute('stroke-width', '4');
     const score = Math.round(Number(state.signal?.analysisScore ?? state.signal?.score ?? 0));
-    const seconds = num(state.signal?.secondsRemaining);
+    const seconds = num(state.diagnostics?.marketClock?.secondsRemaining ?? state.signal?.secondsRemaining);
     const regime = state.signal?.regime?.type || 'identificando';
     status.textContent = `${state.signal?.uiState || 'ANALISANDO'} • score ${score} • ${seconds == null ? '—' : Math.ceil(seconds)}s • ${regime}`;
     svg.appendChild(status);
@@ -187,6 +243,6 @@
     if (!prefs.overlayEnabled && root) root.hidden = true;
     else refresh();
   });
-  setInterval(refresh, 500);
+  setInterval(refresh, 350);
   refresh();
 })();
