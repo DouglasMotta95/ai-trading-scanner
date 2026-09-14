@@ -1,0 +1,30 @@
+name: Package PR29 review archive
+
+on:
+  push:
+    branches:
+      - artifact/pr29-2390b492
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Build exact commit archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          git archive --format=zip --prefix=ai-trading-scanner-2390b492/ --output=ai-trading-scanner-PR29-2390b492.zip 2390b49275f46159375b7c848b3e743c87f1487d
+          sha256sum ai-trading-scanner-PR29-2390b492.zip > ai-trading-scanner-PR29-2390b492.zip.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pr29-review-2390b492
+          path: |
+            ai-trading-scanner-PR29-2390b492.zip
+            ai-trading-scanner-PR29-2390b492.zip.sha256
+          compression-level: 0
