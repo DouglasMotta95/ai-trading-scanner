@@ -419,10 +419,18 @@ export function resetOrchestrator() {
 
 export function serializeCompletedDecisions() {
   const legacyRows = legacySerializeCompletedDecisions();
-  const wrapperRows = [...wrapperCompletedDecisions.entries()].slice(-50).map(([key, decision]) => ({
-    key: `${WRAPPER_ROW_PREFIX}${key}`,
-    decision: { ...decision }
-  }));
+  const legacyKeys = new Set(
+    legacyRows
+      .map(row => wrapperCompletionKey(row?.decision || {}))
+      .filter(key => key && !key.endsWith('|0'))
+  );
+  const wrapperRows = [...wrapperCompletedDecisions.entries()]
+    .filter(([key]) => !legacyKeys.has(key))
+    .slice(-50)
+    .map(([key, decision]) => ({
+      key: `${WRAPPER_ROW_PREFIX}${key}`,
+      decision: { ...decision }
+    }));
   return [...legacyRows, ...wrapperRows].slice(-50);
 }
 
