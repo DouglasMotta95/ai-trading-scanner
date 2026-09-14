@@ -18,6 +18,19 @@ test('recent candle analysis works with real short history', () => {
   assert.equal(result.direction, 'BUY');
 });
 
+test('analysis ignores candles with missing OHLC values', () => {
+  const candles = [
+    { open: null, high: null, low: null, close: null },
+    { open: 1, high: 1.02, low: .99, close: 1.015 },
+    { open: 1.015, high: 1.04, low: 1.01, close: 1.035 },
+    { open: 1.035, high: 1.06, low: 1.03, close: 1.055 }
+  ];
+  const result = analyzeCandles(candles);
+  assert.equal(result.recent.ready, true);
+  assert.equal(result.recent.count, 3);
+  assert.equal(result.direction, 'BUY');
+});
+
 test('analysis considers up to the last ten candles', () => {
   const candles = Array.from({ length: 10 }, (_, i) => ({
     open: 1 + i * .01,

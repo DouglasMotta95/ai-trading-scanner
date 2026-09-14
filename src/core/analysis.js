@@ -1,6 +1,6 @@
 import { rsi, macd } from './indicators.js';
 
-const finite = v => Number.isFinite(Number(v)) ? Number(v) : null;
+const finite = v => v == null || v === '' ? null : Number.isFinite(Number(v)) ? Number(v) : null;
 const clamp = (v, min = 0, max = 100) => Math.max(min, Math.min(max, Number(v) || 0));
 const avg = a => a.length ? a.reduce((s, v) => s + v, 0) / a.length : 0;
 
