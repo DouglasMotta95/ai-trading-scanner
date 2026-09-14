@@ -124,7 +124,7 @@ export async function heartbeat(state = {}, settings = {}) {
     score: state.signal?.score ?? null,
     grade: state.signal?.grade || null,
     confirmations: state.signal?.confirmations || null,
-    regime: state.signal?.regime || null,
+    regime: state.signal?.regime?.type || state.signal?.regime || null,
     provisional: !!state.signal?.provisional,
     feedQuality: state.telemetry?.feedQuality ?? null,
     structured: !!state.capabilities?.structuredQuotes,

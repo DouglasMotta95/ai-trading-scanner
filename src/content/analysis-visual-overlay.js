@@ -103,17 +103,7 @@
       }
     }
 
-    const candles = [...(Array.isArray(scannerState?.candles) ? scannerState.candles.slice(-10) : [])];
-    if (scannerState?.currentCandle) candles.push(scannerState.currentCandle);
-    const lows = candles.map(row => num(row?.low)).filter(value => value != null);
-    const highs = candles.map(row => num(row?.high)).filter(value => value != null);
-    if (!lows.length || !highs.length) return null;
-    let low = Math.min(...lows);
-    let high = Math.max(...highs);
-    const span = Math.max(1e-12, high - low);
-    low -= span * .12;
-    high += span * .12;
-    return price => ((high - price) / Math.max(1e-12, high - low)) * rect.height;
+    return null;
   }
 
   function ensureRoot() {
@@ -219,7 +209,7 @@
     busy = true;
     try {
       const response = await chrome.runtime.sendMessage({ type: 'ATS_READ_SCANNER_STATE' }).catch(() => null);
-      scannerState = response?.state || null;
+      scannerState = response?.targeted === false ? null : (response?.state || null);
       render();
     } finally {
       busy = false;

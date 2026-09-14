@@ -35,9 +35,13 @@ test('overlay is optional, click-through and consumes scanner analysis instead o
   assert.match(background, /analysis-visual-overlay\.js/);
   assert.match(overlay, /pointerEvents = 'none'/);
   assert.match(overlay, /ATS_READ_SCANNER_STATE/);
+  assert.match(overlay, /response\?\.targeted === false \? null/);
+  assert.match(background, /senderTabId === state\.targetTabId/);
   assert.match(overlay, /analytics\.breakoutHigh/);
   assert.match(overlay, /analytics\.breakoutLow/);
   assert.match(overlay, /overlayEnabled: false/);
+  assert.match(overlay, /if \(!yFor\)[\s\S]*root\.hidden = true/);
+  assert.doesNotMatch(overlay, /scannerState\?\.candles\.slice\(-10\)/);
   assert.doesNotMatch(overlay, /processSnapshot|analyzeCandles/);
 });
 

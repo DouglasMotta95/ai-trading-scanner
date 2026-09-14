@@ -917,8 +917,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message?.type === 'ATS_READ_SCANNER_STATE') {
     readScannerState()
-      .then(state => sendResponse({ ok: true, state }))
-      .catch(e => sendResponse({ ok: false, error: String(e?.message || e), state: {} }));
+      .then(state => {
+        const senderTabId = sender?.tab?.id || null;
+        const targeted = !senderTabId || !state?.targetTabId || senderTabId === state.targetTabId;
+        sendResponse({ ok: true, state: targeted ? state : null, targeted });
+      })
+      .catch(e => sendResponse({ ok: false, error: String(e?.message || e), state: {}, targeted: false }));
     return true;
   }
 

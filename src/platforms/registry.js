@@ -13,6 +13,7 @@ const CASA_TRADE = {
   id: 'casatrade',
   name: 'CasaTrade',
   hosts: [...CASATRADE_HOSTS],
+  hostRoots: ['casatrade.com', 'casatrade.io'],
   selectors: {
     asset: [
       '[data-testid*="asset"]',
@@ -66,24 +67,33 @@ export function canonicalAsset(value = '') {
   return s ? `${s}${otc ? ' (OTC)' : ''}` : '';
 }
 
+const PLATFORMS = Object.freeze([CASA_TRADE]);
+
 function normalizeHost(host = '') {
   return String(host || '').trim().toLowerCase().replace(/\.$/, '');
 }
 
-export function isCasaTradeHost(host = '') {
+function platformMatchesHost(platform, host = '') {
   const normalized = normalizeHost(host);
-  return normalized === 'casatrade.com' || normalized.endsWith('.casatrade.com') ||
-    normalized === 'casatrade.io' || normalized.endsWith('.casatrade.io');
+  if (!normalized) return false;
+  const roots = Array.isArray(platform?.hostRoots) ? platform.hostRoots : [];
+  if (roots.some(root => normalized === root || normalized.endsWith(`.${root}`))) return true;
+  return (platform?.hosts || []).some(candidate => normalizeHost(candidate) === normalized);
+}
+
+export function isCasaTradeHost(host = '') {
+  return platformMatchesHost(getPlatform('casatrade'), host);
 }
 
 export function detectPlatform(host = '') {
-  return isCasaTradeHost(host) ? CASA_TRADE : null;
+  return PLATFORMS.find(platform => platformMatchesHost(platform, host)) || null;
 }
 
 export function platformRegistry() {
-  return [CASA_TRADE];
+  return [...PLATFORMS];
 }
 
 export function getPlatform(id = '') {
-  return String(id || '').toLowerCase() === 'casatrade' ? CASA_TRADE : null;
+  const normalized = String(id || '').trim().toLowerCase();
+  return PLATFORMS.find(platform => String(platform?.id || '').toLowerCase() === normalized) || null;
 }
