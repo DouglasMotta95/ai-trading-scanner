@@ -34,6 +34,34 @@
     return out;
   }
 
+  function chartRect() {
+    const rows = [];
+    for (const el of deepElements(4500)) {
+      if (!visible(el)) continue;
+      const tag = String(el.tagName || '').toLowerCase();
+      const meta = `${el.className || ''} ${el.id || ''} ${el.getAttribute?.('data-testid') || ''}`.toLowerCase();
+      if (tag !== 'canvas' && tag !== 'svg' && !/chart|candle|graph|tradingview|plot/.test(meta)) continue;
+      const rect = el.getBoundingClientRect();
+      if (rect.width < 180 || rect.height < 120) continue;
+      let score = rect.width * rect.height;
+      if (tag === 'canvas') score *= 1.8;
+      if (/chart|candle|tradingview/.test(meta)) score *= 1.3;
+      rows.push({ rect, score });
+    }
+    rows.sort((a, b) => b.score - a.score);
+    return rows[0]?.rect || null;
+  }
+
+  const nearChart = (rect, chart) => {
+    if (!chart) return false;
+    const padX = Math.max(90, chart.width * .16);
+    const padY = Math.max(80, chart.height * .14);
+    return rect.right >= chart.left - padX
+      && rect.left <= chart.right + padX
+      && rect.bottom >= chart.top - padY
+      && rect.top <= chart.bottom + padY;
+  };
+
   const normalizeTf = value => {
     const s = fold(value).replace(/\s+/g, '');
     let m = s.match(/^m(1|2|5|15|30)$/); if (m) return `M${m[1]}`;
@@ -73,36 +101,48 @@
 
   function countdownFromDom(tf) {
     const limit = timeframeSeconds(tf);
+    const chart = chartRect();
     const rows = [];
     for (const el of deepElements()) {
       if (!visible(el)) continue;
       const own = clean(el.getAttribute?.('aria-label') || el.getAttribute?.('aria-valuetext') || el.getAttribute?.('title') || el.innerText || el.textContent || '');
-      if (!own || own.length > 120) continue;
-      const local = clean(`${own} ${el.parentElement?.innerText || ''} ${el.parentElement?.parentElement?.innerText || ''}`).slice(0, 360);
-      const ctx = fold(local);
-      const exactContext = /hora de compra|buy time|entry time|tempo da vela|candle time|tempo restante|remaining|restante|countdown|timer/.test(ctx);
+      if (!own || own.length > 80) continue;
+
+      const parentText = clean(`${el.parentElement?.innerText || ''} ${el.parentElement?.parentElement?.innerText || ''}`).slice(0, 260);
+      const ctx = fold(`${own} ${parentText}`);
+      const purchaseContext = /hora de compra|buy time|entry time/.test(ctx);
+      const candleContext = /tempo da vela|candle time|fechamento da vela|candle close|tempo restante|remaining|restante|countdown|timer/.test(ctx);
       const expiryContext = /expira|expiry|expiration|duration|duracao|duração|valor|amount|retorno|lucro|profit/.test(ctx);
-      if (!exactContext || expiryContext) continue;
+      if (expiryContext) continue;
+
+      const rect = el.getBoundingClientRect();
+      const chartScoped = nearChart(rect, chart);
+      // "HORA DE COMPRA" is an operation/purchase cutoff and can differ from the
+      // candle close shown on the chart. It must never drive next-candle timing.
+      if (purchaseContext && !candleContext) continue;
+      if (!candleContext && !chartScoped) continue;
 
       const candidates = [];
-      for (const match of local.matchAll(/\b(\d{1,2}):(\d{2})\b/g)) {
+      for (const match of own.matchAll(/\b(\d{1,2}):(\d{2})\b/g)) {
         candidates.push({ seconds: Number(match[1]) * 60 + Number(match[2]), token: match[0] });
       }
-      for (const match of local.matchAll(/\b(\d{1,4})\s*(?:s|seg|segundo|segundos)\b/gi)) {
+      for (const match of own.matchAll(/\b(\d{1,4})\s*(?:s|seg|segundo|segundos)\b/gi)) {
         candidates.push({ seconds: Number(match[1]), token: match[0] });
       }
 
       for (const candidate of candidates) {
         if (!Number.isFinite(candidate.seconds) || candidate.seconds < 0 || candidate.seconds > limit + 2) continue;
-        let score = 220;
-        if (/hora de compra|buy time|entry time/.test(ctx)) score += 260;
-        if (/tempo da vela|candle time|countdown|remaining|restante/.test(ctx)) score += 150;
-        const rect = el.getBoundingClientRect();
-        if (rect.width < innerWidth * .8) score += 30;
-        rows.push({ seconds: candidate.seconds, score, token: candidate.token, text: own });
+        let score = 100;
+        if (chartScoped) score += 320;
+        if (candleContext) score += 260;
+        if (/tempo da vela|candle time|fechamento da vela|candle close/.test(ctx)) score += 220;
+        if (/remaining|restante|countdown|timer/.test(ctx)) score += 80;
+        if (purchaseContext) score -= 500;
+        if (rect.width < innerWidth * .8) score += 20;
+        rows.push({ seconds: candidate.seconds, score, token: candidate.token, text: own, chartScoped, candleContext });
       }
     }
-    rows.sort((a, b) => b.score - a.score);
+    rows.sort((a, b) => b.score - a.score || a.seconds - b.seconds);
     return rows[0] || null;
   }
 
@@ -156,6 +196,7 @@
         expiration,
         available: true,
         verified: true,
+        clockRole: 'candle-close',
         clockSource: 'trader-dom-countdown',
         clockText: domClock.text,
         clockToken: domClock.token,
@@ -170,6 +211,7 @@
         expiration,
         available: false,
         verified: false,
+        clockRole: 'candle-close',
         clockSource: 'trader-dom-unavailable',
         confidence: 0,
         frameHost: host,
@@ -186,6 +228,8 @@
     }
   }
 
-  setInterval(tick, 250);
+  // Two reads per second are enough for a 15-second decision window and are much
+  // lighter on Quetta/Android than repeatedly walking thousands of DOM nodes at 4 Hz.
+  setInterval(tick, 500);
   tick();
 })();
