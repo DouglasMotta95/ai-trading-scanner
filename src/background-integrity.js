@@ -6,7 +6,9 @@ const num = value => value == null || value === '' ? null : Number.isFinite(Numb
 const casaHost = value => value === 'casatrade.com' || value.endsWith('.casatrade.com') || value === 'casatrade.io' || value.endsWith('.casatrade.io');
 const traderHost = value => value === 'casatraders.online' || value.endsWith('.casatraders.online') || value === 'ivcasatraders.online' || value.endsWith('.ivcasatraders.online');
 const licenseActive = state => ['active', 'valid'].includes(String(state?.license?.status || '').toLowerCase());
-const FOCUS_ARB_TTL_MS = 3200;
+const FOCUS_FRESH_MS = 2600;
+const CLOCK_FRESH_MS = 1400;
+let integrityRepairing = false;
 
 function normAsset(value = '') {
   const raw = clean(value).toUpperCase();
@@ -25,29 +27,8 @@ function senderMeta(sender = {}) {
   let frameHost = '', topHost = '';
   try { frameHost = new URL(sender.url || '').hostname.toLowerCase(); } catch {}
   try { topHost = new URL(sender.tab?.url || '').hostname.toLowerCase(); } catch {}
-  const topCasa = casaHost(frameHost) && sender.frameId === 0;
-  const embeddedTrader = traderHost(frameHost) && casaHost(topHost);
-  const casaFrame = casaHost(frameHost);
-  return {
-    trusted: !!sender.tab?.id && (casaFrame || embeddedTrader),
-    frameHost,
-    topHost,
-    topCasa,
-    embeddedTrader,
-    frameId: sender.frameId
-  };
-}
-
-function focusPriority(message = {}, sender = {}) {
-  const meta = senderMeta(sender);
-  const source = clean(message.source || 'visual-v2').toLowerCase();
-  const explicit = message.explicit === true;
-  let priority = meta.embeddedTrader ? 420 : meta.topCasa ? 220 : 170;
-  if (/chart-frame|chart-header|single-frame/.test(source)) priority += 90;
-  if (/interaction/.test(source)) priority += explicit ? 170 : 80;
-  if (explicit) priority += 45;
-  if (Number(message.score || 0) >= 500) priority += 30;
-  return priority;
+  const embeddedTrader = sender.frameId !== 0 && traderHost(frameHost) && casaHost(topHost);
+  return { trusted: !!sender.tab?.id && embeddedTrader, embeddedTrader, frameHost, topHost, frameId: sender.frameId };
 }
 
 function resetForFocus(state, asset, meta) {
@@ -71,10 +52,11 @@ function resetForFocus(state, asset, meta) {
     diagnostics: {
       ...(state.diagnostics || {}),
       focusedAsset: meta,
+      marketClock: null,
       acquisition: {
         stage: 'reading_price',
-        reason: `Ativo ${asset} confirmado na tela. Sincronizando cotação real do mesmo ativo.`,
-        assetSource: 'visual-integrity-v3',
+        reason: `Ativo ${asset} confirmado no gráfico. Aguardando cotação, velas e relógio reais do mesmo gráfico.`,
+        assetSource: 'chart-authority-v4',
         priceSource: null,
         candleCount: 0,
         requiredCandles: 2,
@@ -86,79 +68,58 @@ function resetForFocus(state, asset, meta) {
 }
 
 async function applyVisualFocus(message = {}, sender = {}) {
-  const senderInfo = senderMeta(sender);
-  if (!senderInfo.trusted) return { ok: true, ignored: true };
+  const info = senderMeta(sender);
+  if (!info.trusted || message.chartScoped !== true || message.frameRole !== 'trader-frame') return { ok: true, ignored: true };
   const asset = normAsset(message.asset);
-  if (!asset) return { ok: true, ignored: true };
-  const incomingPriority = focusPriority(message, sender);
+  if (!asset || message.reliable === false) return { ok: true, ignored: true };
 
   return updateScannerState(state => {
     if (!licenseActive(state)) return;
     if (state.targetTabId && state.targetTabId !== sender.tab.id) return;
-
     const now = Date.now();
-    const currentArbiter = state.diagnostics?.focusArbiter || null;
-    const currentFresh = currentArbiter?.asset && now - Number(currentArbiter.at || 0) < FOCUS_ARB_TTL_MS;
-    const conflict = currentFresh && !sameAsset(currentArbiter.asset, asset);
-    if (conflict && Number(currentArbiter.priority || 0) > incomingPriority) {
+    const previous = state.diagnostics?.focusedAsset || null;
+    const previousFresh = previous?.asset && now - Number(previous.at || 0) < FOCUS_FRESH_MS;
+    const sameFrame = Number(previous?.frameId) === Number(sender.frameId) && clean(previous?.frameHost) === info.frameHost;
+    const sameFocus = sameAsset(previous?.asset, asset);
+
+    if (previousFresh && !sameFrame && !sameFocus && message.explicit !== true) {
       return {
         ...state,
         diagnostics: {
           ...(state.diagnostics || {}),
-          integrity: {
-            state: 'focus_conflict_ignored',
-            expectedAsset: currentArbiter.asset,
-            ignoredAsset: asset,
-            currentPriority: Number(currentArbiter.priority || 0),
-            incomingPriority,
-            at: now
-          }
+          integrity: { state: 'foreign_chart_focus_ignored', expectedAsset: previous.asset, ignoredAsset: asset, at: now }
         }
       };
     }
 
-    const previous = state.diagnostics?.focusedAsset || null;
-    const sameFocus = sameAsset(previous?.asset, asset);
-    const stableSince = sameFocus ? Number(previous?.stableSince || previous?.at || now) : now;
-    const source = clean(message.source || 'visual-v2');
-    const focusArbiter = {
-      asset,
-      priority: incomingPriority,
-      frameHost: senderInfo.frameHost,
-      frameId: sender.frameId,
-      embeddedTrader: senderInfo.embeddedTrader,
-      source,
-      at: now
-    };
+    const stableSince = sameFocus && sameFrame ? Number(previous?.stableSince || previous?.at || now) : now;
     const meta = {
       asset,
       at: now,
       stableSince,
-      changedAt: sameFocus ? Number(previous?.changedAt || stableSince) : now,
+      changedAt: sameFocus && sameFrame ? Number(previous?.changedAt || stableSince) : now,
       score: Number(message.score || 0),
       samples: Number(message.samples || 0),
-      reliable: message.reliable !== false,
+      reliable: true,
       visual: true,
       explicit: message.explicit === true,
-      source,
+      chartScoped: true,
+      chartFound: message.chartFound === true,
+      source: clean(message.source || 'chart-frame-scoped'),
       frameId: sender.frameId,
-      frameHost: senderInfo.frameHost,
-      embeddedTrader: senderInfo.embeddedTrader,
-      priority: incomingPriority
+      frameHost: info.frameHost,
+      embeddedTrader: true,
+      authority: 'visible-chart-frame'
     };
+
     const mismatch = !!state.asset && !sameAsset(state.asset, asset);
-    if (!sameFocus || mismatch) {
-      const next = resetForFocus({ ...state, targetTabId: sender.tab.id }, asset, meta);
-      next.diagnostics.focusArbiter = focusArbiter;
-      return next;
-    }
+    if (!sameFocus || !sameFrame || mismatch) return resetForFocus({ ...state, targetTabId: sender.tab.id }, asset, meta);
     return {
       ...state,
       targetTabId: sender.tab.id,
       diagnostics: {
         ...(state.diagnostics || {}),
         focusedAsset: meta,
-        focusArbiter,
         integrity: { state: sameAsset(state.asset, asset) ? 'matched' : 'awaiting_market', expectedAsset: asset, at: now }
       }
     };
@@ -166,32 +127,70 @@ async function applyVisualFocus(message = {}, sender = {}) {
 }
 
 async function applyClock(message = {}, sender = {}) {
-  const senderInfo = senderMeta(sender);
-  if (!senderInfo.trusted) return { ok: true, ignored: true };
+  const info = senderMeta(sender);
+  if (!info.trusted) return { ok: true, ignored: true };
   const asset = normAsset(message.asset);
-  const secondsRemaining = num(message.secondsRemaining);
-  if (!asset || secondsRemaining == null || secondsRemaining < 0) return { ok: true, ignored: true };
+  if (!asset) return { ok: true, ignored: true };
 
   return updateScannerState(state => {
     if (!licenseActive(state)) return;
     if (state.targetTabId && state.targetTabId !== sender.tab.id) return;
-    const focus = normAsset(state.diagnostics?.focusedAsset?.asset || '');
-    if (!focus || !sameAsset(focus, asset)) return;
-    if (state.asset && !sameAsset(state.asset, focus)) {
-      return resetForFocus(state, focus, state.diagnostics?.focusedAsset || { asset: focus, at: Date.now(), stableSince: Date.now(), reliable: true, visual: true, source: 'integrity-repair' });
-    }
+    const focusMeta = state.diagnostics?.focusedAsset || null;
+    const focus = normAsset(focusMeta?.asset || '');
+    const authoritativeFrame = Number(focusMeta?.frameId) === Number(sender.frameId)
+      && clean(focusMeta?.frameHost).toLowerCase() === info.frameHost
+      && focusMeta?.embeddedTrader === true;
+    if (!focus || !sameAsset(focus, asset) || !authoritativeFrame) return;
 
     const timeframe = clean(message.timeframe || state.analysisTimeframe || state.timeframe || 'M1').toUpperCase();
-    const expiration = clean(message.expiration || state.targetExpiration || state.expiration || '') || null;
+    const expiration = clean(message.expiration || '') || null;
+    const exact = message.available === true
+      && message.verified === true
+      && clean(message.clockSource) === 'trader-dom-countdown'
+      && num(message.secondsRemaining) != null
+      && num(message.secondsRemaining) >= 0;
+
+    if (!exact) {
+      return {
+        ...state,
+        signal: null,
+        analysisTimeframe: timeframe,
+        targetExpiration: expiration,
+        diagnostics: {
+          ...(state.diagnostics || {}),
+          marketClock: {
+            asset: focus,
+            secondsRemaining: null,
+            timeframe,
+            expiration,
+            verified: false,
+            source: clean(message.clockSource || 'trader-dom-unavailable'),
+            frameId: sender.frameId,
+            frameHost: info.frameHost,
+            at: Date.now()
+          },
+          integrity: { state: 'awaiting_exact_clock', expectedAsset: focus, at: Date.now() }
+        }
+      };
+    }
+
+    const secondsRemaining = Number(message.secondsRemaining);
     const marketClock = {
+      asset: focus,
       secondsRemaining,
       timeframe,
       expiration,
-      source: clean(message.clockSource || 'clock-v3'),
+      verified: true,
+      source: 'trader-dom-countdown',
+      text: clean(message.clockText || ''),
+      token: clean(message.clockToken || ''),
       confidence: Number(message.confidence || 0),
-      frameHost: clean(message.frameHost || senderInfo.frameHost || ''),
+      frameId: sender.frameId,
+      frameHost: info.frameHost,
       at: Date.now()
     };
+
+    if (state.asset && !sameAsset(state.asset, focus)) return resetForFocus(state, focus, focusMeta);
     const freshPrice = num(state.price) != null && state.lastSeen && Date.now() - Number(state.lastSeen) < 8000;
     if (!freshPrice || state.connection !== 'online') {
       return {
@@ -212,6 +211,7 @@ async function applyClock(message = {}, sender = {}) {
       expiration,
       targetExpiration: expiration,
       secondsRemaining,
+      clockVerified: true,
       serverTime: Date.now(),
       candles: Array.isArray(state.candles) ? state.candles : []
     };
@@ -226,13 +226,91 @@ async function applyClock(message = {}, sender = {}) {
   });
 }
 
+function focusValid(state, now = Date.now()) {
+  const focus = state?.diagnostics?.focusedAsset || null;
+  return !!normAsset(focus?.asset)
+    && focus?.reliable === true
+    && focus?.chartScoped === true
+    && focus?.embeddedTrader === true
+    && traderHost(clean(focus?.frameHost).toLowerCase())
+    && now - Number(focus?.at || 0) < FOCUS_FRESH_MS;
+}
+
+function clockValid(state, now = Date.now()) {
+  const focus = state?.diagnostics?.focusedAsset || null;
+  const clock = state?.diagnostics?.marketClock || null;
+  return focusValid(state, now)
+    && clock?.verified === true
+    && clean(clock?.source) === 'trader-dom-countdown'
+    && now - Number(clock?.at || 0) < CLOCK_FRESH_MS
+    && sameAsset(clock?.asset, focus?.asset)
+    && Number(clock?.frameId) === Number(focus?.frameId)
+    && clean(clock?.frameHost).toLowerCase() === clean(focus?.frameHost).toLowerCase()
+    && num(clock?.secondsRemaining) != null;
+}
+
+function enforceStateIntegrity(nextState = {}) {
+  if (!licenseActive(nextState)) return nextState;
+  const now = Date.now();
+  const validFocus = focusValid(nextState, now);
+  const focusAsset = validFocus ? normAsset(nextState.diagnostics?.focusedAsset?.asset) : '';
+  const assetMismatch = !!nextState.asset && (!focusAsset || !sameAsset(nextState.asset, focusAsset));
+  if (!validFocus || assetMismatch) {
+    resetOrchestrator();
+    return {
+      ...nextState,
+      connection: 'connecting',
+      asset: focusAsset || null,
+      price: null,
+      candles: [],
+      currentCandle: null,
+      signal: null,
+      lastConfirmed: null,
+      tradeIntent: null,
+      lastSeen: null,
+      timeframe: null,
+      analysisTimeframe: null,
+      expiration: null,
+      targetExpiration: null,
+      diagnostics: {
+        ...(nextState.diagnostics || {}),
+        integrity: { state: validFocus ? 'asset_mismatch_blocked' : 'awaiting_visible_chart_asset', expectedAsset: focusAsset || null, at: now }
+      }
+    };
+  }
+
+  const validClock = clockValid(nextState, now);
+  const signalSeconds = num(nextState.signal?.secondsRemaining);
+  const clockSeconds = num(nextState.diagnostics?.marketClock?.secondsRemaining);
+  const signalClockMismatch = nextState.signal && (!validClock || signalSeconds == null || clockSeconds == null || signalSeconds !== clockSeconds);
+  if (signalClockMismatch) {
+    return {
+      ...nextState,
+      signal: null,
+      diagnostics: {
+        ...(nextState.diagnostics || {}),
+        integrity: { state: 'signal_blocked_without_exact_clock', expectedAsset: focusAsset, at: now }
+      }
+    };
+  }
+  return nextState;
+}
+
+chrome.storage.onChanged.addListener(changes => {
+  if (!changes.scannerState || integrityRepairing) return;
+  const nextState = changes.scannerState.newValue || {};
+  const repaired = enforceStateIntegrity(nextState);
+  if (repaired === nextState) return;
+  const before = JSON.stringify(nextState);
+  const after = JSON.stringify(repaired);
+  if (before === after) return;
+  integrityRepairing = true;
+  updateScannerState(() => repaired).finally(() => { integrityRepairing = false; });
+});
+
 async function injectIntegrityReaders(tabId) {
   if (!tabId || !chrome.scripting?.executeScript) return;
-  const files = [
-    'src/content/focused-asset-v2.js',
-    'src/content/market-clock-sync.js',
-    'src/content/analysis-visual-overlay-v2.js'
-  ];
+  const files = ['src/content/focused-asset-v2.js', 'src/content/market-clock-sync.js', 'src/content/analysis-visual-overlay-v2.js'];
   for (const file of files) {
     try { await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, files: [file], world: 'ISOLATED' }); } catch {}
   }
