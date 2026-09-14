@@ -92,24 +92,25 @@ test('platform readers remain wired to real CasaTrade controls', () => {
   assert.match(content, /comprar\|vender\|buy\|sell/);
 });
 
-test('market feed prefers focused asset but can recover from corroborated real DOM/network evidence', () => {
+test('market feed is filtered to the authoritative visible chart asset before it can drive a decision', () => {
   const manifest = JSON.parse(read('manifest.json'));
-  const focus = read('src/content/focused-asset.js');
+  const focus = read('src/content/focused-asset-v2.js');
   const augment = read('src/background-augment.js');
   const generic = read('src/content/generic-adapter.js');
   const evidence = read('src/core/market-evidence.js');
 
-  assert.ok(manifest.content_scripts.some(x => (x.js || []).includes('src/content/focused-asset.js')));
-  assert.match(focus, /ATS_FOCUSED_ASSET/);
-  assert.match(focus, /aria-selected/);
-  assert.match(focus, /reliable/);
+  assert.ok(manifest.content_scripts.some(x => (x.js || []).includes('src/content/focused-asset-v2.js')));
+  assert.match(focus, /ATS_VISUAL_FOCUS_V2/);
+  assert.match(focus, /chartScoped: true/);
+  assert.match(focus, /frameRole: 'trader-frame'/);
 
   assert.match(augment, /focusedAssets/);
   assert.match(augment, /function chooseCandidate\(payload = \{\}, preferredAsset = ''\)/);
   assert.match(augment, /filter\(row => sameAsset\(row\.asset, focus\)\)/);
-  assert.match(augment, /strongCandidate/);
-  assert.match(augment, /network-fallback/);
-  assert.doesNotMatch(augment, /if \(!focusedAsset\) return;/);
+  assert.match(augment, /const frameMatchesFocus =/);
+  assert.match(augment, /if \(!frameMatchesFocus\) return/);
+  assert.match(augment, /function authoritativeClock\(/);
+  assert.match(augment, /if \(!clock\) return base/);
 
   assert.match(generic, /bestDomAsset/);
   assert.match(generic, /bestNetworkQuote\(''\)/);
