@@ -62,17 +62,20 @@
     if ($('tradeActionStatus')) $('tradeActionStatus').textContent = 'Entrada bloqueada enquanto o relógio da vela não estiver confirmado.';
   }
 
-  function readState() {
+  let reading = false;
+  async function readState() {
+    if (reading) return;
+    reading = true;
     try {
-      chrome.storage.local.get('scannerState', result => {
-        void chrome.runtime?.lastError;
-        applyGuard(result?.scannerState || {});
-      });
-    } catch {}
+      const response = await chrome.runtime.sendMessage({ type: 'ATS_READ_SCANNER_STATE' }).catch(() => null);
+      applyGuard(response?.state || {});
+    } finally {
+      reading = false;
+    }
   }
 
   chrome.storage.onChanged.addListener(changes => {
-    if (changes.scannerState) setTimeout(() => applyGuard(changes.scannerState.newValue || {}), 0);
+    if (changes.scannerState) setTimeout(readState, 0);
   });
   setInterval(readState, 350);
   readState();
