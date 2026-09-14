@@ -25,7 +25,6 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
-
           p = Path('src/core/orchestrator.js')
           s = p.read_text()
           old = "import { analyzeCandles, ANALYST_THRESHOLDS } from './analysis.js';\n"
@@ -33,127 +32,34 @@ jobs:
           if old not in s or "from './market-regime.js'" in s:
               raise SystemExit('orchestrator import anchor missing or already patched')
           s = s.replace(old, new, 1)
-
           old = "  uiState = 'ANALYZING_MARKET', analytics = {}, stability = null\n} = {}) {"
           new = "  uiState = 'ANALYZING_MARKET', analytics = {}, stability = null, regime = null\n} = {}) {"
-          if old not in s:
-              raise SystemExit('baseSignal args anchor missing')
+          if old not in s: raise SystemExit('baseSignal args anchor missing')
           s = s.replace(old, new, 1)
-
           old = "    analytics,\n    stability,\n    targetStart,"
           new = "    analytics,\n    regime,\n    stability,\n    targetStart,"
-          if old not in s:
-              raise SystemExit('baseSignal return anchor missing')
+          if old not in s: raise SystemExit('baseSignal return anchor missing')
           s = s.replace(old, new, 1)
-
           old = "  const liveResult = analyzeCandles(combined, indicatorHistory);\n  const candleCount = closed.length;\n"
           new = "  const liveResult = analyzeCandles(combined, indicatorHistory);\n  const regime = marketRegime(closed);\n  const candleCount = closed.length;\n"
-          if old not in s:
-              raise SystemExit('regime calculation anchor missing')
+          if old not in s: raise SystemExit('regime calculation anchor missing')
           s = s.replace(old, new, 1)
-
           old = "    analytics: liveResult.analytics || {},\n    stability: stabilitySnapshot(tracker),"
           new = "    analytics: liveResult.analytics || {},\n    regime,\n    stability: stabilitySnapshot(tracker),"
-          if old not in s:
-              raise SystemExit('common signal anchor missing')
+          if old not in s: raise SystemExit('common signal anchor missing')
           s = s.replace(old, new, 1)
-
           old = "  if (secondsRemaining <= 10) {\n    const canConfirm = observeConfirmation(tracker, liveResult, direction, score, sampleAt);\n    if (canConfirm) {"
           new = "  if (secondsRemaining <= 10) {\n    const rangeBlocked = regime?.type === 'range';\n    if (rangeBlocked) {\n      tracker.confirmDirection = null;\n      tracker.confirmHits = 0;\n      tracker.lastConfirmAt = null;\n    }\n    const canConfirm = !rangeBlocked && observeConfirmation(tracker, liveResult, direction, score, sampleAt);\n    if (canConfirm) {"
-          if old not in s:
-              raise SystemExit('confirmation gate anchor missing')
+          if old not in s: raise SystemExit('confirmation gate anchor missing')
           s = s.replace(old, new, 1)
-
           old = "    finalDecisions.set(key, {\n      bucket: currentBucket,\n      state: 'NO_TRADE',\n      direction: null,\n      provisional: false,\n      reason: 'Sem confirmação estável suficiente para liberar a próxima vela.',\n      score,\n      targetStart,\n      asset: snapshot.asset,\n      timeframe: analysisTimeframe\n    });\n\n    if (possibleDirection) {"
           new = "    const noTradeReason = rangeBlocked\n      ? 'AGUARDANDO — mercado sem tendência definida.'\n      : 'Sem confirmação estável suficiente para liberar a próxima vela.';\n    finalDecisions.set(key, {\n      bucket: currentBucket,\n      state: 'NO_TRADE',\n      direction: null,\n      provisional: false,\n      reason: noTradeReason,\n      score,\n      targetStart,\n      asset: snapshot.asset,\n      timeframe: analysisTimeframe\n    });\n\n    if (rangeBlocked) {\n      return {\n        candles: closed,\n        currentCandle: current,\n        lastConfirmed,\n        signal: baseSignal({\n          ...common,\n          state: 'NO_TRADE',\n          direction: null,\n          provisional: false,\n          phase: 'FINAL',\n          uiState: 'WAIT',\n          reason: noTradeReason,\n          stability: stabilitySnapshot(tracker)\n        })\n      };\n    }\n\n    if (possibleDirection) {"
-          if old not in s:
-              raise SystemExit('no-trade range return anchor missing')
+          if old not in s: raise SystemExit('no-trade range return anchor missing')
           s = s.replace(old, new, 1)
           p.write_text(s)
-
-          test_file = Path('test/market-regime-gate.test.mjs')
-          test_file.write_text(r'''import test from 'node:test';
-import assert from 'node:assert/strict';
-import { marketRegime } from '../src/core/market-regime.js';
-import { processSnapshot, resetOrchestrator } from '../src/core/orchestrator.js';
-
-const minute = 60_000;
-
-function rangeWithStrongCurrent(bucket) {
-  const candles = [];
-  for (let i = 20; i >= 1; i--) {
-    const index = 20 - i;
-    const base = 1.1000 + (index % 2 === 0 ? -0.0020 : 0.0020);
-    const close = base + (index % 3 === 0 ? 0.0015 : -0.0010);
-    candles.push({
-      time: bucket - i * minute,
-      open: base,
-      high: Math.max(base, close) + 0.0040,
-      low: Math.min(base, close) - 0.0040,
-      close,
-      timeframe: 'M1'
-    });
-  }
-  candles.push({
-    time: bucket,
-    open: 1.0990,
-    high: 1.1125,
-    low: 1.0985,
-    close: 1.1115,
-    timeframe: 'M1'
-  });
-  return candles;
-}
-
-function snapshot(bucket, offset, candles) {
-  return {
-    platformId: 'casatrade',
-    asset: 'EUR/USD',
-    price: 1.1115,
-    timeframe: 'M1',
-    analysisTimeframe: 'M1',
-    connection: 'online',
-    serverTime: bucket + offset,
-    candles
-  };
-}
-
-test('market regime classifies the fixture as range', () => {
-  const bucket = Math.floor(1_800_100_000_000 / minute) * minute;
-  const candles = rangeWithStrongCurrent(bucket);
-  const regime = marketRegime(candles.slice(0, -1));
-  assert.equal(regime.type, 'range');
-});
-
-test('range regime blocks ENTER even after confirmation score and stability are otherwise sufficient', () => {
-  resetOrchestrator();
-  const bucket = Math.floor(1_800_110_000_000 / minute) * minute;
-  const candles = rangeWithStrongCurrent(bucket);
-
-  processSnapshot(snapshot(bucket, 35_000, candles), { connection: 'online' });
-  processSnapshot(snapshot(bucket, 36_000, candles), { connection: 'online' });
-  const firstFinal = processSnapshot(snapshot(bucket, 51_000, candles), { connection: 'online' });
-  const blocked = processSnapshot(snapshot(bucket, 52_000, candles), { connection: 'online' });
-
-  assert.equal(blocked.signal.regime?.type, 'range');
-  assert.ok(Number(blocked.signal.analysisScore) >= 58, `expected score >= 58, got ${blocked.signal.analysisScore}`);
-  assert.notEqual(firstFinal.signal.uiState, 'ENTER_BUY');
-  assert.notEqual(firstFinal.signal.uiState, 'ENTER_SELL');
-  assert.equal(blocked.signal.state, 'NO_TRADE');
-  assert.equal(blocked.signal.uiState, 'WAIT');
-  assert.equal(blocked.signal.direction, null);
-  assert.equal(blocked.signal.reason, 'AGUARDANDO — mercado sem tendência definida.');
-});
-
-test('regime gate is additive and does not change approved thresholds', async () => {
-  const { ANALYST_THRESHOLDS } = await import('../src/core/analysis.js');
-  assert.equal(ANALYST_THRESHOLDS.possibleScore, 44);
-  assert.equal(ANALYST_THRESHOLDS.confirmScore, 58);
-  assert.equal(ANALYST_THRESHOLDS.candleStrength, 62);
-  assert.equal(ANALYST_THRESHOLDS.rejectionStrength, 50);
-});
-''')
           PY
+          TEST_B64='aW1wb3J0IHRlc3QgZnJvbSAnbm9kZTp0ZXN0JzsKaW1wb3J0IGFzc2VydCBmcm9tICdub2RlOmFzc2VydC9zdHJpY3QnOwppbXBvcnQgeyBtYXJrZXRSZWdpbWUgfSBmcm9tICcuLi9zcmMvY29yZS9tYXJrZXQtcmVnaW1lLmpzJzsKaW1wb3J0IHsgcHJvY2Vzc1NuYXBzaG90LCByZXNldE9yY2hlc3RyYXRvciB9IGZyb20gJy4uL3NyYy9jb3JlL29yY2hlc3RyYXRvci5qcyc7Cgpjb25zdCBtaW51dGUgPSA2MF8wMDA7CgpmdW5jdGlvbiByYW5nZVdpdGhTdHJvbmdDdXJyZW50KGJ1Y2tldCkgewogIGNvbnN0IGNhbmRsZXMgPSBbXTsKICBmb3IgKGxldCBpID0gMjA7IGkgPj0gMTsgaS0tKSB7CiAgICBjb25zdCBpbmRleCA9IDIwIC0gaTsKICAgIGNvbnN0IGJhc2UgPSAxLjEwMDAgKyAoaW5kZXggJSAyID09PSAwID8gLTAuMDAyMCA6IDAuMDAyMCk7CiAgICBjb25zdCBjbG9zZSA9IGJhc2UgKyAoaW5kZXggJSAzID09PSAwID8gMC4wMDE1IDogLTAuMDAxMCk7CiAgICBjYW5kbGVzLnB1c2goewogICAgICB0aW1lOiBidWNrZXQgLSBpICogbWludXRlLAogICAgICBvcGVuOiBiYXNlLAogICAgICBoaWdoOiBNYXRoLm1heChiYXNlLCBjbG9zZSkgKyAwLjAwNDAsCiAgICAgIGxvdzogTWF0aC5taW4oYmFzZSwgY2xvc2UpIC0gMC4wMDQwLAogICAgICBjbG9zZSwKICAgICAgdGltZWZyYW1lOiAnTTEnCiAgICB9KTsKICB9CiAgY2FuZGxlcy5wdXNoKHsKICAgIHRpbWU6IGJ1Y2tldCwKICAgIG9wZW46IDEuMDk5MCwKICAgIGhpZ2g6IDEuMTEyNSwKICAgIGxvdzogMS4wOTg1LAogICAgY2xvc2U6IDEuMTExNSwKICAgIHRpbWVmcmFtZTogJ00xJwogIH0pOwogIHJldHVybiBjYW5kbGVzOwp9CgpmdW5jdGlvbiBzbmFwc2hvdChidWNrZXQsIG9mZnNldCwgY2FuZGxlcykgewogIHJldHVybiB7CiAgICBwbGF0Zm9ybUlkOiAnY2FzYXRyYWRlJywKICAgIGFzc2V0OiAnRVVSL1VTRCcsCiAgICBwcmljZTogMS4xMTE1LAogICAgdGltZWZyYW1lOiAnTTEnLAogICAgYW5hbHlzaXNUaW1lZnJhbWU6ICdNMScsCiAgICBjb25uZWN0aW9uOiAnb25saW5lJywKICAgIHNlcnZlclRpbWU6IGJ1Y2tldCArIG9mZnNldCwKICAgIGNhbmRsZXMKICB9Owp9Cgp0ZXN0KCdtYXJrZXQgcmVnaW1lIGNsYXNzaWZpZXMgdGhlIGZpeHR1cmUgYXMgcmFuZ2UnLCAoKSA9PiB7CiAgY29uc3QgYnVja2V0ID0gTWF0aC5mbG9vcigxXzgwMF8xMDBfMDAwXzAwMCAvIG1pbnV0ZSkgKiBtaW51dGU7CiAgY29uc3QgY2FuZGxlcyA9IHJhbmdlV2l0aFN0cm9uZ0N1cnJlbnQoYnVja2V0KTsKICBjb25zdCByZWdpbWUgPSBtYXJrZXRSZWdpbWUoY2FuZGxlcy5zbGljZSgwLCAtMSkpOwogIGFzc2VydC5lcXVhbChyZWdpbWUudHlwZSwgJ3JhbmdlJyk7Cn0pOwoKdGVzdCgncmFuZ2UgcmVnaW1lIGJsb2NrcyBFTlRFUiBldmVuIGFmdGVyIGNvbmZpcm1hdGlvbiBzY29yZSBhbmQgc3RhYmlsaXR5IGFyZSBvdGhlcndpc2Ugc3VmZmljaWVudCcsICgpID0+IHsKICByZXNldE9yY2hlc3RyYXRvcigpOwogIGNvbnN0IGJ1Y2tldCA9IE1hdGguZmxvb3IoMV84MDBfMTEwXzAwMF8wMDAgLyBtaW51dGUpICogbWludXRlOwogIGNvbnN0IGNhbmRsZXMgPSByYW5nZVdpdGhTdHJvbmdDdXJyZW50KGJ1Y2tldCk7CgogIHByb2Nlc3NTbmFwc2hvdChzbmFwc2hvdChidWNrZXQsIDM1XzAwMCwgY2FuZGxlcyksIHsgY29ubmVjdGlvbjogJ29ubGluZScgfSk7CiAgcHJvY2Vzc1NuYXBzaG90KHNuYXBzaG90KGJ1Y2tldCwgMzZfMDAwLCBjYW5kbGVzKSwgeyBjb25uZWN0aW9uOiAnb25saW5lJyB9KTsKICBjb25zdCBmaXJzdEZpbmFsID0gcHJvY2Vzc1NuYXBzaG90KHNuYXBzaG90KGJ1Y2tldCwgNTFfMDAwLCBjYW5kbGVzKSwgeyBjb25uZWN0aW9uOiAnb25saW5lJyB9KTsKICBjb25zdCBibG9ja2VkID0gcHJvY2Vzc1NuYXBzaG90KHNuYXBzaG90KGJ1Y2tldCwgNTJfMDAwLCBjYW5kbGVzKSwgeyBjb25uZWN0aW9uOiAnb25saW5lJyB9KTsKCiAgYXNzZXJ0LmVxdWFsKGJsb2NrZWQuc2lnbmFsLnJlZ2ltZT8udHlwZSwgJ3JhbmdlJyk7CiAgYXNzZXJ0Lm9rKE51bWJlcihibG9ja2VkLnNpZ25hbC5hbmFseXNpc1Njb3JlKSA+PSA1OCwgYGV4cGVjdGVkIHNjb3JlID49IDU4LCBnb3QgJHtibG9ja2VkLnNpZ25hbC5hbmFseXNpc1Njb3JlfWApOwogIGFzc2VydC5ub3RFcXVhbChmaXJzdEZpbmFsLnNpZ25hbC51aVN0YXRlLCAnRU5URVJfQlVZJyk7CiAgYXNzZXJ0Lm5vdEVxdWFsKGZpcnN0RmluYWwuc2lnbmFsLnVpU3RhdGUsICdFTlRFUl9TRUxMJyk7CiAgYXNzZXJ0LmVxdWFsKGJsb2NrZWQuc2lnbmFsLnN0YXRlLCAnTk9fVFJBREUnKTsKICBhc3NlcnQuZXF1YWwoYmxvY2tlZC5zaWduYWwudWlTdGF0ZSwgJ1dBSVQnKTsKICBhc3NlcnQuZXF1YWwoYmxvY2tlZC5zaWduYWwuZGlyZWN0aW9uLCBudWxsKTsKICBhc3NlcnQuZXF1YWwoYmxvY2tlZC5zaWduYWwucmVhc29uLCAnQUdVQVJEQU5ETyDigJQgbWVyY2FkbyBzZW0gdGVuZMOqbmNpYSBkZWZpbmlkYS4nKTsKfSk7Cgp0ZXN0KCdyZWdpbWUgZ2F0ZSBpcyBhZGRpdGl2ZSBhbmQgZG9lcyBub3QgY2hhbmdlIGFwcHJvdmVkIHRocmVzaG9sZHMnLCBhc3luYyAoKSA9PiB7CiAgY29uc3QgeyBBTkFMWVNUX1RIUkVTSE9MRFMgfSA9IGF3YWl0IGltcG9ydCgnLi4vc3JjL2NvcmUvYW5hbHlzaXMuanMnKTsKICBhc3NlcnQuZXF1YWwoQU5BTFlTVF9USFJFU0hPTERTLnBvc3NpYmxlU2NvcmUsIDQ0KTsKICBhc3NlcnQuZXF1YWwoQU5BTFlTVF9USFJFU0hPTERTLmNvbmZpcm1TY29yZSwgNTgpOwogIGFzc2VydC5lcXVhbChBTkFMWVNUX1RIUkVTSE9MRFMuY2FuZGxlU3RyZW5ndGgsIDYyKTsKICBhc3NlcnQuZXF1YWwoQU5BTFlTVF9USFJFU0hPTERTLnJlamVjdGlvblN0cmVuZ3RoLCA1MCk7Cn0pOwo='
+          printf '%s' "$TEST_B64" | base64 -d > test/market-regime-gate.test.mjs
           node --check src/core/orchestrator.js
           node --check src/core/market-regime.js
           node --check test/market-regime-gate.test.mjs
