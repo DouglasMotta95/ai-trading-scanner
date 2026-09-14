@@ -190,8 +190,13 @@ async function setFocusedAsset(message = {}, sender = {}) {
   const explicit = message.explicit === true || source === 'user-selection';
   const visual = message.visual === true || source === 'chart-header' || source === 'user-selection' || source === 'single-frame-asset';
   const reliable = message.reliable === true || explicit || source === 'single-frame-asset' || score >= FOCUS_CHANGE_MIN_SCORE || samples >= 2;
-  const previousProtected = previousFocus?.source === 'user-selection' || previousFocus?.explicit === true;
-  if (previousFocus?.asset && !sameAsset(previousFocus.asset, focused) && (!reliable || (previousProtected && !explicit))) return;
+  const incomingUserSelection = source === 'user-selection';
+  const previousUserSelection = previousFocus?.source === 'user-selection';
+  const previousProtected = previousUserSelection || previousFocus?.explicit === true;
+  if (previousFocus?.asset && !sameAsset(previousFocus.asset, focused)) {
+    if (previousUserSelection && !incomingUserSelection) return;
+    if (!reliable || (previousProtected && !explicit)) return;
+  }
 
   focusedAssets.set(tabId, { asset: focused, score, samples, reliable, visual, source, explicit, frameId: sender.frameId, at: Date.now() });
 
@@ -201,7 +206,11 @@ async function setFocusedAsset(message = {}, sender = {}) {
 
     const previousStored = scannerState.diagnostics?.focusedAsset || null;
     const sameStoredFocus = sameAsset(previousStored?.asset, focused);
-    if (previousStored?.asset && !sameStoredFocus && !reliable) return;
+    const storedUserSelection = previousStored?.source === 'user-selection';
+    if (previousStored?.asset && !sameStoredFocus) {
+      if (storedUserSelection && !incomingUserSelection) return;
+      if (!reliable) return;
+    }
 
     const changed = (!!previousFocus?.asset && !sameAsset(previousFocus.asset, focused)) || (!!previousStored?.asset && !sameStoredFocus);
     const stateAssetMismatch = scannerState.asset && !sameAsset(scannerState.asset, focused);
@@ -214,7 +223,9 @@ async function setFocusedAsset(message = {}, sender = {}) {
       targetTabId: tabId,
       ...(mustResetMarket ? {
         connection: 'connecting', asset: focused, price: null, candles: [], currentCandle: null,
-        signal: null, lastConfirmed: null, tradeIntent: null, lastSeen: null
+        signal: null, lastConfirmed: null, tradeIntent: null, lastSeen: null,
+        timeframe: null, analysisTimeframe: null, expiration: null, targetExpiration: null,
+        platformControls: null
       } : {}),
       diagnostics: {
         ...(scannerState.diagnostics || {}),

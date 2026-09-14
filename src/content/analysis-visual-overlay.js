@@ -15,6 +15,29 @@
   let busy = false;
 
   const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
+  const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
+  const QUOTES = new Set(['USDT','USDC','USD','EUR','GBP','JPY','AUD','CAD','CHF','NZD','BRL','BTC','ETH']);
+  const pairRe = /\b([A-Z0-9]{2,16})\s*[\/_-]\s*(USDT|USDC|USD|EUR|GBP|JPY|AUD|CAD|CHF|NZD|BRL|BTC|ETH)(?:\s*\(\s*OTC\s*\)|\s+OTC)?/i;
+  function canonicalAsset(value = '') {
+    let raw = clean(value).toUpperCase();
+    if (!raw || raw.length > 100) return '';
+    const otc = /(?:\(|\b|[_-])OTC(?:\)|\b)?/.test(raw);
+    let normalized = raw.replace(/\(\s*OTC\s*\)|\bOTC\b/g, '').replace(/^FRX[:_-]?/, '')
+      .replace(/\s+/g, '').replace(/_/g, '/').replace(/-/g, '/').replace(/:+/g, '/')
+      .replace(/^\/+|\/+$/g, '').replace(/\/{2,}/g, '/');
+    if (!normalized.includes('/')) {
+      const quote = [...QUOTES].find(item => normalized.length > item.length && normalized.endsWith(item));
+      if (quote) normalized = `${normalized.slice(0, -quote.length)}/${quote}`;
+    }
+    const match = normalized.match(/^([A-Z0-9]{2,16})\/([A-Z0-9]{2,12})$/);
+    if (!match || !QUOTES.has(match[2])) return '';
+    return `${match[1]}/${match[2]}${otc ? ' (OTC)' : ''}`;
+  }
+  const assetIdentity = value => canonicalAsset(value).replace(/\s*\(OTC\)\s*$/, '');
+  const sameAsset = (a, b) => {
+    const left = assetIdentity(a), right = assetIdentity(b);
+    return !!left && !!right && left === right;
+  };
   const visible = el => {
     if (!el || !(el instanceof Element)) return false;
     const rect = el.getBoundingClientRect();
@@ -39,6 +62,43 @@
     }
     return out;
   };
+  function localVisibleAsset() {
+    const rows = [];
+    for (const el of deepElements(5000)) {
+      if (!visible(el)) continue;
+      const text = clean(el.getAttribute?.('aria-label') || el.getAttribute?.('title') || el.innerText || el.textContent || '');
+      if (!text || text.length > 120) continue;
+      const match = text.match(pairRe);
+      if (!match) continue;
+      const asset = canonicalAsset(match[0]);
+      if (!asset) continue;
+      const role = String(el.getAttribute?.('role') || '').toLowerCase();
+      const flags = `${el.className || ''} ${el.getAttribute?.('aria-selected') || ''} ${el.getAttribute?.('aria-current') || ''} ${el.getAttribute?.('data-state') || ''}`;
+      const selected = /true|active|selected|current|checked/i.test(flags);
+      if (role === 'tab' && !selected) continue;
+      const rect = el.getBoundingClientRect();
+      const context = `${el.id || ''} ${el.className || ''} ${el.parentElement?.className || ''}`.toLowerCase();
+      let score = selected ? 500 : 0;
+      if (role !== 'tab') score += 100;
+      if (rect.top >= 0 && rect.top < innerHeight * .55) score += 45;
+      if (text.length < 45) score += 35;
+      if (/chart|trade|trading|instrument|asset|symbol|header/.test(context)) score += 120;
+      if (/watchlist|listbox|history|portfolio|dropdown|menu|drawer/.test(context) && !selected) score -= 260;
+      rows.push({ asset, score });
+    }
+    rows.sort((a, b) => b.score - a.score);
+    return rows[0]?.asset || '';
+  }
+
+  function overlayMatchesVisibleAsset() {
+    const stateAsset = canonicalAsset(scannerState?.asset || '');
+    const lastSeen = Number(scannerState?.lastSeen || 0);
+    if (!stateAsset || !Number.isFinite(lastSeen) || lastSeen <= 0 || Date.now() - lastSeen > 8000) return false;
+    const visibleAsset = localVisibleAsset();
+    if (!visibleAsset) return false;
+    return sameAsset(visibleAsset, stateAsset);
+  }
+
   const priceFromText = text => {
     const raw = String(text || '').trim();
     if (!/^\s*\d{1,7}(?:[.,]\d{2,10})\s*$/.test(raw)) return null;
@@ -130,7 +190,7 @@
   }
 
   function render() {
-    if (!prefs.overlayEnabled || !scannerState || scannerState.platformId !== 'casatrade' || !scannerState.asset) {
+    if (!prefs.overlayEnabled || !scannerState || scannerState.platformId !== 'casatrade' || !scannerState.asset || !overlayMatchesVisibleAsset()) {
       if (root) root.hidden = true;
       return;
     }

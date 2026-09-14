@@ -165,10 +165,7 @@
   function chooseCandidate() {
     const scanned = focusedAssetCandidate();
     if (userSelection) {
-      if (!scanned || sameAsset(scanned.asset, userSelection.asset) || !scanned.explicit) {
-        return { asset: userSelection.asset, score: Math.max(900, Number(scanned?.score || 0)), explicit: true, source: 'user-selection' };
-      }
-      userSelection = null;
+      return { asset: userSelection.asset, score: Math.max(900, Number(scanned?.score || 0)), explicit: true, source: 'user-selection' };
     }
     if (scanned?.singleAsset && !scanned.explicit) return { ...scanned, source: 'single-frame-asset' };
     return scanned;

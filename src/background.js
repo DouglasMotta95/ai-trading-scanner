@@ -299,7 +299,9 @@ async function connectActiveTab() {
 
 function scanCasaTradeFrame() {
   const host = String(location.hostname || '').toLowerCase().replace(/\.$/, '');
-  if (!(host === 'casatrade.com' || host.endsWith('.casatrade.com') || host === 'casatrade.io' || host.endsWith('.casatrade.io'))) return null;
+  const casaHost = host === 'casatrade.com' || host.endsWith('.casatrade.com') || host === 'casatrade.io' || host.endsWith('.casatrade.io');
+  const traderHost = host === 'casatraders.online' || host.endsWith('.casatraders.online') || host === 'ivcasatraders.online' || host.endsWith('.ivcasatraders.online');
+  if (!casaHost && !traderHost) return null;
 
   const cleanText = v => String(v ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
   const fold = v => cleanText(v).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
