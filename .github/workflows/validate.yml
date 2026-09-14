@@ -12,7 +12,7 @@ jobs:
         with:
           node-version: 20
       - name: Validate manifest
-        run: node -e "const m=JSON.parse(require('fs').readFileSync('manifest.json','utf8')); if(m.manifest_version!==3) process.exit(1); if(m.action?.default_popup) process.exit(2); if(m.side_panel?.default_path!=='src/sidepanel/index.html') process.exit(3); console.log('manifest',m.version,'side-panel-only ok')"
+        run: node -e "const m=JSON.parse(require('fs').readFileSync('manifest.json','utf8')); if(m.manifest_version!==3) process.exit(1); if(m.version!=='0.10.4') process.exit(4); if(m.action?.default_popup) process.exit(2); if(m.side_panel?.default_path!=='src/sidepanel/index.html') process.exit(3); console.log('manifest',m.version,'side-panel-only ok')"
       - name: Check required extension files
         run: test -f src/background.js && test -f src/background-augment.js && test -f src/core/orchestrator.js && test -f src/core/analysis.js && test -f src/core/candles.js && test -f src/services/license.js && test -f src/content/network-probe.js && test -f src/content/network-bridge.js && test -f src/content/generic-adapter.js && test -f src/content/platform-sync.js && test -f src/content/trade-handoff.js && test -f src/platforms/registry.js && test -f src/sidepanel/index.html && test -f src/sidepanel/app.js && test -f src/sidepanel/account-login.js && test ! -e src/core/ai-scoring.js && test ! -e src/core/backtest.js && test ! -e src/core/correlation.js && test ! -e src/core/market-structure.js && test ! -e src/core/reporting.js && test ! -e src/content/chart-overlay.js && test ! -e src/content/history-adapter.js && test ! -e src/background-platform-sync.js
       - name: Syntax check extension
@@ -25,3 +25,15 @@ jobs:
         run: find apps/customer-portal -name '*.js' -print0 | xargs -0 -n1 node --check
       - name: Core unit tests
         run: cd backend && npm test
+      - name: Package extension
+        run: |
+          mkdir -p dist/extension
+          cp manifest.json dist/extension/
+          cp -R src dist/extension/
+          cd dist/extension
+          zip -r ../AI-Trading-Scanner-0.10.4.zip manifest.json src
+      - name: Upload extension artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AI-Trading-Scanner-0.10.4
+          path: dist/AI-Trading-Scanner-0.10.4.zip
