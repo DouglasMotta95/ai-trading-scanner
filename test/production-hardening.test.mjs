@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 
@@ -36,14 +36,88 @@ test('production rejects the checked-in SESSION_SECRET placeholder explicitly', 
   assert.match(`${result.stdout}\n${result.stderr}`, /SESSION_SECRET must be a unique non-example secret/);
 });
 
-test('installationId is a random UUID persisted once per installation and migrates the legacy runtime id', () => {
-  const source = read('src/sidepanel/account-login.js');
-  assert.match(source, /randomInstallId = \(\) => `ats-install-\$\{crypto\.randomUUID\(\)\}`/);
-  assert.match(source, /let installIdPromise = null/);
-  assert.match(source, /const existing = String\(x\[INSTALL_KEY\] \|\| ''\)\.trim\(\)/);
-  assert.match(source, /if \(existing && existing !== legacyId\) return existing/);
-  assert.match(source, /await chrome\.storage\.local\.set\(\{ \[INSTALL_KEY\]: id \}\)/);
-  assert.match(source, /const persisted = await chrome\.storage\.local\.get\(INSTALL_KEY\)/);
-  assert.doesNotMatch(source, /stableInstallId/);
-  assert.doesNotMatch(source, /return runtimeId \? `ats-\$\{runtimeId\}` : crypto\.randomUUID\(\)/);
+function storageMock(initial = {}) {
+  const values = { ...initial };
+  return {
+    values,
+    api: {
+      async get(keys) {
+        if (Array.isArray(keys)) return Object.fromEntries(keys.map(key => [key, values[key]]));
+        if (typeof keys === 'string') return { [keys]: values[keys] };
+        return { ...values };
+      },
+      async set(patch) { Object.assign(values, patch); },
+      async remove(keys) {
+        for (const key of (Array.isArray(keys) ? keys : [keys])) delete values[key];
+      }
+    }
+  };
+}
+
+async function withInstallationGlobals({ initial = {}, uuid }, run) {
+  const hadChrome = Object.prototype.hasOwnProperty.call(globalThis, 'chrome');
+  const previousChrome = globalThis.chrome;
+  const cryptoDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
+  const mock = storageMock(initial);
+  let uuidCalls = 0;
+  globalThis.chrome = {
+    runtime: {
+      id: 'shared-extension-runtime-id',
+      getManifest: () => ({ version: 'test' })
+    },
+    storage: { local: mock.api }
+  };
+  Object.defineProperty(globalThis, 'crypto', {
+    configurable: true,
+    value: { randomUUID: () => { uuidCalls += 1; return uuid; } }
+  });
+  try {
+    const url = pathToFileURL(path.join(root, 'src/services/telemetry.js')).href;
+    const telemetry = await import(`${url}?test=${Date.now()}-${Math.random()}`);
+    return await run({ telemetry, values: mock.values, uuidCalls: () => uuidCalls });
+  } finally {
+    if (hadChrome) globalThis.chrome = previousChrome;
+    else delete globalThis.chrome;
+    if (cryptoDescriptor) Object.defineProperty(globalThis, 'crypto', cryptoDescriptor);
+    else delete globalThis.crypto;
+  }
+}
+
+test('telemetry installationId generates one UUID and reuses it across concurrent calls', async () => {
+  await withInstallationGlobals({
+    uuid: '11111111-1111-4111-8111-111111111111'
+  }, async ({ telemetry, values, uuidCalls }) => {
+    const ids = await Promise.all([
+      telemetry.installationId(),
+      telemetry.installationId(),
+      telemetry.installationId()
+    ]);
+    const expected = 'ats-install-11111111-1111-4111-8111-111111111111';
+    assert.deepEqual(ids, [expected, expected, expected]);
+    assert.equal(values.atsInstallationId, expected);
+    assert.equal(uuidCalls(), 1);
+    assert.notEqual(expected, 'ats-shared-extension-runtime-id');
+  });
+});
+
+test('telemetry installationId migrates the legacy chrome.runtime.id based value', async () => {
+  await withInstallationGlobals({
+    initial: { atsInstallationId: 'ats-shared-extension-runtime-id' },
+    uuid: '22222222-2222-4222-8222-222222222222'
+  }, async ({ telemetry, values, uuidCalls }) => {
+    const id = await telemetry.installationId();
+    const expected = 'ats-install-22222222-2222-4222-8222-222222222222';
+    assert.equal(id, expected);
+    assert.equal(values.atsInstallationId, expected);
+    assert.equal(uuidCalls(), 1);
+  });
+});
+
+test('account login imports the shared telemetry installationId instead of duplicating it', () => {
+  const account = read('src/sidepanel/account-login.js');
+  const index = read('src/sidepanel/index.html');
+  assert.match(account, /import \{ installationId \} from '\.\.\/services\/telemetry\.js';/);
+  assert.match(account, /installationId: await installationId\(\)/);
+  assert.doesNotMatch(account, /randomInstallId|legacyRuntimeInstallId|installIdPromise|stableInstallId/);
+  assert.match(index, /<script type="module" src="account-login\.js"><\/script>/);
 });

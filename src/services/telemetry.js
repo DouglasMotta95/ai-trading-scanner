@@ -7,17 +7,31 @@ const PUBLIC_API = 'https://ats-control-center-v07-production.up.railway.app';
 // Telemetry follows the same fixed commercial backend used by licensing.
 const apiBase = () => PUBLIC_API;
 
-function stableInstallationId() {
+const randomInstallationId = () => `ats-install-${crypto.randomUUID()}`;
+const legacyRuntimeInstallationId = () => {
   const runtimeId = String(chrome.runtime?.id || '').trim();
-  return runtimeId ? `ats-${runtimeId}` : crypto.randomUUID();
-}
+  return runtimeId ? `ats-${runtimeId}` : '';
+};
+let installationIdPromise = null;
 
 export async function installationId() {
-  const x = await chrome.storage.local.get(INSTALL_KEY);
-  if (x[INSTALL_KEY]) return x[INSTALL_KEY];
-  const id = stableInstallationId();
-  await chrome.storage.local.set({ [INSTALL_KEY]: id });
-  return id;
+  if (installationIdPromise) return installationIdPromise;
+  installationIdPromise = (async () => {
+    const x = await chrome.storage.local.get(INSTALL_KEY);
+    const existing = String(x[INSTALL_KEY] || '').trim();
+    const legacyId = legacyRuntimeInstallationId();
+    if (existing && existing !== legacyId) return existing;
+
+    const id = randomInstallationId();
+    await chrome.storage.local.set({ [INSTALL_KEY]: id });
+    const persisted = await chrome.storage.local.get(INSTALL_KEY);
+    return String(persisted[INSTALL_KEY] || id).trim() || id;
+  })();
+  try {
+    return await installationIdPromise;
+  } finally {
+    installationIdPromise = null;
+  }
 }
 
 export async function clientToken() {

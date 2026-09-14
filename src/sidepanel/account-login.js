@@ -1,9 +1,10 @@
+import { installationId } from '../services/telemetry.js';
+
 (() => {
   if (globalThis.__ATS_ACCOUNT_LOGIN__) return;
   globalThis.__ATS_ACCOUNT_LOGIN__ = true;
 
   const PUBLIC_API = 'https://ats-control-center-v07-production.up.railway.app';
-  const INSTALL_KEY = 'atsInstallationId';
   const ACCOUNT_TOKEN_KEY = 'atsAccountToken';
   const ACCOUNT_EXP_KEY = 'atsAccountTokenExpiresAt';
   const LICENSE_KEY = 'atsLicenseKey';
@@ -13,33 +14,6 @@
   const $ = s => document.querySelector(s);
 
   const base = () => PUBLIC_API;
-  const randomInstallId = () => `ats-install-${crypto.randomUUID()}`;
-  const legacyRuntimeInstallId = () => {
-    const runtimeId = String(chrome.runtime?.id || '').trim();
-    return runtimeId ? `ats-${runtimeId}` : '';
-  };
-  let installIdPromise = null;
-
-  async function installId() {
-    if (installIdPromise) return installIdPromise;
-    installIdPromise = (async () => {
-      const x = await chrome.storage.local.get(INSTALL_KEY);
-      const existing = String(x[INSTALL_KEY] || '').trim();
-      const legacyId = legacyRuntimeInstallId();
-      if (existing && existing !== legacyId) return existing;
-
-      const id = randomInstallId();
-      await chrome.storage.local.set({ [INSTALL_KEY]: id });
-      const persisted = await chrome.storage.local.get(INSTALL_KEY);
-      return String(persisted[INSTALL_KEY] || id);
-    })();
-    try {
-      return await installIdPromise;
-    } finally {
-      installIdPromise = null;
-    }
-  }
-
   async function permission(url) {
     try {
       const origin = new URL(url).origin + '/*';
@@ -88,7 +62,7 @@
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           code: String(code || '').replace(/\D/g, ''),
-          installationId: await installId(),
+          installationId: await installationId(),
           version: chrome.runtime.getManifest().version
         })
       });
@@ -117,7 +91,7 @@
           authorization: `Bearer ${token}`
         },
         body: JSON.stringify({
-          installationId: await installId(),
+          installationId: await installationId(),
           version: chrome.runtime.getManifest().version
         })
       });
