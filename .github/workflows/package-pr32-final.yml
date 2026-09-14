@@ -18,7 +18,7 @@ jobs:
       - name: Build exact immutable archive
         run: |
           TARGET_SHA=7aeb5e9bec112cc684c412bd6e64d0dfb85d5884
-          SHORT_SHA=${TARGET_SHA:0:9}
+          SHORT_SHA=${TARGET_SHA:0:7}
           git archive --format=zip --output="AI-Trading-Scanner-Quetta-CasaTrade-${SHORT_SHA}.zip" --prefix="ai-trading-scanner-${SHORT_SHA}/" "$TARGET_SHA"
           unzip -t "AI-Trading-Scanner-Quetta-CasaTrade-${SHORT_SHA}.zip"
           sha256sum "AI-Trading-Scanner-Quetta-CasaTrade-${SHORT_SHA}.zip" > "AI-Trading-Scanner-Quetta-CasaTrade-${SHORT_SHA}.sha256"
