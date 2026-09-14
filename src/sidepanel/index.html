@@ -99,9 +99,32 @@
       </div>
       <p id="tradeActionStatus" class="manual-note">COMPRA/VENDA só libera quando a confirmação final estiver pronta.</p>
     </section>
-  </main>
 
-  <script src="app.js"></script>
+  <section class="card preferences-card">
+    <div class="section-head">
+      <div>
+        <span class="eyebrow">4. ALERTAS</span>
+        <h2>Visual e som</h2>
+      </div>
+      <span class="badge">OPCIONAL</span>
+    </div>
+    <p class="muted">Todos começam desligados. Ative somente o que quiser usar durante a análise.</p>
+    <label class="toggle-row" for="overlayToggle">
+      <span><b>Linhas no gráfico</b><small>Mostra rompimento e tendência sobre a CasaTrade.</small></span>
+      <input id="overlayToggle" type="checkbox" role="switch" aria-label="Linhas no gráfico">
+    </label>
+    <label class="toggle-row" for="possibleSoundToggle">
+      <span><b>Som de possível sinal</b><small>Aviso discreto quando entra em POSSÍVEL COMPRA/VENDA.</small></span>
+      <input id="possibleSoundToggle" type="checkbox" role="switch" aria-label="Som de possível sinal">
+    </label>
+    <label class="toggle-row" for="confirmSoundToggle">
+      <span><b>Som de entrada confirmada</b><small>Aviso mais perceptível ao entrar em ENTRAR NA PRÓXIMA VELA.</small></span>
+      <input id="confirmSoundToggle" type="checkbox" role="switch" aria-label="Som de entrada confirmada">
+    </label>
+  </section>
+</main>
+
+<script src="app.js"></script>
   <script type="module" src="account-login.js"></script>
   <script src="real-entry.js"></script>
 </body>

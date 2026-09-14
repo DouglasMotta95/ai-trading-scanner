@@ -5,6 +5,12 @@ let reconnectBusy = false;
 let reconnectAttempt = 0;
 let nextReconnectAt = 0;
 const RECONNECT_DELAYS_MS = [2000, 4000, 8000, 15000, 30000];
+const UI_PREF_KEY = 'atsScannerUiPreferences';
+const DEFAULT_UI_PREFS = Object.freeze({ overlayEnabled: false, possibleSoundEnabled: false, confirmSoundEnabled: false });
+let uiPrefs = { ...DEFAULT_UI_PREFS };
+let audioContext = null;
+let audibleStateReady = false;
+let lastAudiblePrincipalKey = null;
 
 if ($('extensionVersion')) $('extensionVersion').textContent = `v${chrome.runtime.getManifest().version}`;
 
@@ -98,6 +104,74 @@ function principalState(s = {}) {
   };
   const selected = states[sig.uiState] || states.WAIT;
   return { key: selected[0], text: selected[1], detail: sig.reason || 'Sem direção firme para a próxima vela.' };
+}
+
+function syncPreferenceControls() {
+  if ($('overlayToggle')) $('overlayToggle').checked = !!uiPrefs.overlayEnabled;
+  if ($('possibleSoundToggle')) $('possibleSoundToggle').checked = !!uiPrefs.possibleSoundEnabled;
+  if ($('confirmSoundToggle')) $('confirmSoundToggle').checked = !!uiPrefs.confirmSoundEnabled;
+}
+
+async function loadUiPreferences() {
+  const stored = await chrome.storage.local.get(UI_PREF_KEY).catch(() => ({}));
+  uiPrefs = { ...DEFAULT_UI_PREFS, ...(stored[UI_PREF_KEY] || {}) };
+  syncPreferenceControls();
+}
+
+async function saveUiPreference(key, value) {
+  uiPrefs = { ...uiPrefs, [key]: !!value };
+  await chrome.storage.local.set({ [UI_PREF_KEY]: uiPrefs });
+  syncPreferenceControls();
+  if ((key === 'possibleSoundEnabled' || key === 'confirmSoundEnabled') && value) ensureAudioContext();
+}
+
+function ensureAudioContext() {
+  const AudioContextClass = globalThis.AudioContext || globalThis.webkitAudioContext;
+  if (!AudioContextClass) return null;
+  if (!audioContext) audioContext = new AudioContextClass();
+  if (audioContext.state === 'suspended') audioContext.resume().catch(() => {});
+  return audioContext;
+}
+
+function pulseTone(frequency, startOffset, duration, volume) {
+  const context = ensureAudioContext();
+  if (!context) return;
+  const oscillator = context.createOscillator();
+  const gain = context.createGain();
+  const startsAt = context.currentTime + startOffset;
+  oscillator.type = 'sine';
+  oscillator.frequency.setValueAtTime(frequency, startsAt);
+  gain.gain.setValueAtTime(0.0001, startsAt);
+  gain.gain.exponentialRampToValueAtTime(Math.max(0.001, volume), startsAt + .018);
+  gain.gain.exponentialRampToValueAtTime(0.0001, startsAt + duration);
+  oscillator.connect(gain);
+  gain.connect(context.destination);
+  oscillator.start(startsAt);
+  oscillator.stop(startsAt + duration + .02);
+}
+
+function playSignalTone(kind) {
+  if (kind === 'possible') {
+    pulseTone(620, 0, .09, .035);
+    pulseTone(760, .11, .09, .03);
+    return;
+  }
+  pulseTone(760, 0, .11, .06);
+  pulseTone(980, .12, .12, .07);
+  pulseTone(1240, .25, .14, .08);
+}
+
+function maybePlaySignalAlert(s = {}) {
+  const key = principalState(s).key;
+  if (!audibleStateReady) {
+    audibleStateReady = true;
+    lastAudiblePrincipalKey = key;
+    return;
+  }
+  if (key === lastAudiblePrincipalKey) return;
+  lastAudiblePrincipalKey = key;
+  if ((key === 'POSSIBLE_BUY' || key === 'POSSIBLE_SELL') && uiPrefs.possibleSoundEnabled) playSignalTone('possible');
+  if ((key === 'ENTER_BUY' || key === 'ENTER_SELL') && uiPrefs.confirmSoundEnabled) playSignalTone('confirm');
 }
 
 function renderLicense(s = {}) {
@@ -284,6 +358,7 @@ function render(s = {}) {
   renderLicense(s);
   renderAnalysis(s);
   renderDecision(s);
+  maybePlaySignalAlert(s);
 }
 
 async function getState() {
@@ -291,8 +366,9 @@ async function getState() {
     chrome.runtime.sendMessage({ type: 'ATS_READ_SCANNER_STATE' }).catch(() => ({})),
     chrome.storage.local.get(LAST_VALID_LICENSE_KEY).catch(() => ({}))
   ]);
-  const license = effectiveLicense(state?.license || {}, stored[LAST_VALID_LICENSE_KEY] || null);
-  const rendered = { ...(state || {}), license };
+  const scannerState = state?.state || {};
+  const license = effectiveLicense(scannerState?.license || {}, stored[LAST_VALID_LICENSE_KEY] || null);
+  const rendered = { ...scannerState, license };
   render(rendered);
   return rendered;
 }
@@ -371,12 +447,20 @@ async function prepare(direction) {
 
 $('prepareBuy')?.addEventListener('click', () => prepare('BUY'));
 $('prepareSell')?.addEventListener('click', () => prepare('SELL'));
+$('overlayToggle')?.addEventListener('change', event => saveUiPreference('overlayEnabled', event.currentTarget.checked).catch(() => {}));
+$('possibleSoundToggle')?.addEventListener('change', event => saveUiPreference('possibleSoundEnabled', event.currentTarget.checked).catch(() => {}));
+$('confirmSoundToggle')?.addEventListener('change', event => saveUiPreference('confirmSoundEnabled', event.currentTarget.checked).catch(() => {}));
 
 chrome.storage.onChanged.addListener(changes => {
+  if (changes[UI_PREF_KEY]) {
+    uiPrefs = { ...DEFAULT_UI_PREFS, ...(changes[UI_PREF_KEY].newValue || {}) };
+    syncPreferenceControls();
+  }
   if (changes.scannerState || changes[LAST_VALID_LICENSE_KEY]) getState().catch(() => {});
 });
 
 (async () => {
+  await loadUiPreferences();
   await getState();
   if (licenseStillValid(lastState.license)) await autoConnect(true);
   setInterval(() => getState().catch(() => {}), 500);
