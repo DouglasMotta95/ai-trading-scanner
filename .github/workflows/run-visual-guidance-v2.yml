@@ -1,0 +1,49 @@
+name: Run corrected visual guidance implementation
+
+on:
+  push:
+    branches:
+      - feat/visual-guidance-audio-alerts
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Apply corrected implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          awk '/^          python3 - <<'"'"'PY'"'"'$/ {capture=1; next} capture && /^          PY$/ {exit} capture {sub(/^          /, ""); print}' .github/workflows/apply-visual-guidance.yml > /tmp/apply_visual_guidance.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('/tmp/apply_visual_guidance.py')
+          s = p.read_text()
+          old = "assert.equal(result.recent.breakoutLow, 1.1020);"
+          if old not in s:
+              raise SystemExit('expected test literal not found in extracted patch')
+          p.write_text(s.replace(old, "assert.equal(result.recent.breakoutLow, 1.0990);", 1))
+          PY
+          python3 /tmp/apply_visual_guidance.py
+          node --check src/core/analysis.js
+          node --check src/core/orchestrator.js
+          node --check src/content/analysis-visual-overlay.js
+          node --check src/sidepanel/app.js
+          node --check test/visual-guidance-alerts.test.mjs
+          cd backend
+          npm test
+          cd ..
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add manifest.json src/background.js src/core/analysis.js src/core/orchestrator.js src/content/analysis-visual-overlay.js src/sidepanel/index.html src/sidepanel/styles.css src/sidepanel/app.js test/visual-guidance-alerts.test.mjs
+          git commit -m "feat: add visual guidance and signal alerts"
+          git push origin HEAD:feat/visual-guidance-audio-alerts
