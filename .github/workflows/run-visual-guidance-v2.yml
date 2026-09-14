@@ -28,10 +28,15 @@ jobs:
           from pathlib import Path
           p = Path('/tmp/apply_visual_guidance.py')
           s = p.read_text()
-          old = "assert.equal(result.recent.breakoutLow, 1.1020);"
-          if old not in s:
-              raise SystemExit('expected test literal not found in extracted patch')
-          p.write_text(s.replace(old, "assert.equal(result.recent.breakoutLow, 1.0990);", 1))
+          replacements = {
+              "assert.equal(result.recent.breakoutLow, 1.1020);": "assert.equal(result.recent.breakoutLow, 1.0990);",
+              "assert.equal(result.analytics.breakoutLow, 1.1020);": "assert.equal(result.analytics.breakoutLow, 1.0990);"
+          }
+          for old, new in replacements.items():
+              if old not in s:
+                  raise SystemExit(f'expected test literal not found: {old}')
+              s = s.replace(old, new, 1)
+          p.write_text(s)
           PY
           python3 /tmp/apply_visual_guidance.py
           node --check src/core/analysis.js
