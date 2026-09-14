@@ -51,9 +51,10 @@ jobs:
           if old not in s:
               raise SystemExit('expected legacy installId implementation not found')
           account.write_text(s.replace(old, new, 1))
+          PY
 
-          test = Path('test/production-hardening.test.mjs')
-          test.write_text(r'''import test from 'node:test';
+          cat > test/production-hardening.test.mjs <<'EOF'
+          import test from 'node:test';
           import assert from 'node:assert/strict';
           import fs from 'node:fs';
           import path from 'node:path';
@@ -102,8 +103,8 @@ jobs:
             assert.doesNotMatch(source, /stableInstallId/);
             assert.doesNotMatch(source, /return runtimeId \? `ats-\$\{runtimeId\}` : crypto\.randomUUID\(\)/);
           });
-          '''.replace(/^          /gm, ''))
-          PY
+          EOF
+          sed -i 's/^          //' test/production-hardening.test.mjs
 
           node --check backend/src/server.js
           node --check src/sidepanel/account-login.js
