@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AI Trading Scanner",
-  "version": "0.10.7",
+  "version": "0.10.8",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArDZEDqmjiphJQ4FBhEvxfVBwyAOVeme/dFP5Axh0OOB3KKFtubALdF4RqqnTfxUgGnW/6DhDGlc8asFHN0lRMDEkbv+RcqXIoeQb/EUwDG6QAzBSSxHZh8gCjITjU3Ba2YZ0tkM5aSamxSG7wZIqgQjz4qyc6xOlVNuMcHpz+ucQhapy1dn+0elnHwIjMISemIEEfWMBDkNxqES6XJEGA+MqQpB2+qQYQ0tLryWM7XGRBFabwfs8F6rLvtATf3Y8cgJzn6SL85i22qcy8zmhvWzlM0OC0/CfNULXuaoq1fBlihmicu/psTg/n4BBVSuCtsVb2XBKodgR7cxrFP4PawIDAQAB",
   "description": "Scanner de sinais para CasaTrade com leitura de mercado real, sincronização de operação e confirmação manual.",
   "permissions": [
@@ -90,6 +90,7 @@
         "src/content/embedded-feed-bridge.js",
         "src/content/generic-adapter.js",
         "src/content/platform-sync.js",
+        "src/content/market-cycle-clock-v3.js",
         "src/content/market-clock-sync.js",
         "src/content/analysis-visual-overlay-v2.js",
         "src/content/analysis-visual-overlay.js"
@@ -99,5 +100,5 @@
       "match_origin_as_fallback": true
     }
   ],
-  "version_name": "0.10.7-demo-dynamic-cycle"
+  "version_name": "0.10.8-demo-cycle-v3"
 }

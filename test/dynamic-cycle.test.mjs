@@ -3,11 +3,15 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { CandleBuilder } from '../src/core/candles.js';
 const read = path => fs.readFileSync(new URL('../' + path, import.meta.url), 'utf8');
-test('clock uses selected duration', () => {
-  const clock=read('src/content/market-clock-sync.js');
-  assert.match(clock,/function cycleSelection\(/);
-  assert.match(clock,/timeframeFromExpiration/);
+test('cycle v3 makes selected CasaTrade duration authoritative over a different chart timer', () => {
+  const clock=read('src/content/market-cycle-clock-v3.js');
+  const manifest=JSON.parse(read('manifest.json'));
+  const scripts=manifest.content_scripts.flatMap(row=>row.js||[]);
+  assert.match(clock,/const platformTf = expirationTf \|\| controlTf/);
+  assert.match(clock,/const cycleTf = platformTf \|\| chartTf \|\| stateTf \|\| 'M1'/);
+  assert.match(clock,/const dom = chartTf === cycleTf \? exactDomCountdown\(cycleTf\) : null/);
   assert.match(clock,/platform-cycle-derived/);
+  assert.ok(scripts.indexOf('src/content/market-cycle-clock-v3.js') < scripts.indexOf('src/content/market-clock-sync.js'));
 });
 test('M1 seed aggregates to M5 OHLC',()=>{
  const b=new CandleBuilder(300000); const base=1800000000000;
