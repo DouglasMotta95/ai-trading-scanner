@@ -81,7 +81,7 @@
     const chart = chartRect();
     const buy = [];
     const sell = [];
-    const generic = [];
+    const semantic = [];
 
     for (const el of deepElements()) {
       if (!visible(el)) continue;
@@ -90,35 +90,42 @@
       const values = pricesIn(own);
       if (!values.length) continue;
       const rect = el.getBoundingClientRect();
-      const context = fold(`${own} ${el.className || ''} ${el.id || ''} ${el.getAttribute?.('data-testid') || ''} ${el.parentElement?.className || ''}`);
+      const context = fold(`${own} ${el.className || ''} ${el.id || ''} ${el.getAttribute?.('data-testid') || ''} ${el.parentElement?.className || ''} ${el.parentElement?.getAttribute?.('data-testid') || ''}`);
       if (/saldo|balance|valor|amount|retorno|return|payout|lucro|profit|expira|expiry|timer|countdown|porcent|percent|%/.test(context)) continue;
       const chartScoped = nearChart(rect, chart);
+      const semanticPrice = /price|quote|rate|cotacao|cotação|preco|preço|current|last|bid|ask/.test(context);
+      const buyContext = /comprar|\bbuy\b|\bask\b/.test(context);
+      const sellContext = /vender|\bsell\b|\bbid\b/.test(context);
+      if (!chartScoped && !semanticPrice && !buyContext && !sellContext) continue;
 
       let score = chartScoped ? 160 : 0;
-      if (/price|quote|rate|cotacao|cotação|current|last/.test(context)) score += 190;
-      if (rect.left > innerWidth * .45 && rect.top > innerHeight * .08 && rect.top < innerHeight * .92) score += 55;
-      if (/comprar|\bbuy\b/.test(context)) {
-        for (const value of values) buy.push({ value, score: score + 150 });
+      if (semanticPrice) score += 260;
+      if (rect.left > innerWidth * .45 && rect.top > innerHeight * .08 && rect.top < innerHeight * .92) score += 45;
+      if (buyContext) {
+        for (const value of values) buy.push({ value, score: score + 150, semanticPrice });
         continue;
       }
-      if (/vender|\bsell\b/.test(context)) {
-        for (const value of values) sell.push({ value, score: score + 150 });
+      if (sellContext) {
+        for (const value of values) sell.push({ value, score: score + 150, semanticPrice });
         continue;
       }
-      if (score >= 160) for (const value of values) generic.push({ value, score });
+      // A plain numeric label close to the canvas can be a Y-axis tick. It is not
+      // a quote unless the DOM itself identifies it as a price/current/last value.
+      if (chartScoped && semanticPrice) for (const value of values) semantic.push({ value, score });
     }
 
     buy.sort((a, b) => b.score - a.score);
     sell.sort((a, b) => b.score - a.score);
-    generic.sort((a, b) => b.score - a.score);
+    semantic.sort((a, b) => b.score - a.score);
     if (buy[0] && sell[0]) {
       const scale = Math.max(Math.abs(buy[0].value), Math.abs(sell[0].value), 1e-12);
       if (Math.abs(buy[0].value - sell[0].value) / scale < .03) {
         return { price: (buy[0].value + sell[0].value) / 2, source: 'chart-buy-sell', confidence: 98 };
       }
     }
-    const best = generic[0] || buy[0] || sell[0] || null;
-    return best ? { price: best.value, source: 'chart-visible-price', confidence: Math.min(96, Math.max(75, best.score / 4)) } : null;
+    const directionalSemantic = [...buy, ...sell].filter(row => row.semanticPrice).sort((a, b) => b.score - a.score)[0] || null;
+    const best = semantic[0] || directionalSemantic;
+    return best ? { price: best.value, source: 'chart-semantic-price', confidence: Math.min(96, Math.max(86, best.score / 4)) } : null;
   }
 
   let busy = false;
