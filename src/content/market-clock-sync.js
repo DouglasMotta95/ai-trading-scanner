@@ -64,13 +64,51 @@
 
   const normalizeTf = value => {
     const s = fold(value).replace(/\s+/g, '');
-    let m = s.match(/^m(1|2|5|15|30)$/); if (m) return `M${m[1]}`;
-    m = s.match(/^(1|2|5|15|30)(?:m|min|minuto|minutos)$/); if (m) return `M${m[1]}`;
-    m = s.match(/^s(5|15|30)$/); if (m) return `S${m[1]}`;
-    m = s.match(/^(5|15|30)(?:s|seg|segundo|segundos)$/); if (m) return `S${m[1]}`;
-    if (/^(h1|1h|60m|60min)$/.test(s)) return 'H1';
+    let m = s.match(/^m(\d{1,3})$/); if (m && Number(m[1]) > 0) return `M${Number(m[1])}`;
+    m = s.match(/^(\d{1,3})(?:m|min|minuto|minutos)$/); if (m && Number(m[1]) > 0) return `M${Number(m[1])}`;
+    m = s.match(/^s(\d{1,4})$/); if (m && Number(m[1]) > 0) return `S${Number(m[1])}`;
+    m = s.match(/^(\d{1,4})(?:s|seg|segundo|segundos)$/); if (m && Number(m[1]) > 0) return `S${Number(m[1])}`;
+    m = s.match(/^h(\d{1,2})$/); if (m && Number(m[1]) > 0) return `H${Number(m[1])}`;
+    m = s.match(/^(\d{1,2})h$/); if (m && Number(m[1]) > 0) return `H${Number(m[1])}`;
     return null;
   };
+
+  const timeframeFromExpiration = value => {
+    const raw = clean(value);
+    if (!raw) return null;
+    const direct = normalizeTf(raw);
+    if (direct) return direct;
+    const s = fold(raw).replace(/\s+/g, '');
+    let m = s.match(/^(\d{1,4})s$/);
+    if (m) {
+      const seconds = Number(m[1]);
+      return seconds > 0 && seconds % 60 === 0 ? `M${seconds / 60}` : seconds > 0 ? `S${seconds}` : null;
+    }
+    m = s.match(/^(\d{1,3})m$/);
+    if (m && Number(m[1]) > 0) return `M${Number(m[1])}`;
+    m = s.match(/^(\d{1,2}):(\d{2})$/);
+    if (m) {
+      const seconds = Number(m[1]) * 60 + Number(m[2]);
+      return seconds > 0 && seconds % 60 === 0 ? `M${seconds / 60}` : seconds > 0 ? `S${seconds}` : null;
+    }
+    return null;
+  };
+
+  function cycleSelection(state = {}) {
+    const controls = state.platformControls?.observed || {};
+    const expiration = clean(controls.expiration || state.targetExpiration || state.expiration || '') || null;
+    const expirationTf = timeframeFromExpiration(expiration);
+    const controlTf = normalizeTf(controls.timeframe);
+    const stateTf = normalizeTf(state.analysisTimeframe || state.timeframe);
+    // CasaTrade operation duration is the requested analysis cycle. If it is a
+    // supported duration (5s, 30s, 60s, 5m...), it wins over stale M1 defaults.
+    const checkedAt = Number(state.platformControls?.checkedAt || 0);
+    const controlsFresh = checkedAt > 0 && Date.now() - checkedAt < 5000;
+    const freshExpirationTf = controlsFresh ? expirationTf : null;
+    const freshControlTf = controlsFresh ? controlTf : null;
+    const timeframe = freshExpirationTf || freshControlTf || stateTf || 'M1';
+    return { timeframe, expiration, controlsFresh, source: freshExpirationTf ? 'expiration' : freshControlTf ? 'timeframe' : stateTf ? 'state' : 'default' };
+  }
 
   const timeframeSeconds = value => {
     const tf = normalizeTf(value) || 'M1';
@@ -146,6 +184,25 @@
     return rows[0] || null;
   }
 
+  function derivedCountdown(tf, state = {}, selection = {}) {
+    if (!selection.controlsFresh || !['expiration', 'timeframe'].includes(selection.source)) return null;
+    const duration = timeframeSeconds(tf);
+    if (!Number.isFinite(duration) || duration <= 0) return null;
+    const server = Number(state.serverTime);
+    const basisMs = Number.isFinite(server) && server > 1e12 && Math.abs(Date.now() - server) < 120000 ? server : Date.now();
+    const durationMs = duration * 1000;
+    const elapsed = ((basisMs % durationMs) + durationMs) % durationMs;
+    let seconds = Math.ceil((durationMs - elapsed) / 1000);
+    if (!Number.isFinite(seconds) || seconds <= 0 || seconds > duration) seconds = duration;
+    return {
+      seconds,
+      token: `${seconds}s`,
+      text: `Ciclo ${tf} sincronizado pela duração selecionada na CasaTrade`,
+      score: 84,
+      derived: true
+    };
+  }
+
   function expirationFromDom() {
     const rows = [];
     for (const el of deepElements()) {
@@ -185,22 +242,27 @@
       const focus = focusMeta?.asset || '';
       if (!focus || String(focusMeta?.frameHost || '').toLowerCase() !== host || focusMeta?.embeddedTrader !== true) return;
 
-      const tf = selectedTimeframe(state.analysisTimeframe || state.timeframe || 'M1');
+      const selection = cycleSelection(state);
+      const tf = selection.source === 'expiration' || selection.source === 'timeframe'
+        ? selection.timeframe
+        : selectedTimeframe(selection.timeframe);
       const domClock = countdownFromDom(tf);
-      const expiration = expirationFromDom()?.value || null;
-      const payload = domClock ? {
+      const cycleClock = domClock || derivedCountdown(tf, state, selection);
+      const expiration = selection.expiration || expirationFromDom()?.value || null;
+      const payload = cycleClock ? {
         type: 'ATS_MARKET_CLOCK_V2',
         asset: focus,
         timeframe: tf,
-        secondsRemaining: domClock.seconds,
+        secondsRemaining: cycleClock.seconds,
         expiration,
         available: true,
         verified: true,
         clockRole: 'candle-close',
         clockSource: 'trader-dom-countdown',
-        clockText: domClock.text,
-        clockToken: domClock.token,
-        confidence: Math.max(98, Number(domClock.score || 0)),
+        clockText: cycleClock.text,
+        clockToken: cycleClock.token,
+        confidence: domClock ? Math.max(98, Number(domClock.score || 0)) : Math.max(80, Number(cycleClock.score || 0)),
+        clockMode: domClock ? 'dom-exact' : 'platform-cycle-derived',
         frameHost: host,
         at: Date.now()
       } : {
