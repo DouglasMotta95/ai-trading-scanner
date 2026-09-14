@@ -1,3 +1,28 @@
+function uiChromeCall(target, method, ...args) {
+  return new Promise((resolve, reject) => {
+    const fn = target?.[method];
+    if (typeof fn !== 'function') return reject(new Error(`chrome_api_unavailable:${method}`));
+    let settled = false;
+    const done = (error, value) => {
+      if (settled) return;
+      settled = true;
+      if (error) reject(error); else resolve(value);
+    };
+    const callback = value => {
+      let error = null;
+      try { error = chrome.runtime?.lastError?.message ? new Error(chrome.runtime.lastError.message) : null; } catch {}
+      done(error, value);
+    };
+    try {
+      const returned = fn.call(target, ...args, callback);
+      if (returned && typeof returned.then === 'function') returned.then(value => done(null, value), error => done(error));
+    } catch (error) { done(error); }
+  });
+}
+const uiStorageGet = keys => uiChromeCall(chrome.storage?.local, 'get', keys);
+const uiStorageSet = items => uiChromeCall(chrome.storage?.local, 'set', items);
+const uiSendMessage = message => uiChromeCall(chrome.runtime, 'sendMessage', message);
+
 const LAST_VALID_LICENSE_KEY = 'atsLastValidLicense';
 const $ = id => document.getElementById(id);
 let lastState = {};
@@ -90,7 +115,14 @@ function principalState(s = {}) {
   const online = active && fresh(s) && s.platformId === 'casatrade';
   if (!active) return { key: 'BLOCKED', text: 'ATIVAÇÃO NECESSÁRIA', detail: 'Ative a licença para iniciar a análise.' };
   if (!online || step.stage !== 'diagnosing_next_candle') {
-    return { key: 'ANALYZING_MARKET', text: 'ANALISANDO MERCADO ATUAL', detail: step.reason };
+    const acquisitionLabels = {
+      connecting: 'CONECTANDO À CASATRADE',
+      confirming_asset: 'IDENTIFICANDO ATIVO ABERTO',
+      reading_price: 'LENDO COTAÇÃO DO ATIVO',
+      reading_history: 'CARREGANDO HISTÓRICO DO GRÁFICO',
+      analyzing_current: 'ANALISANDO MERCADO ATUAL'
+    };
+    return { key: 'ANALYZING_MARKET', text: acquisitionLabels[step.stage] || 'ANALISANDO MERCADO ATUAL', detail: step.reason };
   }
 
   const states = {
@@ -113,14 +145,14 @@ function syncPreferenceControls() {
 }
 
 async function loadUiPreferences() {
-  const stored = await chrome.storage.local.get(UI_PREF_KEY).catch(() => ({}));
+  const stored = await uiStorageGet(UI_PREF_KEY).catch(() => ({}));
   uiPrefs = { ...DEFAULT_UI_PREFS, ...(stored[UI_PREF_KEY] || {}) };
   syncPreferenceControls();
 }
 
 async function saveUiPreference(key, value) {
   uiPrefs = { ...uiPrefs, [key]: !!value };
-  await chrome.storage.local.set({ [UI_PREF_KEY]: uiPrefs });
+  await uiStorageSet({ [UI_PREF_KEY]: uiPrefs });
   syncPreferenceControls();
   if ((key === 'possibleSoundEnabled' || key === 'confirmSoundEnabled') && value) ensureAudioContext();
 }
@@ -363,8 +395,8 @@ function render(s = {}) {
 
 async function getState() {
   const [state, stored] = await Promise.all([
-    chrome.runtime.sendMessage({ type: 'ATS_READ_SCANNER_STATE' }).catch(() => ({})),
-    chrome.storage.local.get(LAST_VALID_LICENSE_KEY).catch(() => ({}))
+    uiSendMessage({ type: 'ATS_READ_SCANNER_STATE' }).catch(() => ({})),
+    uiStorageGet(LAST_VALID_LICENSE_KEY).catch(() => ({}))
   ]);
   const scannerState = state?.state || {};
   const license = effectiveLicense(scannerState?.license || {}, stored[LAST_VALID_LICENSE_KEY] || null);
@@ -387,7 +419,7 @@ async function autoConnect(force = false) {
   try {
     const alreadyTargetingCasaTrade = lastState.platformId === 'casatrade' && !!lastState.targetTabId;
     const type = force || !alreadyTargetingCasaTrade ? 'ATS_CONNECT_ACTIVE_TAB' : 'ATS_REFRESH_MARKET';
-    const result = await chrome.runtime.sendMessage({ type }).catch(() => ({ ok: false }));
+    const result = await uiSendMessage({ type }).catch(() => ({ ok: false }));
     await getState();
     if (fresh(lastState) && lastState.platformId === 'casatrade') {
       reconnectAttempt = 0;
@@ -416,7 +448,7 @@ $('activateLicense')?.addEventListener('click', async () => {
   if ($('licenseText')) $('licenseText').textContent = 'Validando chave no servidor…';
 
   try {
-    const result = await chrome.runtime.sendMessage({ type: 'ATS_ACTIVATE_LICENSE', key })
+    const result = await uiSendMessage({ type: 'ATS_ACTIVATE_LICENSE', key })
       .catch(() => ({ ok: false, error: 'backend_unreachable' }));
     const activated = !!result?.ok && licenseStillValid(result?.license);
 
@@ -439,7 +471,7 @@ $('activateLicense')?.addEventListener('click', async () => {
 async function prepare(direction) {
   const status = $('tradeActionStatus');
   if (status) status.textContent = `Preparando ${direction === 'BUY' ? 'COMPRA' : 'VENDA'} na CasaTrade…`;
-  const result = await chrome.runtime.sendMessage({ type: 'ATS_PREPARE_TRADE', direction }).catch(() => ({ ok: false }));
+  const result = await uiSendMessage({ type: 'ATS_PREPARE_TRADE', direction }).catch(() => ({ ok: false }));
   if (status) status.textContent = result?.ok
     ? `${direction === 'BUY' ? 'COMPRA' : 'VENDA'} destacada na CasaTrade. Confirme manualmente.`
     : 'A entrada ainda não está confirmada para esta vela.';

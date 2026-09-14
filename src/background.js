@@ -4,6 +4,7 @@ import { detectPlatform } from './platforms/registry.js';
 import { activateLicense, validateLicense, consumeSignal, clearLicense, licenseRequired, restoreCachedLicense } from './services/license.js';
 import { heartbeat, track } from './services/telemetry.js';
 import { readScannerState, updateScannerState, replaceScannerState } from './services/scanner-state-atomic.js';
+import { storageLocalGet, storageLocalSet, storageLocalRemove, storageSessionGet, storageSessionSet, storageSessionRemove, tabsQuery, tabsUpdate, tabsSendMessage, scriptingExecuteScript, sidePanelSetBehavior } from './services/chrome-compat.js';
 import { resolveSignalHistory, signalPerformance } from './core/signal-outcomes.js';
 
 const SESSION_HISTORY_KEY = 'atsSessionSignalHistory';
@@ -78,11 +79,11 @@ const marketCleared = (state = {}, patch = {}) => ({
 async function runtimeSessionId() {
   if (!runtimeSessionPromise) {
     runtimeSessionPromise = (async () => {
-      const stored = await chrome.storage.session.get(RUNTIME_SESSION_KEY);
+      const stored = await storageSessionGet(RUNTIME_SESSION_KEY);
       let sessionId = clean(stored[RUNTIME_SESSION_KEY]);
       if (!sessionId) {
         sessionId = crypto.randomUUID();
-        await chrome.storage.session.set({ [RUNTIME_SESSION_KEY]: sessionId });
+        await storageSessionSet({ [RUNTIME_SESSION_KEY]: sessionId });
       }
       return sessionId;
     })();
@@ -92,14 +93,14 @@ async function runtimeSessionId() {
 
 async function restoreCompletedDecisionCache() {
   const sessionId = await runtimeSessionId();
-  const stored = await chrome.storage.local.get(COMPLETED_DECISIONS_KEY);
+  const stored = await storageLocalGet(COMPLETED_DECISIONS_KEY);
   const cached = stored[COMPLETED_DECISIONS_KEY];
   if (cached?.sessionId === sessionId && Array.isArray(cached.rows)) {
     restoreCompletedDecisions(cached.rows);
     return;
   }
   restoreCompletedDecisions([]);
-  if (cached) await chrome.storage.local.remove(COMPLETED_DECISIONS_KEY);
+  if (cached) await storageLocalRemove(COMPLETED_DECISIONS_KEY);
 }
 
 async function ensureCompletedDecisionCache() {
@@ -114,18 +115,18 @@ async function ensureCompletedDecisionCache() {
 async function persistCompletedDecisionCache() {
   const rows = serializeCompletedDecisions();
   if (!rows.length) {
-    await chrome.storage.local.remove(COMPLETED_DECISIONS_KEY);
+    await storageLocalRemove(COMPLETED_DECISIONS_KEY);
     return;
   }
   const sessionId = await runtimeSessionId();
-  await chrome.storage.local.set({
+  await storageLocalSet({
     [COMPLETED_DECISIONS_KEY]: { sessionId, rows, updatedAt: Date.now() }
   });
 }
 
 async function clearCompletedDecisionCache() {
   resetOrchestrator();
-  await chrome.storage.local.remove(COMPLETED_DECISIONS_KEY);
+  await storageLocalRemove(COMPLETED_DECISIONS_KEY);
 }
 
 function licenseError(r, currentLicense = DEFAULT_LICENSE) {
@@ -183,23 +184,23 @@ function localSignalRecord(state) {
 }
 
 async function appendSessionHistory(record) {
-  const stored = await chrome.storage.session.get(SESSION_HISTORY_KEY);
+  const stored = await storageSessionGet(SESSION_HISTORY_KEY);
   const rows = Array.isArray(stored[SESSION_HISTORY_KEY]) ? stored[SESSION_HISTORY_KEY] : [];
-  await chrome.storage.session.set({ [SESSION_HISTORY_KEY]: [record, ...rows].slice(0, 50) });
+  await storageSessionSet({ [SESSION_HISTORY_KEY]: [record, ...rows].slice(0, 50) });
 }
 
 async function resolveSessionHistoryOutcomes(marketState = {}) {
-  const stored = await chrome.storage.session.get(SESSION_HISTORY_KEY);
+  const stored = await storageSessionGet(SESSION_HISTORY_KEY);
   const rows = Array.isArray(stored[SESSION_HISTORY_KEY]) ? stored[SESSION_HISTORY_KEY] : [];
   if (!rows.length) return [];
   const outcome = resolveSignalHistory(rows, marketState);
   if (!outcome.resolved.length) return [];
-  await chrome.storage.session.set({ [SESSION_HISTORY_KEY]: outcome.rows.slice(0, 50) });
+  await storageSessionSet({ [SESSION_HISTORY_KEY]: outcome.rows.slice(0, 50) });
   return outcome.resolved;
 }
 
 async function activeCasaTradeTab() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const [tab] = await tabsQuery({ active: true, currentWindow: true });
   if (!tab?.id || !tab.url) return { tab: null, platform: null };
   return { tab, platform: platformFromUrl(tab.url) };
 }
@@ -216,7 +217,7 @@ async function ensureSupportedActiveTab() {
 
 async function injectReaders(tabId) {
   const scripts = [
-    { file: 'src/content/focused-asset.js', world: 'ISOLATED', allFrames: false },
+    { file: 'src/content/focused-asset.js', world: 'ISOLATED', allFrames: true },
     { file: 'src/content/worker-probe.js', world: 'MAIN', allFrames: true },
     { file: 'src/content/canvas-probe.js', world: 'MAIN', allFrames: true },
     { file: 'src/content/network-probe.js', world: 'MAIN', allFrames: true },
@@ -227,7 +228,7 @@ async function injectReaders(tabId) {
     { file: 'src/content/analysis-visual-overlay.js', world: 'ISOLATED', allFrames: true }
   ];
   for (const { file, world, allFrames } of scripts) {
-    await chrome.scripting.executeScript({
+    await scriptingExecuteScript({
       target: { tabId, allFrames },
       files: [file],
       world
@@ -237,7 +238,7 @@ async function injectReaders(tabId) {
 
 async function connectActiveTab() {
   const [{ settings = {} }, initialState] = await Promise.all([
-    chrome.storage.local.get('settings'),
+    storageLocalGet('settings'),
     readScannerState()
   ]);
   let scannerState = initialState;
@@ -705,7 +706,7 @@ async function directScanActiveTab(force = false) {
 
   directScanPromise = (async () => {
     lastDirectScanAt = Date.now();
-    const [{ settings = {} }, scannerState] = await Promise.all([chrome.storage.local.get('settings'), readScannerState()]);
+    const [{ settings = {} }, scannerState] = await Promise.all([storageLocalGet('settings'), readScannerState()]);
 
     if (!licenseActive(scannerState.license)) {
       return updateScannerState(current => marketCleared(current, {
@@ -725,7 +726,7 @@ async function directScanActiveTab(force = false) {
       if (!connected?.ok) return connected?.state || scannerState;
     }
 
-    const results = await chrome.scripting.executeScript({
+    const results = await scriptingExecuteScript({
       target: { tabId: tab.id, allFrames: true },
       func: scanCasaTradeFrame,
       world: 'ISOLATED'
@@ -839,7 +840,7 @@ async function syncPlatformPreferences() {
 
 async function prepareTrade(direction) {
   if (!['BUY', 'SELL'].includes(direction)) return { ok: false, error: 'invalid_direction' };
-  const [{ settings = {} }, scannerState] = await Promise.all([chrome.storage.local.get('settings'), readScannerState()]);
+  const [{ settings = {} }, scannerState] = await Promise.all([storageLocalGet('settings'), readScannerState()]);
   if (!licenseActive(scannerState.license)) return { ok: false, error: 'license_required' };
   const supported = await ensureSupportedActiveTab();
   if (!supported.platform || !supported.tab?.id || supported.tab.id !== scannerState.targetTabId) return { ok: false, error: 'platform_tab_not_connected' };
@@ -859,14 +860,14 @@ async function prepareTrade(direction) {
     status: 'prepared'
   };
 
-  await chrome.tabs.update(supported.tab.id, { active: true }).catch(() => {});
-  await chrome.scripting.executeScript({
+  await tabsUpdate(supported.tab.id, { active: true }).catch(() => {});
+  await scriptingExecuteScript({
     target: { tabId: supported.tab.id, allFrames: true },
     files: ['src/content/trade-handoff.js'],
     world: 'ISOLATED'
   }).catch(() => {});
 
-  const handoff = await chrome.tabs.sendMessage(supported.tab.id, {
+  const handoff = await tabsSendMessage(supported.tab.id, {
     type: 'ATS_HIGHLIGHT_TRADE', ...intent
   }).catch(() => ({ found: false }));
 
@@ -877,7 +878,7 @@ async function prepareTrade(direction) {
 }
 
 chrome.runtime.onInstalled.addListener(async () => {
-  const { settings = {} } = await chrome.storage.local.get('settings');
+  const { settings = {} } = await storageLocalGet('settings');
   await updateScannerState(current => {
     if (!Object.keys(current || {}).length) return DEFAULT_STATE;
     if (!licenseActive(current.license)) return marketCleared(current, {
@@ -886,13 +887,13 @@ chrome.runtime.onInstalled.addListener(async () => {
     });
     return;
   });
-  await chrome.storage.local.set({
+  await storageLocalSet({
     settings: {
       ...settings,
       scanPreferences: { tradeAmount: null, stake: null, timeframe: 'AUTO', expiration: 'AUTO', ...(settings.scanPreferences || {}) }
     }
   });
-  await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
+  await sidePanelSetBehavior({ openPanelOnActionClick: true });
 });
 
 chrome.tabs?.onActivated?.addListener(async () => {
@@ -950,7 +951,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type === 'ATS_ACTIVATE_LICENSE') {
-    Promise.all([readScannerState(), chrome.storage.local.get('settings')]).then(async ([scannerState, { settings = {} }]) => {
+    Promise.all([readScannerState(), storageLocalGet('settings')]).then(async ([scannerState, { settings = {} }]) => {
       const r = await activateLicense(settings, message.key);
       lastLicenseCheck = 0;
       const activated = !!r?.ok && licenseActive(r.license);
@@ -978,7 +979,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type === 'ATS_VALIDATE_LICENSE') {
-    Promise.all([readScannerState(), chrome.storage.local.get('settings')]).then(async ([scannerState, { settings = {} }]) => {
+    Promise.all([readScannerState(), storageLocalGet('settings')]).then(async ([scannerState, { settings = {} }]) => {
       const license = await syncLicense(settings, scannerState, true);
       const next = await updateScannerState(current => merge(current, { license }));
       if (license.status === 'active') telemetryHeartbeat(telemetryState(next), settings, true);
@@ -1021,7 +1022,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type === 'ATS_GET_SESSION_HISTORY') {
-    chrome.storage.session.get(SESSION_HISTORY_KEY).then(x => {
+    storageSessionGet(SESSION_HISTORY_KEY).then(x => {
       const rows = Array.isArray(x[SESSION_HISTORY_KEY]) ? x[SESSION_HISTORY_KEY] : [];
       sendResponse({ ok: true, rows, performance: signalPerformance(rows) });
     });
@@ -1102,7 +1103,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message?.type === 'ATS_PLATFORM_SNAPSHOT') {
     const snapshot = message.payload || {};
-    Promise.all([readScannerState(), chrome.storage.local.get('settings')]).then(async ([scannerState, { settings = {} }]) => {
+    Promise.all([readScannerState(), storageLocalGet('settings')]).then(async ([scannerState, { settings = {} }]) => {
       let host = '';
       try { host = new URL(sender?.url || '').hostname; } catch {}
       const platform = detectPlatform(host);
@@ -1134,7 +1135,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 }
 
   if (message?.type === 'ATS_SET_SCANNER') {
-  Promise.all([readScannerState(), chrome.storage.local.get('settings')]).then(async ([scannerState, { settings = {} }]) => {
+  Promise.all([readScannerState(), storageLocalGet('settings')]).then(async ([scannerState, { settings = {} }]) => {
     const scanning = !!message.enabled;
     if (scanning && licenseRequired(settings) && !licenseActive(scannerState.license)) {
       return sendResponse({ ok: false, error: 'license_required', state: marketCleared(scannerState, { license: scannerState.license || DEFAULT_LICENSE }) });
@@ -1153,7 +1154,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   Promise.all([
     clearCompletedDecisionCache(),
     replaceScannerState(DEFAULT_STATE),
-    chrome.storage.session.remove(SESSION_HISTORY_KEY)
+    storageSessionRemove(SESSION_HISTORY_KEY)
   ]).then(() => sendResponse({ ok: true }));
   return true;
 }

@@ -1,6 +1,7 @@
 import { processSnapshot, resetOrchestrator } from './core/orchestrator.js';
 import { isCasaTradeHost } from './platforms/registry.js';
 import { updateScannerState } from './services/scanner-state-atomic.js';
+import { storageLocalGet } from './services/chrome-compat.js';
 
 const allowedTransports = new Set(['ws', 'fetch', 'xhr', 'rendered', 'worker', 'sharedworker', 'broadcast', 'serviceworker', 'window']);
 const quotes = new Set(['USDT','USDC','USD','EUR','GBP','JPY','AUD','CAD','CHF','NZD','BRL','BTC','ETH']);
@@ -120,7 +121,7 @@ function focusedAssetFor(tabId, scannerState = {}) {
 async function keepRealFeedContext(payload = {}, sender = {}) {
   if (Date.now() - lastRun < 80) return;
   lastRun = Date.now();
-  const { settings = {} } = await chrome.storage.local.get('settings');
+  const { settings = {} } = await storageLocalGet('settings');
   if (settings.runtimePaused) return;
 
   return updateScannerState(scannerState => {
@@ -171,22 +172,28 @@ async function keepRealFeedContext(payload = {}, sender = {}) {
 
 async function setFocusedAsset(message = {}, sender = {}) {
   const focused = normAsset(message.asset);
-  if (!focused || !sender?.tab?.id || sender.frameId !== 0) return;
+  if (!focused || !sender?.tab?.id) return;
 
   let senderHost = '';
-  try { senderHost = new URL(sender.url || sender.tab.url || '').hostname; } catch {}
-  if (!isCasaTradeHost(senderHost)) return;
+  let topHost = '';
+  try { senderHost = new URL(sender.url || '').hostname; } catch {}
+  try { topHost = new URL(sender.tab.url || '').hostname; } catch {}
+  const topLevelCasaTrade = sender.frameId === 0 && isCasaTradeHost(senderHost || topHost);
+  const trustedEmbeddedVisual = sender.frameId !== 0 && trustedEmbeddedHost(senderHost) && isCasaTradeHost(topHost);
+  if (!topLevelCasaTrade && !trustedEmbeddedVisual) return;
 
   const tabId = sender.tab.id;
   const previousFocus = focusedAssets.get(tabId) || null;
   const score = Number(message.score || 0);
   const samples = Number(message.samples || 0);
   const source = clean(message.source || 'chart-header');
-  const visual = message.visual === true || source === 'chart-header' || source === 'user-selection';
-  const reliable = message.reliable === true || source === 'user-selection' || score >= FOCUS_CHANGE_MIN_SCORE || samples >= 2;
-  if (previousFocus?.asset && !sameAsset(previousFocus.asset, focused) && !reliable) return;
+  const explicit = message.explicit === true || source === 'user-selection';
+  const visual = message.visual === true || source === 'chart-header' || source === 'user-selection' || source === 'single-frame-asset';
+  const reliable = message.reliable === true || explicit || source === 'single-frame-asset' || score >= FOCUS_CHANGE_MIN_SCORE || samples >= 2;
+  const previousProtected = previousFocus?.source === 'user-selection' || previousFocus?.explicit === true;
+  if (previousFocus?.asset && !sameAsset(previousFocus.asset, focused) && (!reliable || (previousProtected && !explicit))) return;
 
-  focusedAssets.set(tabId, { asset: focused, score, samples, reliable, visual, source, at: Date.now() });
+  focusedAssets.set(tabId, { asset: focused, score, samples, reliable, visual, source, explicit, frameId: sender.frameId, at: Date.now() });
 
   return updateScannerState(scannerState => {
     if (!licenseActive(scannerState)) return;
@@ -214,7 +221,7 @@ async function setFocusedAsset(message = {}, sender = {}) {
         focusedAsset: {
           asset: focused, at: Date.now(), stableSince,
           changedAt: mustResetMarket ? Date.now() : Number(previousStored?.changedAt || stableSince),
-          score, samples, reliable, visual, source
+          score, samples, reliable, visual, source, explicit, frameId: sender.frameId
         },
         ...(mustResetMarket ? {
           acquisition: {
@@ -237,7 +244,7 @@ async function applyEmbeddedFeed(payload = {}, sender = {}) {
   if (!trustedEmbeddedHost(frameHost) || !isCasaTradeHost(topHost) || !sender?.tab?.id) return;
 
   await keepRealFeedContext(payload, sender).catch(() => {});
-  const { settings = {} } = await chrome.storage.local.get('settings');
+  const { settings = {} } = await storageLocalGet('settings');
   if (settings.runtimePaused) return;
 
   return updateScannerState(scannerState => {

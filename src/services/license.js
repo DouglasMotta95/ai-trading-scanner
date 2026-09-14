@@ -1,3 +1,4 @@
+import { storageLocalGet, storageLocalSet, storageLocalRemove } from './chrome-compat.js';
 import { installationId, saveClientToken, clearClientToken } from './telemetry.js';
 
 const LICENSE_KEY = 'atsLicenseKey';
@@ -19,13 +20,13 @@ export const isDevBuild = () => !chrome.runtime.getManifest().update_url;
 export const licenseRequired = () => true;
 
 export async function savedLicenseKey() {
-  const x = await chrome.storage.local.get(LICENSE_KEY);
+  const x = await storageLocalGet(LICENSE_KEY);
   return String(x[LICENSE_KEY] || '').trim();
 }
 
 export async function saveLicenseKey(key = '') {
   key = String(key || '').trim();
-  await chrome.storage.local.set({ [LICENSE_KEY]: key });
+  await storageLocalSet({ [LICENSE_KEY]: key });
   return key;
 }
 
@@ -82,10 +83,10 @@ function cachedResponse(cached, { syncPending = false, error = null } = {}) {
 }
 
 export async function cachedLicenseSession() {
-  const x = await chrome.storage.local.get(LAST_VALID_LICENSE_KEY);
+  const x = await storageLocalGet(LAST_VALID_LICENSE_KEY);
   const cached = x[LAST_VALID_LICENSE_KEY];
   if (!cached?.license || !licenseStillValid(cached.license)) {
-    if (cached) await chrome.storage.local.remove(LAST_VALID_LICENSE_KEY);
+    if (cached) await storageLocalRemove(LAST_VALID_LICENSE_KEY);
     return null;
   }
   const licenseKey = String(cached.licenseKey || cached.license?.key || '').trim();
@@ -97,7 +98,7 @@ export async function restoreCachedLicense() {
   if (!cached) return null;
   const currentKey = await savedLicenseKey();
   if (!currentKey && cached.licenseKey) {
-    await chrome.storage.local.set({ [LICENSE_KEY]: cached.licenseKey });
+    await storageLocalSet({ [LICENSE_KEY]: cached.licenseKey });
   }
   return {
     ...cached.license,
@@ -120,7 +121,7 @@ async function saveValidLicenseSession(r, licenseKey = '') {
   };
   const values = { [LAST_VALID_LICENSE_KEY]: snapshot };
   if (resolvedKey) values[LICENSE_KEY] = resolvedKey;
-  await chrome.storage.local.set(values);
+  await storageLocalSet(values);
   return snapshot;
 }
 
@@ -130,7 +131,7 @@ async function invalidateCachedLicense(r, licenseKey = '') {
   const attempted = String(licenseKey || '').trim().toUpperCase();
   const cachedKey = String(cached?.licenseKey || '').trim().toUpperCase();
   if (attempted && cachedKey && attempted !== cachedKey) return false;
-  await chrome.storage.local.remove(LAST_VALID_LICENSE_KEY);
+  await storageLocalRemove(LAST_VALID_LICENSE_KEY);
   await clearClientToken();
   return true;
 }
@@ -230,6 +231,6 @@ export async function consumeSignal(settings = {}) {
 }
 
 export async function clearLicense() {
-  await chrome.storage.local.remove([LICENSE_KEY, LAST_VALID_LICENSE_KEY]);
+  await storageLocalRemove([LICENSE_KEY, LAST_VALID_LICENSE_KEY]);
   await clearClientToken();
 }
