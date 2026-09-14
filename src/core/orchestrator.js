@@ -11,7 +11,7 @@ const clean = v => String(v ?? '').trim();
 const POSSIBLE_HITS = 2;
 const CONFIRM_HITS = 2;
 const POSSIBLE_HOLD_MS = 2500;
-const CANDIDATE_MAX_GAP_MS = 3500;
+const CANDIDATE_MAX_GAP_MS = 8000;
 
 function timeframeMs(value = 'M1') {
   return TIMEFRAMES[clean(value).toUpperCase()] || TIMEFRAMES.M1;
@@ -145,7 +145,10 @@ function confirmationQuality(result = {}, direction = null) {
   const broke = result.recent?.breakout === direction;
   const continuation = result.recent?.continuationDirection === direction
     && Number(result.recent?.continuationScore || 0) >= 60;
-  return directionalPower >= 50 && (candleStrong || rejected || broke || continuation);
+  const trendAligned = Number(result.recent?.agreement || 0) >= .7
+    && metrics.momentumDirection === direction
+    && Number(metrics.momentumScore || 0) >= 45;
+  return directionalPower >= 50 && (candleStrong || rejected || broke || continuation || trendAligned);
 }
 
 function rangeOverrideQuality(result = {}, direction = null) {
@@ -543,6 +546,25 @@ export function processSnapshot(snapshot = {}, state = {}) {
         phase: 'ANALYZING',
         uiState: 'WAIT',
         reason: liveResult.waitingFor?.text || 'Padrão ainda sem qualidade suficiente para sinalizar a próxima vela.',
+        stability: stabilitySnapshot(tracker)
+      })
+    };
+  }
+
+  if (possibleDirection) {
+    return {
+      candles: closed,
+      currentCandle: current,
+      lastConfirmed,
+      signal: baseSignal({
+        ...common,
+        state: 'WATCH',
+        direction: possibleDirection,
+        provisional: true,
+        phase: 'POSSIBLE',
+        uiState: possibleDirection === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL',
+        reason: reasonFor(liveResult, possibleDirection, false),
+        score: Math.max(score, Number(tracker.publishedScore || 0)),
         stability: stabilitySnapshot(tracker)
       })
     };

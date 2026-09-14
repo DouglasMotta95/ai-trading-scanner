@@ -222,30 +222,35 @@
     host.appendChild(svg);
 
     const analytics = scannerState.signal?.analytics || {};
-    const addHorizontal = (price, label, stroke, dash = '') => {
+    const waiting = scannerState.signal?.waitingFor || null;
+    const drawnLevels = [];
+    const addHorizontal = (price, label, stroke, dash = '', active = false) => {
       const value = num(price);
       if (value == null) return;
+      const tolerance = Math.max(Math.abs(value) * 0.000002, 1e-10);
+      if (drawnLevels.some(existing => Math.abs(existing - value) <= tolerance)) return;
+      drawnLevels.push(value);
       const y = yFor(value);
       if (!Number.isFinite(y) || y < -20 || y > rect.height + 20) return;
       const line = document.createElementNS(svg.namespaceURI, 'line');
       line.setAttribute('x1', '0'); line.setAttribute('x2', String(rect.width));
       line.setAttribute('y1', String(y)); line.setAttribute('y2', String(y));
-      line.setAttribute('stroke', stroke); line.setAttribute('stroke-width', '1.5');
-      line.setAttribute('opacity', '.82');
+      line.setAttribute('stroke', stroke); line.setAttribute('stroke-width', active ? '3' : '1.5');
+      line.setAttribute('opacity', active ? '.98' : '.78');
       if (dash) line.setAttribute('stroke-dasharray', dash);
       svg.appendChild(line);
       const text = document.createElementNS(svg.namespaceURI, 'text');
       text.setAttribute('x', '8'); text.setAttribute('y', String(Math.max(12, y - 5)));
-      text.setAttribute('fill', stroke); text.setAttribute('font-size', '11'); text.setAttribute('font-weight', '700');
-      text.textContent = `${label} ${formatPrice(value)}`;
+      text.setAttribute('fill', stroke); text.setAttribute('font-size', active ? '12' : '11'); text.setAttribute('font-weight', '700');
+      text.textContent = `${active ? '▶ ' : ''}${label} ${formatPrice(value)}`;
       svg.appendChild(text);
     };
 
     addHorizontal(scannerState.price, 'Preço atual', '#f4f4f4', '2 5');
     addHorizontal(analytics.resistance, 'Resistência', '#f0b56d', '4 5');
     addHorizontal(analytics.support, 'Suporte', '#79bfff', '4 5');
-    addHorizontal(analytics.breakoutHigh, 'Gatilho compra ↑', '#58d6ad', '7 5');
-    addHorizontal(analytics.breakoutLow, 'Gatilho venda ↓', '#f07b94', '7 5');
+    addHorizontal(analytics.breakoutHigh, 'Gatilho compra ↑', '#58d6ad', '7 5', waiting?.type === 'breakout' && waiting?.direction === 'BUY');
+    addHorizontal(analytics.breakoutLow, 'Gatilho venda ↓', '#f07b94', '7 5', waiting?.type === 'breakout' && waiting?.direction === 'SELL');
     const waitLevel = num(scannerState.signal?.waitingFor?.level);
     if (waitLevel != null
       && waitLevel !== num(analytics.breakoutHigh)
@@ -274,6 +279,16 @@
     const seconds = num(scannerState.signal?.secondsRemaining);
     badge.textContent = `ATS • ${statusMap[uiState] || uiState} • ${liveScore}/100${seconds != null ? ` • ${Math.round(seconds)}s` : ''}`;
     svg.appendChild(badge);
+    const regimeType = String(scannerState.signal?.regime?.type || 'unknown');
+    const regimeLabel = regimeType === 'uptrend' ? 'Tendência alta' : regimeType === 'downtrend' ? 'Tendência baixa' : regimeType === 'range' ? 'Mercado lateral' : 'Regime identificando';
+    const detail = document.createElementNS(svg.namespaceURI, 'text');
+    detail.setAttribute('x', '10');
+    detail.setAttribute('y', '34');
+    detail.setAttribute('fill', '#d7e1ef');
+    detail.setAttribute('font-size', '10.5');
+    detail.setAttribute('font-weight', '650');
+    detail.textContent = `${regimeLabel} • ${waiting?.label ? `Aguardando: ${waiting.label}` : 'Monitorando confirmação'}`;
+    svg.appendChild(detail);
 
     const direction = scannerState.signal?.analysisDirection || scannerState.signal?.direction || analytics.trendDirection;
     if (direction === 'BUY' || direction === 'SELL') {
