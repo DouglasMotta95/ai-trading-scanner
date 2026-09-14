@@ -184,7 +184,7 @@ function analyticsSummary(result = {}, direction = null) {
 
 function reasonFor(result = {}, direction = null, final = false) {
   if (!result?.recent?.ready) return 'Montando o padrão com as velas recentes e a vela atual.';
-  if (!direction) return 'Sem direção firme para a próxima vela neste momento.';
+  if (!direction) return result?.waitingFor?.text || 'Sem direção firme para a próxima vela neste momento.';
   return `${final ? 'Padrão confirmado' : 'Padrão consistente'}: ${analyticsSummary(result, direction)}.`;
 }
 
@@ -192,7 +192,7 @@ function baseSignal({
   state = 'WAIT', direction = null, provisional = true, reason, timeframe = 'M1', expiration = null,
   candleCount = 0, secondsRemaining = null, progress = null, currentCandle = null, score = 0,
   analysisDirection = null, analysisScore = null, phase = 'ANALYZING', targetStart = null,
-  uiState = 'ANALYZING_MARKET', analytics = {}, stability = null
+  uiState = 'ANALYZING_MARKET', analytics = {}, waitingFor = null, stability = null
 } = {}) {
   const diagnosis = ['WATCH', 'CONFIRM'].includes(state) && ['BUY', 'SELL'].includes(direction)
     ? direction
@@ -217,6 +217,7 @@ function baseSignal({
     analysisDirection,
     analysisScore: analysisScore == null ? score : analysisScore,
     analytics,
+    waitingFor,
     stability,
     targetStart,
     targetLabel: targetStart ? new Date(targetStart).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : null
@@ -321,6 +322,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
     analysisDirection: direction,
     analysisScore: score,
     analytics: liveResult.analytics || {},
+    waitingFor: liveResult.waitingFor || null,
     stability: stabilitySnapshot(tracker),
     targetStart
   };
@@ -421,7 +423,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
       state: 'NO_TRADE',
       direction: null,
       provisional: false,
-      reason: 'Sem confirmação estável suficiente para liberar a próxima vela.',
+      reason: liveResult.waitingFor?.text || 'Sem confirmação estável suficiente para liberar a próxima vela.',
       score,
       targetStart,
       asset: snapshot.asset,
@@ -458,7 +460,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
         provisional: false,
         phase: 'FINAL',
         uiState: 'WAIT',
-        reason: 'Sem padrão estável forte o suficiente para a próxima vela.',
+        reason: liveResult.waitingFor?.text || 'Sem padrão estável forte o suficiente para a próxima vela.',
         stability: stabilitySnapshot(tracker)
       })
     };
@@ -495,7 +497,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
         provisional: true,
         phase: 'ANALYZING',
         uiState: 'WAIT',
-        reason: 'Padrão ainda sem qualidade suficiente para sinalizar a próxima vela.',
+        reason: liveResult.waitingFor?.text || 'Padrão ainda sem qualidade suficiente para sinalizar a próxima vela.',
         stability: stabilitySnapshot(tracker)
       })
     };
@@ -513,9 +515,9 @@ export function processSnapshot(snapshot = {}, state = {}) {
       provisional: true,
       phase: buildingPattern ? 'BUILDING' : 'ANALYZING',
       uiState: buildingPattern ? 'BUILDING_PATTERN' : 'ANALYZING_MARKET',
-      reason: buildingPattern
+      reason: liveResult.waitingFor?.text || (buildingPattern
         ? `Montando padrão da próxima vela: ${analyticsSummary(liveResult, direction)}.`
-        : 'Analisando poder de compra/venda, rejeição, força e momentum do mercado atual.',
+        : 'Analisando poder de compra/venda, rejeição, força e momentum do mercado atual.'),
       stability: stabilitySnapshot(tracker)
     })
   };

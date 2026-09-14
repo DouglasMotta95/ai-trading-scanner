@@ -211,7 +211,8 @@ async function injectReaders(tabId) {
     { file: 'src/content/network-bridge.js', world: 'ISOLATED', allFrames: true },
     { file: 'src/content/embedded-feed-bridge.js', world: 'ISOLATED', allFrames: true },
     { file: 'src/content/generic-adapter.js', world: 'ISOLATED', allFrames: true },
-    { file: 'src/content/platform-sync.js', world: 'ISOLATED', allFrames: true }
+    { file: 'src/content/platform-sync.js', world: 'ISOLATED', allFrames: true },
+    { file: 'src/content/analysis-visual-overlay.js', world: 'ISOLATED', allFrames: true }
   ];
   for (const { file, world, allFrames } of scripts) {
     await chrome.scripting.executeScript({
