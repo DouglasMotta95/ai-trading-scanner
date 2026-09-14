@@ -1,0 +1,119 @@
+name: Apply production hardening patch
+
+on:
+  push:
+    branches:
+      - fix/production-secret-installation-id
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Apply hardening changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          placeholder = 'COLOQUE_AQUI_UM_SEGREDO_UNICO_GERADO'
+
+          env = Path('backend/.env.example')
+          s = env.read_text()
+          old = 'SESSION_SECRET=replace-with-a-long-random-secret'
+          new = '# NUNCA USE ESTE VALOR EM PRODUÇÃO. Gere um segredo aleatório e exclusivo.\nSESSION_SECRET=' + placeholder
+          if old not in s:
+              raise SystemExit('expected SESSION_SECRET example not found')
+          env.write_text(s.replace(old, new, 1))
+
+          server = Path('backend/src/server.js')
+          s = server.read_text()
+          old = "const SESSION_SECRET = String(process.env.SESSION_SECRET || '').trim();\nconst NODE_ENV = String(process.env.NODE_ENV || 'development').toLowerCase();\nif (NODE_ENV === 'production' && SESSION_SECRET.length < 32) throw new Error('SESSION_SECRET must be configured with at least 32 characters in production');"
+          new = "const SESSION_SECRET = String(process.env.SESSION_SECRET || '').trim();\nconst NODE_ENV = String(process.env.NODE_ENV || 'development').toLowerCase();\nconst SESSION_SECRET_PLACEHOLDERS = new Set([\n  'COLOQUE_AQUI_UM_SEGREDO_UNICO_GERADO',\n  'replace-with-a-long-random-secret'\n]);\nif (NODE_ENV === 'production' && (SESSION_SECRET.length < 32 || SESSION_SECRET_PLACEHOLDERS.has(SESSION_SECRET))) {\n  throw new Error('SESSION_SECRET must be a unique non-example secret with at least 32 characters in production');\n}"
+          if old not in s:
+              raise SystemExit('expected production SESSION_SECRET check not found')
+          server.write_text(s.replace(old, new, 1))
+
+          account = Path('src/sidepanel/account-login.js')
+          s = account.read_text()
+          old = "  const base = () => PUBLIC_API;\n  const stableInstallId = () => {\n    const runtimeId = String(chrome.runtime?.id || '').trim();\n    return runtimeId ? `ats-${runtimeId}` : crypto.randomUUID();\n  };\n\n  async function installId() {\n    const x = await chrome.storage.local.get(INSTALL_KEY);\n    if (x[INSTALL_KEY]) return x[INSTALL_KEY];\n    const id = stableInstallId();\n    await chrome.storage.local.set({ [INSTALL_KEY]: id });\n    return id;\n  }"
+          new = "  const base = () => PUBLIC_API;\n  const randomInstallId = () => `ats-install-${crypto.randomUUID()}`;\n  const legacyRuntimeInstallId = () => {\n    const runtimeId = String(chrome.runtime?.id || '').trim();\n    return runtimeId ? `ats-${runtimeId}` : '';\n  };\n  let installIdPromise = null;\n\n  async function installId() {\n    if (installIdPromise) return installIdPromise;\n    installIdPromise = (async () => {\n      const x = await chrome.storage.local.get(INSTALL_KEY);\n      const existing = String(x[INSTALL_KEY] || '').trim();\n      const legacyId = legacyRuntimeInstallId();\n      if (existing && existing !== legacyId) return existing;\n\n      const id = randomInstallId();\n      await chrome.storage.local.set({ [INSTALL_KEY]: id });\n      const persisted = await chrome.storage.local.get(INSTALL_KEY);\n      return String(persisted[INSTALL_KEY] || id);\n    })();\n    try {\n      return await installIdPromise;\n    } finally {\n      installIdPromise = null;\n    }\n  }"
+          if old not in s:
+              raise SystemExit('expected legacy installId implementation not found')
+          account.write_text(s.replace(old, new, 1))
+
+          test = Path('test/production-hardening.test.mjs')
+          test.write_text(r'''import test from 'node:test';
+          import assert from 'node:assert/strict';
+          import fs from 'node:fs';
+          import path from 'node:path';
+          import { fileURLToPath } from 'node:url';
+          import { spawnSync } from 'node:child_process';
+          import os from 'node:os';
+
+          const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+          const read = p => fs.readFileSync(path.join(root, p), 'utf8');
+          const PLACEHOLDER = 'COLOQUE_AQUI_UM_SEGREDO_UNICO_GERADO';
+
+          test('production rejects the checked-in SESSION_SECRET placeholder explicitly', () => {
+            const envExample = read('backend/.env.example');
+            const server = read('backend/src/server.js');
+            assert.match(envExample, /NUNCA USE ESTE VALOR EM PRODUÇÃO/);
+            assert.match(envExample, new RegExp(`SESSION_SECRET=${PLACEHOLDER}`));
+            assert.match(server, /SESSION_SECRET_PLACEHOLDERS/);
+            assert.match(server, new RegExp(PLACEHOLDER));
+            assert.match(server, /SESSION_SECRET_PLACEHOLDERS\.has\(SESSION_SECRET\)/);
+
+            const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ats-secret-test-'));
+            const result = spawnSync(process.execPath, ['backend/src/server.js'], {
+              cwd: root,
+              encoding: 'utf8',
+              timeout: 5000,
+              env: {
+                ...process.env,
+                NODE_ENV: 'production',
+                SESSION_SECRET: PLACEHOLDER,
+                ATS_DATA_DIR: dataDir,
+                PORT: '0'
+              }
+            });
+            assert.notEqual(result.status, 0);
+            assert.match(`${result.stdout}\n${result.stderr}`, /SESSION_SECRET must be a unique non-example secret/);
+          });
+
+          test('installationId is a random UUID persisted once per installation and migrates the legacy runtime id', () => {
+            const source = read('src/sidepanel/account-login.js');
+            assert.match(source, /randomInstallId = \(\) => `ats-install-\$\{crypto\.randomUUID\(\)\}`/);
+            assert.match(source, /let installIdPromise = null/);
+            assert.match(source, /const existing = String\(x\[INSTALL_KEY\] \|\| ''\)\.trim\(\)/);
+            assert.match(source, /if \(existing && existing !== legacyId\) return existing/);
+            assert.match(source, /await chrome\.storage\.local\.set\(\{ \[INSTALL_KEY\]: id \}\)/);
+            assert.match(source, /const persisted = await chrome\.storage\.local\.get\(INSTALL_KEY\)/);
+            assert.doesNotMatch(source, /stableInstallId/);
+            assert.doesNotMatch(source, /return runtimeId \? `ats-\$\{runtimeId\}` : crypto\.randomUUID\(\)/);
+          });
+          '''.replace(/^          /gm, ''))
+          PY
+
+          node --check backend/src/server.js
+          node --check src/sidepanel/account-login.js
+          node --check test/production-hardening.test.mjs
+          cd backend
+          npm test
+          cd ..
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend/.env.example backend/src/server.js src/sidepanel/account-login.js test/production-hardening.test.mjs
+          git commit -m "fix: harden production secret and installation identity"
+          git push origin HEAD:fix/production-secret-installation-id
