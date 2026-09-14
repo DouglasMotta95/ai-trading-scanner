@@ -13,17 +13,31 @@
   const $ = s => document.querySelector(s);
 
   const base = () => PUBLIC_API;
-  const stableInstallId = () => {
+  const randomInstallId = () => `ats-install-${crypto.randomUUID()}`;
+  const legacyRuntimeInstallId = () => {
     const runtimeId = String(chrome.runtime?.id || '').trim();
-    return runtimeId ? `ats-${runtimeId}` : crypto.randomUUID();
+    return runtimeId ? `ats-${runtimeId}` : '';
   };
+  let installIdPromise = null;
 
   async function installId() {
-    const x = await chrome.storage.local.get(INSTALL_KEY);
-    if (x[INSTALL_KEY]) return x[INSTALL_KEY];
-    const id = stableInstallId();
-    await chrome.storage.local.set({ [INSTALL_KEY]: id });
-    return id;
+    if (installIdPromise) return installIdPromise;
+    installIdPromise = (async () => {
+      const x = await chrome.storage.local.get(INSTALL_KEY);
+      const existing = String(x[INSTALL_KEY] || '').trim();
+      const legacyId = legacyRuntimeInstallId();
+      if (existing && existing !== legacyId) return existing;
+
+      const id = randomInstallId();
+      await chrome.storage.local.set({ [INSTALL_KEY]: id });
+      const persisted = await chrome.storage.local.get(INSTALL_KEY);
+      return String(persisted[INSTALL_KEY] || id);
+    })();
+    try {
+      return await installIdPromise;
+    } finally {
+      installIdPromise = null;
+    }
   }
 
   async function permission(url) {

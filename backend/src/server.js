@@ -11,7 +11,13 @@ const API_KEY = process.env.ATS_API_KEY || '';
 const ADMIN_KEY = process.env.ATS_ADMIN_KEY || API_KEY;
 const SESSION_SECRET = String(process.env.SESSION_SECRET || '').trim();
 const NODE_ENV = String(process.env.NODE_ENV || 'development').toLowerCase();
-if (NODE_ENV === 'production' && SESSION_SECRET.length < 32) throw new Error('SESSION_SECRET must be configured with at least 32 characters in production');
+const SESSION_SECRET_PLACEHOLDERS = new Set([
+  'COLOQUE_AQUI_UM_SEGREDO_UNICO_GERADO',
+  'replace-with-a-long-random-secret'
+]);
+if (NODE_ENV === 'production' && (SESSION_SECRET.length < 32 || SESSION_SECRET_PLACEHOLDERS.has(SESSION_SECRET))) {
+  throw new Error('SESSION_SECRET must be a unique non-example secret with at least 32 characters in production');
+}
 const ADMIN_SESSION_DAYS = Math.max(1, Number(process.env.ADMIN_SESSION_DAYS || 30));
 const CUSTOMER_SESSION_DAYS = Math.max(1, Number(process.env.CUSTOMER_SESSION_DAYS || 30));
 const ACCOUNT_TOKEN_DAYS = Math.max(1, Number(process.env.ACCOUNT_TOKEN_DAYS || 30));
