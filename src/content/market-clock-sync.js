@@ -7,7 +7,8 @@
   const host = String(location.hostname || '').toLowerCase().replace(/\.$/, '');
   const casaHost = value => value === 'casatrade.com' || value.endsWith('.casatrade.com') || value === 'casatrade.io' || value.endsWith('.casatrade.io');
   const traderHost = value => value === 'casatraders.online' || value.endsWith('.casatraders.online') || value === 'ivcasatraders.online' || value.endsWith('.ivcasatraders.online');
-  if (!casaHost(host) && !traderHost(host)) return;
+  const inTraderFrame = traderHost(host);
+  if (!casaHost(host) && !inTraderFrame) return;
 
   const visible = el => {
     if (!el || !(el instanceof Element)) return false;
@@ -66,6 +67,7 @@
       let score = /true|active|selected|current|checked/i.test(flags) ? 150 : 0;
       if (rect.left < innerWidth * .45) score += 20;
       if (rect.top > innerHeight * .08 && rect.top < innerHeight * .92) score += 12;
+      if (inTraderFrame) score += 25;
       rows.push({ tf, score });
     }
     rows.sort((a, b) => b.score - a.score);
@@ -77,28 +79,38 @@
     const rows = [];
     for (const el of deepElements()) {
       if (!visible(el)) continue;
-      const text = clean(el.getAttribute?.('aria-label') || el.getAttribute?.('aria-valuetext') || el.innerText || el.textContent || '');
-      if (!text || text.length > 40) continue;
-      let seconds = null;
-      const clock = text.match(/^(\d{1,2}):(\d{2})$/);
-      if (clock) seconds = Number(clock[1]) * 60 + Number(clock[2]);
-      if (seconds == null) {
-        const plain = text.match(/^(\d{1,4})\s*(?:s|seg|segundo|segundos)$/i);
-        if (plain) seconds = Number(plain[1]);
+      const ownText = clean(el.getAttribute?.('aria-label') || el.getAttribute?.('aria-valuetext') || el.innerText || el.textContent || '');
+      if (!ownText || ownText.length > 100) continue;
+      const local = clean(`${ownText} ${el.parentElement?.innerText || ''} ${el.parentElement?.parentElement?.innerText || ''}`).slice(0, 320);
+      const localFold = fold(local);
+      const timerContext = /hora de compra|buy time|entry time|entrada|countdown|timer|remaining|restante|tempo|candle|vela|chart|grafico|gráfico/.test(localFold);
+      const expiryContext = /expira|expiry|expiration|duration|dura[cç][aã]o|valor|amount|retorno|lucro|profit/.test(localFold);
+
+      const candidates = [];
+      for (const match of ownText.matchAll(/\b(\d{1,2}):(\d{2})\b/g)) {
+        const seconds = Number(match[1]) * 60 + Number(match[2]);
+        candidates.push({ seconds, kind: 'clock' });
       }
-      if (!Number.isFinite(seconds) || seconds < 0 || seconds > limit + 2) continue;
-      const rect = el.getBoundingClientRect();
-      const context = fold(`${el.className || ''} ${el.id || ''} ${el.getAttribute?.('data-testid') || ''} ${el.getAttribute?.('aria-label') || ''} ${el.parentElement?.innerText || ''}`);
-      let score = clock ? 55 : 20;
-      if (/countdown|timer|remaining|restante|tempo|time|candle|chart|grafico|gráfico/.test(context)) score += 125;
-      if (/expira|expiry|duration|valor|amount|retorno|lucro|profit/.test(context)) score -= 160;
-      if (rect.top > innerHeight * .08 && rect.top < innerHeight * .92) score += 15;
-      if (rect.left > innerWidth * .30) score += 10;
-      if (seconds === limit && !/countdown|remaining|restante|candle|chart/.test(context)) score -= 80;
-      rows.push({ seconds, score });
+      const plain = ownText.match(/\b(\d{1,4})\s*(?:s|seg|segundo|segundos)\b/i);
+      if (plain) candidates.push({ seconds: Number(plain[1]), kind: 'plain' });
+
+      for (const candidate of candidates) {
+        const seconds = candidate.seconds;
+        if (!Number.isFinite(seconds) || seconds < 0 || seconds > limit + 2) continue;
+        const rect = el.getBoundingClientRect();
+        let score = candidate.kind === 'clock' ? 70 : 30;
+        if (timerContext) score += 190;
+        if (/hora de compra|buy time|entry time/.test(localFold)) score += 170;
+        if (expiryContext) score -= 220;
+        if (inTraderFrame) score += 90;
+        if (rect.top > innerHeight * .05 && rect.top < innerHeight * .95) score += 20;
+        if (rect.left > innerWidth * .20) score += 10;
+        if (seconds === limit && !timerContext) score -= 100;
+        rows.push({ seconds, score, text: ownText });
+      }
     }
     rows.sort((a, b) => b.score - a.score);
-    return rows[0] && rows[0].score >= 35 ? rows[0] : null;
+    return rows[0] && rows[0].score >= 55 ? rows[0] : null;
   }
 
   function phaseCountdown(tf) {
@@ -130,6 +142,7 @@
       let score = 80;
       if (/true|active|selected|current/i.test(flags)) score += 80;
       if (/expira|expiry|duration/i.test(fold(text))) score += 40;
+      if (inTraderFrame) score += 20;
       rows.push({ value, score });
     }
     rows.sort((a, b) => b.score - a.score);
@@ -159,13 +172,13 @@
         timeframe: tf,
         secondsRemaining,
         expiration,
-        clockSource: domClock ? 'dom-countdown' : 'timeframe-phase',
-        confidence: domClock ? Math.max(80, Number(domClock.score || 0)) : 55,
+        clockSource: domClock ? (inTraderFrame ? 'trader-dom-countdown' : 'dom-countdown') : 'timeframe-phase',
+        confidence: domClock ? Math.max(inTraderFrame ? 95 : 80, Number(domClock.score || 0)) : 55,
         frameHost: host,
         at: Date.now()
       };
       const key = `${payload.asset}|${payload.timeframe}|${payload.secondsRemaining}|${payload.expiration || ''}|${payload.clockSource}`;
-      if (key === lastKey && Date.now() - lastSentAt < 900) return;
+      if (key === lastKey && Date.now() - lastSentAt < 650) return;
       lastKey = key;
       lastSentAt = Date.now();
       await chrome.runtime.sendMessage(payload).catch(() => null);
@@ -174,6 +187,6 @@
     }
   }
 
-  setInterval(tick, 450);
+  setInterval(tick, 300);
   tick();
 })();
