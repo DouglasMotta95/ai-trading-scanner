@@ -25,22 +25,24 @@ function snapshot(bucket, offset, candles = bullish(bucket)) {
   };
 }
 
-test('stable possible signal is visible immediately even before the old 30-second window', () => {
+test('stable setup stays in pattern-building before the 30-second preparation window', () => {
   resetOrchestrator();
   const bucket = Math.floor(1_800_300_000_000 / minute) * minute;
   const first = processSnapshot(snapshot(bucket, 10_000), { connection: 'online' });
   const second = processSnapshot(snapshot(bucket, 11_000), { connection: 'online' });
   assert.notEqual(first.signal.uiState, 'POSSIBLE_BUY');
-  assert.equal(second.signal.uiState, 'POSSIBLE_BUY');
+  assert.equal(second.signal.uiState, 'BUILDING_PATTERN');
   assert.ok(second.signal.secondsRemaining > 30);
 });
 
-test('mobile-throttled second observation can still complete the two-hit pre-signal', () => {
+test('mobile-throttled observations still complete POSSIBLE inside the preparation window', () => {
   resetOrchestrator();
   const bucket = Math.floor(1_800_310_000_000 / minute) * minute;
-  processSnapshot(snapshot(bucket, 12_000), { connection: 'online' });
-  const second = processSnapshot(snapshot(bucket, 18_000), { connection: 'online' });
+  processSnapshot(snapshot(bucket, 35_000), { connection: 'online' });
+  const second = processSnapshot(snapshot(bucket, 41_000), { connection: 'online' });
   assert.equal(second.signal.uiState, 'POSSIBLE_BUY');
+  assert.ok(second.signal.secondsRemaining <= 30);
+  assert.ok(second.signal.secondsRemaining > 15);
 });
 
 test('slow but consistent twenty-candle drift is a trend, not automatically range', () => {
