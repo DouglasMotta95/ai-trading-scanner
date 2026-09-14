@@ -172,45 +172,74 @@
   let candidateSamples = 0;
   let lastPublished = '';
   let lastPublishedAt = 0;
+  let scanTimer = null;
+  let queuedForce = false;
+  let scanning = false;
 
   function publish(force = false) {
-    const winner = scanWinner();
-    if (!winner?.asset) return;
-    const now = Date.now();
-    if (sameAsset(candidate, winner.asset)) candidateSamples += 1;
-    else { candidate = winner.asset; candidateSince = now; candidateSamples = 1; }
-    const stableFor = Math.max(0, now - candidateSince);
-    const reliable = winner.explicit || (candidateSamples >= 2 && stableFor >= 220) || (candidateSamples >= 3);
-    if (!reliable) return;
-    if (!force && sameAsset(lastPublished, winner.asset) && now - lastPublishedAt < 550) return;
-    lastPublished = winner.asset;
-    lastPublishedAt = now;
+    if (scanning) {
+      queuedForce ||= force;
+      return;
+    }
+    scanning = true;
+    try {
+      const winner = scanWinner();
+      if (!winner?.asset) return;
+      const now = Date.now();
+      if (sameAsset(candidate, winner.asset)) candidateSamples += 1;
+      else { candidate = winner.asset; candidateSince = now; candidateSamples = 1; }
+      const stableFor = Math.max(0, now - candidateSince);
+      const reliable = winner.explicit || (candidateSamples >= 2 && stableFor >= 220) || (candidateSamples >= 3);
+      if (!reliable) return;
+      if (!force && sameAsset(lastPublished, winner.asset) && now - lastPublishedAt < 650) return;
+      lastPublished = winner.asset;
+      lastPublishedAt = now;
 
-    const common = {
-      asset: winner.asset,
-      score: Number(winner.score || 0),
-      samples: candidateSamples,
-      stableFor,
-      reliable: true,
-      visual: true,
-      explicit: winner.explicit === true,
-      chartScoped: true,
-      chartFound: winner.chartFound === true,
-      frameHost: host,
-      frameRole: 'trader-frame',
-      at: now,
-      source: winner.explicit ? 'chart-frame-explicit' : 'chart-frame-scoped'
-    };
-    globalThis.__ATS_FOCUSED_ASSET_VALUE__ = winner.asset;
-    globalThis.__ATS_FOCUSED_ASSET_META__ = common;
-    try { chrome.runtime.sendMessage({ type: 'ATS_VISUAL_FOCUS_V2', ...common }, () => void chrome.runtime?.lastError); } catch {}
+      const common = {
+        asset: winner.asset,
+        score: Number(winner.score || 0),
+        samples: candidateSamples,
+        stableFor,
+        reliable: true,
+        visual: true,
+        explicit: winner.explicit === true,
+        chartScoped: true,
+        chartFound: winner.chartFound === true,
+        frameHost: host,
+        frameRole: 'trader-frame',
+        at: now,
+        source: winner.explicit ? 'chart-frame-explicit' : 'chart-frame-scoped'
+      };
+      globalThis.__ATS_FOCUSED_ASSET_VALUE__ = winner.asset;
+      globalThis.__ATS_FOCUSED_ASSET_META__ = common;
+      try { chrome.runtime.sendMessage({ type: 'ATS_VISUAL_FOCUS_V2', ...common }, () => void chrome.runtime?.lastError); } catch {}
+    } finally {
+      scanning = false;
+      if (queuedForce) {
+        queuedForce = false;
+        schedulePublish(90, true);
+      }
+    }
   }
 
-  const observer = new MutationObserver(() => publish(false));
+  function schedulePublish(delay = 110, force = false) {
+    queuedForce ||= force;
+    if (scanTimer) return;
+    scanTimer = setTimeout(() => {
+      scanTimer = null;
+      const shouldForce = queuedForce;
+      queuedForce = false;
+      publish(shouldForce);
+    }, delay);
+  }
+
+  // Live charts mutate constantly. Coalesce those mutations into one scan instead of
+  // walking thousands of DOM nodes once for every tick/canvas update on Android.
+  const observer = new MutationObserver(() => schedulePublish(120, false));
   try { observer.observe(document.documentElement, { subtree: true, childList: true, attributes: true, characterData: true }); } catch {}
-  document.addEventListener('pointerup', () => setTimeout(() => publish(true), 100), true);
-  document.addEventListener('touchend', () => setTimeout(() => publish(true), 120), true);
-  document.addEventListener('click', () => setTimeout(() => publish(true), 120), true);
-  setInterval(() => publish(false), 280);
+  document.addEventListener('pointerup', () => schedulePublish(80, true), true);
+  document.addEventListener('touchend', () => schedulePublish(90, true), true);
+  document.addEventListener('click', () => schedulePublish(90, true), true);
+  setInterval(() => schedulePublish(0, false), 450);
   setTimeout(() => publish(true), 250);
 })();
