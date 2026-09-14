@@ -40,10 +40,12 @@ test('asset mismatch or missing chart authority is a hard safety reset', () => {
   assert.match(integrity, /chrome\.storage\.onChanged\.addListener/);
 });
 
-test('clock uses only exact CasaTrade DOM countdown and has no synthetic phase fallback', () => {
+test('clock uses only exact candle-close countdown and rejects purchase cutoff as candle time', () => {
   const clock = read('src/content/market-clock-sync.js');
   assert.match(clock, /if \(!traderHost\(host\)\) return/);
-  assert.match(clock, /hora de compra\|buy time\|entry time/);
+  assert.match(clock, /const purchaseContext = \/hora de compra\|buy time\|entry time\//);
+  assert.match(clock, /if \(purchaseContext && !candleContext\) continue/);
+  assert.match(clock, /clockRole: 'candle-close'/);
   assert.match(clock, /clockSource: 'trader-dom-countdown'/);
   assert.match(clock, /clockSource: 'trader-dom-unavailable'/);
   assert.match(clock, /verified: true/);
@@ -55,6 +57,7 @@ test('clock uses only exact CasaTrade DOM countdown and has no synthetic phase f
 test('clock is accepted only from the same authoritative frame as the visible asset', () => {
   const integrity = read('src/background-integrity.js');
   assert.match(integrity, /Number\(focusMeta\?\.frameId\) === Number\(sender\.frameId\)/);
+  assert.match(integrity, /clean\(message\.clockRole\) === 'candle-close'/);
   assert.match(integrity, /clean\(message\.clockSource\) === 'trader-dom-countdown'/);
   assert.match(integrity, /message\.verified === true/);
   assert.match(integrity, /awaiting_exact_clock/);
@@ -65,7 +68,8 @@ test('signals with missing or mismatched CasaTrade clock are removed immediately
   assert.match(integrity, /signalClockMismatch/);
   assert.match(integrity, /signal_blocked_without_exact_clock/);
   assert.match(integrity, /signalSeconds !== clockSeconds/);
-  assert.match(integrity, /CLOCK_FRESH_MS = 1400/);
+  assert.match(integrity, /CLOCK_FRESH_MS = 2200/);
+  assert.match(integrity, /clean\(clock\?\.role\) === 'candle-close'/);
 });
 
 test('exact clock feeds the same orchestrator used for bounded next-candle decisions', () => {
