@@ -1,13 +1,13 @@
 import {
   processSnapshot as legacyProcessSnapshot,
   resetOrchestrator as legacyResetOrchestrator,
-  serializeCompletedDecisions,
-  restoreCompletedDecisions
+  serializeCompletedDecisions as legacySerializeCompletedDecisions,
+  restoreCompletedDecisions as legacyRestoreCompletedDecisions
 } from './orchestrator-legacy.js';
 import { ANALYST_THRESHOLDS } from './analysis.js';
 
-// Compatibility markers for legacy regression tests. The old implementation is
-// preserved verbatim in orchestrator-legacy.js, including: if (secondsRemaining <= 10)
+// The 0.10.4 analyst remains the source of price-action, regime and indicator analysis.
+// This wrapper only turns that live analysis into one bounded decision per target candle.
 const POSSIBLE_HITS = 2;
 const CONFIRM_HITS = 2;
 const CANDIDATE_MAX_GAP_MS = 8000;
@@ -30,8 +30,6 @@ function cycleKey(snapshot = {}, signal = {}) {
   const sampleAt = num(snapshot.serverTime) ?? Date.now();
   const seconds = num(signal.secondsRemaining) ?? num(snapshot.secondsRemaining) ?? 0;
   const rawTarget = num(signal.targetStart) ?? (sampleAt + Math.max(0, seconds) * 1000);
-  // CasaTrade countdown is integer-second based. Five-second quantization absorbs
-  // DOM sampling jitter without allowing a decision to leak into another candle.
   const targetKey = Math.round(rawTarget / 5000) * 5000;
   return `${asset}|${timeframe}|${targetKey}`;
 }
@@ -257,7 +255,6 @@ export function processSnapshot(snapshot = {}, state = {}) {
     };
   }
 
-  // Legacy confirmations remain valid and are latched immediately.
   if (signal.state === 'CONFIRM' && ['BUY', 'SELL'].includes(signal.direction)) {
     cycle.locked = 'ENTER';
     cycle.direction = signal.direction;
@@ -329,4 +326,10 @@ export function resetOrchestrator() {
   legacyResetOrchestrator();
 }
 
-export { serializeCompletedDecisions, restoreCompletedDecisions };
+export function serializeCompletedDecisions() {
+  return legacySerializeCompletedDecisions();
+}
+
+export function restoreCompletedDecisions(rows = []) {
+  return legacyRestoreCompletedDecisions(rows);
+}
