@@ -241,8 +241,39 @@
       svg.appendChild(text);
     };
 
-    addHorizontal(analytics.breakoutHigh, 'Rompimento ↑', '#58d6ad', '7 5');
-    addHorizontal(analytics.breakoutLow, 'Rompimento ↓', '#f07b94', '7 5');
+    addHorizontal(scannerState.price, 'Preço atual', '#f4f4f4', '2 5');
+    addHorizontal(analytics.resistance, 'Resistência', '#f0b56d', '4 5');
+    addHorizontal(analytics.support, 'Suporte', '#79bfff', '4 5');
+    addHorizontal(analytics.breakoutHigh, 'Gatilho compra ↑', '#58d6ad', '7 5');
+    addHorizontal(analytics.breakoutLow, 'Gatilho venda ↓', '#f07b94', '7 5');
+    const waitLevel = num(scannerState.signal?.waitingFor?.level);
+    if (waitLevel != null
+      && waitLevel !== num(analytics.breakoutHigh)
+      && waitLevel !== num(analytics.breakoutLow)
+      && waitLevel !== num(analytics.support)
+      && waitLevel !== num(analytics.resistance)) {
+      addHorizontal(waitLevel, 'Aguardando', '#d8c36a', '3 4');
+    }
+
+    const uiState = String(scannerState.signal?.uiState || 'ANALYZING_MARKET');
+    const statusMap = {
+      POSSIBLE_BUY: 'POSSÍVEL COMPRA',
+      POSSIBLE_SELL: 'POSSÍVEL VENDA',
+      ENTER_BUY: 'ENTRAR COMPRA',
+      ENTER_SELL: 'ENTRAR VENDA',
+      WAIT: 'AGUARDAR',
+      ANALYZING_MARKET: 'ANALISANDO'
+    };
+    const badge = document.createElementNS(svg.namespaceURI, 'text');
+    badge.setAttribute('x', '10');
+    badge.setAttribute('y', '18');
+    badge.setAttribute('fill', '#ffffff');
+    badge.setAttribute('font-size', '12');
+    badge.setAttribute('font-weight', '800');
+    const liveScore = Math.round(Number(scannerState.signal?.analysisScore ?? scannerState.signal?.score ?? 0));
+    const seconds = num(scannerState.signal?.secondsRemaining);
+    badge.textContent = `ATS • ${statusMap[uiState] || uiState} • ${liveScore}/100${seconds != null ? ` • ${Math.round(seconds)}s` : ''}`;
+    svg.appendChild(badge);
 
     const direction = scannerState.signal?.analysisDirection || scannerState.signal?.direction || analytics.trendDirection;
     if (direction === 'BUY' || direction === 'SELL') {

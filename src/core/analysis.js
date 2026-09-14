@@ -331,9 +331,11 @@ export function recentPriceAction(candles = []) {
   if (metrics.lossOfStrength >= 72 && !breakout && !rejection) {
     reasons.push('A vela atual perdeu força; confirmação exige continuidade');
   }
-  if (lateral) { score = Math.min(score, 54); direction = null; reasons.push('Mercado lateral nas últimas velas'); }
+  const decisiveLocalSetup = !!breakout || !!rejection || (continuationDirection && continuationScore >= 65);
+  if (lateral && !decisiveLocalSetup) { score = Math.min(score, 54); direction = null; reasons.push('Mercado lateral nas últimas velas'); }
   if (doji && !rejection) { score = Math.min(score, 48); direction = null; reasons.push('Doji sem confirmação'); }
-  if (tiny >= Math.ceil(rows.length * .6) && agreement < .75) { score = Math.min(score, 56); direction = null; reasons.push('Compressão: aguardando rompimento'); }
+  if (tiny >= Math.ceil(rows.length * .6) && agreement < .75 && !decisiveLocalSetup) { score = Math.min(score, 56); direction = null; reasons.push('Compressão: aguardando rompimento'); }
+  if (lateral && decisiveLocalSetup) reasons.push('Mercado lateral, mas com gatilho local confirmado');
   score = clamp(score);
 
   const opinion = !direction

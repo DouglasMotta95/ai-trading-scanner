@@ -148,6 +148,20 @@ function confirmationQuality(result = {}, direction = null) {
   return directionalPower >= 50 && (candleStrong || rejected || broke || continuation);
 }
 
+function rangeOverrideQuality(result = {}, direction = null) {
+  if (!direction || !result?.recent?.ready) return false;
+  const metrics = result.analytics || result.recent?.metrics || {};
+  const directionalPower = direction === 'BUY' ? Number(metrics.buyPower || 0) : Number(metrics.sellPower || 0);
+  const broke = result.recent?.breakout === direction;
+  const rejected = result.recent?.rejection === direction
+    && Number(metrics.rejectionStrength || 0) >= ANALYST_THRESHOLDS.rejectionStrength;
+  const continuation = result.recent?.continuationDirection === direction
+    && Number(result.recent?.continuationScore || 0) >= 68
+    && metrics.momentumDirection === direction
+    && Number(metrics.momentumScore || 0) >= 55;
+  return directionalPower >= 50 && (broke || rejected || continuation);
+}
+
 function observeConfirmation(tracker, result, direction, score, at) {
   const qualifies = tracker.publishedDirection === direction
     && Number(score) >= ANALYST_THRESHOLDS.confirmScore
@@ -394,7 +408,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
   }
 
   if (secondsRemaining <= 10) {
-    const rangeBlocked = regime?.type === 'range';
+    const rangeBlocked = regime?.type === 'range' && !rangeOverrideQuality(liveResult, direction);
     if (rangeBlocked) {
       tracker.confirmDirection = null;
       tracker.confirmHits = 0;

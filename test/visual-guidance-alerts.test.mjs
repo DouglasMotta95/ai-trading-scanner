@@ -37,6 +37,13 @@ test('overlay is optional, click-through and consumes scanner analysis instead o
   assert.match(overlay, /ATS_READ_SCANNER_STATE/);
   assert.match(overlay, /analytics\.breakoutHigh/);
   assert.match(overlay, /analytics\.breakoutLow/);
+  assert.match(overlay, /analytics\.support/);
+  assert.match(overlay, /analytics\.resistance/);
+  assert.match(overlay, /Preço atual/);
+  assert.match(overlay, /Gatilho compra/);
+  assert.match(overlay, /Gatilho venda/);
+  assert.match(overlay, /POSSÍVEL COMPRA/);
+  assert.match(overlay, /ENTRAR COMPRA/);
   assert.match(overlay, /overlayEnabled: false/);
   assert.doesNotMatch(overlay, /processSnapshot|analyzeCandles/);
 });
