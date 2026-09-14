@@ -25,3 +25,14 @@ jobs:
         run: find apps/customer-portal -name '*.js' -print0 | xargs -0 -n1 node --check
       - name: Core unit tests
         run: cd backend && npm test
+      - name: Package extension
+        run: |
+          mkdir -p dist/extension
+          cp manifest.json dist/extension/
+          cp -R src dist/extension/
+      - name: Upload extension artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-trading-scanner-extension-pr32
+          path: dist/extension
+          if-no-files-found: error
