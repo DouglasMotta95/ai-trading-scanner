@@ -496,6 +496,8 @@ async function applySnapshot(snapshot, _scannerState = {}, settings = {}, platfo
     const evidence = resolveMarketEvidence(snapshot, scannerState, { focusStableMs: FOCUS_STABLE_MS });
     const focusGate = evidenceFocusGate(evidence, snapshot);
     const resolvedAsset = normAsset(evidence.asset);
+    const switchedAsset = !!scannerState.asset && !!resolvedAsset && !sameAsset(scannerState.asset, resolvedAsset);
+    if (switchedAsset) resetOrchestrator();
 
     if (!resolvedAsset) {
       return merge(scannerState, {
@@ -510,6 +512,7 @@ async function applySnapshot(snapshot, _scannerState = {}, settings = {}, platfo
         currentCandle: null,
         signal: null,
         lastConfirmed: null,
+        tradeIntent: null,
         lastSeen: Date.now(),
         diagnostics: {
           ...(scannerState.diagnostics || {}),
@@ -521,14 +524,14 @@ async function applySnapshot(snapshot, _scannerState = {}, settings = {}, platfo
             assetSource: null,
             priceSource: null,
             candleCount: 0,
-            requiredCandles: 3,
+            requiredCandles: 2,
             at: Date.now()
           }
         }
       });
     }
 
-    const fallbackHistory = historyForAsset(scannerState, resolvedAsset);
+    const fallbackHistory = switchedAsset ? [] : historyForAsset(scannerState, resolvedAsset);
     if (num(evidence.price) == null) {
       return merge(scannerState, {
         license,
@@ -541,6 +544,8 @@ async function applySnapshot(snapshot, _scannerState = {}, settings = {}, platfo
         candles: fallbackHistory,
         currentCandle: null,
         signal: null,
+        lastConfirmed: switchedAsset ? null : (scannerState.lastConfirmed || null),
+        tradeIntent: switchedAsset ? null : (scannerState.tradeIntent || null),
         lastSeen: Date.now(),
         diagnostics: {
           ...(scannerState.diagnostics || {}),
@@ -552,14 +557,12 @@ async function applySnapshot(snapshot, _scannerState = {}, settings = {}, platfo
             assetSource: evidence.assetSource,
             priceSource: null,
             candleCount: fallbackHistory.length,
-            requiredCandles: 3,
+            requiredCandles: 2,
             at: Date.now()
           }
         }
       });
     }
-
-    if (scannerState.asset && !sameAsset(scannerState.asset, resolvedAsset)) resetOrchestrator();
 
     const analysisTimeframe = snapshot.timeframe || scannerState.analysisTimeframe || scannerState.timeframe || 'M1';
     const targetExpiration = snapshot.expiration || scannerState.targetExpiration || scannerState.expiration || null;
@@ -592,20 +595,22 @@ async function applySnapshot(snapshot, _scannerState = {}, settings = {}, platfo
       scanner: 'scanning',
       license,
       connection: 'online',
+      lastConfirmed: switchedAsset ? null : (scannerState.lastConfirmed || null),
+      tradeIntent: switchedAsset ? null : (scannerState.tradeIntent || null),
       lastSeen: Date.now(),
       diagnostics: {
         ...(scannerState.diagnostics || {}),
         ...(snapshot?.diagnostics || {}),
         focusGate,
         acquisition: {
-          stage: candles.length >= 3 ? 'analyzing_current' : 'reading_history',
-          reason: candles.length >= 3
+          stage: candles.length >= 2 ? 'analyzing_current' : 'reading_history',
+          reason: candles.length >= 2
             ? 'Ativo e preço confirmados. Analisando a vela atual.'
-            : `Lendo histórico de velas (${candles.length}/3).`,
+            : `Analisando mercado atual • ${candles.length}/2 velas fechadas.`,
           assetSource: evidence.assetSource,
           priceSource: evidence.priceSource,
           candleCount: candles.length,
-          requiredCandles: 3,
+          requiredCandles: 2,
           at: Date.now()
         }
       }
@@ -621,14 +626,14 @@ async function applySnapshot(snapshot, _scannerState = {}, settings = {}, platfo
           ...(candidate.diagnostics?.acquisition || {}),
           stage,
           reason: stage === 'reading_history'
-            ? `Lendo histórico de velas (${processedCount}/3).`
+            ? `Analisando mercado atual • ${processedCount}/2 velas fechadas.`
             : stage === 'analyzing_current'
-              ? 'Histórico mínimo pronto. Analisando a vela atual.'
-              : 'Analisando a vela atual e calculando o diagnóstico da próxima vela.',
+              ? 'Analisando mercado atual.'
+              : 'Montando padrão da próxima vela.',
           assetSource: evidence.assetSource,
           priceSource: evidence.priceSource,
           candleCount: processedCount,
-          requiredCandles: 3,
+          requiredCandles: 2,
           at: Date.now()
         }
       }
@@ -715,14 +720,17 @@ async function directScanActiveTab(force = false) {
       .sort((a, b) => Number(b.score || 0) - Number(a.score || 0));
 
     const latest = await readScannerState();
-    const focus = focusedAsset(latest);
+    const focusMeta = focusedAssetMeta(latest);
+    const focusAt = Number(focusMeta?.at || 0);
+    const focus = focusAt > 0 && Date.now() - focusAt < 5000 ? normAsset(focusMeta?.asset) : '';
     const focusRows = focus ? rows.filter(x => x.asset && sameAsset(x.asset, focus)) : [];
     const bestFocused = focusRows.find(x => x.asset && num(x.price) != null) || null;
-    const bestFallback = rows.find(x => x.asset && num(x.price) != null) || rows.find(x => x.asset) || null;
-    const priceOnly = rows.find(x => num(x.price) != null) || null;
-    const best = bestFocused || bestFallback || priceOnly;
-    const observedAsset = normAsset(best?.asset || focus || '');
-    const observedPrice = num(best?.price) ?? (focus && priceOnly ? num(priceOnly.price) : null);
+    const bestFocusAssetOnly = focusRows.find(x => x.asset) || null;
+    const bestFallback = focus ? null : (rows.find(x => x.asset && num(x.price) != null) || rows.find(x => x.asset) || null);
+    const priceOnly = focus ? null : (rows.find(x => num(x.price) != null) || null);
+    const best = focus ? (bestFocused || bestFocusAssetOnly) : (bestFallback || priceOnly);
+    const observedAsset = focus || normAsset(best?.asset || '');
+    const observedPrice = focus ? num(bestFocused?.price) : num(best?.price);
     const history = historyForAsset(latest, observedAsset || focus);
 
     if (!observedAsset && observedPrice == null) {
@@ -749,7 +757,7 @@ async function directScanActiveTab(force = false) {
       at: Date.now()
     };
 
-    const assetSource = bestFocused ? 'focused-dom' : best?.asset ? 'dom-fallback' : focus ? 'focused-price-fallback' : null;
+    const assetSource = bestFocused ? 'focused-dom' : focus ? 'focused-screen' : best?.asset ? 'dom-fallback' : null;
     const priceSource = best?.priceSource || (best?.buy != null || best?.sell != null ? 'buttons' : observedPrice != null ? 'chart' : null);
     const snapshot = {
       platformId: platform.id,
@@ -765,7 +773,7 @@ async function directScanActiveTab(force = false) {
       candles: history,
       capabilities: {
         structuredQuotes: false,
-        candles: history.length >= 3,
+        candles: history.length >= 2,
         expiration: !!best?.expiration,
         multiAsset: false
       },
@@ -903,6 +911,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const state = await directScanActiveTab(true);
       return { ...connected, state };
     })().then(sendResponse).catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
+    return true;
+  }
+
+  if (message?.type === 'ATS_READ_SCANNER_STATE') {
+    readScannerState()
+      .then(state => sendResponse({ ok: true, state }))
+      .catch(e => sendResponse({ ok: false, error: String(e?.message || e), state: {} }));
+    return true;
+  }
+
+  if (message?.type === 'ATS_REFRESH_MARKET') {
+    readScannerState().then(async scannerState => {
+      if (!licenseActive(scannerState.license)) return sendResponse({ ok: false, error: 'license_required' });
+      const supported = await ensureSupportedActiveTab();
+      if (!supported.platform) return sendResponse({ ok: false, error: 'platform_not_registered', state: supported.scannerState });
+      const state = await directScanActiveTab(true);
+      sendResponse({ ok: true, state });
+    }).catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
     return true;
   }
 

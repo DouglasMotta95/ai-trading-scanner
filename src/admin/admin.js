@@ -1,11 +1,7 @@
 import { PLATFORM_ADAPTERS } from '../platforms/registry.js';
 
 const PUBLIC_API = 'https://ats-control-center-v07-production.up.railway.app';
-const PROFILE_SCORE = { conservative: 85, balanced: 78, aggressive: 70 };
 const DEFAULTS = {
-  profile: 'balanced',
-  minScore: 78,
-  onlyA: false,
   timeframe: 'M1',
   staleBlock: true,
   apiBase: PUBLIC_API,
@@ -88,7 +84,7 @@ async function load() {
 }
 
 async function renderDiag() {
-  const { scannerState = {} } = await chrome.storage.local.get('scannerState');
+  const scannerState = (await chrome.runtime.sendMessage({ type: 'ATS_READ_SCANNER_STATE' }).catch(() => ({ state: {} })))?.state || {};
   const d = scannerState.diagnostics || {};
   const platform = scannerState.platformName || scannerState.platformId || 'Plataforma não conectada';
   const l = scannerState.license || {};
@@ -121,11 +117,11 @@ function collect() {
     ...(s.scanPreferences || {}),
     timeframe: s.timeframe || 'M1'
   };
+  const { profile: _profile, minScore: _minScore, onlyA: _onlyA, ...existingRisk } = s.risk || {};
   s.risk = {
-    ...(s.risk || {}),
-    profile: s.profile,
-    minScore: Number(s.minScore) || PROFILE_SCORE.balanced,
-    onlyA: !!s.onlyA,
+    ...existingRisk,
+    preSignalScore: 44,
+    confirmScore: 58,
     staleBlock: s.staleBlock !== false
   };
   s.selectorsByPlatform = {};
@@ -139,17 +135,6 @@ function collect() {
   return s;
 }
 
-$('profile')?.addEventListener('change', e => {
-  const suggested = PROFILE_SCORE[e.target.value];
-  if (suggested && $('minScore')) {
-    $('minScore').value = suggested;
-    $('scoreValue').textContent = suggested;
-  }
-});
-
-$('minScore')?.addEventListener('input', e => {
-  if ($('scoreValue')) $('scoreValue').textContent = e.target.value;
-});
 
 $('save')?.addEventListener('click', async () => {
   const settings = collect();
@@ -163,7 +148,7 @@ $('save')?.addEventListener('click', async () => {
 });
 
 $('copyDiag')?.addEventListener('click', async () => {
-  const { scannerState = {} } = await chrome.storage.local.get('scannerState');
+  const scannerState = (await chrome.runtime.sendMessage({ type: 'ATS_READ_SCANNER_STATE' }).catch(() => ({ state: {} })))?.state || {};
   const safe = {
     platformId: scannerState.platformId,
     platformName: scannerState.platformName,

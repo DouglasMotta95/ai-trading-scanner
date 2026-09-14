@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+Disallow: /admin/
+Sitemap: https://ats-control-center-v07-production.up.railway.app/sitemap.xml

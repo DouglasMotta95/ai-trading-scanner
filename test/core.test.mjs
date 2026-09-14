@@ -4,6 +4,48 @@ import { analyzeCandles } from '../src/core/analysis.js';
 import { processSnapshot, resetOrchestrator } from '../src/core/orchestrator.js';
 import { detectPlatform } from '../src/platforms/registry.js';
 
+const minute = 60_000;
+
+function bullishRows(bucket) {
+  return [
+    { time: bucket - 4 * minute, open: 1.00, high: 1.02, low: .99, close: 1.018, timeframe: 'M1' },
+    { time: bucket - 3 * minute, open: 1.018, high: 1.04, low: 1.01, close: 1.038, timeframe: 'M1' },
+    { time: bucket - 2 * minute, open: 1.038, high: 1.06, low: 1.03, close: 1.058, timeframe: 'M1' },
+    { time: bucket - minute, open: 1.058, high: 1.08, low: 1.05, close: 1.078, timeframe: 'M1' },
+    { time: bucket, open: 1.078, high: 1.115, low: 1.075, close: 1.11, timeframe: 'M1' }
+  ];
+}
+
+function snap(bucket, atMs, price = 1.11, candles = bullishRows(bucket), extra = {}) {
+  return processSnapshot({
+    platformId: 'casatrade', asset: 'EUR/USD (OTC)', price,
+    timeframe: 'M1', analysisTimeframe: 'M1', connection: 'online',
+    serverTime: bucket + atMs, candles, ...extra
+  }, { connection: 'online' });
+}
+
+function publishPossible(bucket) {
+  const first = snap(bucket, 35_000);
+  assert.notEqual(first.signal.state, 'WATCH');
+  const second = snap(bucket, 36_000);
+  assert.equal(second.signal.state, 'WATCH');
+  assert.equal(second.signal.phase, 'POSSIBLE');
+  assert.equal(second.signal.direction, 'BUY');
+  assert.equal(second.signal.uiState, 'POSSIBLE_BUY');
+  return second;
+}
+
+function confirmStable(bucket) {
+  publishPossible(bucket);
+  const firstFinal = snap(bucket, 51_000);
+  assert.notEqual(firstFinal.signal.state, 'CONFIRM');
+  const confirmed = snap(bucket, 52_000);
+  assert.equal(confirmed.signal.state, 'CONFIRM');
+  assert.equal(confirmed.signal.direction, 'BUY');
+  assert.equal(confirmed.signal.uiState, 'ENTER_BUY');
+  return confirmed;
+}
+
 test('recent candle analysis works with real short history', () => {
   const candles = [
     { open: 1, high: 1.02, low: .99, close: 1.015 },
@@ -44,109 +86,79 @@ test('analysis considers up to the last ten candles', () => {
   assert.equal(result.direction, 'BUY');
 });
 
-test('current candle can create a possible signal in the last 30 seconds', () => {
+test('analyst starts once two closed candles plus current candle are available', () => {
   resetOrchestrator();
-  const minute = 60_000;
-  const bucket = Math.floor(1_700_000_000_000 / minute) * minute;
+  const bucket = Math.floor(1_699_990_000_000 / minute) * minute;
   const candles = [
-    { time: bucket - 4 * minute, open: 1.00, high: 1.02, low: .99, close: 1.018 },
-    { time: bucket - 3 * minute, open: 1.018, high: 1.04, low: 1.01, close: 1.038 },
-    { time: bucket - 2 * minute, open: 1.038, high: 1.06, low: 1.03, close: 1.058 },
-    { time: bucket - minute, open: 1.058, high: 1.08, low: 1.05, close: 1.078 },
-    { time: bucket, open: 1.078, high: 1.10, low: 1.075, close: 1.098 }
+    { time: bucket - 2 * minute, open: 1.00, high: 1.02, low: .99, close: 1.018, timeframe: 'M1' },
+    { time: bucket - minute, open: 1.018, high: 1.04, low: 1.01, close: 1.038, timeframe: 'M1' },
+    { time: bucket, open: 1.038, high: 1.06, low: 1.035, close: 1.058, timeframe: 'M1' }
   ];
-  const out = processSnapshot({
-    platformId: 'casatrade', asset: 'EUR/USD (OTC)', price: 1.098,
-    timeframe: 'M1', analysisTimeframe: 'M1', connection: 'online',
-    serverTime: bucket + 35_000, candles
-  }, { connection: 'online' });
-  assert.equal(out.signal.phase, 'POSSIBLE');
-  assert.equal(out.signal.state, 'WATCH');
-  assert.equal(out.signal.direction, 'BUY');
-  assert.equal(out.signal.secondsRemaining, 25);
+  const out = snap(bucket, 15_000, 1.058, candles);
+  assert.notEqual(out.signal.state, 'SEARCHING');
+  assert.notEqual(out.signal.phase, 'HISTORY');
+  assert.equal(out.signal.warmup.required, 2);
+  assert.equal(out.signal.candleCount, 2);
 });
 
-test('final decision confirms in the last 10 seconds for the next candle', () => {
+test('possible signal requires consecutive stable observations in the last 30 seconds', () => {
   resetOrchestrator();
-  const minute = 60_000;
+  const bucket = Math.floor(1_700_000_000_000 / minute) * minute;
+  const first = snap(bucket, 35_000);
+  assert.notEqual(first.signal.state, 'WATCH');
+  assert.notEqual(first.signal.uiState, 'POSSIBLE_BUY');
+
+  const second = snap(bucket, 36_000);
+  assert.equal(second.signal.phase, 'POSSIBLE');
+  assert.equal(second.signal.state, 'WATCH');
+  assert.equal(second.signal.direction, 'BUY');
+  assert.equal(second.signal.uiState, 'POSSIBLE_BUY');
+  assert.equal(second.signal.secondsRemaining, 24);
+});
+
+test('final decision requires stable confirmation for the next candle', () => {
+  resetOrchestrator();
   const bucket = Math.floor(1_700_100_000_000 / minute) * minute;
-  const candles = [
-    { time: bucket - 4 * minute, open: 1.00, high: 1.02, low: .99, close: 1.018 },
-    { time: bucket - 3 * minute, open: 1.018, high: 1.04, low: 1.01, close: 1.038 },
-    { time: bucket - 2 * minute, open: 1.038, high: 1.06, low: 1.03, close: 1.058 },
-    { time: bucket - minute, open: 1.058, high: 1.08, low: 1.05, close: 1.078 },
-    { time: bucket, open: 1.078, high: 1.11, low: 1.075, close: 1.105 }
-  ];
-  const out = processSnapshot({
-    platformId: 'casatrade', asset: 'EUR/USD (OTC)', price: 1.105,
-    timeframe: 'M1', analysisTimeframe: 'M1', connection: 'online',
-    serverTime: bucket + 50_000, candles
-  }, { connection: 'online' });
+  publishPossible(bucket);
+
+  const firstFinal = snap(bucket, 51_000);
+  assert.notEqual(firstFinal.signal.state, 'CONFIRM');
+
+  const out = snap(bucket, 52_000);
   assert.equal(out.signal.phase, 'FINAL');
   assert.equal(out.signal.state, 'CONFIRM');
   assert.equal(out.signal.direction, 'BUY');
+  assert.equal(out.signal.uiState, 'ENTER_BUY');
   assert.equal(out.signal.provisional, false);
-  assert.equal(out.signal.secondsRemaining, 10);
+  assert.equal(out.signal.secondsRemaining, 8);
   assert.equal(out.signal.targetStart, bucket + minute);
 });
 
-test('final decision recalculates on every new tick inside the last 10 seconds', () => {
+test('confirmed decision is latched and cannot flicker back to wait inside the same candle', () => {
   resetOrchestrator();
-  const minute = 60_000;
   const bucket = Math.floor(1_700_150_000_000 / minute) * minute;
-  const closed = [
-    { time: bucket - 4 * minute, open: 1.00, high: 1.02, low: .99, close: 1.018, timeframe: 'M1' },
-    { time: bucket - 3 * minute, open: 1.018, high: 1.04, low: 1.01, close: 1.038, timeframe: 'M1' },
-    { time: bucket - 2 * minute, open: 1.038, high: 1.06, low: 1.03, close: 1.058, timeframe: 'M1' },
-    { time: bucket - minute, open: 1.058, high: 1.08, low: 1.05, close: 1.078, timeframe: 'M1' }
-  ];
+  const confirmed = confirmStable(bucket);
+  assert.equal(confirmed.signal.state, 'CONFIRM');
 
-  const weak = processSnapshot({
-    platformId: 'casatrade', asset: 'EUR/USD (OTC)', price: 1.079,
-    timeframe: 'M1', analysisTimeframe: 'M1', connection: 'online',
-    serverTime: bucket + 50_000,
-    candles: [...closed, { time: bucket, open: 1.078, high: 1.09, low: 1.07, close: 1.079, timeframe: 'M1' }]
-  }, { connection: 'online' });
+  const closed = bullishRows(bucket).slice(0, -1);
+  const weak = snap(bucket, 55_000, 1.079, [
+    ...closed,
+    { time: bucket, open: 1.078, high: 1.09, low: 1.07, close: 1.079, timeframe: 'M1' }
+  ]);
 
-  assert.equal(weak.signal.phase, 'FINAL');
-  assert.equal(weak.signal.state, 'NO_TRADE');
-  assert.equal(weak.signal.direction, null);
-  assert.equal(weak.signal.score, 48);
-  assert.equal(weak.signal.secondsRemaining, 10);
-
-  const stronger = processSnapshot({
-    platformId: 'casatrade', asset: 'EUR/USD (OTC)', price: 1.115,
-    timeframe: 'M1', analysisTimeframe: 'M1', connection: 'online',
-    serverTime: bucket + 55_000,
-    candles: [...closed, { time: bucket, open: 1.078, high: 1.12, low: 1.075, close: 1.115, timeframe: 'M1' }]
-  }, { connection: 'online' });
-
-  assert.equal(stronger.signal.phase, 'FINAL');
-  assert.equal(stronger.signal.state, 'CONFIRM');
-  assert.equal(stronger.signal.direction, 'BUY');
-  assert.equal(stronger.signal.provisional, false);
-  assert.ok(stronger.signal.score >= 58);
-  assert.equal(stronger.signal.secondsRemaining, 5);
-  assert.equal(stronger.signal.targetStart, bucket + minute);
+  assert.equal(weak.signal.state, 'CONFIRM');
+  assert.equal(weak.signal.direction, 'BUY');
+  assert.equal(weak.signal.uiState, 'ENTER_BUY');
+  assert.equal(weak.signal.provisional, false);
+  assert.equal(weak.signal.targetStart, bucket + minute);
 });
 
-test('live analysis direction remains visible before the pre-signal window', () => {
+test('live analyst exposes pattern-building state before the pre-signal window', () => {
   resetOrchestrator();
-  const minute = 60_000;
   const bucket = Math.floor(1_700_175_000_000 / minute) * minute;
-  const candles = [
-    { time: bucket - 4 * minute, open: 1.00, high: 1.02, low: .99, close: 1.018, timeframe: 'M1' },
-    { time: bucket - 3 * minute, open: 1.018, high: 1.04, low: 1.01, close: 1.038, timeframe: 'M1' },
-    { time: bucket - 2 * minute, open: 1.038, high: 1.06, low: 1.03, close: 1.058, timeframe: 'M1' },
-    { time: bucket - minute, open: 1.058, high: 1.08, low: 1.05, close: 1.078, timeframe: 'M1' },
-    { time: bucket, open: 1.078, high: 1.10, low: 1.075, close: 1.098, timeframe: 'M1' }
-  ];
-  const out = processSnapshot({
-    platformId: 'casatrade', asset: 'EUR/USD (OTC)', price: 1.098,
-    timeframe: 'M1', analysisTimeframe: 'M1', connection: 'online',
-    serverTime: bucket + 15_000, candles
-  }, { connection: 'online' });
-  assert.equal(out.signal.phase, 'ANALYZING');
+  const out = snap(bucket, 15_000);
+  assert.equal(out.signal.phase, 'BUILDING');
+  assert.equal(out.signal.uiState, 'BUILDING_PATTERN');
   assert.equal(out.signal.direction, null);
   assert.equal(out.signal.analysisDirection, 'BUY');
   assert.equal(out.signal.analysisScore, out.signal.score);
@@ -154,29 +166,17 @@ test('live analysis direction remains visible before the pre-signal window', () 
 
 test('completed final decision is exposed as last confirmed after candle rollover', () => {
   resetOrchestrator();
-  const minute = 60_000;
   const bucket = Math.floor(1_700_190_000_000 / minute) * minute;
-  const closed = [
-    { time: bucket - 4 * minute, open: 1.00, high: 1.02, low: .99, close: 1.018, timeframe: 'M1' },
-    { time: bucket - 3 * minute, open: 1.018, high: 1.04, low: 1.01, close: 1.038, timeframe: 'M1' },
-    { time: bucket - 2 * minute, open: 1.038, high: 1.06, low: 1.03, close: 1.058, timeframe: 'M1' },
-    { time: bucket - minute, open: 1.058, high: 1.08, low: 1.05, close: 1.078, timeframe: 'M1' }
-  ];
-
-  const final = processSnapshot({
-    platformId: 'casatrade', asset: 'EUR/USD (OTC)', price: 1.11,
-    timeframe: 'M1', analysisTimeframe: 'M1', connection: 'online',
-    serverTime: bucket + 55_000,
-    candles: [...closed, { time: bucket, open: 1.078, high: 1.115, low: 1.075, close: 1.11, timeframe: 'M1' }]
-  }, { connection: 'online' });
+  const final = confirmStable(bucket);
   assert.equal(final.signal.state, 'CONFIRM');
 
+  const history = bullishRows(bucket).slice(0, -1);
   const next = processSnapshot({
     platformId: 'casatrade', asset: 'EUR/USD (OTC)', price: 1.112,
     timeframe: 'M1', analysisTimeframe: 'M1', connection: 'online',
     serverTime: bucket + minute + 5_000,
     candles: [
-      ...closed,
+      ...history,
       { time: bucket, open: 1.078, high: 1.115, low: 1.075, close: 1.11, timeframe: 'M1' },
       { time: bucket + minute, open: 1.11, high: 1.113, low: 1.109, close: 1.112, timeframe: 'M1' }
     ]
@@ -191,20 +191,8 @@ test('completed final decision is exposed as last confirmed after candle rollove
 
 test('CasaTrade countdown overrides wall-clock countdown when provided', () => {
   resetOrchestrator();
-  const minute = 60_000;
   const bucket = Math.floor(1_700_200_000_000 / minute) * minute;
-  const candles = [
-    { time: bucket - 4 * minute, open: 1.00, high: 1.02, low: .99, close: 1.018, timeframe: 'M1' },
-    { time: bucket - 3 * minute, open: 1.018, high: 1.04, low: 1.01, close: 1.038, timeframe: 'M1' },
-    { time: bucket - 2 * minute, open: 1.038, high: 1.06, low: 1.03, close: 1.058, timeframe: 'M1' },
-    { time: bucket - minute, open: 1.058, high: 1.08, low: 1.05, close: 1.078, timeframe: 'M1' },
-    { time: bucket, open: 1.078, high: 1.11, low: 1.075, close: 1.105, timeframe: 'M1' }
-  ];
-  const out = processSnapshot({
-    platformId: 'casatrade', asset: 'EUR/USD (OTC)', price: 1.105,
-    timeframe: 'M1', analysisTimeframe: 'M1', connection: 'online',
-    serverTime: bucket + 20_000, secondsRemaining: 9, candles
-  }, { connection: 'online' });
+  const out = snap(bucket, 20_000, 1.11, bullishRows(bucket), { secondsRemaining: 9 });
   assert.equal(out.signal.secondsRemaining, 9);
   assert.equal(out.signal.phase, 'FINAL');
 });

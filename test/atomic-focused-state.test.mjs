@@ -129,29 +129,29 @@ test('asset identity ignores OTC label only, preserving display labels and rejec
   assert.notEqual(normalizeForIdentity('EUR/USD (OTC)'), normalizeForIdentity('GBP/USD'));
 });
 
-test('snapshot publishers prefer focused asset and only fall back to corroborated evidence', () => {
+test('snapshot publishers keep visual focus authoritative without mixing pairs', () => {
   const network = read('src/content/network-bridge.js');
   const generic = read('src/content/generic-adapter.js');
   const augment = read('src/background-augment.js');
+  const evidence = read('src/core/market-evidence.js');
 
   assert.match(network, /function focusedAsset\(\)/);
-  assert.match(network, /const focus = focusedAsset\(\);\s*if \(!focus\) return;/);
   assert.match(network, /!sameAsset\(cleanAsset, focus\)/);
   assert.match(network, /const candidate = bestCandidate\(payload, focus\)/);
 
-  assert.match(generic, /const explicitFocus = canonicalAsset\(globalThis\.__ATS_FOCUSED_ASSET_VALUE__ \|\| ''\)/);
-  assert.match(generic, /const focusMeta = globalThis\.__ATS_FOCUSED_ASSET_META__ \|\| \{\}/);
   assert.match(generic, /const domChoice = bestDomAsset\(rows\)/);
   assert.match(generic, /const anyNetwork = bestNetworkQuote\(''\)/);
-  assert.match(generic, /const focusSupported = !!explicitFocus/);
-  assert.match(generic, /canonicalAsset\(domChoice\?\.asset \|\| anyNetwork\?\.asset \|\| explicitFocus \|\| ''\)/);
-  assert.match(generic, /let sameAssetRows = rows\.filter\(r => r\.asset && sameAsset\(r\.asset, asset\)\)/);
-  assert.match(generic, /let net = bestNetworkQuote\(asset\)/);
+  assert.match(generic, /const focusSupported = focusFresh/);
+  assert.doesNotMatch(generic, /if \(!explicitFocus\) return;/);
 
   assert.match(augment, /return updateScannerState\(scannerState =>/);
-  assert.match(augment, /const focus = focusedAssetFor\(sender\.tab\.id, scannerState\)/);
-  assert.match(augment, /const focusedCandidate = focus \? chooseCandidate\(payload, focus\) : null/);
-  assert.match(augment, /const fallbackCandidate = focusedCandidate \|\| chooseCandidate\(payload, ''\)/);
-  assert.match(augment, /const focusCorroborated = !!focus && sameAsset\(fallbackCandidate\.asset, focus\)/);
-  assert.match(augment, /if \(!asset \|\| !candidate \|\| !sameAsset\(candidate\.asset, asset\)\) return/);
+  assert.match(augment, /if \(focus\) \{/);
+  assert.match(augment, /candidate = chooseCandidate\(payload, focus\)/);
+  assert.match(augment, /if \(!candidate \|\| !sameAsset\(candidate\.asset, focus\)\) return/);
+  assert.match(augment, /lastConfirmed: switchedAsset \? null/);
+  assert.match(augment, /tradeIntent: switchedAsset \? null/);
+
+  assert.match(evidence, /export function resolveMarketEvidence/);
+  assert.match(evidence, /focusAuthoritative/);
+  assert.match(evidence, /price: null/);
 });

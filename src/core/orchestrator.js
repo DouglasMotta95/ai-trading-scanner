@@ -1,11 +1,16 @@
 import { CandleBuilder, TIMEFRAMES } from './candles.js';
-import { analyzeCandles } from './analysis.js';
+import { analyzeCandles, ANALYST_THRESHOLDS } from './analysis.js';
 
 const builders = new Map();
 const finalDecisions = new Map();
 const completedDecisions = new Map();
+const signalStability = new Map();
 const num = v => v == null || v === '' ? null : Number.isFinite(Number(v)) ? Number(v) : null;
 const clean = v => String(v ?? '').trim();
+const POSSIBLE_HITS = 2;
+const CONFIRM_HITS = 2;
+const POSSIBLE_HOLD_MS = 2500;
+const CANDIDATE_MAX_GAP_MS = 3500;
 
 function timeframeMs(value = 'M1') {
   return TIMEFRAMES[clean(value).toUpperCase()] || TIMEFRAMES.M1;
@@ -55,16 +60,140 @@ function currentFromSnapshot(candles = [], bucket, timeframeMsValue, timeframeLa
   };
 }
 
-function reasonFor(result = {}, direction = null, final = false) {
-  if (!result?.recent?.ready) return 'AGUARDAR — ainda faltam velas suficientes para avaliar a próxima vela.';
-  if (!direction) return final ? 'AGUARDAR — o padrão perdeu força. Não entrar na próxima vela.' : 'AGUARDAR — ainda não há direção firme para a próxima vela.';
-  const side = direction === 'BUY' ? 'COMPRA' : 'VENDA';
-  if (result.recent?.breakout === direction) return `${side} — ${final ? 'rompimento confirmado' : 'rompimento em formação'} e a vela atual favorece a direção.`;
-  if (result.recent?.rejection === direction) return `${side} — ${final ? 'rejeição confirmada' : 'rejeição em formação'} e a vela atual favorece a direção.`;
-  return `${side} — a sequência das últimas velas e a vela atual mantêm a direção.`;
+function trackerFor(key, bucket, at) {
+  let tracker = signalStability.get(key);
+  if (!tracker || tracker.bucket !== bucket) {
+    tracker = {
+      bucket,
+      candidateDirection: null,
+      candidateHits: 0,
+      candidateSince: null,
+      lastCandidateAt: null,
+      publishedDirection: null,
+      publishedAt: null,
+      lastStrongAt: null,
+      publishedScore: 0,
+      weakHits: 0,
+      confirmDirection: null,
+      confirmHits: 0,
+      lastConfirmAt: null,
+      updatedAt: at
+    };
+    signalStability.set(key, tracker);
+  }
+  tracker.updatedAt = at;
+  return tracker;
 }
 
-function baseSignal({ state = 'WAIT', direction = null, provisional = true, reason, timeframe = 'M1', expiration = null, candleCount = 0, secondsRemaining = null, progress = null, currentCandle = null, score = 0, analysisDirection = null, analysisScore = null, phase = 'ANALYZING', targetStart = null } = {}) {
+function observePossible(tracker, direction, score, at) {
+  const qualifies = ['BUY', 'SELL'].includes(direction) && Number(score) >= ANALYST_THRESHOLDS.possibleScore;
+  if (qualifies) {
+    const sameCandidate = tracker.candidateDirection === direction
+      && tracker.lastCandidateAt != null
+      && at - tracker.lastCandidateAt <= CANDIDATE_MAX_GAP_MS;
+    if (sameCandidate) {
+      tracker.candidateHits += 1;
+    } else {
+      tracker.candidateDirection = direction;
+      tracker.candidateHits = 1;
+      tracker.candidateSince = at;
+    }
+    tracker.lastCandidateAt = at;
+
+    if (tracker.publishedDirection === direction) {
+      tracker.weakHits = 0;
+      tracker.lastStrongAt = at;
+      tracker.publishedScore = Number(score);
+    } else if (tracker.candidateHits >= POSSIBLE_HITS) {
+      tracker.publishedDirection = direction;
+      tracker.publishedAt = at;
+      tracker.lastStrongAt = at;
+      tracker.publishedScore = Number(score);
+      tracker.weakHits = 0;
+    } else if (tracker.publishedDirection) {
+      tracker.weakHits += 1;
+    }
+  } else {
+    tracker.candidateDirection = null;
+    tracker.candidateHits = 0;
+    tracker.candidateSince = null;
+    tracker.lastCandidateAt = null;
+    tracker.weakHits += 1;
+  }
+
+  if (tracker.publishedDirection) {
+    const staleFor = at - Number(tracker.lastStrongAt || tracker.publishedAt || at);
+    if (staleFor > POSSIBLE_HOLD_MS && tracker.weakHits >= 3) {
+      tracker.publishedDirection = null;
+      tracker.publishedAt = null;
+      tracker.lastStrongAt = null;
+      tracker.publishedScore = 0;
+      tracker.weakHits = 0;
+    }
+  }
+  return tracker.publishedDirection;
+}
+
+function confirmationQuality(result = {}, direction = null) {
+  if (!direction || !result?.recent?.ready) return false;
+  const metrics = result.analytics || result.recent?.metrics || {};
+  const directionalPower = direction === 'BUY' ? Number(metrics.buyPower || 0) : Number(metrics.sellPower || 0);
+  const candleStrong = Number(metrics.currentStrength || 0) >= ANALYST_THRESHOLDS.candleStrength;
+  const rejected = result.recent?.rejection === direction
+    && Number(metrics.rejectionStrength || 0) >= ANALYST_THRESHOLDS.rejectionStrength;
+  const broke = result.recent?.breakout === direction;
+  const continuation = result.recent?.continuationDirection === direction
+    && Number(result.recent?.continuationScore || 0) >= 60;
+  return directionalPower >= 50 && (candleStrong || rejected || broke || continuation);
+}
+
+function observeConfirmation(tracker, result, direction, score, at) {
+  const qualifies = tracker.publishedDirection === direction
+    && Number(score) >= ANALYST_THRESHOLDS.confirmScore
+    && confirmationQuality(result, direction);
+  if (!qualifies) {
+    tracker.confirmDirection = null;
+    tracker.confirmHits = 0;
+    tracker.lastConfirmAt = null;
+    return false;
+  }
+
+  const same = tracker.confirmDirection === direction
+    && tracker.lastConfirmAt != null
+    && at - tracker.lastConfirmAt <= CANDIDATE_MAX_GAP_MS;
+  if (same) tracker.confirmHits += 1;
+  else {
+    tracker.confirmDirection = direction;
+    tracker.confirmHits = 1;
+  }
+  tracker.lastConfirmAt = at;
+  return tracker.confirmHits >= CONFIRM_HITS;
+}
+
+function analyticsSummary(result = {}, direction = null) {
+  const metrics = result.analytics || result.recent?.metrics || {};
+  if (!direction) return 'Mercado sem domínio claro entre compra e venda.';
+  const power = direction === 'BUY' ? Number(metrics.buyPower || 0) : Number(metrics.sellPower || 0);
+  const parts = [`poder ${direction === 'BUY' ? 'comprador' : 'vendedor'} ${Math.round(power)}%`];
+  if (Number(metrics.currentStrength || 0) > 0) parts.push(`força da vela ${Math.round(Number(metrics.currentStrength || 0))}%`);
+  if (result.recent?.rejection === direction) parts.push(`rejeição ${Math.round(Number(metrics.rejectionStrength || 0))}%`);
+  if (result.recent?.breakout === direction) parts.push('rompimento recente');
+  if (metrics.momentumDirection === direction && Number(metrics.momentumScore || 0) >= 45) parts.push('momentum favorável');
+  return parts.join(' • ');
+}
+
+function reasonFor(result = {}, direction = null, final = false) {
+  if (!result?.recent?.ready) return 'Montando o padrão com as velas recentes e a vela atual.';
+  if (!direction) return 'Sem direção firme para a próxima vela neste momento.';
+  return `${final ? 'Padrão confirmado' : 'Padrão consistente'}: ${analyticsSummary(result, direction)}.`;
+}
+
+function baseSignal({
+  state = 'WAIT', direction = null, provisional = true, reason, timeframe = 'M1', expiration = null,
+  candleCount = 0, secondsRemaining = null, progress = null, currentCandle = null, score = 0,
+  analysisDirection = null, analysisScore = null, phase = 'ANALYZING', targetStart = null,
+  uiState = 'ANALYZING_MARKET', analytics = {}, stability = null
+} = {}) {
   const diagnosis = ['WATCH', 'CONFIRM'].includes(state) && ['BUY', 'SELL'].includes(direction)
     ? direction
     : 'WAIT';
@@ -72,12 +201,13 @@ function baseSignal({ state = 'WAIT', direction = null, provisional = true, reas
     state,
     direction,
     diagnosis,
+    uiState,
     provisional,
     phase,
     hint: reason,
     reason,
     candleCount,
-    warmup: { current: candleCount, required: 3 },
+    warmup: { current: candleCount, required: ANALYST_THRESHOLDS.minimumClosedCandles },
     timeframe,
     targetExpiration: expiration,
     secondsRemaining,
@@ -86,6 +216,8 @@ function baseSignal({ state = 'WAIT', direction = null, provisional = true, reas
     score,
     analysisDirection,
     analysisScore: analysisScore == null ? score : analysisScore,
+    analytics,
+    stability,
     targetStart,
     targetLabel: targetStart ? new Date(targetStart).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : null
   };
@@ -119,6 +251,15 @@ function completedDecision(decision = {}, fallback = {}) {
   };
 }
 
+function stabilitySnapshot(tracker = {}) {
+  return {
+    possibleDirection: tracker.publishedDirection || null,
+    possibleHits: Number(tracker.candidateHits || 0),
+    possibleSince: tracker.publishedAt || null,
+    confirmHits: Number(tracker.confirmHits || 0)
+  };
+}
+
 export function processSnapshot(snapshot = {}, state = {}) {
   const price = num(snapshot.price);
   if (!snapshot.asset || price == null) {
@@ -127,7 +268,8 @@ export function processSnapshot(snapshot = {}, state = {}) {
       signal: baseSignal({
         state: 'WAIT',
         phase: 'CONNECTING',
-        reason: 'AGUARDAR — confirmando ativo e cotação reais da CasaTrade.'
+        uiState: 'ANALYZING_MARKET',
+        reason: 'Confirmando ativo e cotação reais da CasaTrade.'
       })
     };
   }
@@ -166,6 +308,8 @@ export function processSnapshot(snapshot = {}, state = {}) {
   const direction = ['BUY', 'SELL'].includes(liveResult.direction) ? liveResult.direction : null;
   const score = Number(liveResult.score || 0);
   const expiration = snapshot.targetExpiration || state.targetExpiration || snapshot.expiration || state.expiration || null;
+  const tracker = trackerFor(key, currentBucket, sampleAt);
+  const possibleDirection = observePossible(tracker, direction, score, sampleAt);
   const common = {
     timeframe: analysisTimeframe,
     expiration,
@@ -176,6 +320,8 @@ export function processSnapshot(snapshot = {}, state = {}) {
     score,
     analysisDirection: direction,
     analysisScore: score,
+    analytics: liveResult.analytics || {},
+    stability: stabilitySnapshot(tracker),
     targetStart
   };
 
@@ -204,7 +350,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
     finalDecisions.delete(key);
   }
 
-  if (candleCount < 3 || !current) {
+  if (candleCount < ANALYST_THRESHOLDS.minimumClosedCandles || !current) {
     return {
       candles: closed,
       currentCandle: current || null,
@@ -213,57 +359,149 @@ export function processSnapshot(snapshot = {}, state = {}) {
         ...common,
         state: 'SEARCHING',
         phase: 'HISTORY',
-        reason: `Lendo histórico de velas fechadas: ${candleCount}/3 disponíveis.`
+        uiState: 'ANALYZING_MARKET',
+        reason: `Analisando mercado atual • ${candleCount}/${ANALYST_THRESHOLDS.minimumClosedCandles} velas fechadas reais.`
+      })
+    };
+  }
+
+  const latched = finalDecisions.get(key);
+  if (latched?.bucket === currentBucket && latched.state === 'CONFIRM') {
+    return {
+      candles: closed,
+      currentCandle: current,
+      lastConfirmed,
+      signal: baseSignal({
+        ...common,
+        ...latched,
+        state: 'CONFIRM',
+        direction: latched.direction,
+        provisional: false,
+        phase: 'FINAL',
+        uiState: latched.direction === 'BUY' ? 'ENTER_BUY' : 'ENTER_SELL',
+        reason: latched.reason,
+        score: Math.max(Number(latched.score || 0), score),
+        stability: stabilitySnapshot(tracker),
+        targetStart: latched.targetStart || targetStart
       })
     };
   }
 
   if (secondsRemaining <= 10) {
-    const confirmed = !!direction && score >= 58;
-    const latestDecision = {
+    const canConfirm = observeConfirmation(tracker, liveResult, direction, score, sampleAt);
+    if (canConfirm) {
+      const latestDecision = {
+        bucket: currentBucket,
+        state: 'CONFIRM',
+        direction,
+        provisional: false,
+        reason: reasonFor(liveResult, direction, true),
+        score,
+        targetStart,
+        asset: snapshot.asset,
+        timeframe: analysisTimeframe
+      };
+      finalDecisions.set(key, latestDecision);
+      return {
+        candles: closed,
+        currentCandle: current,
+        lastConfirmed,
+        signal: baseSignal({
+          ...common,
+          ...latestDecision,
+          phase: 'FINAL',
+          uiState: direction === 'BUY' ? 'ENTER_BUY' : 'ENTER_SELL',
+          stability: stabilitySnapshot(tracker)
+        })
+      };
+    }
+
+    finalDecisions.set(key, {
       bucket: currentBucket,
-      state: confirmed ? 'CONFIRM' : 'NO_TRADE',
-      direction: confirmed ? direction : null,
+      state: 'NO_TRADE',
+      direction: null,
       provisional: false,
-      reason: confirmed
-        ? reasonFor(liveResult, direction, true)
-        : 'AGUARDAR — confirmação final sem força suficiente. Não entrar na próxima vela.',
+      reason: 'Sem confirmação estável suficiente para liberar a próxima vela.',
       score,
       targetStart,
       asset: snapshot.asset,
       timeframe: analysisTimeframe
-    };
-    finalDecisions.set(key, latestDecision);
+    });
+
+    if (possibleDirection) {
+      return {
+        candles: closed,
+        currentCandle: current,
+        lastConfirmed,
+        signal: baseSignal({
+          ...common,
+          state: 'WATCH',
+          direction: possibleDirection,
+          provisional: true,
+          phase: 'POSSIBLE',
+          uiState: possibleDirection === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL',
+          reason: reasonFor(liveResult, possibleDirection, false),
+          score: Math.max(score, Number(tracker.publishedScore || 0)),
+          stability: stabilitySnapshot(tracker)
+        })
+      };
+    }
+
     return {
       candles: closed,
       currentCandle: current,
       lastConfirmed,
       signal: baseSignal({
         ...common,
-        ...latestDecision,
+        state: 'NO_TRADE',
+        direction: null,
+        provisional: false,
         phase: 'FINAL',
-        score: latestDecision.score,
-        targetStart
+        uiState: 'WAIT',
+        reason: 'Sem padrão estável forte o suficiente para a próxima vela.',
+        stability: stabilitySnapshot(tracker)
       })
     };
   }
 
-  if (secondsRemaining <= 30 && direction && score >= 44) {
+  if (secondsRemaining <= 30) {
+    if (possibleDirection) {
+      return {
+        candles: closed,
+        currentCandle: current,
+        lastConfirmed,
+        signal: baseSignal({
+          ...common,
+          state: 'WATCH',
+          direction: possibleDirection,
+          provisional: true,
+          phase: 'POSSIBLE',
+          uiState: possibleDirection === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL',
+          reason: reasonFor(liveResult, possibleDirection, false),
+          score: Math.max(score, Number(tracker.publishedScore || 0)),
+          stability: stabilitySnapshot(tracker)
+        })
+      };
+    }
+
     return {
       candles: closed,
       currentCandle: current,
       lastConfirmed,
       signal: baseSignal({
         ...common,
-        state: 'WATCH',
-        direction,
+        state: 'WAIT',
+        direction: null,
         provisional: true,
-        phase: 'POSSIBLE',
-        reason: reasonFor(liveResult, direction, false)
+        phase: 'ANALYZING',
+        uiState: 'WAIT',
+        reason: 'Padrão ainda sem qualidade suficiente para sinalizar a próxima vela.',
+        stability: stabilitySnapshot(tracker)
       })
     };
   }
 
+  const buildingPattern = !!direction && score >= 30;
   return {
     candles: closed,
     currentCandle: current,
@@ -273,10 +511,12 @@ export function processSnapshot(snapshot = {}, state = {}) {
       state: 'WAIT',
       direction: null,
       provisional: true,
-      phase: 'ANALYZING',
-      reason: secondsRemaining > 30
-        ? 'AGUARDAR — analisando as velas fechadas e a vela atual. O pré-sinal abre nos últimos 30s.'
-        : 'AGUARDAR — a vela atual ainda não formou um padrão forte o suficiente.'
+      phase: buildingPattern ? 'BUILDING' : 'ANALYZING',
+      uiState: buildingPattern ? 'BUILDING_PATTERN' : 'ANALYZING_MARKET',
+      reason: buildingPattern
+        ? `Montando padrão da próxima vela: ${analyticsSummary(liveResult, direction)}.`
+        : 'Analisando poder de compra/venda, rejeição, força e momentum do mercado atual.',
+      stability: stabilitySnapshot(tracker)
     })
   };
 }
@@ -302,4 +542,5 @@ export function resetOrchestrator() {
   builders.clear();
   finalDecisions.clear();
   completedDecisions.clear();
+  signalStability.clear();
 }

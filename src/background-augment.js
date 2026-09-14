@@ -108,9 +108,12 @@ function chooseCandidate(payload = {}, preferredAsset = '') {
 }
 
 function focusedAssetFor(tabId, scannerState = {}) {
-  const inMemory = normAsset(focusedAssets.get(tabId)?.asset);
+  const now = Date.now();
+  const memory = focusedAssets.get(tabId) || null;
+  const inMemory = memory && now - Number(memory.at || 0) < 5000 ? normAsset(memory.asset) : '';
   if (inMemory) return inMemory;
-  const stored = normAsset(scannerState?.diagnostics?.focusedAsset?.asset);
+  const storedMeta = scannerState?.diagnostics?.focusedAsset || null;
+  const stored = storedMeta && now - Number(storedMeta.at || 0) < 5000 ? normAsset(storedMeta.asset) : '';
   return stored || '';
 }
 
@@ -178,10 +181,12 @@ async function setFocusedAsset(message = {}, sender = {}) {
   const previousFocus = focusedAssets.get(tabId) || null;
   const score = Number(message.score || 0);
   const samples = Number(message.samples || 0);
-  const reliable = message.reliable === true || score >= FOCUS_CHANGE_MIN_SCORE || samples >= 2;
+  const source = clean(message.source || 'chart-header');
+  const visual = message.visual === true || source === 'chart-header' || source === 'user-selection';
+  const reliable = message.reliable === true || source === 'user-selection' || score >= FOCUS_CHANGE_MIN_SCORE || samples >= 2;
   if (previousFocus?.asset && !sameAsset(previousFocus.asset, focused) && !reliable) return;
 
-  focusedAssets.set(tabId, { asset: focused, score, samples, reliable, at: Date.now() });
+  focusedAssets.set(tabId, { asset: focused, score, samples, reliable, visual, source, at: Date.now() });
 
   return updateScannerState(scannerState => {
     if (!licenseActive(scannerState)) return;
@@ -193,33 +198,32 @@ async function setFocusedAsset(message = {}, sender = {}) {
 
     const changed = (!!previousFocus?.asset && !sameAsset(previousFocus.asset, focused)) || (!!previousStored?.asset && !sameStoredFocus);
     const stateAssetMismatch = scannerState.asset && !sameAsset(scannerState.asset, focused);
-    const stableSince = sameStoredFocus
-      ? Number(previousStored?.stableSince || previousStored?.at || Date.now())
-      : Date.now();
-    if ((changed || stateAssetMismatch) && reliable) resetOrchestrator();
+    const mustResetMarket = (changed || stateAssetMismatch) && reliable;
+    const stableSince = sameStoredFocus ? Number(previousStored?.stableSince || previousStored?.at || Date.now()) : Date.now();
+    if (mustResetMarket) resetOrchestrator();
 
     return {
       ...scannerState,
       targetTabId: tabId,
-      ...((changed || stateAssetMismatch) && reliable ? {
-        asset: focused,
-        price: null,
-        candles: [],
-        currentCandle: null,
-        signal: null,
-        lastSeen: Date.now()
+      ...(mustResetMarket ? {
+        connection: 'connecting', asset: focused, price: null, candles: [], currentCandle: null,
+        signal: null, lastConfirmed: null, tradeIntent: null, lastSeen: null
       } : {}),
       diagnostics: {
         ...(scannerState.diagnostics || {}),
         focusedAsset: {
-          asset: focused,
-          at: Date.now(),
-          stableSince,
-          score,
-          samples,
-          reliable,
-          source: message.source || 'chart-header'
-        }
+          asset: focused, at: Date.now(), stableSince,
+          changedAt: mustResetMarket ? Date.now() : Number(previousStored?.changedAt || stableSince),
+          score, samples, reliable, visual, source
+        },
+        ...(mustResetMarket ? {
+          acquisition: {
+            stage: 'reading_price',
+            reason: `Ativo ${focused} confirmado na tela. Aguardando preço real do mesmo ativo.`,
+            assetSource: source === 'user-selection' ? 'focused-user-selection' : 'focused-screen',
+            priceSource: null, candleCount: 0, requiredCandles: 2, at: Date.now()
+          }
+        } : {})
       }
     };
   });
@@ -246,18 +250,21 @@ async function applyEmbeddedFeed(payload = {}, sender = {}) {
     const focusStable = !!focus && sameAsset(focusMeta?.asset, focus)
       && Number.isFinite(stableSince) && stableSince > 0 && Date.now() - stableSince >= FOCUS_STABLE_MS;
 
-    const focusedCandidate = focus ? chooseCandidate(payload, focus) : null;
-    const fallbackCandidate = focusedCandidate || chooseCandidate(payload, '');
-    if (!fallbackCandidate) return;
-
-    const focusCorroborated = !!focus && sameAsset(fallbackCandidate.asset, focus);
-    const focusReliable = focusMeta?.reliable === true || Number(focusMeta?.score || 0) >= FOCUS_CHANGE_MIN_SCORE;
-    const asset = focus && (focusCorroborated || focusStable || focusReliable)
-      ? focus
-      : normAsset(fallbackCandidate.asset);
-    const candidate = sameAsset(fallbackCandidate.asset, asset)
-      ? fallbackCandidate
-      : chooseCandidate(payload, asset);
+    let candidate = null;
+    let asset = '';
+    let assetSource = 'network-fallback';
+    if (focus) {
+      candidate = chooseCandidate(payload, focus);
+      if (!candidate || !sameAsset(candidate.asset, focus)) return;
+      asset = focus;
+      assetSource = focusMeta?.source === 'user-selection'
+        ? 'focused-user-selection'
+        : focusStable ? 'focused-stable' : 'focused-screen';
+    } else {
+      candidate = chooseCandidate(payload, '');
+      if (!candidate) return;
+      asset = normAsset(candidate.asset);
+    }
     if (!asset || !candidate || !sameAsset(candidate.asset, asset)) return;
 
     const allHistory = sanitizeRecentCandles(payload.recentCandles || {});
@@ -266,100 +273,63 @@ async function applyEmbeddedFeed(payload = {}, sender = {}) {
     const timeframe = normTf(candidate.timeframe) || candles.at(-1)?.timeframe || scannerState.analysisTimeframe || scannerState.timeframe || 'M1';
     const expiration = normExp(candidate.expiration) || scannerState.targetExpiration || scannerState.expiration || null;
     const secondsRemaining = num(candidate.secondsRemaining ?? payload.secondsRemaining);
+    const switchedAsset = !!scannerState.asset && !sameAsset(scannerState.asset, asset);
+    if (switchedAsset) resetOrchestrator();
 
     const snapshot = {
-      platformId: 'casatrade',
-      platformName: 'CasaTrade',
-      connection: 'online',
-      asset,
-      price: Number(candidate.price),
-      timeframe,
-      analysisTimeframe: timeframe,
-      expiration,
-      targetExpiration: expiration,
-      secondsRemaining,
-      serverTime: num(candidate.timestamp) || null,
-      candles,
-      capabilities: {
-        structuredQuotes: true,
-        candles: candles.length >= 3,
-        expiration: !!expiration,
-        multiAsset: false
-      }
+      platformId: 'casatrade', platformName: 'CasaTrade', connection: 'online', asset,
+      price: Number(candidate.price), timeframe, analysisTimeframe: timeframe, expiration,
+      targetExpiration: expiration, secondsRemaining, serverTime: num(candidate.timestamp) || null, candles,
+      capabilities: { structuredQuotes: true, candles: candles.length >= 2, expiration: !!expiration, multiAsset: false }
     };
 
-    if (scannerState.asset && !sameAsset(scannerState.asset, asset)) resetOrchestrator();
-    const assetSource = focus && sameAsset(asset, focus)
-      ? (focusStable ? 'focused-stable' : 'focused-corroborated')
-      : 'network-fallback';
     const base = {
-      ...scannerState,
-      ...snapshot,
-      targetTabId: sender.tab.id,
-      scanner: 'scanning',
-      connection: 'online',
+      ...scannerState, ...snapshot, targetTabId: sender.tab.id, scanner: 'scanning', connection: 'online',
+      lastConfirmed: switchedAsset ? null : (scannerState.lastConfirmed || null),
+      tradeIntent: switchedAsset ? null : (scannerState.tradeIntent || null),
       lastSeen: Date.now(),
       platformControls: {
         ...(scannerState.platformControls || {}),
-        observed: {
-          ...(scannerState.platformControls?.observed || {}),
-          timeframe,
-          expiration,
-          detected: { timeframe: !!timeframe, expiration: !!expiration },
-          at: Date.now()
-        }
+        observed: { ...(scannerState.platformControls?.observed || {}), timeframe, expiration,
+          detected: { timeframe: !!timeframe, expiration: !!expiration }, at: Date.now() }
       },
       diagnostics: {
         ...(scannerState.diagnostics || {}),
         focusGate: {
-          state: assetSource === 'network-fallback' ? 'fallback' : 'ready',
-          focusedAsset: focus || null,
-          receivedAsset: normAsset(candidate.asset),
-          resolvedAsset: asset,
-          assetSource,
-          stable: focusStable,
-          reason: assetSource === 'network-fallback' ? 'Foco ainda não confirmado; usando cotação de rede consistente.' : null,
-          at: Date.now()
+          state: focus ? 'ready' : 'fallback', focusedAsset: focus || null, receivedAsset: normAsset(candidate.asset),
+          resolvedAsset: asset, assetSource, stable: focusStable, reliable: focusMeta?.reliable === true,
+          reason: focus ? null : 'Sem foco visual recente; usando cotação de rede forte como fallback temporário.', at: Date.now()
         },
         acquisition: {
-          stage: candles.length >= 3 ? 'diagnosing_next_candle' : 'reading_history',
-          reason: candles.length >= 3 ? 'Ativo e preço confirmados; analisando a próxima vela.' : `Lendo histórico de velas (${candles.length}/3).`,
-          assetSource,
-          priceSource: `network:${candidate.transport || payload.primaryTransport || 'market'}`,
-          candleCount: candles.length,
-          requiredCandles: 3,
-          at: Date.now()
+          stage: candles.length >= 2 ? 'diagnosing_next_candle' : 'reading_history',
+          reason: candles.length >= 2 ? 'Ativo, preço e histórico sincronizados. Diagnosticando a próxima vela.' : `Analisando mercado atual • ${candles.length}/2 velas fechadas.`,
+          assetSource, priceSource: `network:${candidate.transport || payload.primaryTransport || 'market'}`,
+          candleCount: candles.length, requiredCandles: 2, at: Date.now()
         },
         embeddedFeed: {
-          frameHost,
-          transport: candidate.transport || payload.primaryTransport || null,
-          candidateCount: normalizedCandidates(payload).length,
-          filteredTo: asset,
-          candleCount: candles.length,
-          at: Date.now()
+          frameHost, transport: candidate.transport || payload.primaryTransport || null,
+          candidateCount: normalizedCandidates(payload).length, filteredTo: asset, candleCount: candles.length, at: Date.now()
         }
       }
     };
 
     const processed = processSnapshot(snapshot, base);
     const processedCount = Number(processed.signal?.candleCount ?? candles.length ?? 0);
-    const stage = processedCount < 3 || processed.signal?.state === 'SEARCHING'
+    const stage = processedCount < 2 || processed.signal?.state === 'SEARCHING'
       ? 'reading_history'
-      : 'diagnosing_next_candle';
+      : processed.signal?.currentCandle ? 'diagnosing_next_candle' : 'analyzing_current';
     return {
-      ...base,
-      ...processed,
-      license: scannerState.license,
+      ...base, ...processed, license: scannerState.license,
       diagnostics: {
         ...base.diagnostics,
         acquisition: {
-          ...base.diagnostics.acquisition,
-          stage,
+          ...base.diagnostics.acquisition, stage,
           reason: stage === 'reading_history'
-            ? `Lendo histórico de velas (${processedCount}/3).`
-            : 'Analisando a vela atual e calculando o diagnóstico da próxima vela.',
-          candleCount: processedCount,
-          at: Date.now()
+            ? `Analisando mercado atual • ${processedCount}/2 velas fechadas.`
+            : stage === 'analyzing_current'
+              ? 'Analisando a vela atual.'
+              : 'Montando padrão da próxima vela.',
+          candleCount: processedCount, requiredCandles: 2, at: Date.now()
         }
       }
     };

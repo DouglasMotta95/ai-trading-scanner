@@ -133,9 +133,10 @@ test('price-only frame tagged as focused fallback is discarded instead of being 
     diagnostics: { assetSource: 'focused-price-fallback', priceSource: 'chart' }
   }, state, { now: NOW });
 
-  assert.equal(result.asset, null);
+  assert.equal(result.asset, 'EUR/USD');
   assert.equal(result.price, null);
-  assert.match(result.reason, /preço sem ativo correspondente foi descartado/);
+  assert.equal(result.focusAuthoritative, true);
+  assert.match(result.reason, /Aguardando cotação real do mesmo ativo/);
 });
 
 test('matching network price fills a snapshot asset that arrived without price', () => {

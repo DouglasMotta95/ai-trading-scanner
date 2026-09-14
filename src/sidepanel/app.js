@@ -2,6 +2,9 @@ const LAST_VALID_LICENSE_KEY = 'atsLastValidLicense';
 const $ = id => document.getElementById(id);
 let lastState = {};
 let reconnectBusy = false;
+let reconnectAttempt = 0;
+let nextReconnectAt = 0;
+const RECONNECT_DELAYS_MS = [2000, 4000, 8000, 15000, 30000];
 
 if ($('extensionVersion')) $('extensionVersion').textContent = `v${chrome.runtime.getManifest().version}`;
 
@@ -50,34 +53,58 @@ function marketStep(s = {}) {
   const acquisition = s.diagnostics?.acquisition || {};
   const signal = s.signal || {};
   const candleCount = Math.max(0, Number(signal.candleCount ?? acquisition.candleCount ?? s.candles?.length ?? 0));
-  if (!licenseStillValid(s.license)) return { stage: 'blocked', reason: 'Ative a licença para conectar à CasaTrade.', candleCount };
-  if (!s.platformId) return { stage: 'connecting', reason: acquisition.reason || 'Conectando à aba da CasaTrade.', candleCount };
-  if (!s.asset) return { stage: 'confirming_asset', reason: acquisition.reason || 'Confirmando o ativo aberto na CasaTrade.', candleCount };
-  if (num(s.price) == null) return { stage: 'reading_price', reason: acquisition.reason || 'Ativo encontrado. Aguardando uma cotação real.', candleCount };
-  if (s.connection !== 'online') return { stage: acquisition.stage || 'connecting', reason: acquisition.reason || 'Ativo e cotação detectados; concluindo sincronização.', candleCount };
-  if (!s.lastSeen || Date.now() - Number(s.lastSeen) >= 8000) return { stage: 'reading_price', reason: 'A última cotação ficou desatualizada. Aguardando nova leitura real.', candleCount };
-  if (candleCount < 3 || signal.state === 'SEARCHING' || signal.phase === 'HISTORY') {
-    return { stage: 'reading_history', reason: acquisition.reason || `Lendo histórico de velas (${candleCount}/3).`, candleCount };
+  const required = Math.max(2, Number(signal.warmup?.required || 2));
+  if (!licenseStillValid(s.license)) return { stage: 'blocked', reason: 'Ative a licença para conectar à CasaTrade.', candleCount, required };
+  if (!s.platformId) return { stage: 'connecting', reason: acquisition.reason || 'Conectando à aba da CasaTrade.', candleCount, required };
+  if (!s.asset) return { stage: 'confirming_asset', reason: acquisition.reason || 'Confirmando o ativo aberto na CasaTrade.', candleCount, required };
+  if (num(s.price) == null) return { stage: 'reading_price', reason: acquisition.reason || 'Ativo encontrado. Lendo a cotação real do mesmo ativo.', candleCount, required };
+  if (s.connection !== 'online') return { stage: acquisition.stage || 'connecting', reason: acquisition.reason || 'Sincronizando ativo e cotação.', candleCount, required };
+  if (!s.lastSeen || Date.now() - Number(s.lastSeen) >= 8000) return { stage: 'reading_price', reason: 'Atualizando a cotação real do ativo aberto.', candleCount, required };
+  if (candleCount < required || signal.state === 'SEARCHING' || signal.phase === 'HISTORY') {
+    return { stage: 'reading_history', reason: `Analisando mercado atual • ${candleCount}/${required} velas fechadas.`, candleCount, required };
   }
-  if (!signal.currentCandle && !s.currentCandle) return { stage: 'analyzing_current', reason: 'Histórico mínimo pronto. Montando a vela atual.', candleCount };
-  return { stage: 'diagnosing_next_candle', reason: acquisition.reason || signal.reason || 'Analisando a vela atual para diagnosticar a próxima vela.', candleCount };
+  if (!signal.currentCandle && !s.currentCandle) return { stage: 'analyzing_current', reason: 'Analisando a vela atual.', candleCount, required };
+  return { stage: 'diagnosing_next_candle', reason: signal.reason || acquisition.reason || 'Montando o padrão da próxima vela.', candleCount, required };
 }
 
 const stepTitle = step => ({
-  blocked: 'Ative a licença para conectar',
-  connecting: 'Conectando à CasaTrade…',
-  confirming_asset: 'Confirmando ativo aberto…',
-  reading_price: 'Lendo preço real…',
-  reading_history: `Lendo histórico de velas (${step.candleCount}/3)`,
-  analyzing_current: 'Analisando vela atual',
-  diagnosing_next_candle: 'Diagnóstico da próxima vela'
-}[step.stage] || 'Conectando à CasaTrade…');
+  blocked: 'Analisando mercado atual',
+  connecting: 'Analisando mercado atual',
+  confirming_asset: 'Analisando mercado atual',
+  reading_price: 'Analisando mercado atual',
+  reading_history: 'Analisando mercado atual',
+  analyzing_current: 'Analisando mercado atual',
+  diagnosing_next_candle: 'Montando padrão da próxima vela'
+}[step.stage] || 'Analisando mercado atual');
+
+function principalState(s = {}) {
+  const step = marketStep(s);
+  const sig = s.signal || {};
+  const active = licenseStillValid(s.license);
+  const online = active && fresh(s) && s.platformId === 'casatrade';
+  if (!active) return { key: 'BLOCKED', text: 'ATIVAÇÃO NECESSÁRIA', detail: 'Ative a licença para iniciar a análise.' };
+  if (!online || step.stage !== 'diagnosing_next_candle') {
+    return { key: 'ANALYZING_MARKET', text: 'ANALISANDO MERCADO ATUAL', detail: step.reason };
+  }
+
+  const states = {
+    ANALYZING_MARKET: ['ANALYZING_MARKET', 'ANALISANDO MERCADO ATUAL'],
+    BUILDING_PATTERN: ['BUILDING_PATTERN', 'MONTANDO PADRÃO DA PRÓXIMA VELA'],
+    POSSIBLE_BUY: ['POSSIBLE_BUY', 'POSSÍVEL COMPRA'],
+    POSSIBLE_SELL: ['POSSIBLE_SELL', 'POSSÍVEL VENDA'],
+    ENTER_BUY: ['ENTER_BUY', 'ENTRAR NA PRÓXIMA VELA: COMPRA'],
+    ENTER_SELL: ['ENTER_SELL', 'ENTRAR NA PRÓXIMA VELA: VENDA'],
+    WAIT: ['WAIT', 'AGUARDAR']
+  };
+  const selected = states[sig.uiState] || states.WAIT;
+  return { key: selected[0], text: selected[1], detail: sig.reason || 'Sem direção firme para a próxima vela.' };
+}
 
 function renderLicense(s = {}) {
   const l = s.license || {};
   const active = licenseStillValid(l);
   $('licenseCard')?.classList.toggle('active', active);
-  if ($('activationBox')) $('activationBox').hidden = active;
+  if ($('activationBox')) { const box = $('activationBox'); const accountManaged = box.dataset.accountManaged === '1'; const manualOpen = box.dataset.manualOpen === '1'; box.hidden = active || (accountManaged && !manualOpen); }
   if ($('licenseHealth')) {
     $('licenseHealth').textContent = active ? 'ATIVA' : String(l.status || 'INATIVA').toUpperCase();
     $('licenseHealth').className = `badge ${active ? 'ok' : l.status === 'expired' || l.status === 'device_locked' ? 'bad' : ''}`;
@@ -132,32 +159,24 @@ function renderRecentCandles(s = {}) {
 function renderAnalysis(s = {}) {
   const active = licenseStillValid(s.license);
   const online = active && fresh(s) && s.platformId === 'casatrade';
-  const sig = online ? (s.signal || {}) : (s.signal || {});
+  const sig = s.signal || {};
   const current = online ? (sig.currentCandle || s.currentCandle || {}) : {};
-  const step = marketStep(s);
+  const principal = principalState(s);
 
   if ($('connectionBadge')) {
     const connected = active && s.connection === 'online' && !!s.asset && num(s.price) != null;
-    $('connectionBadge').textContent = !active ? 'BLOQUEADO' : connected ? 'CONECTADO' : step.stage === 'reading_price' ? 'AGUARDANDO PREÇO' : 'CONECTANDO';
+    $('connectionBadge').textContent = !active ? 'BLOQUEADO' : connected ? 'CONECTADO' : 'SINCRONIZANDO';
     $('connectionBadge').className = `badge ${connected ? 'ok' : 'warn'}`;
   }
 
-  if ($('analysisTitle')) $('analysisTitle').textContent = stepTitle(step);
-
+  if ($('analysisTitle')) $('analysisTitle').textContent = principal.text;
   if ($('asset')) $('asset').textContent = active && s.asset ? s.asset : '—';
   if ($('price')) $('price').textContent = online && s.price != null ? String(s.price) : '—';
   if ($('secondsRemaining')) $('secondsRemaining').textContent = online && num(sig.secondsRemaining) != null ? String(Math.max(0, Math.ceil(Number(sig.secondsRemaining)))) : '—';
   if ($('timeframe')) $('timeframe').textContent = online ? (s.analysisTimeframe || sig.timeframe || s.timeframe || 'M1') : '—';
   if ($('expiration')) $('expiration').textContent = online ? (s.targetExpiration || sig.targetExpiration || s.expiration || '—') : '—';
   if ($('candleProgress')) $('candleProgress').style.width = `${online && num(sig.progress) != null ? Math.max(0, Math.min(100, Number(sig.progress))) : 0}%`;
-
-  if ($('analysisReason')) {
-    $('analysisReason').textContent = !active
-      ? 'Nenhum dado de mercado é analisado antes da licença ficar ATIVA.'
-      : online
-        ? (sig.reason || step.reason || 'Analisando a vela atual para a próxima vela.')
-        : step.reason;
-  }
+  if ($('analysisReason')) $('analysisReason').textContent = principal.detail;
 
   if ($('currentOpen')) $('currentOpen').textContent = priceText(current.open);
   if ($('currentHigh')) $('currentHigh').textContent = priceText(current.high);
@@ -168,6 +187,7 @@ function renderAnalysis(s = {}) {
 
 function renderTradeActions(s = {}, online = false) {
   const sig = online ? (s.signal || {}) : {};
+  const principal = principalState(s);
   const confirmed = sig.state === 'CONFIRM' && sig.provisional === false && ['BUY', 'SELL'].includes(sig.direction);
   const possible = sig.state === 'WATCH' && ['BUY', 'SELL'].includes(sig.direction);
   const buy = $('prepareBuy');
@@ -181,14 +201,7 @@ function renderTradeActions(s = {}, online = false) {
     sell.disabled = !(confirmed && sig.direction === 'SELL');
     sell.className = `trade-choice sell-choice${sig.direction === 'SELL' && (confirmed || possible) ? ' selected' : ''}${possible && sig.direction === 'SELL' ? ' possible' : ''}`;
   }
-
-  if ($('tradeActionStatus')) {
-    $('tradeActionStatus').textContent = confirmed
-      ? `Confirmação forte: ${sig.direction === 'BUY' ? 'COMPRA' : 'VENDA'} indicada para a próxima vela; confirme manualmente na CasaTrade.`
-      : possible
-        ? `Diagnóstico pendendo para ${sig.direction === 'BUY' ? 'COMPRA' : 'VENDA'}, mas ainda é pré-sinal. Aguarde a confirmação.`
-        : 'Entrada bloqueada enquanto o diagnóstico não atingir a confirmação mínima.';
-  }
+  if ($('tradeActionStatus')) $('tradeActionStatus').textContent = principal.text;
 }
 
 function decisionTime(value) {
@@ -198,130 +211,62 @@ function decisionTime(value) {
 }
 
 function renderSeparatedSignalState(s = {}, online = false) {
-  const sig = online ? (s.signal || {}) : {};
   const last = online ? (s.lastConfirmed || null) : null;
-  const step = marketStep(s);
-
+  const principal = principalState(s);
   if ($('lastConfirmed')) {
     if (!last) {
       $('lastConfirmed').textContent = 'Nenhuma decisão finalizada nesta sessão.';
     } else {
-      const result = last.state === 'CONFIRM'
-        ? (last.direction === 'SELL' ? 'VENDA' : 'COMPRA')
-        : 'SEM ENTRADA';
+      const result = last.state === 'CONFIRM' ? (last.direction === 'SELL' ? 'VENDA' : 'COMPRA') : 'SEM ENTRADA';
       const at = decisionTime(last.time || last.targetStart);
       $('lastConfirmed').textContent = `${result}${at ? ` • ${at}` : ''}${num(last.score) != null ? ` • ${Math.round(Number(last.score))}/100` : ''}`;
     }
   }
-
-  if (!$('analyzingNow')) return;
-  if (!online) {
-    $('analyzingNow').textContent = step.reason;
-    return;
-  }
-
-  const count = Math.max(0, Number(sig.candleCount || 0));
-  const required = Math.max(1, Number(sig.warmup?.required || 3));
-  const windowCount = Math.min(10, count);
-  const liveDirection = ['BUY', 'SELL'].includes(sig.analysisDirection)
-    ? sig.analysisDirection
-    : ['BUY', 'SELL'].includes(sig.direction) ? sig.direction : null;
-  const liveScore = num(sig.analysisScore) != null ? Number(sig.analysisScore) : num(sig.score);
-  const scoreText = liveScore != null ? ` • ${Math.round(liveScore)}/100` : '';
-
-  if (count < required || sig.state === 'SEARCHING') {
-    $('analyzingNow').textContent = `Lendo histórico de velas: ${count}/${required} fechadas.`;
-    return;
-  }
-
-  const lean = liveDirection === 'BUY' ? 'Pendendo para COMPRA' : liveDirection === 'SELL' ? 'Pendendo para VENDA' : 'AGUARDAR';
-  if (sig.phase === 'FINAL') {
-    $('analyzingNow').textContent = `${lean}${scoreText} • confirmação da próxima vela nos últimos ${Math.max(0, Math.ceil(Number(sig.secondsRemaining || 0)))}s.`;
-  } else if (sig.phase === 'POSSIBLE') {
-    $('analyzingNow').textContent = `${lean}${scoreText} • pré-sinal em formação • ${windowCount}/10 velas fechadas.`;
-  } else {
-    $('analyzingNow').textContent = `${lean}${scoreText} • analisando vela atual para a próxima vela • ${windowCount}/10 fechadas.`;
-  }
+  if ($('analyzingNow')) $('analyzingNow').textContent = principal.text;
 }
 
 function renderDecision(s = {}) {
   const active = licenseStillValid(s.license);
   const online = active && fresh(s) && s.platformId === 'casatrade';
   const sig = online ? (s.signal || {}) : {};
-  const step = marketStep(s);
+  const principal = principalState(s);
   const card = $('decisionCard');
   const banner = $('decisionBanner');
 
   card?.classList.remove('buy', 'sell', 'no-trade');
   banner?.classList.remove('waiting', 'possible', 'buy', 'sell', 'no-trade');
 
-  let title = 'DIAGNÓSTICO: AGUARDAR';
-  let badge = 'AGUARDAR';
-  let badgeClass = 'badge';
-  let decision = '🟡 AGUARDAR';
-  let sub = sig.reason || 'Aguardando força suficiente para a próxima vela.';
   let bannerClass = 'waiting';
-
-  if (!active) {
-    title = 'ATIVAÇÃO NECESSÁRIA';
-    badge = 'BLOQUEADO';
-    badgeClass = 'badge warn';
-    decision = '🔒 ATIVE A LICENÇA';
-    sub = 'O scanner só conecta e começa a analisar depois que a chave for validada.';
-  } else if (!online) {
-    title = stepTitle(step).toUpperCase();
-    badge = 'AGUARDAR';
-    decision = '🟡 AGUARDAR';
-    sub = step.reason;
-  } else if (sig.state === 'SEARCHING') {
-    title = 'LENDO HISTÓRICO';
-    badge = 'ANALISANDO';
-    badgeClass = 'badge warn';
-    decision = `VELAS ${Math.max(0, Number(sig.candleCount || 0))}/3`;
-    sub = 'Aguardando pelo menos 3 velas fechadas reais antes do diagnóstico operacional.';
-  } else if (sig.state === 'WATCH' && sig.direction) {
-    const buy = sig.direction === 'BUY';
-    title = `DIAGNÓSTICO: ${buy ? 'COMPRA' : 'VENDA'}`;
-    badge = 'PRÉ-SINAL';
-    badgeClass = 'badge warn';
-    decision = `${buy ? '🟢 COMPRA' : '🔴 VENDA'} • AGUARDE CONFIRMAÇÃO`;
-    sub = sig.reason || 'Direção encontrada, mas a entrada ainda está bloqueada até a confirmação final.';
+  let badgeClass = 'badge';
+  if (principal.key === 'POSSIBLE_BUY' || principal.key === 'POSSIBLE_SELL') {
     bannerClass = 'possible';
-  } else if (sig.state === 'CONFIRM' && sig.direction) {
-    const buy = sig.direction === 'BUY';
-    title = `DIAGNÓSTICO: ${buy ? 'COMPRA' : 'VENDA'}`;
-    badge = 'CONFIRMADO';
-    badgeClass = 'badge ok';
-    decision = `${buy ? '🟢 COMPRA' : '🔴 VENDA'} NA PRÓXIMA VELA`;
-    sub = sig.reason || `Indicação confirmada para a próxima vela${sig.targetLabel ? ` • ${sig.targetLabel}` : ''}.`;
-    bannerClass = buy ? 'buy' : 'sell';
-    card?.classList.add(buy ? 'buy' : 'sell');
-  } else if (sig.state === 'NO_TRADE' && sig.phase === 'FINAL') {
-    title = 'DIAGNÓSTICO: AGUARDAR';
-    badge = 'SEM ENTRADA';
     badgeClass = 'badge warn';
-    decision = '🟡 AGUARDAR';
-    sub = sig.reason || 'A próxima vela não tem força suficiente para liberar entrada.';
+  } else if (principal.key === 'ENTER_BUY') {
+    bannerClass = 'buy';
+    badgeClass = 'badge ok';
+    card?.classList.add('buy');
+  } else if (principal.key === 'ENTER_SELL') {
+    bannerClass = 'sell';
+    badgeClass = 'badge ok';
+    card?.classList.add('sell');
+  } else if (principal.key === 'WAIT') {
     bannerClass = 'no-trade';
+    badgeClass = 'badge warn';
     card?.classList.add('no-trade');
+  } else if (principal.key === 'BLOCKED') {
+    badgeClass = 'badge warn';
   }
 
-  if ($('signalTitle')) $('signalTitle').textContent = title;
+  if ($('signalTitle')) $('signalTitle').textContent = principal.text;
   if ($('signalBadge')) {
-    $('signalBadge').textContent = badge;
+    $('signalBadge').textContent = principal.text;
     $('signalBadge').className = badgeClass;
   }
   if (banner) banner.classList.add(bannerClass);
-  if ($('decisionText')) $('decisionText').textContent = decision;
-  if ($('decisionSubtext')) $('decisionSubtext').textContent = sub;
+  if ($('decisionText')) $('decisionText').textContent = principal.text;
+  if ($('decisionSubtext')) $('decisionSubtext').textContent = principal.detail;
   renderSeparatedSignalState(s, online);
-  if ($('signalReason')) $('signalReason').textContent = !active
-    ? 'Ative a licença para liberar a conexão com a CasaTrade.'
-    : online
-      ? (sig.reason || sig.hint || 'Analisando a próxima vela.')
-      : s.platformId && s.platformId !== 'casatrade'
-        ? 'Plataforma não suportada/não conectada.'
-        : step.reason;
+  if ($('signalReason')) $('signalReason').textContent = principal.detail;
   if ($('signalScore')) $('signalScore').textContent = online && num(sig.score) != null ? `${Math.round(Number(sig.score))}/100` : '—';
   if ($('targetTime')) {
     const realEntry = num(s.lastConfirmed?.entryPrice);
@@ -342,21 +287,41 @@ function render(s = {}) {
 }
 
 async function getState() {
-  const stored = await chrome.storage.local.get(['scannerState', LAST_VALID_LICENSE_KEY]).catch(() => ({}));
-  const state = stored.scannerState || {};
+  const [state, stored] = await Promise.all([
+    chrome.runtime.sendMessage({ type: 'ATS_READ_SCANNER_STATE' }).catch(() => ({})),
+    chrome.storage.local.get(LAST_VALID_LICENSE_KEY).catch(() => ({}))
+  ]);
   const license = effectiveLicense(state?.license || {}, stored[LAST_VALID_LICENSE_KEY] || null);
-  const rendered = { ...state, license };
+  const rendered = { ...(state || {}), license };
   render(rendered);
   return rendered;
 }
 
 async function autoConnect(force = false) {
   if (reconnectBusy || !licenseStillValid(lastState.license)) return;
-  if (!force && fresh(lastState) && lastState.platformId === 'casatrade') return;
+  if (!force && fresh(lastState) && lastState.platformId === 'casatrade') {
+    reconnectAttempt = 0;
+    nextReconnectAt = 0;
+    return;
+  }
+  const now = Date.now();
+  if (!force && now < nextReconnectAt) return;
+
   reconnectBusy = true;
   try {
-    await chrome.runtime.sendMessage({ type: 'ATS_CONNECT_ACTIVE_TAB' }).catch(() => ({ ok: false }));
+    const alreadyTargetingCasaTrade = lastState.platformId === 'casatrade' && !!lastState.targetTabId;
+    const type = force || !alreadyTargetingCasaTrade ? 'ATS_CONNECT_ACTIVE_TAB' : 'ATS_REFRESH_MARKET';
+    const result = await chrome.runtime.sendMessage({ type }).catch(() => ({ ok: false }));
     await getState();
+    if (fresh(lastState) && lastState.platformId === 'casatrade') {
+      reconnectAttempt = 0;
+      nextReconnectAt = 0;
+    } else {
+      reconnectAttempt = Math.min(reconnectAttempt + 1, RECONNECT_DELAYS_MS.length);
+      const delay = RECONNECT_DELAYS_MS[Math.max(0, reconnectAttempt - 1)];
+      nextReconnectAt = Date.now() + delay;
+    }
+    return result;
   } finally {
     reconnectBusy = false;
   }
@@ -419,5 +384,5 @@ chrome.storage.onChanged.addListener(changes => {
     if (licenseStillValid(lastState.license) && (!fresh(lastState) || lastState.platformId !== 'casatrade')) {
       autoConnect().catch(() => {});
     }
-  }, 2000);
+  }, 1000);
 })();
