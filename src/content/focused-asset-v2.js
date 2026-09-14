@@ -7,22 +7,28 @@
   const host = String(location.hostname || '').toLowerCase().replace(/\.$/, '');
   const casaHost = value => value === 'casatrade.com' || value.endsWith('.casatrade.com') || value === 'casatrade.io' || value.endsWith('.casatrade.io');
   const traderHost = value => value === 'casatraders.online' || value.endsWith('.casatraders.online') || value === 'ivcasatraders.online' || value.endsWith('.ivcasatraders.online');
-  if (!casaHost(host) && !traderHost(host)) return;
+  const inTraderFrame = traderHost(host);
+  if (!casaHost(host) && !inTraderFrame) return;
 
-  const pairRe = /\b([A-Z0-9]{2,20})\s*[\/_-]\s*([A-Z0-9]{2,12})(?:\s*\(\s*OTC\s*\)|\s+OTC)?/i;
-  const compactFxRe = /\b([A-Z]{3})([A-Z]{3})(?:\s*\(\s*OTC\s*\)|[_-]?OTC)?\b/i;
+  const pairRe = /\b([A-Z0-9]{2,20})\s*[\/_-]\s*([A-Z0-9]{2,12})(?:\s*\(\s*OTC\s*\)|\s+OTC)?/gi;
+  const compactFxRe = /\b([A-Z]{3})([A-Z]{3})(?:\s*\(\s*OTC\s*\)|[_-]?OTC)?\b/gi;
 
-  function canonicalAsset(value = '') {
+  function assetsIn(value = '') {
     const raw = clean(value).toUpperCase();
-    if (!raw || raw.length > 100) return '';
-    const otc = /(?:\(|\b|[_-])OTC(?:\)|\b)?/i.test(raw);
-    const direct = raw.match(pairRe);
-    if (direct) return `${direct[1]}/${direct[2]}${otc ? ' (OTC)' : ''}`;
-    const compact = raw.match(compactFxRe);
-    if (compact) return `${compact[1]}/${compact[2]}${otc ? ' (OTC)' : ''}`;
-    return '';
+    if (!raw || raw.length > 220) return [];
+    const out = [];
+    const seen = new Set();
+    const add = (base, quote, otc) => {
+      const asset = `${base}/${quote}${otc ? ' (OTC)' : ''}`;
+      const id = asset.replace(/\s*\(OTC\)\s*$/i, '');
+      if (!seen.has(id)) { seen.add(id); out.push(asset); }
+    };
+    for (const match of raw.matchAll(pairRe)) add(match[1], match[2], /OTC/i.test(match[0]));
+    if (!out.length) for (const match of raw.matchAll(compactFxRe)) add(match[1], match[2], /OTC/i.test(match[0]));
+    return out;
   }
 
+  const canonicalAsset = value => assetsIn(value)[0] || '';
   const identity = value => canonicalAsset(value).replace(/\s*\(OTC\)\s*$/i, '');
   const sameAsset = (a, b) => !!identity(a) && identity(a) === identity(b);
   const visible = el => {
@@ -93,8 +99,9 @@
       const action = clean(`${node.getAttribute?.('aria-label') || ''} ${node.getAttribute?.('title') || ''}`);
       if (/fechar|close|remover|remove|delete|excluir/i.test(action)) return '';
       const text = clean(`${node.getAttribute?.('aria-label') || ''} ${node.getAttribute?.('title') || ''} ${node.innerText || node.textContent || ''}`);
-      const asset = canonicalAsset(text);
-      if (asset) return asset;
+      const assets = assetsIn(text);
+      if (assets.length === 1) return assets[0];
+      if (assets.length > 1) continue;
     }
     return '';
   }
@@ -105,24 +112,50 @@
       if (!visible(el)) continue;
       const text = clean(el.getAttribute?.('aria-label') || el.getAttribute?.('title') || el.innerText || el.textContent || '');
       if (!text || text.length > 120) continue;
-      const asset = canonicalAsset(text);
-      if (!asset) continue;
+      const assets = assetsIn(text);
+      if (assets.length !== 1) continue;
+      const asset = assets[0];
       const rect = el.getBoundingClientRect();
       const selection = selectionEvidence(el);
       const context = contextOf(el);
       const role = String(el.getAttribute?.('role') || '').toLowerCase();
+      const isTab = role === 'tab' || /(?:^|[\s_-])tab(?:$|[\s_-])/.test(context);
+      const headerBand = !isTab && rect.left >= 0 && rect.left <= innerWidth * .48 && rect.top >= innerHeight * .06 && rect.top <= innerHeight * .36;
+      const chartContext = /chart|trade|trading|instrument|asset|symbol|header|market/.test(context);
       let score = selection.score;
       if (text.length <= 38) score += 55;
       if (rect.top >= 0 && rect.top <= innerHeight * .46) score += 55;
       if (rect.left >= 0 && rect.left <= innerWidth * .86) score += 25;
-      if (/chart|trade|trading|instrument|asset|symbol|tab|header|market/.test(context)) score += 125;
-      if (role === 'tab') score += 65;
+      if (chartContext) score += 125;
+      if (isTab) score += 65;
+      if (headerBand) score += inTraderFrame ? 980 : 360;
+      if (inTraderFrame && chartContext && !isTab) score += 240;
       if (/watchlist|watch-list|asset-list|instrument-list|listbox|search|history|histor|portfolio|leader|ranking|modal|drawer|dropdown|menu/.test(context)) score -= selection.explicit ? 80 : 330;
       if (selection.rejected) score -= 260;
-      rows.push({ asset, score, explicit: selection.explicit, top: rect.top, left: rect.left });
+      rows.push({ asset, score, explicit: selection.explicit, headerBand, isTab, top: rect.top, left: rect.left });
     }
-    rows.sort((a, b) => Number(b.explicit) - Number(a.explicit) || b.score - a.score || a.top - b.top || a.left - b.left);
-    return rows[0] || null;
+
+    const grouped = new Map();
+    for (const row of rows) {
+      const id = identity(row.asset);
+      if (!id) continue;
+      const current = grouped.get(id) || { asset: row.asset, score: -Infinity, explicit: false, headerHits: 0, nonTabHits: 0, hits: 0, top: row.top, left: row.left };
+      current.score = Math.max(current.score, row.score);
+      current.explicit = current.explicit || row.explicit;
+      current.headerHits += row.headerBand ? 1 : 0;
+      current.nonTabHits += row.isTab ? 0 : 1;
+      current.hits += 1;
+      current.top = Math.min(current.top, row.top);
+      current.left = Math.min(current.left, row.left);
+      grouped.set(id, current);
+    }
+
+    const winners = [...grouped.values()].map(row => ({
+      ...row,
+      score: row.score + Math.min(180, row.hits * 30) + row.headerHits * (inTraderFrame ? 450 : 180) + row.nonTabHits * 25
+    }));
+    winners.sort((a, b) => b.headerHits - a.headerHits || Number(b.explicit) - Number(a.explicit) || b.score - a.score || b.hits - a.hits || a.top - b.top || a.left - b.left);
+    return winners[0] || null;
   }
 
   let lastInteractionAt = 0;
@@ -142,23 +175,24 @@
     if (!reliable) return;
 
     globalThis.__ATS_FOCUSED_ASSET_VALUE__ = asset;
-    globalThis.__ATS_FOCUSED_ASSET_META__ = { asset, score, samples: candidateSamples, stableFor, reliable: true, visual: true, source, explicit: explicit === true, at: now };
+    globalThis.__ATS_FOCUSED_ASSET_META__ = { asset, score, samples: candidateSamples, stableFor, reliable: true, visual: true, source, explicit: explicit === true, at: now, frameHost: host, frameRole: inTraderFrame ? 'trader-frame' : 'casa-shell' };
     if (!force && sameAsset(lastPublished, asset) && now - lastPublishedAt < 650) return;
     lastPublished = asset;
     lastPublishedAt = now;
 
-    const common = { asset, score, samples: candidateSamples, stableFor, reliable: true, visual: true, explicit: explicit === true, at: now };
+    const common = { asset, score, samples: candidateSamples, stableFor, reliable: true, visual: true, explicit: explicit === true, at: now, frameHost: host, frameRole: inTraderFrame ? 'trader-frame' : 'casa-shell' };
     try { chrome.runtime.sendMessage({ type: 'ATS_VISUAL_FOCUS_V2', ...common, source }, () => void chrome.runtime?.lastError); } catch {}
-    const legacySource = source === 'interaction' || source === 'interaction-scan' ? 'user-selection' : 'chart-header';
-    try { chrome.runtime.sendMessage({ type: 'ATS_FOCUSED_ASSET', ...common, source: legacySource, explicit: explicit === true || legacySource === 'user-selection' }, () => void chrome.runtime?.lastError); } catch {}
   }
 
   function publishScan(force = false) {
     const winner = scanWinner();
     if (!winner?.asset) return;
     const interactionFresh = Date.now() - lastInteractionAt < 1400;
+    const source = inTraderFrame
+      ? (interactionFresh ? 'chart-frame-interaction-scan' : 'chart-frame-visual-scan')
+      : (interactionFresh ? 'interaction-scan' : 'visual-scan');
     send(winner.asset, {
-      source: interactionFresh ? 'interaction-scan' : 'visual-scan',
+      source,
       explicit: winner.explicit || interactionFresh,
       score: Number(winner.score || 0),
       force
@@ -168,7 +202,7 @@
   function onInteraction(event) {
     lastInteractionAt = Date.now();
     const direct = assetFromPath(event);
-    if (direct) send(direct, { source: 'interaction', explicit: true, score: 1000, force: true });
+    if (direct) send(direct, { source: inTraderFrame ? 'chart-frame-interaction' : 'interaction', explicit: true, score: 1000, force: true });
     setTimeout(() => publishScan(true), 0);
     setTimeout(() => publishScan(true), 90);
     setTimeout(() => publishScan(true), 260);
@@ -179,6 +213,6 @@
   document.addEventListener('click', onInteraction, true);
   const observer = new MutationObserver(() => publishScan(false));
   try { observer.observe(document.documentElement, { subtree: true, childList: true, attributes: true, characterData: true }); } catch {}
-  setInterval(() => publishScan(false), 350);
+  setInterval(() => publishScan(false), 300);
   publishScan(true);
 })();
