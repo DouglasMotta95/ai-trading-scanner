@@ -68,6 +68,10 @@ test('RSI and MACD reinforce the score without changing the 10-candle price acti
   assert.equal(after.indicators.bollinger.effect, 0);
   assert.equal(after.indicators.adjustment, 18);
   assert.equal(after.score, 62);
+  assert.ok(Number.isFinite(after.analytics.buyPower));
+  assert.ok(Number.isFinite(after.analytics.sellPower));
+  assert.ok(Number.isFinite(after.analytics.currentStrength));
+  assert.ok(Number.isFinite(after.analytics.momentumScore));
 });
 
 test('MACD against the price-action direction subtracts exactly 10', () => {
@@ -89,21 +93,25 @@ test('orchestrator uses extended history for indicators while price action remai
   const { candles } = scoringFixture({ preDelta: .001, bucket });
   const current = candles.at(-1);
 
-  const out = processSnapshot({
+  const snapshot = serverTime => ({
     platformId: 'casatrade',
     asset: 'EUR/USD (OTC)',
     price: current.close,
     timeframe: 'M1',
     analysisTimeframe: 'M1',
     connection: 'online',
-    serverTime: bucket + 35_000,
+    serverTime,
     candles
-  }, { connection: 'online' });
+  });
 
+  const first = processSnapshot(snapshot(bucket + 35_000), { connection: 'online' });
+  assert.notEqual(first.signal.state, 'WATCH');
+
+  const out = processSnapshot(snapshot(bucket + 36_000), { connection: 'online' });
   assert.equal(out.signal.phase, 'POSSIBLE');
   assert.equal(out.signal.state, 'WATCH');
   assert.equal(out.signal.direction, 'BUY');
   assert.equal(out.signal.score, 62);
-  assert.equal(out.signal.secondsRemaining, 25);
+  assert.equal(out.signal.secondsRemaining, 24);
   assert.equal(out.candles.length, 39);
 });

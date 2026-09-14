@@ -1,5 +1,6 @@
 const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
 const clean = value => String(value ?? '').trim();
+const MIN_ANALYST_CANDLES = 2;
 
 export const normMarketAsset = value => clean(value).toUpperCase()
   .replace(/\s+/g, ' ')
@@ -79,8 +80,9 @@ function focusedEvidence(state = {}, now = Date.now(), stableMs = 2000) {
   const since = Number(meta.stableSince || at || 0);
   const fresh = !!asset && at > 0 && now - at < 5000;
   const stable = fresh && since > 0 && now - since >= stableMs;
-  const reliable = fresh && (meta.reliable === true || Number(meta.score || 0) >= 90 || stable);
-  return { asset, meta, fresh, stable, reliable };
+  const visual = fresh && (meta.visual === true || ['chart-header','user-selection'].includes(clean(meta.source)));
+  const reliable = fresh && (meta.reliable === true || visual || Number(meta.score || 0) >= 90 || stable);
+  return { asset, meta, fresh, stable, visual, reliable, authoritative: fresh && !!asset };
 }
 
 export function resolveMarketEvidence(snapshot = {}, state = {}, options = {}) {
@@ -88,9 +90,6 @@ export function resolveMarketEvidence(snapshot = {}, state = {}, options = {}) {
   const stableMs = Number(options.focusStableMs || 2000);
   const focus = focusedEvidence(state, now, stableMs);
 
-  // A price-only frame must never be attached to a stored focus and promoted as a real quote.
-  // directScan labels that provisional combination explicitly so the central resolver can reject
-  // both the synthetic asset and its unrelated price, then recover only from independent evidence.
   const rawSnapshotSource = clean(snapshot?.diagnostics?.assetSource);
   const syntheticFocusedPrice = rawSnapshotSource === 'focused-price-fallback';
   const snapshotAsset = syntheticFocusedPrice ? '' : normMarketAsset(snapshot?.asset);
@@ -106,9 +105,15 @@ export function resolveMarketEvidence(snapshot = {}, state = {}, options = {}) {
 
   let asset = '';
   let assetSource = null;
-  if (focus.fresh && focus.asset && (focusCorroborated || focus.reliable)) {
+  if (focus.authoritative) {
     asset = focus.asset;
-    assetSource = focus.stable ? 'focused-stable' : focusCorroborated ? 'focused-corroborated' : 'focused-reliable';
+    assetSource = focus.meta?.source === 'user-selection'
+      ? 'focused-user-selection'
+      : focus.stable
+        ? 'focused-stable'
+        : focusCorroborated
+          ? 'focused-corroborated'
+          : 'focused-screen';
   } else if (snapshotAsset) {
     asset = snapshotAsset;
     assetSource = snapshot?.diagnostics?.assetSource || 'snapshot-fallback';
@@ -134,9 +139,10 @@ export function resolveMarketEvidence(snapshot = {}, state = {}, options = {}) {
       focusStable: focus.stable,
       focusReliable: focus.reliable,
       focusCorroborated,
+      focusAuthoritative: focus.authoritative,
       reason: syntheticFocusedPrice
         ? 'Ativo/preço não confirmados: preço sem ativo correspondente foi descartado.'
-        : 'Ativo não confirmado: aguardando evidência do foco, DOM ou feed de rede.'
+        : 'Ativo não confirmado: aguardando evidência do foco visual, DOM ou feed de rede.'
     };
   }
 
@@ -174,8 +180,11 @@ export function resolveMarketEvidence(snapshot = {}, state = {}, options = {}) {
     focusStable: focus.stable,
     focusReliable: focus.reliable,
     focusCorroborated,
+    focusAuthoritative: focus.authoritative,
     reason: price == null
-      ? `Ativo ${asset} identificado, mas ainda não chegou uma cotação real válida.`
+      ? focus.authoritative
+        ? `Ativo ${asset} confirmado na tela. Aguardando cotação real do mesmo ativo.`
+        : `Ativo ${asset} identificado, mas ainda não chegou uma cotação real válida.`
       : null
   };
 }
@@ -195,7 +204,7 @@ export function marketHistoryFor(state = {}, asset = '') {
 
 export function acquisitionStage(signal = {}, candleCount = 0) {
   const count = Math.max(0, Number(signal?.candleCount ?? candleCount ?? 0));
-  if (count < 3 || signal?.state === 'SEARCHING' || signal?.phase === 'HISTORY') return 'reading_history';
+  if (count < MIN_ANALYST_CANDLES || signal?.state === 'SEARCHING' || signal?.phase === 'HISTORY') return 'reading_history';
   if (!signal?.currentCandle) return 'analyzing_current';
   return 'diagnosing_next_candle';
 }

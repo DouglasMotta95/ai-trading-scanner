@@ -26,13 +26,17 @@ test('sidepanel exposes only the focused license, candle and next-entry surface'
   assert.match(app, /ATS_ACTIVATE_LICENSE/);
   assert.match(app, /ATS_CONNECT_ACTIVE_TAB/);
   assert.match(app, /ATS_PREPARE_TRADE/);
-  assert.match(app, /DIAGNÓSTICO: AGUARDAR/);
-  assert.match(app, /DIAGNÓSTICO: \$\{buy \? 'COMPRA' : 'VENDA'\}/);
-  assert.match(app, /AGUARDE CONFIRMAÇÃO/);
-  assert.match(app, /NA PRÓXIMA VELA/);
-  assert.match(app, /Entrada bloqueada enquanto o diagnóstico não atingir a confirmação mínima/);
+  assert.match(app, /function principalState\(s = \{\}\)/);
+  assert.match(app, /ANALISANDO MERCADO ATUAL/);
+  assert.match(app, /MONTANDO PADRÃO DA PRÓXIMA VELA/);
+  assert.match(app, /POSSÍVEL COMPRA/);
+  assert.match(app, /POSSÍVEL VENDA/);
+  assert.match(app, /ENTRAR NA PRÓXIMA VELA: COMPRA/);
+  assert.match(app, /ENTRAR NA PRÓXIMA VELA: VENDA/);
+  assert.match(app, /AGUARDAR/);
   assert.match(app, /buy\.disabled = !\(confirmed && sig\.direction === 'BUY'\)/);
   assert.match(app, /sell\.disabled = !\(confirmed && sig\.direction === 'SELL'\)/);
+  assert.doesNotMatch(app, /DIAGNÓSTICO: AGUARDAR|AGUARDE CONFIRMAÇÃO|Pré-sinal aponta/);
   assert.doesNotMatch(app, /ATS_RUN_BACKTEST|ATS_GET_WEEKLY_REPORT|renderIndicators|renderAI|renderIntelligence/);
 
   for (const removed of [
@@ -43,13 +47,13 @@ test('sidepanel exposes only the focused license, candle and next-entry surface'
 
 test('panel exposes acquisition reason while keeping unavailable market values empty', () => {
   const app = read('src/sidepanel/app.js');
-  assert.match(app, /Plataforma não suportada\/não conectada/);
   assert.match(app, /function marketStep\(s = \{\}\)/);
   assert.match(app, /confirming_asset/);
   assert.match(app, /reading_price/);
   assert.match(app, /reading_history/);
   assert.match(app, /analyzing_current/);
   assert.match(app, /diagnosing_next_candle/);
+  assert.match(app, /const required = Math\.max\(2,/);
   assert.match(app, /online && s\.price != null \? String\(s\.price\) : '—'/);
   assert.match(app, /active && s\.asset \? s\.asset : '—'/);
 });

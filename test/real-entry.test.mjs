@@ -17,15 +17,30 @@ const closed = bucket => [
   { time: bucket - minute, open: 1.058, high: 1.08, low: 1.05, close: 1.078, timeframe: 'M1' }
 ];
 
-function confirmAt(bucket) {
+function strongSnapshot(bucket, serverTime) {
   const history = closed(bucket);
-  const final = processSnapshot({
+  return {
     platformId: 'casatrade', asset: 'EUR/USD (OTC)', price: 1.11,
     timeframe: 'M1', analysisTimeframe: 'M1', connection: 'online',
-    serverTime: bucket + 55_000,
+    serverTime,
     candles: [...history, { time: bucket, open: 1.078, high: 1.115, low: 1.075, close: 1.11, timeframe: 'M1' }]
-  }, { connection: 'online' });
+  };
+}
+
+function confirmAt(bucket) {
+  const history = closed(bucket);
+  const state = { connection: 'online' };
+  const firstPossible = processSnapshot(strongSnapshot(bucket, bucket + 35_000), state);
+  assert.notEqual(firstPossible.signal.state, 'WATCH');
+  const possible = processSnapshot(strongSnapshot(bucket, bucket + 36_000), state);
+  assert.equal(possible.signal.state, 'WATCH');
+  assert.equal(possible.signal.uiState, 'POSSIBLE_BUY');
+
+  const firstFinal = processSnapshot(strongSnapshot(bucket, bucket + 51_000), state);
+  assert.notEqual(firstFinal.signal.state, 'CONFIRM');
+  const final = processSnapshot(strongSnapshot(bucket, bucket + 52_000), state);
   assert.equal(final.signal.state, 'CONFIRM');
+  assert.equal(final.signal.uiState, 'ENTER_BUY');
   return history;
 }
 

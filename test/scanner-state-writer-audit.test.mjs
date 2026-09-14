@@ -34,6 +34,11 @@ test('scannerState has exactly one storage writer across src', () => {
     );
     assert.doesNotMatch(
       source,
+      /chrome\.storage\.local\.get\s*\([^)]*scannerState/,
+      `${path.relative(root, file)} reads scannerState directly`
+    );
+    assert.doesNotMatch(
+      source,
       /\bupdates\.scannerState\s*=/,
       `${path.relative(root, file)} writes scannerState through an updates object`
     );

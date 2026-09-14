@@ -129,6 +129,7 @@ function renderInspector() {
   $('#renewAction').onclick = () => openModal('renew', l.key);
   $('#toggleAction').onclick = async () => {
     const op = l.status === 'active' ? 'revoke' : 'activate';
+    if (op === 'revoke' && !confirm(`Bloquear a licença de ${l.customerName || l.email || l.key}?`)) return;
     try { await api(`/v1/admin/licenses/${encodeURIComponent(l.key)}/${op}`, {method:'POST'}); toast(op === 'revoke' ? 'Licença bloqueada' : 'Licença reativada'); await refreshData(); }
     catch (e) { toast(`Falha: ${e.message}`); }
   };
@@ -146,16 +147,18 @@ function renderSystem(health, authStatus) {
 }
 
 async function refreshData() {
-  try {
-    const [m,p,l,c,a,h,s] = await Promise.all([
-      api('/v1/admin/metrics'), api('/v1/admin/plans'), api('/v1/admin/licenses'), api('/v1/admin/clients'), api('/v1/admin/audit'), fetch(`${apiBase}/health`).then(r => r.json()), api('/v1/admin/auth/status')
-    ]);
-    metrics = m; plans = p.plans || []; licenses = l.licenses || []; clients = c.clients || []; auditEvents = a.events || [];
-    renderMetrics(); renderPlans(); renderRecent(); renderAudit(); renderLicenseSelects(); renderLicenses(); renderInspector(); renderClients(); renderSystem(h,s);
-  } catch (e) {
-    if (e.status === 401) return showLogin();
-    toast(`Falha ao atualizar: ${e.message}`);
-  }
+  const tasks = [
+    api('/v1/admin/metrics'), api('/v1/admin/plans'), api('/v1/admin/licenses'), api('/v1/admin/clients'), api('/v1/admin/audit'), fetch(`${apiBase}/health`).then(r => r.json()), api('/v1/admin/auth/status')
+  ];
+  const settled = await Promise.allSettled(tasks);
+  const failures = settled.filter(x => x.status === 'rejected').map(x => x.reason);
+  if (failures.some(e => e?.status === 401)) return showLogin();
+  const value = i => settled[i].status === 'fulfilled' ? settled[i].value : null;
+  const m=value(0),p=value(1),l=value(2),c=value(3),a=value(4),h=value(5),s=value(6);
+  if(m)metrics=m;if(p)plans=p.plans||[];if(l)licenses=l.licenses||[];if(c)clients=c.clients||[];if(a)auditEvents=a.events||[];
+  renderMetrics(); renderPlans(); renderRecent(); renderAudit(); renderLicenseSelects(); renderLicenses(); renderInspector(); renderClients();
+  if(h&&s)renderSystem(h,s);
+  if(failures.length) toast(`Atualização parcial: ${failures.length} fonte${failures.length===1?'':'s'} indisponível${failures.length===1?'':'is'}.`);
 }
 
 function showLogin() { $('#authGate').hidden = false; $('#loginKey').focus(); }

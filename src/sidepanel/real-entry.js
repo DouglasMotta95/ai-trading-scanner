@@ -52,8 +52,8 @@ function renderRealEntry(state = {}) {
 }
 
 async function syncRealEntry() {
-  const { scannerState = {} } = await chrome.storage.local.get('scannerState').catch(() => ({}));
-  renderRealEntry(scannerState);
+  const reply = await chrome.runtime.sendMessage({ type: 'ATS_READ_SCANNER_STATE' }).catch(() => ({ state: {} }));
+  renderRealEntry(reply?.state || {});
 }
 
 chrome.storage.onChanged.addListener(changes => {

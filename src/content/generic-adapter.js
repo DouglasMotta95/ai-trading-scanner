@@ -142,9 +142,15 @@
       for (const asset of assetsIn(text)) {
         const r = el.getBoundingClientRect();
         const classes = classText(el);
-        let score = (counts.get(asset) || 0) * 18;
-        if (/true|active|selected|current|checked/i.test(classes)) score += 130;
-        if (/\bOTC\b/i.test(text)) score += 55;
+        const directSelected = el.getAttribute?.('aria-selected') === 'true' || el.getAttribute?.('data-active') === 'true' || /^(active|selected|current)$/i.test(String(el.getAttribute?.('data-state') || ''));
+        const directRejected = el.getAttribute?.('aria-selected') === 'false' || /^(inactive|disabled)$/i.test(String(el.getAttribute?.('data-state') || ''));
+        const context = fold([classes, el.getAttribute?.('role'), el.getAttribute?.('data-testid'), el.getAttribute?.('aria-label')].filter(Boolean).join(' '));
+        let score = Math.min(40, (counts.get(asset) || 0) * 5);
+        if (directSelected) score += 420;
+        else if (/(?:^|[\s_-])(active|selected|current|checked)(?:$|[\s_-])/i.test(classes)) score += 110;
+        if (directRejected) score -= 320;
+        if (/chart|trade|instrument|asset|symbol|tab|header|market/.test(context)) score += 80;
+        if (/watchlist|asset-list|instrument-list|listbox|search|history|historico|portfolio|leader|ranking|modal|drawer|dropdown|menu/.test(context)) score -= directSelected ? 80 : 220;
         if (r.top >= 0 && r.top < innerHeight * .42) score += 35;
         if (r.left >= 0 && r.left < innerWidth * .7) score += 20;
         if (text.length < 35) score += 18;
@@ -154,7 +160,7 @@
     }
 
     if (!rows.length && counts.size) {
-      for (const [asset, count] of counts) rows.push({ asset, score: count * 18 + (/\(OTC\)$/.test(asset) ? 20 : 0) });
+      for (const [asset, count] of counts) rows.push({ asset, score: Math.min(40, count * 5) });
     }
     rows.sort((a, b) => b.score - a.score);
     return rows[0] || null;
@@ -300,11 +306,39 @@
     return key && Array.isArray(history[key]) ? history[key].slice(-120) : [];
   };
 
+  function selectedCountdown(timeframe = 'M1') {
+    const tf = normalizeTf(timeframe) || 'M1';
+    const tfSeconds = tf.startsWith('M') ? Number(tf.slice(1)) * 60 : tf.startsWith('S') ? Number(tf.slice(1)) : tf.startsWith('H') ? Number(tf.slice(1)) * 3600 : 60;
+    const rows = [];
+    for (const el of deepElements(6000)) {
+      if (!visible(el)) continue;
+      const text = textOf(el);
+      if (!text || text.length > 32) continue;
+      let seconds = null;
+      const clock = text.match(/^(\d{1,2}):([0-5]\d)$/);
+      if (clock) seconds = Number(clock[1]) * 60 + Number(clock[2]);
+      if (seconds == null) {
+        const plain = text.match(/^(\d{1,4})\s*(?:s|seg|segundo|segundos)$/i);
+        if (plain) seconds = Number(plain[1]);
+      }
+      if (!Number.isFinite(seconds) || seconds < 0 || seconds > tfSeconds + 2) continue;
+      const r = el.getBoundingClientRect();
+      const context = fold([classText(el), el.getAttribute?.('data-testid'), el.getAttribute?.('aria-label'), el.parentElement?.innerText].filter(Boolean).join(' '));
+      let score = clock ? 45 : 15;
+      if (/countdown|timer|remaining|restante|tempo|time|candle|chart|trade|expiry/.test(context)) score += 90;
+      if (r.top > innerHeight * .08 && r.top < innerHeight * .92) score += 15;
+      rows.push({ seconds, score });
+    }
+    rows.sort((a, b) => b.score - a.score);
+    return rows[0]?.seconds ?? null;
+  }
+
   function localObservation() {
     const active = scanAsset();
     const buttonQuote = tradeButtonPrice();
     const chartQuote = buttonQuote ? null : chartPrice();
     const quote = buttonQuote || chartQuote;
+    const timeframe = selectedTimeframe();
     return {
       frameId,
       href: location.href,
@@ -315,8 +349,9 @@
       buy: num(quote?.buy),
       sell: num(quote?.sell),
       priceSource: quote?.source || null,
-      timeframe: selectedTimeframe(),
+      timeframe,
       expiration: selectedExpiration(),
+      secondsRemaining: selectedCountdown(timeframe || 'M1'),
       instrumentType: instrumentType()
     };
   }
@@ -353,87 +388,71 @@
     lastEmitAt = now;
 
     const rows = recentFrameRows();
-    const explicitFocus = canonicalAsset(globalThis.__ATS_FOCUSED_ASSET_VALUE__ || '');
     const focusMeta = globalThis.__ATS_FOCUSED_ASSET_META__ || {};
+    const rawFocus = canonicalAsset(globalThis.__ATS_FOCUSED_ASSET_VALUE__ || focusMeta.asset || '');
+    const focusFresh = !!rawFocus && Number(focusMeta.at || 0) > 0 && now - Number(focusMeta.at) < 5000;
+    const explicitFocus = focusFresh ? rawFocus : '';
+    const focusSupported = focusFresh;
     const domChoice = bestDomAsset(rows);
     const anyNetwork = bestNetworkQuote('');
-    const focusRows = explicitFocus ? rows.filter(r => r.asset && sameAsset(r.asset, explicitFocus)) : [];
-    const focusNet = explicitFocus ? bestNetworkQuote(explicitFocus) : null;
-    const focusSupported = !!explicitFocus && (
-      focusRows.some(row => num(row.price) != null)
-      || !!focusNet
-      || focusMeta.reliable === true
-      || Number(focusMeta.score || 0) >= 90
-    );
 
-    let asset = focusSupported
+    const asset = focusSupported
       ? explicitFocus
-      : canonicalAsset(domChoice?.asset || anyNetwork?.asset || explicitFocus || '');
+      : canonicalAsset(domChoice?.asset || anyNetwork?.asset || '');
     if (!asset) return;
 
-    let sameAssetRows = rows.filter(r => r.asset && sameAsset(r.asset, asset));
-    let net = bestNetworkQuote(asset);
-    let priceRows = sameAssetRows
-      .filter((r, i, arr) => r.price != null && arr.indexOf(r) === i)
-      .sort((a, b) => Number(b.priceSource === 'buttons') - Number(a.priceSource === 'buttons') || b.at - a.at);
+    const sameAssetRows = rows.filter(r => r.asset && sameAsset(r.asset, asset));
+    const net = bestNetworkQuote(asset);
+    const priceRows = sameAssetRows
+      .filter(r => r.price != null)
+      .sort((a, b) => Number(b.priceSource === 'buttons') - Number(a.priceSource === 'buttons') || Number(b.at || 0) - Number(a.at || 0));
 
-    let price = priceRows[0]?.price ?? net?.price ?? null;
-    if (price == null && focusSupported && domChoice?.asset && !sameAsset(domChoice.asset, asset)) {
-      const fallbackAsset = canonicalAsset(domChoice.asset);
-      const fallbackRows = rows.filter(r => r.asset && sameAsset(r.asset, fallbackAsset));
-      const fallbackNet = bestNetworkQuote(fallbackAsset);
-      const fallbackPriceRows = fallbackRows
-        .filter(r => r.price != null)
-        .sort((a, b) => Number(b.priceSource === 'buttons') - Number(a.priceSource === 'buttons') || b.at - a.at);
-      const fallbackPrice = fallbackPriceRows[0]?.price ?? fallbackNet?.price ?? null;
-      if (fallbackPrice != null) {
-        asset = fallbackAsset;
-        sameAssetRows = fallbackRows;
-        net = fallbackNet;
-        priceRows = fallbackPriceRows;
-        price = fallbackPrice;
-      }
-    }
-
-    if (net?.price != null && price != null) {
+    const bestDomPrice = priceRows[0] || null;
+    let price = bestDomPrice?.price ?? net?.price ?? null;
+    if (bestDomPrice?.priceSource !== 'buttons' && net?.price != null && price != null) {
       const scale = Math.max(Math.abs(net.price), Math.abs(price), 1e-9);
       if (Math.abs(net.price - price) / scale > 0.08) price = net.price;
     }
-    if (price == null && net?.price != null) price = net.price;
-    if (price == null) return;
 
+    const assetChanged = !!lastAsset && !sameAsset(lastAsset, asset);
     const timeframe = sameAssetRows.map(r => r.timeframe).find(Boolean) || net?.timeframe || 'M1';
     const expiration = sameAssetRows.map(r => r.expiration).find(Boolean) || net?.expiration || null;
+    const secondsRemaining = sameAssetRows.map(r => num(r.secondsRemaining)).find(v => v != null)
+      ?? num(net?.secondsRemaining)
+      ?? null;
     const type = sameAssetRows.map(r => r.instrumentType).find(x => x && x !== 'unknown')
       || net?.instrumentType
       || 'unknown';
 
-    const assetSource = explicitFocus && sameAsset(asset, explicitFocus) && focusSupported
-      ? 'focused-screen'
+    const assetSource = focusSupported
+      ? (focusMeta.source === 'user-selection' ? 'focused-user-selection' : 'focused-screen')
       : domChoice?.asset && sameAsset(asset, domChoice.asset)
         ? 'dom-fallback'
         : 'network-fallback';
-    const priceSource = priceRows[0]?.priceSource || (net ? `network:${net.transport || 'quote'}` : 'unknown');
+    const priceSource = bestDomPrice?.priceSource || (net ? `network:${net.transport || 'quote'}` : null);
+    const history = assetChanged ? [] : historyFor(asset);
+    const marketType = /\(OTC\)$/i.test(asset) ? 'otc' : 'regular';
     lastAsset = asset;
 
-    const history = historyFor(asset);
-    const marketType = /\(OTC\)$/i.test(asset) ? 'otc' : 'regular';
-    const candidate = {
-      asset,
-      price,
-      timeframe,
-      expiration,
-      transport: net?.transport || priceRows[0]?.priceSource || 'dom',
-      source: net ? 'network+cross-frame-dom' : 'cross-frame-dom',
-      confidence: net ? Math.max(75, Number(net.confidence || 0)) : Math.max(70, Number(domChoice?.assetScore || 0)),
-      seenCount: Number(net?.seenCount || 1),
-      observedAt: Date.now()
-    };
-
-    chrome.runtime.sendMessage({
-      type: 'ATS_DOM_CATALOG',
-      payload: { candidates: [candidate], assetCount: 1, timeframe, expiration, instrumentType: type, marketType }
-    }).catch(() => {});
+    if (price != null) {
+      const candidate = {
+        asset,
+        price,
+        timeframe,
+        expiration,
+        secondsRemaining,
+        selected: focusSupported,
+        transport: net?.transport || bestDomPrice?.priceSource || 'dom',
+        source: net ? 'network+cross-frame-dom' : 'cross-frame-dom',
+        confidence: focusSupported ? 99 : net ? Math.max(75, Number(net.confidence || 0)) : Math.max(70, Number(domChoice?.assetScore || 0)),
+        seenCount: Number(net?.seenCount || 1),
+        observedAt: Date.now()
+      };
+      chrome.runtime.sendMessage({
+        type: 'ATS_DOM_CATALOG',
+        payload: { candidates: [candidate], assetCount: 1, timeframe, expiration, instrumentType: type, marketType }
+      }).catch(() => {});
+    }
 
     chrome.runtime.sendMessage({
       type: 'ATS_PLATFORM_SNAPSHOT',
@@ -441,7 +460,7 @@
         platformId: platform.id,
         platformName: platform.name,
         adapterVersion: chrome.runtime.getManifest().version,
-        connection: 'online',
+        connection: price != null ? 'online' : 'connecting',
         url: location.origin + location.pathname,
         asset,
         timeframe,
@@ -449,9 +468,10 @@
         marketType,
         instrumentType: type,
         expiration,
+        secondsRemaining,
         serverTime: Number(net?.timestamp) > 1e12 ? Number(net.timestamp) : null,
         candles: history,
-        ticks: [{ price, at: Date.now() }],
+        ticks: price != null ? [{ price, at: Date.now() }] : [],
         capabilities: {
           structuredQuotes: !!net,
           candles: history.length >= 3,
@@ -462,6 +482,7 @@
           capture: net ? 'rede-validada+cross-frame-dom' : 'cross-frame-dom-casatrade',
           assetSource,
           priceSource,
+          focusAuthoritative: focusSupported,
           focusReliable: focusMeta.reliable === true,
           focusScore: Number(focusMeta.score || 0),
           frameCount: rows.length,
@@ -514,8 +535,8 @@
       });
     }
 
-    const stored = await chrome.storage.local.get('scannerState').catch(() => ({}));
-    networkState = stored.scannerState?.diagnostics?.network || {};
+    const stored = await chrome.runtime.sendMessage({ type: 'ATS_READ_SCANNER_STATE' }).catch(() => ({ state: {} }));
+    networkState = stored?.state?.diagnostics?.network || {};
     chrome.storage.onChanged.addListener(changes => {
       if (!changes.scannerState) return;
       networkState = changes.scannerState.newValue?.diagnostics?.network || {};
