@@ -5,10 +5,8 @@
   const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
   const fold = value => clean(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
   const host = String(location.hostname || '').toLowerCase().replace(/\.$/, '');
-  const casaHost = value => value === 'casatrade.com' || value.endsWith('.casatrade.com') || value === 'casatrade.io' || value.endsWith('.casatrade.io');
   const traderHost = value => value === 'casatraders.online' || value.endsWith('.casatraders.online') || value === 'ivcasatraders.online' || value.endsWith('.ivcasatraders.online');
-  const inTraderFrame = traderHost(host);
-  if (!casaHost(host) && !inTraderFrame) return;
+  if (!traderHost(host)) return;
 
   const visible = el => {
     if (!el || !(el instanceof Element)) return false;
@@ -17,7 +15,7 @@
     return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity || 1) > 0;
   };
 
-  function deepElements(limit = 7000) {
+  function deepElements(limit = 6500) {
     const out = [];
     const roots = [document];
     const seen = new Set();
@@ -56,22 +54,21 @@
 
   function selectedTimeframe(fallback = 'M1') {
     const rows = [];
-    for (const el of deepElements(4500)) {
+    for (const el of deepElements(4000)) {
       if (!visible(el)) continue;
-      const text = clean(el.getAttribute?.('aria-label') || el.innerText || el.textContent || '');
-      if (!text || text.length > 24) continue;
+      const text = clean(el.getAttribute?.('aria-label') || el.getAttribute?.('title') || el.innerText || el.textContent || '');
+      if (!text || text.length > 28) continue;
       const tf = normalizeTf(text);
       if (!tf) continue;
       const flags = `${el.className || ''} ${el.getAttribute?.('aria-selected') || ''} ${el.getAttribute?.('aria-current') || ''} ${el.getAttribute?.('data-state') || ''}`;
-      const rect = el.getBoundingClientRect();
-      let score = /true|active|selected|current|checked/i.test(flags) ? 150 : 0;
-      if (rect.left < innerWidth * .45) score += 20;
-      if (rect.top > innerHeight * .08 && rect.top < innerHeight * .92) score += 12;
-      if (inTraderFrame) score += 25;
+      const context = fold(`${flags} ${el.parentElement?.innerText || ''}`);
+      let score = /true|active|selected|current|checked/i.test(flags) ? 180 : 0;
+      if (/vela|candle|timeframe|periodo|period/.test(context)) score += 90;
+      if (/expira|expiry|duration|hora de compra/.test(context)) score -= 120;
       rows.push({ tf, score });
     }
     rows.sort((a, b) => b.score - a.score);
-    return rows[0]?.tf || normalizeTf(fallback) || 'M1';
+    return rows[0]?.score > 0 ? rows[0].tf : (normalizeTf(fallback) || 'M1');
   }
 
   function countdownFromDom(tf) {
@@ -79,55 +76,45 @@
     const rows = [];
     for (const el of deepElements()) {
       if (!visible(el)) continue;
-      const ownText = clean(el.getAttribute?.('aria-label') || el.getAttribute?.('aria-valuetext') || el.innerText || el.textContent || '');
-      if (!ownText || ownText.length > 100) continue;
-      const local = clean(`${ownText} ${el.parentElement?.innerText || ''} ${el.parentElement?.parentElement?.innerText || ''}`).slice(0, 320);
-      const localFold = fold(local);
-      const timerContext = /hora de compra|buy time|entry time|entrada|countdown|timer|remaining|restante|tempo|candle|vela|chart|grafico|gráfico/.test(localFold);
-      const expiryContext = /expira|expiry|expiration|duration|dura[cç][aã]o|valor|amount|retorno|lucro|profit/.test(localFold);
+      const own = clean(el.getAttribute?.('aria-label') || el.getAttribute?.('aria-valuetext') || el.getAttribute?.('title') || el.innerText || el.textContent || '');
+      if (!own || own.length > 120) continue;
+      const local = clean(`${own} ${el.parentElement?.innerText || ''} ${el.parentElement?.parentElement?.innerText || ''}`).slice(0, 360);
+      const ctx = fold(local);
+      const exactContext = /hora de compra|buy time|entry time|tempo da vela|candle time|tempo restante|remaining|restante|countdown|timer/.test(ctx);
+      const expiryContext = /expira|expiry|expiration|duration|duracao|duração|valor|amount|retorno|lucro|profit/.test(ctx);
+      if (!exactContext || expiryContext) continue;
 
       const candidates = [];
-      for (const match of ownText.matchAll(/\b(\d{1,2}):(\d{2})\b/g)) {
-        const seconds = Number(match[1]) * 60 + Number(match[2]);
-        candidates.push({ seconds, kind: 'clock' });
+      for (const match of local.matchAll(/\b(\d{1,2}):(\d{2})\b/g)) {
+        candidates.push({ seconds: Number(match[1]) * 60 + Number(match[2]), token: match[0] });
       }
-      const plain = ownText.match(/\b(\d{1,4})\s*(?:s|seg|segundo|segundos)\b/i);
-      if (plain) candidates.push({ seconds: Number(plain[1]), kind: 'plain' });
+      for (const match of local.matchAll(/\b(\d{1,4})\s*(?:s|seg|segundo|segundos)\b/gi)) {
+        candidates.push({ seconds: Number(match[1]), token: match[0] });
+      }
 
       for (const candidate of candidates) {
-        const seconds = candidate.seconds;
-        if (!Number.isFinite(seconds) || seconds < 0 || seconds > limit + 2) continue;
+        if (!Number.isFinite(candidate.seconds) || candidate.seconds < 0 || candidate.seconds > limit + 2) continue;
+        let score = 220;
+        if (/hora de compra|buy time|entry time/.test(ctx)) score += 260;
+        if (/tempo da vela|candle time|countdown|remaining|restante/.test(ctx)) score += 150;
         const rect = el.getBoundingClientRect();
-        let score = candidate.kind === 'clock' ? 70 : 30;
-        if (timerContext) score += 190;
-        if (/hora de compra|buy time|entry time/.test(localFold)) score += 170;
-        if (expiryContext) score -= 220;
-        if (inTraderFrame) score += 90;
-        if (rect.top > innerHeight * .05 && rect.top < innerHeight * .95) score += 20;
-        if (rect.left > innerWidth * .20) score += 10;
-        if (seconds === limit && !timerContext) score -= 100;
-        rows.push({ seconds, score, text: ownText });
+        if (rect.width < innerWidth * .8) score += 30;
+        rows.push({ seconds: candidate.seconds, score, token: candidate.token, text: own });
       }
     }
     rows.sort((a, b) => b.score - a.score);
-    return rows[0] && rows[0].score >= 55 ? rows[0] : null;
-  }
-
-  function phaseCountdown(tf) {
-    const span = timeframeSeconds(tf);
-    const phase = (Date.now() / 1000) % span;
-    const remaining = Math.ceil(span - phase);
-    return Math.max(1, Math.min(span, remaining));
+    return rows[0] || null;
   }
 
   function expirationFromDom() {
     const rows = [];
     for (const el of deepElements()) {
       if (!visible(el)) continue;
-      const text = clean(el.getAttribute?.('aria-label') || el.getAttribute?.('aria-valuetext') || el.innerText || el.textContent || '');
-      if (!text || text.length > 90) continue;
-      const local = clean(`${text} ${el.parentElement?.innerText || ''} ${el.parentElement?.parentElement?.innerText || ''}`).slice(0, 260);
-      if (!/expira|expiry|expiration|dura[cç][aã]o|duration/i.test(local)) continue;
+      const own = clean(el.getAttribute?.('aria-label') || el.getAttribute?.('aria-valuetext') || el.getAttribute?.('title') || el.innerText || el.textContent || '');
+      if (!own || own.length > 120) continue;
+      const local = clean(`${own} ${el.parentElement?.innerText || ''} ${el.parentElement?.parentElement?.innerText || ''}`).slice(0, 360);
+      const ctx = fold(local);
+      if (!/expira|expiry|expiration|duracao|duração|duration/.test(ctx)) continue;
       const duration = local.match(/\b(\d{1,4})\s*(s|seg|segundo|segundos|m|min|minuto|minutos)\b/i);
       const absolute = local.match(/\b([01]?\d|2[0-3]):([0-5]\d)\b/);
       let value = null;
@@ -137,13 +124,7 @@
       } else if (absolute) {
         value = `${String(Number(absolute[1])).padStart(2, '0')}:${absolute[2]}`;
       }
-      if (!value) continue;
-      const flags = `${el.className || ''} ${el.getAttribute?.('aria-selected') || ''} ${el.getAttribute?.('data-state') || ''}`;
-      let score = 80;
-      if (/true|active|selected|current/i.test(flags)) score += 80;
-      if (/expira|expiry|duration/i.test(fold(text))) score += 40;
-      if (inTraderFrame) score += 20;
-      rows.push({ value, score });
+      if (value) rows.push({ value, score: /expira|expiry|duration/.test(fold(own)) ? 180 : 110 });
     }
     rows.sort((a, b) => b.score - a.score);
     return rows[0] || null;
@@ -160,25 +141,43 @@
       const response = await chrome.runtime.sendMessage({ type: 'ATS_READ_SCANNER_STATE' }).catch(() => null);
       const state = response?.state || null;
       if (!state?.license || !['active','valid'].includes(String(state.license.status || '').toLowerCase())) return;
-      const focus = state.diagnostics?.focusedAsset?.asset || state.asset || '';
-      if (!focus) return;
+      const focusMeta = state.diagnostics?.focusedAsset || null;
+      const focus = focusMeta?.asset || '';
+      if (!focus || String(focusMeta?.frameHost || '').toLowerCase() !== host || focusMeta?.embeddedTrader !== true) return;
+
       const tf = selectedTimeframe(state.analysisTimeframe || state.timeframe || 'M1');
       const domClock = countdownFromDom(tf);
-      const secondsRemaining = domClock?.seconds ?? phaseCountdown(tf);
-      const expiration = expirationFromDom()?.value || state.targetExpiration || state.expiration || null;
-      const payload = {
+      const expiration = expirationFromDom()?.value || null;
+      const payload = domClock ? {
         type: 'ATS_MARKET_CLOCK_V2',
         asset: focus,
         timeframe: tf,
-        secondsRemaining,
+        secondsRemaining: domClock.seconds,
         expiration,
-        clockSource: domClock ? (inTraderFrame ? 'trader-dom-countdown' : 'dom-countdown') : 'timeframe-phase',
-        confidence: domClock ? Math.max(inTraderFrame ? 95 : 80, Number(domClock.score || 0)) : 55,
+        available: true,
+        verified: true,
+        clockSource: 'trader-dom-countdown',
+        clockText: domClock.text,
+        clockToken: domClock.token,
+        confidence: Math.max(98, Number(domClock.score || 0)),
+        frameHost: host,
+        at: Date.now()
+      } : {
+        type: 'ATS_MARKET_CLOCK_V2',
+        asset: focus,
+        timeframe: tf,
+        secondsRemaining: null,
+        expiration,
+        available: false,
+        verified: false,
+        clockSource: 'trader-dom-unavailable',
+        confidence: 0,
         frameHost: host,
         at: Date.now()
       };
-      const key = `${payload.asset}|${payload.timeframe}|${payload.secondsRemaining}|${payload.expiration || ''}|${payload.clockSource}`;
-      if (key === lastKey && Date.now() - lastSentAt < 650) return;
+
+      const key = `${payload.asset}|${payload.timeframe}|${payload.secondsRemaining ?? 'x'}|${payload.expiration || ''}|${payload.clockSource}`;
+      if (key === lastKey && Date.now() - lastSentAt < 700) return;
       lastKey = key;
       lastSentAt = Date.now();
       await chrome.runtime.sendMessage(payload).catch(() => null);
@@ -187,6 +186,6 @@
     }
   }
 
-  setInterval(tick, 300);
+  setInterval(tick, 250);
   tick();
 })();
