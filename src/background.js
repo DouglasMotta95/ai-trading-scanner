@@ -4,6 +4,7 @@ import { detectPlatform } from './platforms/registry.js';
 import { activateLicense, validateLicense, consumeSignal, clearLicense, licenseRequired, restoreCachedLicense } from './services/license.js';
 import { heartbeat, track } from './services/telemetry.js';
 import { readScannerState, updateScannerState, replaceScannerState } from './services/scanner-state-atomic.js';
+import { resolveSignalHistory, signalPerformance } from './core/signal-outcomes.js';
 
 const SESSION_HISTORY_KEY = 'atsSessionSignalHistory';
 const COMPLETED_DECISIONS_KEY = 'atsCompletedDecisions';
@@ -176,7 +177,8 @@ function localSignalRecord(state) {
     id: crypto.randomUUID(), at: Date.now(), asset: state.asset || '—', platform: 'CasaTrade', direction: s.direction,
     timeframe: state.analysisTimeframe || s.timeframe || state.timeframe || null,
     expiration: state.targetExpiration || s.targetExpiration || state.expiration || null,
-    entryPrice: num(state.price), status: 'confirmed'
+    targetStart: num(s.targetStart), score: Number(s.score || 0), regime: s.regime?.type || null,
+    entryPrice: null, exitPrice: null, result: null, status: 'pending', outcomeBasis: 'target_candle_open_close'
   };
 }
 
@@ -184,6 +186,16 @@ async function appendSessionHistory(record) {
   const stored = await chrome.storage.session.get(SESSION_HISTORY_KEY);
   const rows = Array.isArray(stored[SESSION_HISTORY_KEY]) ? stored[SESSION_HISTORY_KEY] : [];
   await chrome.storage.session.set({ [SESSION_HISTORY_KEY]: [record, ...rows].slice(0, 50) });
+}
+
+async function resolveSessionHistoryOutcomes(marketState = {}) {
+  const stored = await chrome.storage.session.get(SESSION_HISTORY_KEY);
+  const rows = Array.isArray(stored[SESSION_HISTORY_KEY]) ? stored[SESSION_HISTORY_KEY] : [];
+  if (!rows.length) return [];
+  const outcome = resolveSignalHistory(rows, marketState);
+  if (!outcome.resolved.length) return [];
+  await chrome.storage.session.set({ [SESSION_HISTORY_KEY]: outcome.rows.slice(0, 50) });
+  return outcome.resolved;
 }
 
 async function activeCasaTradeTab() {
@@ -679,6 +691,10 @@ async function applySnapshot(snapshot, _scannerState = {}, settings = {}, platfo
     await appendSessionHistory(confirmedRecord);
     await telemetryEvent('signal_confirmed', confirmedRecord, settings);
   }
+  if (processedSnapshot) {
+    const resolvedRecords = await resolveSessionHistoryOutcomes(next).catch(() => []);
+    for (const record of resolvedRecords) await telemetryEvent('signal_resolved', record, settings);
+  }
   telemetryHeartbeat(next, settings, becameConfirm);
   return next;
 }
@@ -1005,10 +1021,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type === 'ATS_GET_SESSION_HISTORY') {
-    chrome.storage.session.get(SESSION_HISTORY_KEY).then(x => sendResponse({
-      ok: true,
-      rows: Array.isArray(x[SESSION_HISTORY_KEY]) ? x[SESSION_HISTORY_KEY] : []
-    }));
+    chrome.storage.session.get(SESSION_HISTORY_KEY).then(x => {
+      const rows = Array.isArray(x[SESSION_HISTORY_KEY]) ? x[SESSION_HISTORY_KEY] : [];
+      sendResponse({ ok: true, rows, performance: signalPerformance(rows) });
+    });
     return true;
   }
 
