@@ -1,0 +1,206 @@
+name: Apply unified installation ID fix
+
+on:
+  push:
+    branches:
+      - fix/production-secret-installation-id
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Unify installation identity and validate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          telemetry = Path('src/services/telemetry.js')
+          s = telemetry.read_text()
+          old = """function stableInstallationId() {
+            const runtimeId = String(chrome.runtime?.id || '').trim();
+            return runtimeId ? `ats-${runtimeId}` : crypto.randomUUID();
+          }
+
+          export async function installationId() {
+            const x = await chrome.storage.local.get(INSTALL_KEY);
+            if (x[INSTALL_KEY]) return x[INSTALL_KEY];
+            const id = stableInstallationId();
+            await chrome.storage.local.set({ [INSTALL_KEY]: id });
+            return id;
+          }
+          """
+          new = """const randomInstallationId = () => `ats-install-${crypto.randomUUID()}`;
+          const legacyRuntimeInstallationId = () => {
+            const runtimeId = String(chrome.runtime?.id || '').trim();
+            return runtimeId ? `ats-${runtimeId}` : '';
+          };
+          let installationIdPromise = null;
+
+          export async function installationId() {
+            if (installationIdPromise) return installationIdPromise;
+            installationIdPromise = (async () => {
+              const x = await chrome.storage.local.get(INSTALL_KEY);
+              const existing = String(x[INSTALL_KEY] || '').trim();
+              const legacyId = legacyRuntimeInstallationId();
+              if (existing && existing !== legacyId) return existing;
+
+              const id = randomInstallationId();
+              await chrome.storage.local.set({ [INSTALL_KEY]: id });
+              const persisted = await chrome.storage.local.get(INSTALL_KEY);
+              return String(persisted[INSTALL_KEY] || id).trim() || id;
+            })();
+            try {
+              return await installationIdPromise;
+            } finally {
+              installationIdPromise = null;
+            }
+          }
+          """
+          if old not in s:
+              raise SystemExit('telemetry installationId block not found')
+          telemetry.write_text(s.replace(old, new, 1))
+
+          account = Path('src/sidepanel/account-login.js')
+          s = account.read_text()
+          if not s.startswith('(() => {'):
+              raise SystemExit('unexpected account-login module shape')
+          s = "import { installationId } from '../services/telemetry.js';\n\n" + s
+          s = s.replace("  const INSTALL_KEY = 'atsInstallationId';\n", '', 1)
+          start = s.find('  const randomInstallId = () =>')
+          end = s.find('\n\n  async function permission(url)', start)
+          if start < 0 or end < 0:
+              raise SystemExit('account-login duplicate installation id block not found')
+          s = s[:start] + s[end+2:]
+          s = s.replace('installationId: await installId()', 'installationId: await installationId()')
+          if 'installId()' in s or 'randomInstallId' in s or 'legacyRuntimeInstallId' in s or 'installIdPromise' in s:
+              raise SystemExit('duplicate account installation id implementation remains')
+          account.write_text(s)
+
+          index = Path('src/sidepanel/index.html')
+          s = index.read_text()
+          old_script = '<script src="account-login.js"></script>'
+          new_script = '<script type="module" src="account-login.js"></script>'
+          if old_script not in s:
+              raise SystemExit('account-login script tag not found')
+          index.write_text(s.replace(old_script, new_script, 1))
+
+          test_file = Path('test/production-hardening.test.mjs')
+          s = test_file.read_text()
+          s = s.replace("import { fileURLToPath } from 'node:url';", "import { fileURLToPath, pathToFileURL } from 'node:url';", 1)
+          marker = "test('installationId is a random UUID persisted once per installation and migrates the legacy runtime id', () => {"
+          pos = s.find(marker)
+          if pos < 0:
+              raise SystemExit('old account-login-only installation test not found')
+          s = s[:pos] + r'''function storageMock(initial = {}) {
+            const values = { ...initial };
+            return {
+              values,
+              api: {
+                async get(keys) {
+                  if (Array.isArray(keys)) return Object.fromEntries(keys.map(key => [key, values[key]]));
+                  if (typeof keys === 'string') return { [keys]: values[keys] };
+                  return { ...values };
+                },
+                async set(patch) { Object.assign(values, patch); },
+                async remove(keys) {
+                  for (const key of (Array.isArray(keys) ? keys : [keys])) delete values[key];
+                }
+              }
+            };
+          }
+
+          async function withInstallationGlobals({ initial = {}, uuid }, run) {
+            const hadChrome = Object.prototype.hasOwnProperty.call(globalThis, 'chrome');
+            const previousChrome = globalThis.chrome;
+            const cryptoDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
+            const mock = storageMock(initial);
+            let uuidCalls = 0;
+            globalThis.chrome = {
+              runtime: {
+                id: 'shared-extension-runtime-id',
+                getManifest: () => ({ version: 'test' })
+              },
+              storage: { local: mock.api }
+            };
+            Object.defineProperty(globalThis, 'crypto', {
+              configurable: true,
+              value: { randomUUID: () => { uuidCalls += 1; return uuid; } }
+            });
+            try {
+              const url = pathToFileURL(path.join(root, 'src/services/telemetry.js')).href;
+              const telemetry = await import(`${url}?test=${Date.now()}-${Math.random()}`);
+              return await run({ telemetry, values: mock.values, uuidCalls: () => uuidCalls });
+            } finally {
+              if (hadChrome) globalThis.chrome = previousChrome;
+              else delete globalThis.chrome;
+              if (cryptoDescriptor) Object.defineProperty(globalThis, 'crypto', cryptoDescriptor);
+              else delete globalThis.crypto;
+            }
+          }
+
+          test('telemetry installationId generates one UUID and reuses it across concurrent calls', async () => {
+            await withInstallationGlobals({
+              uuid: '11111111-1111-4111-8111-111111111111'
+            }, async ({ telemetry, values, uuidCalls }) => {
+              const ids = await Promise.all([
+                telemetry.installationId(),
+                telemetry.installationId(),
+                telemetry.installationId()
+              ]);
+              const expected = 'ats-install-11111111-1111-4111-8111-111111111111';
+              assert.deepEqual(ids, [expected, expected, expected]);
+              assert.equal(values.atsInstallationId, expected);
+              assert.equal(uuidCalls(), 1);
+              assert.notEqual(expected, 'ats-shared-extension-runtime-id');
+            });
+          });
+
+          test('telemetry installationId migrates the legacy chrome.runtime.id based value', async () => {
+            await withInstallationGlobals({
+              initial: { atsInstallationId: 'ats-shared-extension-runtime-id' },
+              uuid: '22222222-2222-4222-8222-222222222222'
+            }, async ({ telemetry, values, uuidCalls }) => {
+              const id = await telemetry.installationId();
+              const expected = 'ats-install-22222222-2222-4222-8222-222222222222';
+              assert.equal(id, expected);
+              assert.equal(values.atsInstallationId, expected);
+              assert.equal(uuidCalls(), 1);
+            });
+          });
+
+          test('account login imports the shared telemetry installationId instead of duplicating it', () => {
+            const account = read('src/sidepanel/account-login.js');
+            const index = read('src/sidepanel/index.html');
+            assert.match(account, /import \{ installationId \} from '\.\.\/services\/telemetry\.js';/);
+            assert.match(account, /installationId: await installationId\(\)/);
+            assert.doesNotMatch(account, /randomInstallId|legacyRuntimeInstallId|installIdPromise|stableInstallId/);
+            assert.match(index, /<script type="module" src="account-login\.js"><\/script>/);
+          });
+          '''
+          test_file.write_text(s)
+          PY
+
+          node --check src/services/telemetry.js
+          node --check src/sidepanel/account-login.js
+          node --check test/production-hardening.test.mjs
+          cd backend
+          npm test
+          cd ..
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/services/telemetry.js src/sidepanel/account-login.js src/sidepanel/index.html test/production-hardening.test.mjs
+          git commit -m "fix: unify installation identity source"
+          git push origin HEAD:fix/production-secret-installation-id
