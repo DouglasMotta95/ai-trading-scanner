@@ -19,7 +19,9 @@ jobs:
         with:
           node-version: 20
       - name: Apply Quetta/mobile compatibility patch
-        run: python3 .github/scripts/fix-mobile-runtime.py
+        run: |
+          python3 .github/scripts/fix-mobile-runtime.py
+          python3 .github/scripts/update-mobile-regressions.py
       - name: Validate extension and tests
         run: |
           find src -name '*.js' -print0 | xargs -0 -n1 node --check
@@ -29,7 +31,7 @@ jobs:
           cd ..
       - name: Commit functional changes and remove temporary helpers
         run: |
-          rm -f .github/scripts/fix-mobile-runtime.py .github/workflows/apply-mobile-runtime-fix.yml
+          rm -f .github/scripts/fix-mobile-runtime.py .github/scripts/update-mobile-regressions.py .github/workflows/apply-mobile-runtime-fix.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
