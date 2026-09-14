@@ -1,0 +1,802 @@
+name: Apply visual guidance implementation
+
+on:
+  push:
+    branches:
+      - feat/visual-guidance-audio-alerts
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Apply implementation and validate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              s = p.read_text()
+              if old not in s:
+                  raise SystemExit(f'pattern not found in {path}: {old[:100]!r}')
+              p.write_text(s.replace(old, new, 1))
+
+          # --- analysis.js: expose breakout levels + structured waitingFor ---
+          path = Path('src/core/analysis.js')
+          s = path.read_text()
+          thresholds = """export const ANALYST_THRESHOLDS = Object.freeze({
+            minimumClosedCandles: 2,
+            preferredClosedCandles: 3,
+            minimumPatternRows: 3,
+            possibleScore: 44,
+            confirmScore: 58,
+            candleStrength: 62,
+            rejectionStrength: 50
+          });
+          """
+          guidance = thresholds + r'''
+          const formatLevel = value => {
+            const n = finite(value);
+            if (n == null) return '—';
+            const abs = Math.abs(n);
+            const digits = abs >= 1000 ? 2 : abs >= 100 ? 3 : abs >= 1 ? 5 : 8;
+            return n.toFixed(digits).replace(/0+$/, '').replace(/\.$/, '');
+          };
+
+          export function waitingFor(recent = {}, direction = null, score = 0) {
+            if (!recent?.ready) {
+              return {
+                type: 'history', direction: null, label: 'Histórico recente', level: null,
+                current: Number(recent?.count || 0), required: ANALYST_THRESHOLDS.minimumPatternRows,
+                text: 'Aguardando histórico recente suficiente para formar o padrão.'
+              };
+            }
+
+            const metrics = recent.metrics || {};
+            const chosenDirection = ['BUY', 'SELL'].includes(direction) ? direction : null;
+            const lastClose = finite(recent.lastClose);
+            const avgRange = Math.max(1e-12, finite(recent.averageRange) || Math.abs(Number(recent.resistance || 0) - Number(recent.support || 0)) || 1);
+            const candidates = [];
+            const add = candidate => {
+              if (!candidate || !Number.isFinite(Number(candidate.gap))) return;
+              candidates.push(candidate);
+            };
+            const levelGap = (level, side) => {
+              const n = finite(level);
+              if (n == null || lastClose == null) return Infinity;
+              const distance = side === 'BUY' ? Math.max(0, n - lastClose) : Math.max(0, lastClose - n);
+              return distance / avgRange;
+            };
+
+            if (!chosenDirection || chosenDirection === 'BUY') {
+              const level = finite(recent.breakoutHigh);
+              if (recent.breakout !== 'BUY' && level != null) add({
+                type: 'breakout', direction: 'BUY', label: 'Rompimento da máxima', level,
+                current: lastClose, required: level, gap: levelGap(level, 'BUY'),
+                text: `Aguardando rompimento da máxima recente em ${formatLevel(level)}.`
+              });
+            }
+            if (!chosenDirection || chosenDirection === 'SELL') {
+              const level = finite(recent.breakoutLow);
+              if (recent.breakout !== 'SELL' && level != null) add({
+                type: 'breakout', direction: 'SELL', label: 'Rompimento da mínima', level,
+                current: lastClose, required: level, gap: levelGap(level, 'SELL'),
+                text: `Aguardando rompimento da mínima recente em ${formatLevel(level)}.`
+              });
+            }
+
+            if (chosenDirection) {
+              const buy = chosenDirection === 'BUY';
+              const rejectionNow = Number(buy ? metrics.rejectionBuy : metrics.rejectionSell) || 0;
+              if (recent.rejection !== chosenDirection) add({
+                type: 'rejection', direction: chosenDirection,
+                label: `Rejeição ${buy ? 'compradora' : 'vendedora'}`, level: null,
+                current: rejectionNow, required: ANALYST_THRESHOLDS.rejectionStrength,
+                gap: Math.max(0, ANALYST_THRESHOLDS.rejectionStrength - rejectionNow) / ANALYST_THRESHOLDS.rejectionStrength,
+                text: `Aguardando confirmação de rejeição ${buy ? 'compradora' : 'vendedora'} (${Math.round(rejectionNow)}%/${ANALYST_THRESHOLDS.rejectionStrength}%).`
+              });
+
+              const power = Number(buy ? metrics.buyPower : metrics.sellPower) || 0;
+              if (power < 50) add({
+                type: 'power', direction: chosenDirection,
+                label: `Poder ${buy ? 'comprador' : 'vendedor'}`, level: null,
+                current: power, required: 50, gap: (50 - power) / 50,
+                text: `Aguardando poder ${buy ? 'comprador' : 'vendedor'} atingir 50% (agora ${Math.round(power)}%).`
+              });
+
+              const strength = Number(metrics.currentStrength || 0);
+              if (strength < ANALYST_THRESHOLDS.candleStrength) add({
+                type: 'candle_strength', direction: chosenDirection,
+                label: 'Força da vela atual', level: null,
+                current: strength, required: ANALYST_THRESHOLDS.candleStrength,
+                gap: Math.max(0, ANALYST_THRESHOLDS.candleStrength - strength) / ANALYST_THRESHOLDS.candleStrength,
+                text: `Aguardando força da vela atingir ${ANALYST_THRESHOLDS.candleStrength}% (agora ${Math.round(strength)}%).`
+              });
+
+              const continuation = Number(recent.continuationScore || 0);
+              if (recent.continuationDirection !== chosenDirection || continuation < 60) add({
+                type: 'continuation', direction: chosenDirection,
+                label: 'Continuação do movimento', level: null,
+                current: continuation, required: 60,
+                gap: Math.max(0, 60 - continuation) / 60,
+                text: `Aguardando continuidade ${buy ? 'compradora' : 'vendedora'} ficar consistente (${Math.round(continuation)}%/60%).`
+              });
+            }
+
+            const targetScore = Number(score) < ANALYST_THRESHOLDS.possibleScore
+              ? ANALYST_THRESHOLDS.possibleScore
+              : Number(score) < ANALYST_THRESHOLDS.confirmScore
+                ? ANALYST_THRESHOLDS.confirmScore
+                : null;
+            if (targetScore != null) add({
+              type: targetScore === ANALYST_THRESHOLDS.possibleScore ? 'possible_score' : 'confirm_score',
+              direction: chosenDirection, label: 'Força do padrão', level: null,
+              current: Number(score) || 0, required: targetScore,
+              gap: Math.max(0, targetScore - Number(score || 0)) / targetScore,
+              text: `Aguardando força do padrão atingir ${targetScore}/100 (agora ${Math.round(Number(score) || 0)}/100).`
+            });
+
+            if ((recent.lateral || (recent.reasons || []).some(reason => /compressão/i.test(String(reason)))) && candidates.length) {
+              for (const candidate of candidates) if (candidate.type === 'breakout') candidate.gap *= .45;
+            }
+
+            candidates.sort((a, b) => a.gap - b.gap);
+            const best = candidates[0];
+            if (best) {
+              const { gap, ...publicCandidate } = best;
+              return publicCandidate;
+            }
+            return {
+              type: 'stability', direction: chosenDirection, label: 'Confirmação estável', level: null,
+              current: null, required: 2,
+              text: 'Aguardando nova confirmação estável do padrão.'
+            };
+          }
+          '''
+          if thresholds not in s:
+              raise SystemExit('threshold block not found')
+          s = s.replace(thresholds, guidance, 1)
+
+          s = s.replace("""      metrics: analystMetrics(rows)
+              };""", """      metrics: analystMetrics(rows),
+                breakoutHigh: null,
+                breakoutLow: null,
+                support: null,
+                resistance: null,
+                averageRange: null,
+                lastClose: rows[rows.length - 1]?.close ?? null
+              };""", 1)
+
+          old = """  const prevHigh = Math.max(...prev.slice(-4).map(x => x.high));
+            const prevLow = Math.min(...prev.slice(-4).map(x => x.low));
+            const breakout = last.close > prevHigh ? 'BUY' : last.close < prevLow ? 'SELL' : null;"""
+          new = """  const prevHigh = Math.max(...prev.slice(-4).map(x => x.high));
+            const prevLow = Math.min(...prev.slice(-4).map(x => x.low));
+            const averageRange = avg(rows.map(x => x.range));
+            const breakout = last.close > prevHigh ? 'BUY' : last.close < prevLow ? 'SELL' : null;"""
+          if old not in s: raise SystemExit('breakout block not found')
+          s = s.replace(old, new, 1)
+
+          old = """    continuationScore,
+              metrics,
+              reasons
+            };"""
+          new = """    continuationScore,
+              metrics,
+              breakoutHigh: prevHigh,
+              breakoutLow: prevLow,
+              support,
+              resistance,
+              averageRange,
+              lastClose: last.close,
+              reasons
+            };"""
+          if old not in s: raise SystemExit('recent return block not found')
+          s = s.replace(old, new, 1)
+
+          old = """  const recent = recentPriceAction(rows);
+            if (!recent.ready) {"""
+          new = """  const recent = recentPriceAction(rows);
+            const levelAnalytics = {
+              breakoutHigh: recent.breakoutHigh ?? null,
+              breakoutLow: recent.breakoutLow ?? null,
+              support: recent.support ?? null,
+              resistance: recent.resistance ?? null,
+              trendDirection: recent.direction || null
+            };
+            if (!recent.ready) {"""
+          if old not in s: raise SystemExit('analyze recent block not found')
+          s = s.replace(old, new, 1)
+
+          old = """      indicators: indicatorReinforcement(indicatorRows, null),
+                analytics: recent.metrics || {}
+              };"""
+          new = """      indicators: indicatorReinforcement(indicatorRows, null),
+                analytics: { ...(recent.metrics || {}), ...levelAnalytics },
+                waitingFor: waitingFor(recent, null, 0)
+              };"""
+          if old not in s: raise SystemExit('not-ready return not found')
+          s = s.replace(old, new, 1)
+
+          old = """      indicators: indicatorReinforcement(indicatorRows, null),
+                analytics: recent.metrics || {}
+              };"""
+          new = """      indicators: indicatorReinforcement(indicatorRows, null),
+                analytics: { ...(recent.metrics || {}), ...levelAnalytics },
+                waitingFor: waitingFor(recent, null, recent.score)
+              };"""
+          if old not in s: raise SystemExit('no-direction return not found')
+          s = s.replace(old, new, 1)
+
+          old = """    indicators,
+              analytics: {
+                ...(recent.metrics || {}),
+                continuationDirection: recent.continuationDirection || null,"""
+          new = """    indicators,
+              waitingFor: waitingFor(recent, recent.direction, score),
+              analytics: {
+                ...(recent.metrics || {}),
+                ...levelAnalytics,
+                continuationDirection: recent.continuationDirection || null,"""
+          if old not in s: raise SystemExit('final analytics block not found')
+          s = s.replace(old, new, 1)
+          path.write_text(s)
+
+          # --- orchestrator.js: propagate waitingFor and use it for WAIT text ---
+          path = Path('src/core/orchestrator.js')
+          s = path.read_text()
+          s = s.replace("if (!direction) return 'Sem direção firme para a próxima vela neste momento.';", "if (!direction) return result?.waitingFor?.text || 'Sem direção firme para a próxima vela neste momento.';", 1)
+          s = s.replace("uiState = 'ANALYZING_MARKET', analytics = {}, stability = null", "uiState = 'ANALYZING_MARKET', analytics = {}, waitingFor = null, stability = null", 1)
+          s = s.replace("    analytics,\n    stability,", "    analytics,\n    waitingFor,\n    stability,", 1)
+          s = s.replace("    analytics: liveResult.analytics || {},\n    stability:", "    analytics: liveResult.analytics || {},\n    waitingFor: liveResult.waitingFor || null,\n    stability:", 1)
+          s = s.replace("reason: 'Sem confirmação estável suficiente para liberar a próxima vela.',", "reason: liveResult.waitingFor?.text || 'Sem confirmação estável suficiente para liberar a próxima vela.',", 1)
+          s = s.replace("reason: 'Sem padrão estável forte o suficiente para a próxima vela.',", "reason: liveResult.waitingFor?.text || 'Sem padrão estável forte o suficiente para a próxima vela.',", 1)
+          s = s.replace("reason: 'Padrão ainda sem qualidade suficiente para sinalizar a próxima vela.',", "reason: liveResult.waitingFor?.text || 'Padrão ainda sem qualidade suficiente para sinalizar a próxima vela.',", 1)
+          old = """      reason: buildingPattern
+                  ? `Montando padrão da próxima vela: ${analyticsSummary(liveResult, direction)}.`
+                  : 'Analisando poder de compra/venda, rejeição, força e momentum do mercado atual.',"""
+          new = """      reason: liveResult.waitingFor?.text || (buildingPattern
+                  ? `Montando padrão da próxima vela: ${analyticsSummary(liveResult, direction)}.`
+                  : 'Analisando poder de compra/venda, rejeição, força e momentum do mercado atual.'),"""
+          if old not in s: raise SystemExit('building reason block not found')
+          s = s.replace(old, new, 1)
+          path.write_text(s)
+
+          # --- overlay content script ---
+          Path('src/content/analysis-visual-overlay.js').write_text(r'''(() => {
+            if (globalThis.__ATS_ANALYSIS_VISUAL_OVERLAY__) return;
+            globalThis.__ATS_ANALYSIS_VISUAL_OVERLAY__ = true;
+
+            const PREF_KEY = 'atsScannerUiPreferences';
+            const DEFAULT_PREFS = { overlayEnabled: false, possibleSoundEnabled: false, confirmSoundEnabled: false };
+            const host = String(location.hostname || '').toLowerCase().replace(/\.$/, '');
+            const refHost = (() => { try { return new URL(document.referrer || '').hostname.toLowerCase().replace(/\.$/, ''); } catch { return ''; } })();
+            const isCasaTrade = value => value === 'casatrade.com' || value.endsWith('.casatrade.com') || value === 'casatrade.io' || value.endsWith('.casatrade.io');
+            if (!isCasaTrade(host) && !isCasaTrade(refHost)) return;
+
+            let prefs = { ...DEFAULT_PREFS };
+            let scannerState = null;
+            let root = null;
+            let busy = false;
+
+            const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
+            const visible = el => {
+              if (!el || !(el instanceof Element)) return false;
+              const rect = el.getBoundingClientRect();
+              const style = getComputedStyle(el);
+              return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity || 1) > 0;
+            };
+            const deepElements = (limit = 5500) => {
+              const out = [];
+              const roots = [document];
+              const seen = new Set();
+              while (roots.length && out.length < limit) {
+                const current = roots.shift();
+                if (!current || seen.has(current)) continue;
+                seen.add(current);
+                let nodes = [];
+                try { nodes = [...current.querySelectorAll('*')]; } catch {}
+                for (const el of nodes) {
+                  out.push(el);
+                  if (out.length >= limit) break;
+                  if (el.shadowRoot) roots.push(el.shadowRoot);
+                }
+              }
+              return out;
+            };
+            const priceFromText = text => {
+              const raw = String(text || '').trim();
+              if (!/^\s*\d{1,7}(?:[.,]\d{2,10})\s*$/.test(raw)) return null;
+              const parsed = Number(raw.replace(',', '.'));
+              return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+            };
+            const formatPrice = value => {
+              const n = num(value);
+              if (n == null) return '—';
+              const digits = Math.abs(n) >= 1000 ? 2 : Math.abs(n) >= 100 ? 3 : Math.abs(n) >= 1 ? 5 : 8;
+              return n.toFixed(digits).replace(/0+$/, '').replace(/\.$/, '');
+            };
+
+            function chartRect() {
+              const rows = [];
+              for (const el of deepElements()) {
+                if (!visible(el)) continue;
+                const tag = String(el.tagName || '').toLowerCase();
+                const meta = `${el.className || ''} ${el.id || ''} ${el.getAttribute?.('data-testid') || ''}`.toLowerCase();
+                const chartLike = tag === 'canvas' || tag === 'svg' || /chart|candle|graph|trading/.test(meta);
+                if (!chartLike) continue;
+                const r = el.getBoundingClientRect();
+                if (r.width < 280 || r.height < 180) continue;
+                let score = r.width * r.height;
+                if (tag === 'canvas') score *= 1.7;
+                if (tag === 'svg') score *= 1.25;
+                if (/chart|candle|trading/.test(meta)) score *= 1.25;
+                rows.push({ rect: r, score });
+              }
+              rows.sort((a, b) => b.score - a.score);
+              return rows[0]?.rect || null;
+            }
+
+            function axisMapper(rect) {
+              const currentPrice = num(scannerState?.price);
+              const labels = [];
+              for (const el of deepElements(3500)) {
+                if (!visible(el)) continue;
+                const value = priceFromText(el.textContent || el.innerText || '');
+                if (value == null) continue;
+                if (currentPrice != null && (value < currentPrice * .2 || value > currentPrice * 5)) continue;
+                const r = el.getBoundingClientRect();
+                const y = r.top + r.height / 2;
+                const nearRightScale = r.left >= rect.right - 150 && r.left <= rect.right + 100;
+                if (!nearRightScale || y < rect.top - 8 || y > rect.bottom + 8) continue;
+                labels.push({ price: value, y });
+              }
+
+              const unique = [];
+              for (const row of labels) {
+                if (!unique.some(other => Math.abs(other.price - row.price) < 1e-12)) unique.push(row);
+              }
+              if (unique.length >= 2) {
+                const meanP = unique.reduce((sum, row) => sum + row.price, 0) / unique.length;
+                const meanY = unique.reduce((sum, row) => sum + row.y, 0) / unique.length;
+                const denom = unique.reduce((sum, row) => sum + (row.price - meanP) ** 2, 0);
+                if (denom > 0) {
+                  const slope = unique.reduce((sum, row) => sum + (row.price - meanP) * (row.y - meanY), 0) / denom;
+                  if (Number.isFinite(slope) && Math.abs(slope) > 1e-9) {
+                    return price => meanY + slope * (price - meanP) - rect.top;
+                  }
+                }
+              }
+
+              const candles = [...(Array.isArray(scannerState?.candles) ? scannerState.candles.slice(-10) : [])];
+              if (scannerState?.currentCandle) candles.push(scannerState.currentCandle);
+              const lows = candles.map(row => num(row?.low)).filter(value => value != null);
+              const highs = candles.map(row => num(row?.high)).filter(value => value != null);
+              if (!lows.length || !highs.length) return null;
+              let low = Math.min(...lows);
+              let high = Math.max(...highs);
+              const span = Math.max(1e-12, high - low);
+              low -= span * .12;
+              high += span * .12;
+              return price => ((high - price) / Math.max(1e-12, high - low)) * rect.height;
+            }
+
+            function ensureRoot() {
+              if (root?.isConnected) return root;
+              root = document.createElement('div');
+              root.id = 'ats-analysis-visual-overlay';
+              root.style.position = 'fixed';
+              root.style.zIndex = '2147483000';
+              root.style.pointerEvents = 'none';
+              root.style.userSelect = 'none';
+              root.style.contain = 'layout style paint';
+              document.documentElement.appendChild(root);
+              return root;
+            }
+
+            function render() {
+              if (!prefs.overlayEnabled || !scannerState || scannerState.platformId !== 'casatrade' || !scannerState.asset) {
+                if (root) root.hidden = true;
+                return;
+              }
+              const rect = chartRect();
+              if (!rect) {
+                if (root) root.hidden = true;
+                return;
+              }
+              const yFor = axisMapper(rect);
+              if (!yFor) {
+                if (root) root.hidden = true;
+                return;
+              }
+
+              const host = ensureRoot();
+              host.hidden = false;
+              host.style.left = `${Math.round(rect.left)}px`;
+              host.style.top = `${Math.round(rect.top)}px`;
+              host.style.width = `${Math.round(rect.width)}px`;
+              host.style.height = `${Math.round(rect.height)}px`;
+              host.replaceChildren();
+
+              const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+              svg.setAttribute('width', '100%');
+              svg.setAttribute('height', '100%');
+              svg.setAttribute('viewBox', `0 0 ${Math.max(1, rect.width)} ${Math.max(1, rect.height)}`);
+              svg.style.overflow = 'visible';
+              svg.style.pointerEvents = 'none';
+              host.appendChild(svg);
+
+              const analytics = scannerState.signal?.analytics || {};
+              const addHorizontal = (price, label, stroke, dash = '') => {
+                const value = num(price);
+                if (value == null) return;
+                const y = yFor(value);
+                if (!Number.isFinite(y) || y < -20 || y > rect.height + 20) return;
+                const line = document.createElementNS(svg.namespaceURI, 'line');
+                line.setAttribute('x1', '0'); line.setAttribute('x2', String(rect.width));
+                line.setAttribute('y1', String(y)); line.setAttribute('y2', String(y));
+                line.setAttribute('stroke', stroke); line.setAttribute('stroke-width', '1.5');
+                line.setAttribute('opacity', '.82');
+                if (dash) line.setAttribute('stroke-dasharray', dash);
+                svg.appendChild(line);
+                const text = document.createElementNS(svg.namespaceURI, 'text');
+                text.setAttribute('x', '8'); text.setAttribute('y', String(Math.max(12, y - 5)));
+                text.setAttribute('fill', stroke); text.setAttribute('font-size', '11'); text.setAttribute('font-weight', '700');
+                text.textContent = `${label} ${formatPrice(value)}`;
+                svg.appendChild(text);
+              };
+
+              addHorizontal(analytics.breakoutHigh, 'Rompimento ↑', '#58d6ad', '7 5');
+              addHorizontal(analytics.breakoutLow, 'Rompimento ↓', '#f07b94', '7 5');
+
+              const direction = scannerState.signal?.analysisDirection || scannerState.signal?.direction || analytics.trendDirection;
+              if (direction === 'BUY' || direction === 'SELL') {
+                const closes = (Array.isArray(scannerState.candles) ? scannerState.candles.slice(-6) : [])
+                  .map(row => num(row?.close)).filter(value => value != null);
+                const current = num(scannerState.currentCandle?.close) ?? num(scannerState.price);
+                if (current != null) closes.push(current);
+                if (closes.length >= 2) {
+                  const xs = closes.map((_, index) => index);
+                  const meanX = xs.reduce((a, b) => a + b, 0) / xs.length;
+                  const meanY = closes.reduce((a, b) => a + b, 0) / closes.length;
+                  const denom = xs.reduce((sum, x) => sum + (x - meanX) ** 2, 0);
+                  let slope = denom > 0 ? xs.reduce((sum, x, index) => sum + (x - meanX) * (closes[index] - meanY), 0) / denom : 0;
+                  const visibleRange = Math.max(1e-12, Math.max(...closes) - Math.min(...closes));
+                  if (direction === 'BUY' && slope <= 0) slope = visibleRange / Math.max(4, closes.length * 2);
+                  if (direction === 'SELL' && slope >= 0) slope = -visibleRange / Math.max(4, closes.length * 2);
+                  const startPrice = meanY + slope * (0 - meanX);
+                  const endPrice = meanY + slope * ((closes.length - 1) - meanX);
+                  const trend = document.createElementNS(svg.namespaceURI, 'line');
+                  trend.setAttribute('x1', String(rect.width * .12));
+                  trend.setAttribute('x2', String(rect.width * .88));
+                  trend.setAttribute('y1', String(yFor(startPrice)));
+                  trend.setAttribute('y2', String(yFor(endPrice)));
+                  trend.setAttribute('stroke', direction === 'BUY' ? '#69cfff' : '#ffb46b');
+                  trend.setAttribute('stroke-width', '2');
+                  trend.setAttribute('opacity', '.78');
+                  svg.appendChild(trend);
+                }
+              }
+            }
+
+            async function refreshState() {
+              if (!prefs.overlayEnabled || busy) return render();
+              busy = true;
+              try {
+                const response = await chrome.runtime.sendMessage({ type: 'ATS_READ_SCANNER_STATE' }).catch(() => null);
+                scannerState = response?.state || null;
+                render();
+              } finally {
+                busy = false;
+              }
+            }
+
+            async function loadPrefs() {
+              const stored = await chrome.storage.local.get(PREF_KEY).catch(() => ({}));
+              prefs = { ...DEFAULT_PREFS, ...(stored[PREF_KEY] || {}) };
+              if (!prefs.overlayEnabled && root) root.hidden = true;
+              if (prefs.overlayEnabled) refreshState().catch(() => {});
+            }
+
+            chrome.storage.onChanged.addListener(changes => {
+              if (!changes[PREF_KEY]) return;
+              prefs = { ...DEFAULT_PREFS, ...(changes[PREF_KEY].newValue || {}) };
+              if (!prefs.overlayEnabled && root) root.hidden = true;
+              else refreshState().catch(() => {});
+            });
+            addEventListener('resize', () => render(), { passive: true });
+            addEventListener('scroll', () => render(), { passive: true, capture: true });
+            loadPrefs().catch(() => {});
+            setInterval(() => refreshState().catch(() => {}), 800);
+          })();
+          ''')
+
+          # --- manifest + background injection ---
+          path = Path('manifest.json')
+          s = path.read_text()
+          old = '        "src/content/generic-adapter.js",\n        "src/content/platform-sync.js"'
+          new = '        "src/content/generic-adapter.js",\n        "src/content/platform-sync.js",\n        "src/content/analysis-visual-overlay.js"'
+          if old not in s: raise SystemExit('manifest isolated script list not found')
+          path.write_text(s.replace(old, new, 1))
+
+          path = Path('src/background.js')
+          s = path.read_text()
+          old = """    { file: 'src/content/generic-adapter.js', world: 'ISOLATED', allFrames: true },
+              { file: 'src/content/platform-sync.js', world: 'ISOLATED', allFrames: true }
+            ];"""
+          new = """    { file: 'src/content/generic-adapter.js', world: 'ISOLATED', allFrames: true },
+              { file: 'src/content/platform-sync.js', world: 'ISOLATED', allFrames: true },
+              { file: 'src/content/analysis-visual-overlay.js', world: 'ISOLATED', allFrames: true }
+            ];"""
+          if old not in s: raise SystemExit('background injectReaders list not found')
+          path.write_text(s.replace(old, new, 1))
+
+          # --- sidepanel controls ---
+          path = Path('src/sidepanel/index.html')
+          s = path.read_text()
+          marker = '    </section>\n  </main>\n\n  <script src="app.js"></script>'
+          controls = r'''    </section>
+
+            <section class="card preferences-card">
+              <div class="section-head">
+                <div>
+                  <span class="eyebrow">4. ALERTAS</span>
+                  <h2>Visual e som</h2>
+                </div>
+                <span class="badge">OPCIONAL</span>
+              </div>
+              <p class="muted">Todos começam desligados. Ative somente o que quiser usar durante a análise.</p>
+              <label class="toggle-row" for="overlayToggle">
+                <span><b>Linhas no gráfico</b><small>Mostra rompimento e tendência sobre a CasaTrade.</small></span>
+                <input id="overlayToggle" type="checkbox" role="switch" aria-label="Linhas no gráfico">
+              </label>
+              <label class="toggle-row" for="possibleSoundToggle">
+                <span><b>Som de possível sinal</b><small>Aviso discreto quando entra em POSSÍVEL COMPRA/VENDA.</small></span>
+                <input id="possibleSoundToggle" type="checkbox" role="switch" aria-label="Som de possível sinal">
+              </label>
+              <label class="toggle-row" for="confirmSoundToggle">
+                <span><b>Som de entrada confirmada</b><small>Aviso mais perceptível ao entrar em ENTRAR NA PRÓXIMA VELA.</small></span>
+                <input id="confirmSoundToggle" type="checkbox" role="switch" aria-label="Som de entrada confirmada">
+              </label>
+            </section>
+          </main>
+
+          <script src="app.js"></script>'''
+          if marker not in s: raise SystemExit('sidepanel insertion marker not found')
+          path.write_text(s.replace(marker, controls, 1))
+
+          path = Path('src/sidepanel/styles.css')
+          s = path.read_text()
+          s += ".preferences-card{display:grid;gap:8px}.toggle-row{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:4px;padding:10px 11px;border:1px solid #17344a;border-radius:12px;background:#081623;cursor:pointer}.toggle-row span{display:grid;gap:3px}.toggle-row b{font-size:12px;color:#e7f4ff}.toggle-row small{font-size:10px;line-height:1.35;color:#7894a9}.toggle-row input[type=checkbox]{appearance:none;width:38px;min-width:38px;height:22px;padding:0;border:1px solid #35536a;border-radius:999px;background:#0b1824;position:relative;cursor:pointer;transition:.18s ease}.toggle-row input[type=checkbox]::after{content:'';position:absolute;width:16px;height:16px;border-radius:50%;left:2px;top:2px;background:#8299aa;transition:.18s ease}.toggle-row input[type=checkbox]:checked{border-color:#2f8069;background:#124c3e}.toggle-row input[type=checkbox]:checked::after{left:18px;background:#75e9bd}.toggle-row input[type=checkbox]:focus-visible{outline:2px solid #4ca7d8;outline-offset:2px}"
+          path.write_text(s)
+
+          # --- app.js preferences, deduplicated sounds, and unwrap ATS_READ_SCANNER_STATE envelope ---
+          path = Path('src/sidepanel/app.js')
+          s = path.read_text()
+          old = """const RECONNECT_DELAYS_MS = [2000, 4000, 8000, 15000, 30000];
+
+          if ($('extensionVersion'))"""
+          new = """const RECONNECT_DELAYS_MS = [2000, 4000, 8000, 15000, 30000];
+          const UI_PREF_KEY = 'atsScannerUiPreferences';
+          const DEFAULT_UI_PREFS = Object.freeze({ overlayEnabled: false, possibleSoundEnabled: false, confirmSoundEnabled: false });
+          let uiPrefs = { ...DEFAULT_UI_PREFS };
+          let audioContext = null;
+          let audibleStateReady = false;
+          let lastAudiblePrincipalKey = null;
+
+          if ($('extensionVersion'))"""
+          if old not in s: raise SystemExit('app constants marker not found')
+          s = s.replace(old, new, 1)
+
+          marker = """function renderLicense(s = {}) {"""
+          helpers = r'''function syncPreferenceControls() {
+            if ($('overlayToggle')) $('overlayToggle').checked = !!uiPrefs.overlayEnabled;
+            if ($('possibleSoundToggle')) $('possibleSoundToggle').checked = !!uiPrefs.possibleSoundEnabled;
+            if ($('confirmSoundToggle')) $('confirmSoundToggle').checked = !!uiPrefs.confirmSoundEnabled;
+          }
+
+          async function loadUiPreferences() {
+            const stored = await chrome.storage.local.get(UI_PREF_KEY).catch(() => ({}));
+            uiPrefs = { ...DEFAULT_UI_PREFS, ...(stored[UI_PREF_KEY] || {}) };
+            syncPreferenceControls();
+          }
+
+          async function saveUiPreference(key, value) {
+            uiPrefs = { ...uiPrefs, [key]: !!value };
+            await chrome.storage.local.set({ [UI_PREF_KEY]: uiPrefs });
+            syncPreferenceControls();
+            if ((key === 'possibleSoundEnabled' || key === 'confirmSoundEnabled') && value) ensureAudioContext();
+          }
+
+          function ensureAudioContext() {
+            const AudioContextClass = globalThis.AudioContext || globalThis.webkitAudioContext;
+            if (!AudioContextClass) return null;
+            if (!audioContext) audioContext = new AudioContextClass();
+            if (audioContext.state === 'suspended') audioContext.resume().catch(() => {});
+            return audioContext;
+          }
+
+          function pulseTone(frequency, startOffset, duration, volume) {
+            const context = ensureAudioContext();
+            if (!context) return;
+            const oscillator = context.createOscillator();
+            const gain = context.createGain();
+            const startsAt = context.currentTime + startOffset;
+            oscillator.type = 'sine';
+            oscillator.frequency.setValueAtTime(frequency, startsAt);
+            gain.gain.setValueAtTime(0.0001, startsAt);
+            gain.gain.exponentialRampToValueAtTime(Math.max(0.001, volume), startsAt + .018);
+            gain.gain.exponentialRampToValueAtTime(0.0001, startsAt + duration);
+            oscillator.connect(gain);
+            gain.connect(context.destination);
+            oscillator.start(startsAt);
+            oscillator.stop(startsAt + duration + .02);
+          }
+
+          function playSignalTone(kind) {
+            if (kind === 'possible') {
+              pulseTone(620, 0, .09, .035);
+              pulseTone(760, .11, .09, .03);
+              return;
+            }
+            pulseTone(760, 0, .11, .06);
+            pulseTone(980, .12, .12, .07);
+            pulseTone(1240, .25, .14, .08);
+          }
+
+          function maybePlaySignalAlert(s = {}) {
+            const key = principalState(s).key;
+            if (!audibleStateReady) {
+              audibleStateReady = true;
+              lastAudiblePrincipalKey = key;
+              return;
+            }
+            if (key === lastAudiblePrincipalKey) return;
+            lastAudiblePrincipalKey = key;
+            if ((key === 'POSSIBLE_BUY' || key === 'POSSIBLE_SELL') && uiPrefs.possibleSoundEnabled) playSignalTone('possible');
+            if ((key === 'ENTER_BUY' || key === 'ENTER_SELL') && uiPrefs.confirmSoundEnabled) playSignalTone('confirm');
+          }
+
+          function renderLicense(s = {}) {'''
+          if marker not in s: raise SystemExit('renderLicense marker not found')
+          s = s.replace(marker, helpers, 1)
+
+          s = s.replace("""  renderAnalysis(s);
+            renderDecision(s);
+          }""", """  renderAnalysis(s);
+            renderDecision(s);
+            maybePlaySignalAlert(s);
+          }""", 1)
+
+          old = """  const license = effectiveLicense(state?.license || {}, stored[LAST_VALID_LICENSE_KEY] || null);
+            const rendered = { ...(state || {}), license };"""
+          new = """  const scannerState = state?.state || {};
+            const license = effectiveLicense(scannerState?.license || {}, stored[LAST_VALID_LICENSE_KEY] || null);
+            const rendered = { ...scannerState, license };"""
+          if old not in s: raise SystemExit('getState envelope block not found')
+          s = s.replace(old, new, 1)
+
+          marker = """$('prepareBuy')?.addEventListener('click', () => prepare('BUY'));
+          $('prepareSell')?.addEventListener('click', () => prepare('SELL'));
+
+          chrome.storage.onChanged.addListener(changes => {"""
+          new = """$('prepareBuy')?.addEventListener('click', () => prepare('BUY'));
+          $('prepareSell')?.addEventListener('click', () => prepare('SELL'));
+          $('overlayToggle')?.addEventListener('change', event => saveUiPreference('overlayEnabled', event.currentTarget.checked).catch(() => {}));
+          $('possibleSoundToggle')?.addEventListener('change', event => saveUiPreference('possibleSoundEnabled', event.currentTarget.checked).catch(() => {}));
+          $('confirmSoundToggle')?.addEventListener('change', event => saveUiPreference('confirmSoundEnabled', event.currentTarget.checked).catch(() => {}));
+
+          chrome.storage.onChanged.addListener(changes => {"""
+          if marker not in s: raise SystemExit('toggle listener marker not found')
+          s = s.replace(marker, new, 1)
+
+          old = """chrome.storage.onChanged.addListener(changes => {
+            if (changes.scannerState || changes[LAST_VALID_LICENSE_KEY]) getState().catch(() => {});
+          });"""
+          new = """chrome.storage.onChanged.addListener(changes => {
+            if (changes[UI_PREF_KEY]) {
+              uiPrefs = { ...DEFAULT_UI_PREFS, ...(changes[UI_PREF_KEY].newValue || {}) };
+              syncPreferenceControls();
+            }
+            if (changes.scannerState || changes[LAST_VALID_LICENSE_KEY]) getState().catch(() => {});
+          });"""
+          if old not in s: raise SystemExit('storage listener block not found')
+          s = s.replace(old, new, 1)
+
+          s = s.replace("""(async () => {
+            await getState();""", """(async () => {
+            await loadUiPreferences();
+            await getState();""", 1)
+          path.write_text(s)
+
+          # --- regression tests ---
+          Path('test/visual-guidance-alerts.test.mjs').write_text(r'''import test from 'node:test';
+          import assert from 'node:assert/strict';
+          import fs from 'node:fs';
+          import { analyzeCandles, waitingFor } from '../src/core/analysis.js';
+
+          const read = path => fs.readFileSync(new URL('../' + path, import.meta.url), 'utf8');
+
+          const rows = [
+            { open: 1.1000, high: 1.1040, low: 1.0990, close: 1.1030 },
+            { open: 1.1030, high: 1.1060, low: 1.1020, close: 1.1050 },
+            { open: 1.1050, high: 1.1080, low: 1.1040, close: 1.1070 },
+            { open: 1.1070, high: 1.1100, low: 1.1060, close: 1.1090 },
+            { open: 1.1090, high: 1.1098, low: 1.1082, close: 1.1094 }
+          ];
+
+          test('analysis exposes the exact recent breakout levels and structured waitingFor guidance', () => {
+            const result = analyzeCandles(rows, rows);
+            assert.equal(result.recent.breakoutHigh, 1.1100);
+            assert.equal(result.recent.breakoutLow, 1.1020);
+            assert.equal(result.analytics.breakoutHigh, 1.1100);
+            assert.equal(result.analytics.breakoutLow, 1.1020);
+            assert.ok(result.waitingFor && typeof result.waitingFor === 'object');
+            assert.match(result.waitingFor.text, /^Aguardando /);
+            assert.ok(['breakout','rejection','power','candle_strength','continuation','possible_score','confirm_score','stability'].includes(result.waitingFor.type));
+            const direct = waitingFor(result.recent, result.direction, result.score);
+            assert.equal(direct.type, result.waitingFor.type);
+          });
+
+          test('overlay is optional, click-through and consumes scanner analysis instead of creating a second signal engine', () => {
+            const manifest = JSON.parse(read('manifest.json'));
+            const overlay = read('src/content/analysis-visual-overlay.js');
+            const background = read('src/background.js');
+            const isolatedScripts = manifest.content_scripts.flatMap(row => row.js || []);
+            assert.ok(isolatedScripts.includes('src/content/analysis-visual-overlay.js'));
+            assert.match(background, /analysis-visual-overlay\.js/);
+            assert.match(overlay, /pointerEvents = 'none'/);
+            assert.match(overlay, /ATS_READ_SCANNER_STATE/);
+            assert.match(overlay, /analytics\.breakoutHigh/);
+            assert.match(overlay, /analytics\.breakoutLow/);
+            assert.match(overlay, /overlayEnabled: false/);
+            assert.doesNotMatch(overlay, /processSnapshot|analyzeCandles/);
+          });
+
+          test('sidepanel has three OFF-by-default controls and deduplicates sounds on principal-state transitions', () => {
+            const html = read('src/sidepanel/index.html');
+            const app = read('src/sidepanel/app.js');
+            for (const id of ['overlayToggle','possibleSoundToggle','confirmSoundToggle']) assert.match(html, new RegExp(`id="${id}"`));
+            assert.match(app, /overlayEnabled: false/);
+            assert.match(app, /possibleSoundEnabled: false/);
+            assert.match(app, /confirmSoundEnabled: false/);
+            assert.match(app, /if \(key === lastAudiblePrincipalKey\) return;/);
+            assert.match(app, /POSSIBLE_BUY.*POSSIBLE_SELL/);
+            assert.match(app, /ENTER_BUY.*ENTER_SELL/);
+            assert.match(app, /playSignalTone\('possible'\)/);
+            assert.match(app, /playSignalTone\('confirm'\)/);
+          });
+
+          test('sidepanel unwraps ATS_READ_SCANNER_STATE response envelope before rendering', () => {
+            const app = read('src/sidepanel/app.js');
+            assert.match(app, /const scannerState = state\?\.state \|\| \{\};/);
+            assert.match(app, /const rendered = \{ \.\.\.scannerState, license \};/);
+          });
+          ''')
+          PY
+
+          node --check src/core/analysis.js
+          node --check src/core/orchestrator.js
+          node --check src/content/analysis-visual-overlay.js
+          node --check src/sidepanel/app.js
+          node --check test/visual-guidance-alerts.test.mjs
+          cd backend
+          npm test
+          cd ..
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add manifest.json src/background.js src/core/analysis.js src/core/orchestrator.js src/content/analysis-visual-overlay.js src/sidepanel/index.html src/sidepanel/styles.css src/sidepanel/app.js test/visual-guidance-alerts.test.mjs
+          git commit -m "feat: add visual guidance and signal alerts"
+          git push origin HEAD:feat/visual-guidance-audio-alerts
