@@ -1,0 +1,40 @@
+name: Retry market regime phase 1
+
+on:
+  push:
+    branches:
+      - feat/market-regime-confirmation-gate
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Apply gate with corrected regression fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          awk '/^          python3 - <<'"'"'PY'"'"'$/ {capture=1; next} capture && /^          PY$/ {exit} capture {sub(/^          /, ""); print}' .github/workflows/apply-market-regime-phase1.yml > /tmp/market_regime_patch.py
+          python3 /tmp/market_regime_patch.py
+          TEST_B64='aW1wb3J0IHRlc3QgZnJvbSAnbm9kZTp0ZXN0JzsKaW1wb3J0IGFzc2VydCBmcm9tICdub2RlOmFzc2VydC9zdHJpY3QnOwppbXBvcnQgeyBtYXJrZXRSZWdpbWUgfSBmcm9tICcuLi9zcmMvY29yZS9tYXJrZXQtcmVnaW1lLmpzJzsKaW1wb3J0IHsgcHJvY2Vzc1NuYXBzaG90LCByZXNldE9yY2hlc3RyYXRvciB9IGZyb20gJy4uL3NyYy9jb3JlL29yY2hlc3RyYXRvci5qcyc7Cgpjb25zdCBtaW51dGUgPSA2MF8wMDA7CgpmdW5jdGlvbiByYW5nZVdpdGhTdHJvbmdDdXJyZW50KGJ1Y2tldCkgewogIGNvbnN0IGNhbmRsZXMgPSBbXTsKICBmb3IgKGxldCBpID0gMjA7IGkgPj0gMTA7IGktLSkgewogICAgY29uc3QgaW5kZXggPSAyMCAtIGk7CiAgICBjb25zdCBvcGVuID0gMS4xMDAwICsgKGluZGV4ICUgMiA9PT0gMCA/IC0wLjAwMTAgOiAwLjAwMTApOwogICAgY29uc3QgY2xvc2UgPSAxLjEwMDAgKyAoaW5kZXggJSAzID09PSAwID8gMC4wMDEwIDogLTAuMDAxMCk7CiAgICBjYW5kbGVzLnB1c2goewogICAgICB0aW1lOiBidWNrZXQgLSBpICogbWludXRlLAogICAgICBvcGVuLAogICAgICBoaWdoOiAxLjE1MDAsCiAgICAgIGxvdzogMS4wNTAwLAogICAgICBjbG9zZSwKICAgICAgdGltZWZyYW1lOiAnTTEnCiAgICB9KTsKICB9CiAgZm9yIChsZXQgaSA9IDk7IGkgPj0gMTsgaS0tKSB7CiAgICBjb25zdCBzdGVwID0gOSAtIGk7CiAgICBjb25zdCBvcGVuID0gMS4wOTAwICsgc3RlcCAqIDAuMDAyMDsKICAgIGNvbnN0IGNsb3NlID0gb3BlbiArIDAuMDAxNzsKICAgIGNhbmRsZXMucHVzaCh7CiAgICAgIHRpbWU6IGJ1Y2tldCAtIGkgKiBtaW51dGUsCiAgICAgIG9wZW4sCiAgICAgIGhpZ2g6IGNsb3NlICsgMC4wMDAyLAogICAgICBsb3c6IG9wZW4gLSAwLjAwMDIsCiAgICAgIGNsb3NlLAogICAgICB0aW1lZnJhbWU6ICdNMScKICAgIH0pOwogIH0KICBjYW5kbGVzLnB1c2goewogICAgdGltZTogYnVja2V0LAogICAgb3BlbjogMS4xMDgwLAogICAgaGlnaDogMS4xMTI1LAogICAgbG93OiAxLjEwNzgsCiAgICBjbG9zZTogMS4xMTIyLAogICAgdGltZWZyYW1lOiAnTTEnCiAgfSk7CiAgcmV0dXJuIGNhbmRsZXM7Cn0KCmZ1bmN0aW9uIHNuYXBzaG90KGJ1Y2tldCwgb2Zmc2V0LCBjYW5kbGVzKSB7CiAgcmV0dXJuIHsKICAgIHBsYXRmb3JtSWQ6ICdjYXNhdHJhZGUnLAogICAgYXNzZXQ6ICdFVVIvVVNEJywKICAgIHByaWNlOiAxLjExMjIsCiAgICB0aW1lZnJhbWU6ICdNMScsCiAgICBhbmFseXNpc1RpbWVmcmFtZTogJ00xJywKICAgIGNvbm5lY3Rpb246ICdvbmxpbmUnLAogICAgc2VydmVyVGltZTogYnVja2V0ICsgb2Zmc2V0LAogICAgY2FuZGxlcwogIH07Cn0KCnRlc3QoJ21hcmtldCByZWdpbWUgY2xhc3NpZmllcyB0aGUgZml4dHVyZSBhcyByYW5nZScsICgpID0+IHsKICBjb25zdCBidWNrZXQgPSBNYXRoLmZsb29yKDFfODAwXzEwMF8wMDBfMDAwIC8gbWludXRlKSAqIG1pbnV0ZTsKICBjb25zdCBjYW5kbGVzID0gcmFuZ2VXaXRoU3Ryb25nQ3VycmVudChidWNrZXQpOwogIGNvbnN0IHJlZ2ltZSA9IG1hcmtldFJlZ2ltZShjYW5kbGVzLnNsaWNlKDAsIC0xKSk7CiAgYXNzZXJ0LmVxdWFsKHJlZ2ltZS50eXBlLCAncmFuZ2UnKTsKfSk7Cgp0ZXN0KCdyYW5nZSByZWdpbWUgYmxvY2tzIEVOVEVSIGV2ZW4gYWZ0ZXIgY29uZmlybWF0aW9uIHNjb3JlIGFuZCBzdGFiaWxpdHkgYXJlIG90aGVyd2lzZSBzdWZmaWNpZW50JywgKCkgPT4gewogIHJlc2V0T3JjaGVzdHJhdG9yKCk7CiAgY29uc3QgYnVja2V0ID0gTWF0aC5mbG9vcigxXzgwMF8xMTBfMDAwXzAwMCAvIG1pbnV0ZSkgKiBtaW51dGU7CiAgY29uc3QgY2FuZGxlcyA9IHJhbmdlV2l0aFN0cm9uZ0N1cnJlbnQoYnVja2V0KTsKCiAgcHJvY2Vzc1NuYXBzaG90KHNuYXBzaG90KGJ1Y2tldCwgMzVfMDAwLCBjYW5kbGVzKSwgeyBjb25uZWN0aW9uOiAnb25saW5lJyB9KTsKICBwcm9jZXNzU25hcHNob3Qoc25hcHNob3QoYnVja2V0LCAzNl8wMDAsIGNhbmRsZXMpLCB7IGNvbm5lY3Rpb246ICdvbmxpbmUnIH0pOwogIGNvbnN0IGZpcnN0RmluYWwgPSBwcm9jZXNzU25hcHNob3Qoc25hcHNob3QoYnVja2V0LCA1MV8wMDAsIGNhbmRsZXMpLCB7IGNvbm5lY3Rpb246ICdvbmxpbmUnIH0pOwogIGNvbnN0IGJsb2NrZWQgPSBwcm9jZXNzU25hcHNob3Qoc25hcHNob3QoYnVja2V0LCA1Ml8wMDAsIGNhbmRsZXMpLCB7IGNvbm5lY3Rpb246ICdvbmxpbmUnIH0pOwoKICBhc3NlcnQuZXF1YWwoYmxvY2tlZC5zaWduYWwucmVnaW1lPy50eXBlLCAncmFuZ2UnKTsKICBhc3NlcnQub2soTnVtYmVyKGJsb2NrZWQuc2lnbmFsLmFuYWx5c2lzU2NvcmUpID49IDU4LCBgZXhwZWN0ZWQgc2NvcmUgPj0gNTgsIGdvdCAke2Jsb2NrZWQuc2lnbmFsLmFuYWx5c2lzU2NvcmV9YCk7CiAgYXNzZXJ0Lm5vdEVxdWFsKGZpcnN0RmluYWwuc2lnbmFsLnVpU3RhdGUsICdFTlRFUl9CVVknKTsKICBhc3NlcnQubm90RXF1YWwoZmlyc3RGaW5hbC5zaWduYWwudWlTdGF0ZSwgJ0VOVEVSX1NFTEwnKTsKICBhc3NlcnQuZXF1YWwoYmxvY2tlZC5zaWduYWwuc3RhdGUsICdOT19UUkFERScpOwogIGFzc2VydC5lcXVhbChibG9ja2VkLnNpZ25hbC51aVN0YXRlLCAnV0FJVCcpOwogIGFzc2VydC5lcXVhbChibG9ja2VkLnNpZ25hbC5kaXJlY3Rpb24sIG51bGwpOwogIGFzc2VydC5lcXVhbChibG9ja2VkLnNpZ25hbC5yZWFzb24sICdBR1VBUkRBTkRPIOKAlCBtZXJjYWRvIHNlbSB0ZW5kw6puY2lhIGRlZmluaWRhLicpOwp9KTsKCnRlc3QoJ3JlZ2ltZSBnYXRlIGlzIGFkZGl0aXZlIGFuZCBkb2VzIG5vdCBjaGFuZ2UgYXBwcm92ZWQgdGhyZXNob2xkcycsIGFzeW5jICgpID0+IHsKICBjb25zdCB7IEFOQUxZU1RfVEhSRVNIT0xEUyB9ID0gYXdhaXQgaW1wb3J0KCcuLi9zcmMvY29yZS9hbmFseXNpcy5qcycpOwogIGFzc2VydC5lcXVhbChBTkFMWVNUX1RIUkVTSE9MRFMucG9zc2libGVTY29yZSwgNDQpOwogIGFzc2VydC5lcXVhbChBTkFMWVNUX1RIUkVTSE9MRFMuY29uZmlybVNjb3JlLCA1OCk7CiAgYXNzZXJ0LmVxdWFsKEFOQUxZU1RfVEhSRVNIT0xEUy5jYW5kbGVTdHJlbmd0aCwgNjIpOwogIGFzc2VydC5lcXVhbChBTkFMWVNUX1RIUkVTSE9MRFMucmVqZWN0aW9uU3RyZW5ndGgsIDUwKTsKfSk7Cg=='
+          printf '%s' "$TEST_B64" | base64 -d > test/market-regime-gate.test.mjs
+          node --check src/core/orchestrator.js
+          node --check src/core/market-regime.js
+          node --check test/market-regime-gate.test.mjs
+          cd backend
+          npm test
+          cd ..
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/core/orchestrator.js test/market-regime-gate.test.mjs
+          git commit -m "feat: gate confirmations in range regime"
+          git push origin HEAD:feat/market-regime-confirmation-gate
