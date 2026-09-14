@@ -68,12 +68,15 @@ test('signals with missing or mismatched CasaTrade clock are removed immediately
   assert.match(integrity, /CLOCK_FRESH_MS = 1400/);
 });
 
-test('exact clock feeds the same orchestrator used for next-candle prediction', () => {
+test('exact clock feeds the same orchestrator used for bounded next-candle decisions', () => {
   const integrity = read('src/background-integrity.js');
   const orchestrator = read('src/core/orchestrator.js');
   assert.match(integrity, /clockVerified: true/);
   assert.match(integrity, /processSnapshot\(snapshot, state\)/);
-  assert.match(orchestrator, /if \(secondsRemaining <= 10\)/);
+  assert.match(orchestrator, /const DECISION_WINDOW_SECONDS = 15/);
+  assert.match(orchestrator, /const SKIP_LOCK_SECONDS = 4/);
+  assert.match(orchestrator, /if \(secondsRemaining > DECISION_WINDOW_SECONDS\)/);
+  assert.match(orchestrator, /if \(secondsRemaining <= SKIP_LOCK_SECONDS\)/);
   assert.match(orchestrator, /ANALYST_THRESHOLDS\.confirmScore/);
 });
 
