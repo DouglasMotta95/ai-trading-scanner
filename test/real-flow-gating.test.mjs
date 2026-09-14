@@ -66,17 +66,18 @@ test('activation only clears the key after a genuinely active response', () => {
   assert.doesNotMatch(failureBranch, /input\.value\s*=/);
 });
 
-test('focus stability remains a preference, not an eternal blocker', () => {
-  const focus = read('src/content/focused-asset.js');
+test('focus stability remains a preference while the visible chart frame is authoritative', () => {
+  const focus = read('src/content/focused-asset-v2.js');
   const generic = read('src/content/generic-adapter.js');
   const augment = read('src/background-augment.js');
   const background = read('src/background.js');
   const panel = read('src/sidepanel/app.js');
 
   assert.match(focus, /__ATS_FOCUSED_ASSET_META__/);
-  assert.match(focus, /reliable/);
-  assert.match(focus, /CONSISTENT_SAMPLES = 2/);
-  assert.match(focus, /CONSISTENT_MS = 300/);
+  assert.match(focus, /reliable: true/);
+  assert.match(focus, /chartScoped: true/);
+  assert.match(focus, /frameRole: 'trader-frame'/);
+  assert.match(focus, /candidateSamples >= 2 && stableFor >= 220/);
 
   assert.match(generic, /const domChoice = bestDomAsset\(rows\)/);
   assert.match(generic, /const anyNetwork = bestNetworkQuote\(''\)/);
@@ -86,9 +87,12 @@ test('focus stability remains a preference, not an eternal blocker', () => {
   assert.match(augment, /const FOCUS_STABLE_MS = 2000/);
   assert.match(augment, /const focusStable =/);
   assert.match(augment, /return updateScannerState\(scannerState =>/);
-  assert.match(augment, /if \(focus\) \{/);
-  assert.match(augment, /candidate = chooseCandidate\(payload, focus\)/);
+  assert.match(augment, /const frameMatchesFocus =/);
+  assert.match(augment, /if \(!frameMatchesFocus\) return/);
+  assert.match(augment, /const candidate = chooseCandidate\(payload, focus\)/);
   assert.match(augment, /if \(!candidate \|\| !sameAsset\(candidate\.asset, focus\)\) return/);
+  assert.match(augment, /const clock = authoritativeClock\(scannerState, asset, sender\)/);
+  assert.match(augment, /if \(!clock\) return base/);
   assert.doesNotMatch(augment, /Date\.now\(\) - stableSince < FOCUS_STABLE_MS\) return/);
 
   const apply = section(background, 'async function applySnapshot', 'async function directScanActiveTab');
