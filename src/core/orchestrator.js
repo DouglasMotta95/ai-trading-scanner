@@ -17,12 +17,27 @@ const DECISION_WINDOW_SECONDS = 15;
 const SKIP_LOCK_SECONDS = 4;
 const DECISION_HIT_GAP_MS = 2500;
 const cycles = new Map();
+const wrapperCompletedDecisions = new Map();
+const WRAPPER_ROW_PREFIX = 'wrapper-cycle:';
 
 const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
 const clean = value => String(value ?? '').trim();
 const directionOf = signal => ['BUY', 'SELL'].includes(signal?.analysisDirection)
   ? signal.analysisDirection
   : ['BUY', 'SELL'].includes(signal?.direction) ? signal.direction : null;
+const assetIdentity = value => clean(value).toUpperCase().replace(/\s*\(\s*OTC\s*\)\s*$/i, '');
+const sameAsset = (a, b) => !!assetIdentity(a) && assetIdentity(a) === assetIdentity(b);
+
+function timeframeMs(value = 'M1') {
+  const tf = clean(value).toUpperCase();
+  const seconds = tf.match(/^S(\d+)$/);
+  if (seconds) return Math.max(1, Number(seconds[1])) * 1000;
+  const minutes = tf.match(/^M(\d+)$/);
+  if (minutes) return Math.max(1, Number(minutes[1])) * 60_000;
+  const hours = tf.match(/^H(\d+)$/);
+  if (hours) return Math.max(1, Number(hours[1])) * 3_600_000;
+  return 60_000;
+}
 
 function cycleKey(snapshot = {}, signal = {}) {
   const asset = clean(snapshot.asset || 'unknown');
@@ -177,31 +192,105 @@ function buildingSignal(signal) {
   };
 }
 
-function resolveWrapperDecision(snapshot = {}, result = {}, currentKey = '') {
+function targetCandle(snapshot = {}, result = {}, targetBucket, tfMs) {
+  const current = result?.currentCandle || null;
+  const currentTime = num(current?.time ?? current?.timestamp);
+  if (currentTime != null && Math.floor(currentTime / tfMs) * tfMs === targetBucket) return current;
+
+  const rows = Array.isArray(snapshot.candles) ? snapshot.candles : [];
+  for (let index = rows.length - 1; index >= 0; index -= 1) {
+    const row = rows[index];
+    let time = num(row?.time ?? row?.timestamp);
+    if (time != null && time > 0 && time < 1e12) time *= 1000;
+    if (time == null || Math.floor(time / tfMs) * tfMs !== targetBucket) continue;
+    return row;
+  }
+  return null;
+}
+
+function completedFromCycle(cycle, snapshot = {}, result = {}) {
+  const now = num(snapshot.serverTime) ?? Date.now();
+  const asset = clean(snapshot.asset || '');
+  const timeframe = clean(snapshot.analysisTimeframe || snapshot.timeframe || result?.signal?.timeframe || 'M1').toUpperCase();
+  const tfMs = timeframeMs(timeframe);
+  const targetStart = Number(cycle.targetStart);
+  if (!Number.isFinite(targetStart) || targetStart <= 0) return null;
+  const targetBucket = Math.round(targetStart / tfMs) * tfMs;
+  if (now < targetBucket) return null;
+
+  const exactTarget = targetCandle(snapshot, result, targetBucket, tfMs);
+  const entryPrice = num(exactTarget?.open);
+  const entryConfirmed = entryPrice != null;
+  return {
+    state: 'CONFIRM',
+    direction: cycle.direction,
+    score: Number(cycle.score || 0),
+    time: targetBucket,
+    targetStart: targetBucket,
+    entryPrice: entryConfirmed ? entryPrice : null,
+    entryTime: entryConfirmed ? targetBucket : null,
+    entryConfirmed,
+    entryStatus: entryConfirmed ? 'confirmed' : 'unconfirmed',
+    entryReason: entryConfirmed ? null : 'Preço de entrada não confirmado: a vela-alvo não foi observada.',
+    capturedAt: entryConfirmed ? now : null,
+    asset,
+    timeframe
+  };
+}
+
+function wrapperCompletionKey(decision = {}) {
+  return `${assetIdentity(decision.asset)}|${clean(decision.timeframe).toUpperCase()}|${Number(decision.targetStart || 0)}`;
+}
+
+function rememberWrapperCompleted(decision = {}) {
+  if (!decision || decision.state !== 'CONFIRM') return;
+  const key = wrapperCompletionKey(decision);
+  if (!key || key.endsWith('|0')) return;
+  wrapperCompletedDecisions.set(key, { ...decision });
+  if (wrapperCompletedDecisions.size > 50) {
+    const oldest = [...wrapperCompletedDecisions.entries()]
+      .sort((a, b) => Number(a[1]?.targetStart || 0) - Number(b[1]?.targetStart || 0))[0]?.[0];
+    if (oldest) wrapperCompletedDecisions.delete(oldest);
+  }
+}
+
+function latestWrapperCompleted(snapshot = {}) {
+  const asset = clean(snapshot.asset || '');
+  const timeframe = clean(snapshot.analysisTimeframe || snapshot.timeframe || 'M1').toUpperCase();
+  return [...wrapperCompletedDecisions.values()]
+    .filter(row => sameAsset(row?.asset, asset) && clean(row?.timeframe).toUpperCase() === timeframe)
+    .sort((a, b) => Number(b?.targetStart || 0) - Number(a?.targetStart || 0))[0] || null;
+}
+
+function newerDecision(a, b) {
+  if (!a) return b || null;
+  if (!b) return a;
+  return Number(b.targetStart || b.time || 0) > Number(a.targetStart || a.time || 0) ? b : a;
+}
+
+function resolveWrapperDecision(snapshot = {}, result = {}, currentKey = '', state = {}) {
   const now = num(snapshot.serverTime) ?? Date.now();
   const asset = clean(snapshot.asset || '');
   const timeframe = clean(snapshot.analysisTimeframe || snapshot.timeframe || 'M1').toUpperCase();
-  for (const cycle of cycles.values()) {
+  const candidates = [...cycles.values()];
+  const persisted = state?.decisionCycle;
+  if (persisted?.locked === 'ENTER' && !persisted.resolved && !candidates.some(row => row?.key === persisted.key)) {
+    candidates.push({ ...persisted });
+  }
+
+  for (const cycle of candidates) {
     if (!cycle || cycle.key === currentKey || cycle.locked !== 'ENTER' || cycle.resolved) continue;
-    if (!cycle.key.startsWith(`${asset}|${timeframe}|`)) continue;
+    const cycleAsset = clean(cycle.key).split('|')[0] || asset;
+    const cycleTimeframe = clean(cycle.key).split('|')[1] || timeframe;
+    if (!sameAsset(cycleAsset, asset) || cycleTimeframe.toUpperCase() !== timeframe) continue;
     if (!Number.isFinite(Number(cycle.targetStart)) || now < Number(cycle.targetStart)) continue;
-    const entryPrice = num(result.currentCandle?.open) ?? num(snapshot.price);
+
+    const completed = completedFromCycle(cycle, snapshot, result);
+    if (!completed) continue;
     cycle.resolved = true;
-    return {
-      state: 'CONFIRM',
-      direction: cycle.direction,
-      score: Number(cycle.score || 0),
-      time: Number(cycle.targetStart),
-      targetStart: Number(cycle.targetStart),
-      entryPrice,
-      entryTime: Number(cycle.targetStart),
-      entryConfirmed: entryPrice != null,
-      entryStatus: entryPrice != null ? 'confirmed' : 'unconfirmed',
-      entryReason: entryPrice != null ? null : 'Preço de entrada não confirmado na abertura da vela-alvo.',
-      capturedAt: entryPrice != null ? now : null,
-      asset,
-      timeframe
-    };
+    cycles.set(cycle.key, cycle);
+    rememberWrapperCompleted(completed);
+    return completed;
   }
   return null;
 }
@@ -218,7 +307,8 @@ export function processSnapshot(snapshot = {}, state = {}) {
   const at = num(snapshot.serverTime) ?? Date.now();
   const score = Number(signal.analysisScore ?? signal.score ?? 0);
   const direction = directionOf(signal);
-  const rolledLastConfirmed = result.lastConfirmed || resolveWrapperDecision(snapshot, result, key);
+  const recovered = resolveWrapperDecision(snapshot, result, key, state);
+  const rolledLastConfirmed = newerDecision(newerDecision(result.lastConfirmed, latestWrapperCompleted(snapshot)), recovered);
 
   if (cycle.locked === 'ENTER') {
     return {
@@ -323,13 +413,31 @@ export function processSnapshot(snapshot = {}, state = {}) {
 
 export function resetOrchestrator() {
   cycles.clear();
+  wrapperCompletedDecisions.clear();
   legacyResetOrchestrator();
 }
 
 export function serializeCompletedDecisions() {
-  return legacySerializeCompletedDecisions();
+  const legacyRows = legacySerializeCompletedDecisions();
+  const wrapperRows = [...wrapperCompletedDecisions.entries()].slice(-50).map(([key, decision]) => ({
+    key: `${WRAPPER_ROW_PREFIX}${key}`,
+    decision: { ...decision }
+  }));
+  return [...legacyRows, ...wrapperRows].slice(-50);
 }
 
 export function restoreCompletedDecisions(rows = []) {
-  return legacyRestoreCompletedDecisions(rows);
+  wrapperCompletedDecisions.clear();
+  const legacyRows = [];
+  for (const row of Array.isArray(rows) ? rows.slice(-50) : []) {
+    const key = clean(row?.key);
+    const decision = row?.decision;
+    if (!key || !decision || typeof decision !== 'object') continue;
+    if (key.startsWith(WRAPPER_ROW_PREFIX)) {
+      wrapperCompletedDecisions.set(key.slice(WRAPPER_ROW_PREFIX.length), { ...decision });
+    } else {
+      legacyRows.push(row);
+    }
+  }
+  return legacyRestoreCompletedDecisions(legacyRows);
 }
