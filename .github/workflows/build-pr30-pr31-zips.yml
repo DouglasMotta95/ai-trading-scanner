@@ -1,0 +1,62 @@
+name: Build exact PR source zips
+
+on:
+  push:
+    branches:
+      - artifact/build-pr30-pr31-zips
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout PR 30 head
+        uses: actions/checkout@v4
+        with:
+          ref: 831e3dae04554061f67daeab826e6a66d9f197d7
+          path: pr30
+          fetch-depth: 1
+
+      - name: Checkout PR 31 head
+        uses: actions/checkout@v4
+        with:
+          ref: ddea566c6a6db7fe0ba08d9a51a8bad89d6494ea
+          path: pr31
+          fetch-depth: 1
+
+      - name: Verify exact HEADs and build source zips
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C pr30 rev-parse HEAD)" = "831e3dae04554061f67daeab826e6a66d9f197d7"
+          test "$(git -C pr31 rev-parse HEAD)" = "ddea566c6a6db7fe0ba08d9a51a8bad89d6494ea"
+          git -C pr30 archive --format=zip --prefix=ai-trading-scanner-PR30-831e3dae/ -o ../ai-trading-scanner-PR30-831e3dae.zip HEAD
+          git -C pr31 archive --format=zip --prefix=ai-trading-scanner-PR31-ddea566c/ -o ../ai-trading-scanner-PR31-ddea566c.zip HEAD
+          sha256sum ai-trading-scanner-PR30-831e3dae.zip ai-trading-scanner-PR31-ddea566c.zip | tee SHA256SUMS.txt
+          unzip -tq ai-trading-scanner-PR30-831e3dae.zip
+          unzip -tq ai-trading-scanner-PR31-ddea566c.zip
+
+      - name: Upload PR 30 zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-trading-scanner-PR30-831e3dae
+          path: ai-trading-scanner-PR30-831e3dae.zip
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Upload PR 31 zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-trading-scanner-PR31-ddea566c
+          path: ai-trading-scanner-PR31-ddea566c.zip
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Upload checksums
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-trading-scanner-PR30-PR31-checksums
+          path: SHA256SUMS.txt
+          if-no-files-found: error
