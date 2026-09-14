@@ -4,12 +4,14 @@ import fs from 'node:fs';
 
 const read = path => fs.readFileSync(new URL('../' + path, import.meta.url), 'utf8');
 
-test('video fix replaces sticky focus tracker with visual v2 tracker', () => {
+test('video fix replaces sticky focus behavior while keeping guarded legacy compatibility entry', () => {
   const manifest = JSON.parse(read('manifest.json'));
   const scripts = manifest.content_scripts.flatMap(row => row.js || []);
-  assert.ok(scripts.includes('src/content/focused-asset-v2.js'));
-  assert.ok(!scripts.includes('src/content/focused-asset.js'));
+  const v2 = scripts.indexOf('src/content/focused-asset-v2.js');
+  const legacy = scripts.indexOf('src/content/focused-asset.js');
+  assert.ok(v2 >= 0 && legacy > v2);
   const focus = read('src/content/focused-asset-v2.js');
+  assert.match(focus, /__ATS_FOCUSED_ASSET_TRACKER__ = true/);
   assert.match(focus, /setTimeout\(\(\) => publishScan\(true\), 90\)/);
   assert.match(focus, /interaction-scan/);
   assert.doesNotMatch(focus, /let userSelection\s*=/);
@@ -41,12 +43,14 @@ test('corrected clock feeds the same orchestrator so POSSIBLE can resolve inside
   assert.match(orchestrator, /ANALYST_THRESHOLDS\.confirmScore/);
 });
 
-test('overlay v2 runs in real embedded trader frame and contains all requested analysis lines', () => {
+test('overlay v2 runs first in real embedded trader frame and guards the legacy overlay', () => {
   const manifest = JSON.parse(read('manifest.json'));
   const scripts = manifest.content_scripts.flatMap(row => row.js || []);
-  assert.ok(scripts.includes('src/content/analysis-visual-overlay-v2.js'));
-  assert.ok(!scripts.includes('src/content/analysis-visual-overlay.js'));
+  const v2 = scripts.indexOf('src/content/analysis-visual-overlay-v2.js');
+  const legacy = scripts.indexOf('src/content/analysis-visual-overlay.js');
+  assert.ok(v2 >= 0 && legacy > v2);
   const overlay = read('src/content/analysis-visual-overlay-v2.js');
+  assert.match(overlay, /__ATS_ANALYSIS_VISUAL_OVERLAY__ = true/);
   assert.match(overlay, /casatraders\.online/);
   assert.match(overlay, /ivcasatraders\.online/);
   for (const label of ['Preço atual','Resistência','Suporte','Gatilho compra ↑','Gatilho venda ↓','Aguardando']) assert.ok(overlay.includes(label), `missing overlay label ${label}`);
