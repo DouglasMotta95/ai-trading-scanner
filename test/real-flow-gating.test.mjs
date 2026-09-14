@@ -45,8 +45,8 @@ test('completed decisions persist in local storage but are scoped to the browser
 
   assert.match(background, /COMPLETED_DECISIONS_KEY = 'atsCompletedDecisions'/);
   assert.match(background, /RUNTIME_SESSION_KEY = 'atsRuntimeSessionId'/);
-  assert.match(background, /chrome\.storage\.session\.get\(RUNTIME_SESSION_KEY\)/);
-  assert.match(background, /chrome\.storage\.local\.get\(COMPLETED_DECISIONS_KEY\)/);
+  assert.match(background, /storageSessionGet\(RUNTIME_SESSION_KEY\)/);
+  assert.match(background, /storageLocalGet\(COMPLETED_DECISIONS_KEY\)/);
   assert.match(background, /\[COMPLETED_DECISIONS_KEY\]: \{ sessionId, rows, updatedAt: Date\.now\(\) \}/);
   assert.match(background, /restoreCompletedDecisions\(cached\.rows\)/);
   assert.match(background, /serializeCompletedDecisions\(\)/);

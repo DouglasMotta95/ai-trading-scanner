@@ -6,7 +6,6 @@
   const RELIABLE_SCORE = 120;
   const CONSISTENT_SAMPLES = 2;
   const CONSISTENT_MS = 300;
-  const USER_SELECTION_MS = 3500;
   const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
 
   function canonicalAsset(value = '') {
@@ -107,10 +106,22 @@
 
   function focusedAssetCandidate() {
     const rows = [];
-    let nodes = [];
-    try {
-      nodes = document.querySelectorAll('[aria-selected],[aria-current],[data-state],[data-active],[role="tab"],button,span,strong,b,div,p');
-    } catch {}
+    const roots = [document];
+    const seenRoots = new Set(roots);
+    for (let i = 0; i < roots.length && i < 250; i++) {
+      let descendants = [];
+      try { descendants = roots[i].querySelectorAll('*'); } catch {}
+      for (const node of descendants) {
+        if (node.shadowRoot && !seenRoots.has(node.shadowRoot)) {
+          seenRoots.add(node.shadowRoot);
+          roots.push(node.shadowRoot);
+        }
+      }
+    }
+    const nodes = [];
+    for (const root of roots) {
+      try { nodes.push(...root.querySelectorAll('[aria-selected],[aria-current],[data-state],[data-active],[role="tab"],button,span,strong,b,div,p')); } catch {}
+    }
 
     for (const el of nodes) {
       if (!visible(el)) continue;
@@ -139,7 +150,9 @@
     }
 
     rows.sort((a, b) => Number(b.explicit) - Number(a.explicit) || b.score - a.score || a.top - b.top || a.left - b.left);
-    return rows[0] || null;
+    const uniqueAssets = new Set(rows.map(row => assetIdentity(row.asset)).filter(Boolean));
+    const winner = rows[0] || null;
+    return winner ? { ...winner, singleAsset: uniqueAssets.size === 1 } : null;
   }
 
   let candidateAsset = '';
@@ -151,12 +164,10 @@
 
   function chooseCandidate() {
     const scanned = focusedAssetCandidate();
-    const now = Date.now();
-    if (userSelection && now - userSelection.at <= USER_SELECTION_MS) {
-      if (!scanned || sameAsset(scanned.asset, userSelection.asset) || !scanned.explicit) {
-        return { asset: userSelection.asset, score: Math.max(900, Number(scanned?.score || 0)), explicit: true, source: 'user-selection' };
-      }
+    if (userSelection) {
+      return { asset: userSelection.asset, score: Math.max(900, Number(scanned?.score || 0)), explicit: true, source: 'user-selection' };
     }
+    if (scanned?.singleAsset && !scanned.explicit) return { ...scanned, source: 'single-frame-asset' };
     return scanned;
   }
 
@@ -188,7 +199,8 @@
       reliable,
       visual: true,
       at: now,
-      source: candidate.source || 'chart-header'
+      source: candidate.source || 'chart-header',
+      explicit: candidate.explicit === true
     };
 
     if (reliable || sameAsset(previousGlobal, candidate.asset)) {
@@ -198,34 +210,41 @@
     if (!force && sameAsset(candidate.asset, lastSentAsset) && now - lastSentAt < 700) return;
     lastSentAsset = candidate.asset;
     lastSentAt = now;
-    chrome.runtime.sendMessage({
-      type: 'ATS_FOCUSED_ASSET',
-      asset: candidate.asset,
-      score: Number(candidate.score || 0),
-      samples: candidateSamples,
-      stableFor,
-      reliable,
-      visual: true,
-      source: candidate.source || 'chart-header',
-      at: now
-    }).catch(() => {});
+    try {
+      chrome.runtime.sendMessage({
+        type: 'ATS_FOCUSED_ASSET',
+        asset: candidate.asset,
+        score: Number(candidate.score || 0),
+        samples: candidateSamples,
+        stableFor,
+        reliable,
+        visual: true,
+        source: candidate.source || 'chart-header',
+        explicit: candidate.explicit === true,
+        at: now
+      }, () => void chrome.runtime?.lastError);
+    } catch {}
   }
 
   function rememberUserSelection(event) {
-    const target = event?.target instanceof Element ? event.target : null;
-    if (!target) return;
-    const actionLabel = clean(target.getAttribute?.('aria-label') || target.getAttribute?.('title') || '');
-    if (/fechar|close|remover|remove|delete|excluir/i.test(actionLabel)) return;
-    const hit = assetFromElement(target);
-    if (!hit?.asset) return;
-    userSelection = { asset: hit.asset, at: Date.now() };
-    candidateAsset = hit.asset;
-    candidateSince = Date.now();
-    candidateSamples = Math.max(candidateSamples, 2);
-    publish(true);
+    const path = typeof event?.composedPath === 'function' ? event.composedPath() : [event?.target];
+    for (const target of path) {
+      if (!(target instanceof Element)) continue;
+      const actionLabel = clean(target.getAttribute?.('aria-label') || target.getAttribute?.('title') || '');
+      if (/fechar|close|remover|remove|delete|excluir/i.test(actionLabel)) return;
+      const hit = assetFromElement(target);
+      if (!hit?.asset) continue;
+      userSelection = { asset: hit.asset, at: Date.now() };
+      candidateAsset = hit.asset;
+      candidateSince = Date.now();
+      candidateSamples = Math.max(candidateSamples, 2);
+      publish(true);
+      return;
+    }
   }
 
   document.addEventListener('pointerup', rememberUserSelection, true);
+  document.addEventListener('touchend', rememberUserSelection, true);
   document.addEventListener('click', rememberUserSelection, true);
   const observer = new MutationObserver(() => publish(false));
   try { observer.observe(document.documentElement, { subtree: true, childList: true, attributes: true, characterData: true }); } catch {}

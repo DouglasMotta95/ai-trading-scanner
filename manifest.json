@@ -38,12 +38,18 @@
         "https://casatrade.com/*",
         "https://*.casatrade.com/*",
         "https://casatrade.io/*",
-        "https://*.casatrade.io/*"
+        "https://*.casatrade.io/*",
+        "https://casatraders.online/*",
+        "https://*.casatraders.online/*",
+        "https://ivcasatraders.online/*",
+        "https://*.ivcasatraders.online/*"
       ],
       "js": [
         "src/content/focused-asset.js"
       ],
-      "run_at": "document_start"
+      "run_at": "document_start",
+      "all_frames": true,
+      "match_origin_as_fallback": true
     },
     {
       "matches": [
@@ -81,7 +87,8 @@
         "src/content/network-bridge.js",
         "src/content/embedded-feed-bridge.js",
         "src/content/generic-adapter.js",
-        "src/content/platform-sync.js"
+        "src/content/platform-sync.js",
+        "src/content/analysis-visual-overlay.js"
       ],
       "run_at": "document_start",
       "all_frames": true,

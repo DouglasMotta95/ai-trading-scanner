@@ -1,5 +1,6 @@
 import { CandleBuilder, TIMEFRAMES } from './candles.js';
 import { analyzeCandles, ANALYST_THRESHOLDS } from './analysis.js';
+import { marketRegime } from './market-regime.js';
 
 const builders = new Map();
 const finalDecisions = new Map();
@@ -10,7 +11,7 @@ const clean = v => String(v ?? '').trim();
 const POSSIBLE_HITS = 2;
 const CONFIRM_HITS = 2;
 const POSSIBLE_HOLD_MS = 2500;
-const CANDIDATE_MAX_GAP_MS = 3500;
+const CANDIDATE_MAX_GAP_MS = 8000;
 
 function timeframeMs(value = 'M1') {
   return TIMEFRAMES[clean(value).toUpperCase()] || TIMEFRAMES.M1;
@@ -144,7 +145,24 @@ function confirmationQuality(result = {}, direction = null) {
   const broke = result.recent?.breakout === direction;
   const continuation = result.recent?.continuationDirection === direction
     && Number(result.recent?.continuationScore || 0) >= 60;
-  return directionalPower >= 50 && (candleStrong || rejected || broke || continuation);
+  const trendAligned = Number(result.recent?.agreement || 0) >= .7
+    && metrics.momentumDirection === direction
+    && Number(metrics.momentumScore || 0) >= 45;
+  return directionalPower >= 50 && (candleStrong || rejected || broke || continuation || trendAligned);
+}
+
+function rangeOverrideQuality(result = {}, direction = null) {
+  if (!direction || !result?.recent?.ready) return false;
+  const metrics = result.analytics || result.recent?.metrics || {};
+  const directionalPower = direction === 'BUY' ? Number(metrics.buyPower || 0) : Number(metrics.sellPower || 0);
+  const broke = result.recent?.breakout === direction;
+  const rejected = result.recent?.rejection === direction
+    && Number(metrics.rejectionStrength || 0) >= ANALYST_THRESHOLDS.rejectionStrength;
+  const continuation = result.recent?.continuationDirection === direction
+    && Number(result.recent?.continuationScore || 0) >= 68
+    && metrics.momentumDirection === direction
+    && Number(metrics.momentumScore || 0) >= 55;
+  return directionalPower >= 50 && (broke || rejected || continuation);
 }
 
 function observeConfirmation(tracker, result, direction, score, at) {
@@ -184,7 +202,7 @@ function analyticsSummary(result = {}, direction = null) {
 
 function reasonFor(result = {}, direction = null, final = false) {
   if (!result?.recent?.ready) return 'Montando o padrão com as velas recentes e a vela atual.';
-  if (!direction) return 'Sem direção firme para a próxima vela neste momento.';
+  if (!direction) return result?.waitingFor?.text || 'Sem direção firme para a próxima vela neste momento.';
   return `${final ? 'Padrão confirmado' : 'Padrão consistente'}: ${analyticsSummary(result, direction)}.`;
 }
 
@@ -192,7 +210,7 @@ function baseSignal({
   state = 'WAIT', direction = null, provisional = true, reason, timeframe = 'M1', expiration = null,
   candleCount = 0, secondsRemaining = null, progress = null, currentCandle = null, score = 0,
   analysisDirection = null, analysisScore = null, phase = 'ANALYZING', targetStart = null,
-  uiState = 'ANALYZING_MARKET', analytics = {}, stability = null
+  uiState = 'ANALYZING_MARKET', analytics = {}, waitingFor = null, regime = null, stability = null
 } = {}) {
   const diagnosis = ['WATCH', 'CONFIRM'].includes(state) && ['BUY', 'SELL'].includes(direction)
     ? direction
@@ -217,6 +235,8 @@ function baseSignal({
     analysisDirection,
     analysisScore: analysisScore == null ? score : analysisScore,
     analytics,
+    waitingFor,
+    regime,
     stability,
     targetStart,
     targetLabel: targetStart ? new Date(targetStart).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : null
@@ -295,6 +315,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
   const combined = current ? [...closed.slice(-9), current] : closed.slice(-10);
   const indicatorHistory = current ? [...closed, current] : closed;
   const liveResult = analyzeCandles(combined, indicatorHistory);
+  const regime = marketRegime(closed);
   const candleCount = closed.length;
 
   const clockRemaining = num(snapshot.secondsRemaining);
@@ -321,6 +342,8 @@ export function processSnapshot(snapshot = {}, state = {}) {
     analysisDirection: direction,
     analysisScore: score,
     analytics: liveResult.analytics || {},
+    waitingFor: liveResult.waitingFor || null,
+    regime,
     stability: stabilitySnapshot(tracker),
     targetStart
   };
@@ -388,7 +411,13 @@ export function processSnapshot(snapshot = {}, state = {}) {
   }
 
   if (secondsRemaining <= 10) {
-    const canConfirm = observeConfirmation(tracker, liveResult, direction, score, sampleAt);
+    const rangeBlocked = regime?.type === 'range' && !rangeOverrideQuality(liveResult, direction);
+    if (rangeBlocked) {
+      tracker.confirmDirection = null;
+      tracker.confirmHits = 0;
+      tracker.lastConfirmAt = null;
+    }
+    const canConfirm = !rangeBlocked && observeConfirmation(tracker, liveResult, direction, score, sampleAt);
     if (canConfirm) {
       const latestDecision = {
         bucket: currentBucket,
@@ -416,17 +445,38 @@ export function processSnapshot(snapshot = {}, state = {}) {
       };
     }
 
+    const noTradeReason = rangeBlocked
+      ? 'AGUARDANDO — mercado sem tendência definida.'
+      : (liveResult.waitingFor?.text || 'Sem confirmação estável suficiente para liberar a próxima vela.');
     finalDecisions.set(key, {
       bucket: currentBucket,
       state: 'NO_TRADE',
       direction: null,
       provisional: false,
-      reason: 'Sem confirmação estável suficiente para liberar a próxima vela.',
+      reason: noTradeReason,
       score,
       targetStart,
       asset: snapshot.asset,
       timeframe: analysisTimeframe
     });
+
+    if (rangeBlocked) {
+      return {
+        candles: closed,
+        currentCandle: current,
+        lastConfirmed,
+        signal: baseSignal({
+          ...common,
+          state: 'NO_TRADE',
+          direction: null,
+          provisional: false,
+          phase: 'FINAL',
+          uiState: 'WAIT',
+          reason: noTradeReason,
+          stability: stabilitySnapshot(tracker)
+        })
+      };
+    }
 
     if (possibleDirection) {
       return {
@@ -458,7 +508,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
         provisional: false,
         phase: 'FINAL',
         uiState: 'WAIT',
-        reason: 'Sem padrão estável forte o suficiente para a próxima vela.',
+        reason: noTradeReason,
         stability: stabilitySnapshot(tracker)
       })
     };
@@ -495,7 +545,26 @@ export function processSnapshot(snapshot = {}, state = {}) {
         provisional: true,
         phase: 'ANALYZING',
         uiState: 'WAIT',
-        reason: 'Padrão ainda sem qualidade suficiente para sinalizar a próxima vela.',
+        reason: liveResult.waitingFor?.text || 'Padrão ainda sem qualidade suficiente para sinalizar a próxima vela.',
+        stability: stabilitySnapshot(tracker)
+      })
+    };
+  }
+
+  if (possibleDirection) {
+    return {
+      candles: closed,
+      currentCandle: current,
+      lastConfirmed,
+      signal: baseSignal({
+        ...common,
+        state: 'WATCH',
+        direction: possibleDirection,
+        provisional: true,
+        phase: 'POSSIBLE',
+        uiState: possibleDirection === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL',
+        reason: reasonFor(liveResult, possibleDirection, false),
+        score: Math.max(score, Number(tracker.publishedScore || 0)),
         stability: stabilitySnapshot(tracker)
       })
     };
@@ -513,9 +582,9 @@ export function processSnapshot(snapshot = {}, state = {}) {
       provisional: true,
       phase: buildingPattern ? 'BUILDING' : 'ANALYZING',
       uiState: buildingPattern ? 'BUILDING_PATTERN' : 'ANALYZING_MARKET',
-      reason: buildingPattern
+      reason: liveResult.waitingFor?.text || (buildingPattern
         ? `Montando padrão da próxima vela: ${analyticsSummary(liveResult, direction)}.`
-        : 'Analisando poder de compra/venda, rejeição, força e momentum do mercado atual.',
+        : 'Analisando poder de compra/venda, rejeição, força e momentum do mercado atual.'),
       stability: stabilitySnapshot(tracker)
     })
   };

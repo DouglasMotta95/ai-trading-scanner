@@ -61,7 +61,7 @@ test('panel exposes acquisition reason while keeping unavailable market values e
 test('background keeps session-scoped confirmed decisions without exposing extra history page', () => {
   const background = read('src/background.js');
   const html = read('src/sidepanel/index.html');
-  assert.match(background, /chrome\.storage\.session/);
+  assert.match(background, /storageSession(?:Get|Set|Remove)/);
   assert.match(background, /atsSessionSignalHistory/);
   assert.doesNotMatch(html, /signalHistory|HISTÓRICO DA SESSÃO/);
 });

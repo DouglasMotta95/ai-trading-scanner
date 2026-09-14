@@ -1,3 +1,28 @@
+function uiChromeCall(target, method, ...args) {
+  return new Promise((resolve, reject) => {
+    const fn = target?.[method];
+    if (typeof fn !== 'function') return reject(new Error(`chrome_api_unavailable:${method}`));
+    let settled = false;
+    const done = (error, value) => {
+      if (settled) return;
+      settled = true;
+      if (error) reject(error); else resolve(value);
+    };
+    const callback = value => {
+      let error = null;
+      try { error = chrome.runtime?.lastError?.message ? new Error(chrome.runtime.lastError.message) : null; } catch {}
+      done(error, value);
+    };
+    try {
+      const returned = fn.call(target, ...args, callback);
+      if (returned && typeof returned.then === 'function') returned.then(value => done(null, value), error => done(error));
+    } catch (error) { done(error); }
+  });
+}
+const uiStorageGet = keys => uiChromeCall(chrome.storage?.local, 'get', keys);
+const uiStorageSet = items => uiChromeCall(chrome.storage?.local, 'set', items);
+const uiSendMessage = message => uiChromeCall(chrome.runtime, 'sendMessage', message);
+
 const LAST_VALID_LICENSE_KEY = 'atsLastValidLicense';
 const $ = id => document.getElementById(id);
 let lastState = {};
@@ -5,6 +30,12 @@ let reconnectBusy = false;
 let reconnectAttempt = 0;
 let nextReconnectAt = 0;
 const RECONNECT_DELAYS_MS = [2000, 4000, 8000, 15000, 30000];
+const UI_PREF_KEY = 'atsScannerUiPreferences';
+const DEFAULT_UI_PREFS = Object.freeze({ overlayEnabled: false, possibleSoundEnabled: false, confirmSoundEnabled: false });
+let uiPrefs = { ...DEFAULT_UI_PREFS };
+let audioContext = null;
+let audibleStateReady = false;
+let lastAudiblePrincipalKey = null;
 
 if ($('extensionVersion')) $('extensionVersion').textContent = `v${chrome.runtime.getManifest().version}`;
 
@@ -84,7 +115,14 @@ function principalState(s = {}) {
   const online = active && fresh(s) && s.platformId === 'casatrade';
   if (!active) return { key: 'BLOCKED', text: 'ATIVAÇÃO NECESSÁRIA', detail: 'Ative a licença para iniciar a análise.' };
   if (!online || step.stage !== 'diagnosing_next_candle') {
-    return { key: 'ANALYZING_MARKET', text: 'ANALISANDO MERCADO ATUAL', detail: step.reason };
+    const acquisitionLabels = {
+      connecting: 'CONECTANDO À CASATRADE',
+      confirming_asset: 'IDENTIFICANDO ATIVO ABERTO',
+      reading_price: 'LENDO COTAÇÃO DO ATIVO',
+      reading_history: 'CARREGANDO HISTÓRICO DO GRÁFICO',
+      analyzing_current: 'ANALISANDO MERCADO ATUAL'
+    };
+    return { key: 'ANALYZING_MARKET', text: acquisitionLabels[step.stage] || 'ANALISANDO MERCADO ATUAL', detail: step.reason };
   }
 
   const states = {
@@ -98,6 +136,74 @@ function principalState(s = {}) {
   };
   const selected = states[sig.uiState] || states.WAIT;
   return { key: selected[0], text: selected[1], detail: sig.reason || 'Sem direção firme para a próxima vela.' };
+}
+
+function syncPreferenceControls() {
+  if ($('overlayToggle')) $('overlayToggle').checked = !!uiPrefs.overlayEnabled;
+  if ($('possibleSoundToggle')) $('possibleSoundToggle').checked = !!uiPrefs.possibleSoundEnabled;
+  if ($('confirmSoundToggle')) $('confirmSoundToggle').checked = !!uiPrefs.confirmSoundEnabled;
+}
+
+async function loadUiPreferences() {
+  const stored = await uiStorageGet(UI_PREF_KEY).catch(() => ({}));
+  uiPrefs = { ...DEFAULT_UI_PREFS, ...(stored[UI_PREF_KEY] || {}) };
+  syncPreferenceControls();
+}
+
+async function saveUiPreference(key, value) {
+  uiPrefs = { ...uiPrefs, [key]: !!value };
+  await uiStorageSet({ [UI_PREF_KEY]: uiPrefs });
+  syncPreferenceControls();
+  if ((key === 'possibleSoundEnabled' || key === 'confirmSoundEnabled') && value) ensureAudioContext();
+}
+
+function ensureAudioContext() {
+  const AudioContextClass = globalThis.AudioContext || globalThis.webkitAudioContext;
+  if (!AudioContextClass) return null;
+  if (!audioContext) audioContext = new AudioContextClass();
+  if (audioContext.state === 'suspended') audioContext.resume().catch(() => {});
+  return audioContext;
+}
+
+function pulseTone(frequency, startOffset, duration, volume) {
+  const context = ensureAudioContext();
+  if (!context) return;
+  const oscillator = context.createOscillator();
+  const gain = context.createGain();
+  const startsAt = context.currentTime + startOffset;
+  oscillator.type = 'sine';
+  oscillator.frequency.setValueAtTime(frequency, startsAt);
+  gain.gain.setValueAtTime(0.0001, startsAt);
+  gain.gain.exponentialRampToValueAtTime(Math.max(0.001, volume), startsAt + .018);
+  gain.gain.exponentialRampToValueAtTime(0.0001, startsAt + duration);
+  oscillator.connect(gain);
+  gain.connect(context.destination);
+  oscillator.start(startsAt);
+  oscillator.stop(startsAt + duration + .02);
+}
+
+function playSignalTone(kind) {
+  if (kind === 'possible') {
+    pulseTone(620, 0, .09, .035);
+    pulseTone(760, .11, .09, .03);
+    return;
+  }
+  pulseTone(760, 0, .11, .06);
+  pulseTone(980, .12, .12, .07);
+  pulseTone(1240, .25, .14, .08);
+}
+
+function maybePlaySignalAlert(s = {}) {
+  const key = principalState(s).key;
+  if (!audibleStateReady) {
+    audibleStateReady = true;
+    lastAudiblePrincipalKey = key;
+    return;
+  }
+  if (key === lastAudiblePrincipalKey) return;
+  lastAudiblePrincipalKey = key;
+  if ((key === 'POSSIBLE_BUY' || key === 'POSSIBLE_SELL') && uiPrefs.possibleSoundEnabled) playSignalTone('possible');
+  if ((key === 'ENTER_BUY' || key === 'ENTER_SELL') && uiPrefs.confirmSoundEnabled) playSignalTone('confirm');
 }
 
 function renderLicense(s = {}) {
@@ -284,15 +390,17 @@ function render(s = {}) {
   renderLicense(s);
   renderAnalysis(s);
   renderDecision(s);
+  maybePlaySignalAlert(s);
 }
 
 async function getState() {
   const [state, stored] = await Promise.all([
-    chrome.runtime.sendMessage({ type: 'ATS_READ_SCANNER_STATE' }).catch(() => ({})),
-    chrome.storage.local.get(LAST_VALID_LICENSE_KEY).catch(() => ({}))
+    uiSendMessage({ type: 'ATS_READ_SCANNER_STATE' }).catch(() => ({})),
+    uiStorageGet(LAST_VALID_LICENSE_KEY).catch(() => ({}))
   ]);
-  const license = effectiveLicense(state?.license || {}, stored[LAST_VALID_LICENSE_KEY] || null);
-  const rendered = { ...(state || {}), license };
+  const scannerState = state?.state || {};
+  const license = effectiveLicense(scannerState?.license || {}, stored[LAST_VALID_LICENSE_KEY] || null);
+  const rendered = { ...scannerState, license };
   render(rendered);
   return rendered;
 }
@@ -311,7 +419,7 @@ async function autoConnect(force = false) {
   try {
     const alreadyTargetingCasaTrade = lastState.platformId === 'casatrade' && !!lastState.targetTabId;
     const type = force || !alreadyTargetingCasaTrade ? 'ATS_CONNECT_ACTIVE_TAB' : 'ATS_REFRESH_MARKET';
-    const result = await chrome.runtime.sendMessage({ type }).catch(() => ({ ok: false }));
+    const result = await uiSendMessage({ type }).catch(() => ({ ok: false }));
     await getState();
     if (fresh(lastState) && lastState.platformId === 'casatrade') {
       reconnectAttempt = 0;
@@ -340,7 +448,7 @@ $('activateLicense')?.addEventListener('click', async () => {
   if ($('licenseText')) $('licenseText').textContent = 'Validando chave no servidor…';
 
   try {
-    const result = await chrome.runtime.sendMessage({ type: 'ATS_ACTIVATE_LICENSE', key })
+    const result = await uiSendMessage({ type: 'ATS_ACTIVATE_LICENSE', key })
       .catch(() => ({ ok: false, error: 'backend_unreachable' }));
     const activated = !!result?.ok && licenseStillValid(result?.license);
 
@@ -363,7 +471,7 @@ $('activateLicense')?.addEventListener('click', async () => {
 async function prepare(direction) {
   const status = $('tradeActionStatus');
   if (status) status.textContent = `Preparando ${direction === 'BUY' ? 'COMPRA' : 'VENDA'} na CasaTrade…`;
-  const result = await chrome.runtime.sendMessage({ type: 'ATS_PREPARE_TRADE', direction }).catch(() => ({ ok: false }));
+  const result = await uiSendMessage({ type: 'ATS_PREPARE_TRADE', direction }).catch(() => ({ ok: false }));
   if (status) status.textContent = result?.ok
     ? `${direction === 'BUY' ? 'COMPRA' : 'VENDA'} destacada na CasaTrade. Confirme manualmente.`
     : 'A entrada ainda não está confirmada para esta vela.';
@@ -371,12 +479,20 @@ async function prepare(direction) {
 
 $('prepareBuy')?.addEventListener('click', () => prepare('BUY'));
 $('prepareSell')?.addEventListener('click', () => prepare('SELL'));
+$('overlayToggle')?.addEventListener('change', event => saveUiPreference('overlayEnabled', event.currentTarget.checked).catch(() => {}));
+$('possibleSoundToggle')?.addEventListener('change', event => saveUiPreference('possibleSoundEnabled', event.currentTarget.checked).catch(() => {}));
+$('confirmSoundToggle')?.addEventListener('change', event => saveUiPreference('confirmSoundEnabled', event.currentTarget.checked).catch(() => {}));
 
 chrome.storage.onChanged.addListener(changes => {
+  if (changes[UI_PREF_KEY]) {
+    uiPrefs = { ...DEFAULT_UI_PREFS, ...(changes[UI_PREF_KEY].newValue || {}) };
+    syncPreferenceControls();
+  }
   if (changes.scannerState || changes[LAST_VALID_LICENSE_KEY]) getState().catch(() => {});
 });
 
 (async () => {
+  await loadUiPreferences();
   await getState();
   if (licenseStillValid(lastState.license)) await autoConnect(true);
   setInterval(() => getState().catch(() => {}), 500);
