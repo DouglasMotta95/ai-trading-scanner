@@ -1,0 +1,123 @@
+name: Integrate demo candidate
+
+on:
+  push:
+    branches:
+      - release/demo-candidate-integrated-v3
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Integrate PR30 and PR31 behavior
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin ddea566c6a6db7fe0ba08d9a51a8bad89d6494ea
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('src/core/orchestrator.js')
+          s = p.read_text()
+
+          if "import { marketRegime } from './market-regime.js';" not in s:
+              needle = "import { analyzeCandles, ANALYST_THRESHOLDS } from './analysis.js';\n"
+              assert needle in s
+              s = s.replace(needle, needle + "import { marketRegime } from './market-regime.js';\n", 1)
+
+          if "regime = null" not in s:
+              old = "uiState = 'ANALYZING_MARKET', analytics = {}, waitingFor = null, stability = null"
+              new = "uiState = 'ANALYZING_MARKET', analytics = {}, waitingFor = null, regime = null, stability = null"
+              assert old in s
+              s = s.replace(old, new, 1)
+
+          if "    regime,\n    stability," not in s:
+              old = "    analytics,\n    waitingFor,\n    stability,"
+              new = "    analytics,\n    waitingFor,\n    regime,\n    stability,"
+              assert old in s
+              s = s.replace(old, new, 1)
+
+          if "const regime = marketRegime(closed);" not in s:
+              old = "  const liveResult = analyzeCandles(combined, indicatorHistory);\n  const candleCount = closed.length;"
+              new = "  const liveResult = analyzeCandles(combined, indicatorHistory);\n  const regime = marketRegime(closed);\n  const candleCount = closed.length;"
+              assert old in s
+              s = s.replace(old, new, 1)
+
+          if "    waitingFor: liveResult.waitingFor || null,\n    regime," not in s:
+              old = "    waitingFor: liveResult.waitingFor || null,\n    stability: stabilitySnapshot(tracker),"
+              new = "    waitingFor: liveResult.waitingFor || null,\n    regime,\n    stability: stabilitySnapshot(tracker),"
+              assert old in s
+              s = s.replace(old, new, 1)
+
+          old_gate = "  if (secondsRemaining <= 10) {\n    const canConfirm = observeConfirmation(tracker, liveResult, direction, score, sampleAt);"
+          if old_gate in s:
+              new_gate = "  if (secondsRemaining <= 10) {\n    const rangeBlocked = regime?.type === 'range';\n    if (rangeBlocked) {\n      tracker.confirmDirection = null;\n      tracker.confirmHits = 0;\n      tracker.lastConfirmAt = null;\n    }\n    const canConfirm = !rangeBlocked && observeConfirmation(tracker, liveResult, direction, score, sampleAt);"
+              s = s.replace(old_gate, new_gate, 1)
+
+          old_no_trade = "    finalDecisions.set(key, {\n      bucket: currentBucket,\n      state: 'NO_TRADE',\n      direction: null,\n      provisional: false,\n      reason: liveResult.waitingFor?.text || 'Sem confirmação estável suficiente para liberar a próxima vela.',"
+          if old_no_trade in s:
+              new_no_trade = "    const noTradeReason = rangeBlocked\n      ? 'AGUARDANDO — mercado sem tendência definida.'\n      : (liveResult.waitingFor?.text || 'Sem confirmação estável suficiente para liberar a próxima vela.');\n    finalDecisions.set(key, {\n      bucket: currentBucket,\n      state: 'NO_TRADE',\n      direction: null,\n      provisional: false,\n      reason: noTradeReason,"
+              s = s.replace(old_no_trade, new_no_trade, 1)
+
+          final_wait = "        reason: liveResult.waitingFor?.text || 'Sem padrão estável forte o suficiente para a próxima vela.',"
+          if final_wait in s:
+              s = s.replace(final_wait, "        reason: noTradeReason,", 1)
+
+          required = [
+              "import { marketRegime } from './market-regime.js';",
+              "const regime = marketRegime(closed);",
+              "const rangeBlocked = regime?.type === 'range';",
+              "AGUARDANDO — mercado sem tendência definida.",
+              "waitingFor: liveResult.waitingFor || null",
+          ]
+          for item in required:
+              assert item in s, item
+          p.write_text(s)
+          PY
+
+          if [ ! -f test/market-regime-gate.test.mjs ]; then
+            git show ddea566c6a6db7fe0ba08d9a51a8bad89d6494ea:test/market-regime-gate.test.mjs > test/market-regime-gate.test.mjs
+          fi
+
+          cat > test/demo-candidate-integration.test.mjs <<'EOF'
+          import test from 'node:test';
+          import assert from 'node:assert/strict';
+          import { readFile } from 'node:fs/promises';
+
+          test('demo candidate keeps visual focus, structured waiting and range confirmation gate together', async () => {
+            const [orchestrator, focusedAsset, analysis] = await Promise.all([
+              readFile(new URL('../src/core/orchestrator.js', import.meta.url), 'utf8'),
+              readFile(new URL('../src/content/focused-asset.js', import.meta.url), 'utf8'),
+              readFile(new URL('../src/core/analysis.js', import.meta.url), 'utf8')
+            ]);
+            assert.match(orchestrator, /marketRegime\(closed\)/);
+            assert.match(orchestrator, /regime\?\.type === 'range'/);
+            assert.match(orchestrator, /AGUARDANDO — mercado sem tendência definida/);
+            assert.match(orchestrator, /waitingFor: liveResult\.waitingFor \|\| null/);
+            assert.match(analysis, /waitingFor/);
+            assert.match(focusedAsset, /user-selection/);
+            assert.match(focusedAsset, /aria-selected/);
+            assert.match(focusedAsset, /__ATS_FOCUSED_ASSET_VALUE__/);
+          });
+          EOF
+
+          find src -name '*.js' -print0 | xargs -0 -n1 node --check
+          cd backend
+          npm test
+          cd ..
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/core/orchestrator.js test/market-regime-gate.test.mjs test/demo-candidate-integration.test.mjs
+          if ! git diff --cached --quiet; then
+            git commit -m "feat: integrate demo scanner candidate"
+            git push origin HEAD:release/demo-candidate-integrated-v3
+          fi
