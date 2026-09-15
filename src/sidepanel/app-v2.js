@@ -73,17 +73,31 @@ function ensureAudio() {
   if (audioContext.state === 'suspended') audioContext.resume().catch(() => {});
   return audioContext;
 }
-function tone(freq, offset, duration, gainValue) {
+function tone(freq, offset, duration, gainValue, type = 'triangle') {
   const ctx = ensureAudio(); if (!ctx) return;
   const oscillator = ctx.createOscillator(); const gain = ctx.createGain();
   const start = ctx.currentTime + offset;
-  oscillator.frequency.setValueAtTime(freq, start); oscillator.type = 'sine';
-  gain.gain.setValueAtTime(.0001, start); gain.gain.exponentialRampToValueAtTime(gainValue, start + .02); gain.gain.exponentialRampToValueAtTime(.0001, start + duration);
-  oscillator.connect(gain); gain.connect(ctx.destination); oscillator.start(start); oscillator.stop(start + duration + .03);
+  oscillator.frequency.setValueAtTime(freq, start); oscillator.type = type;
+  gain.gain.setValueAtTime(.0001, start);
+  gain.gain.exponentialRampToValueAtTime(Math.max(.001, Math.min(.28, gainValue)), start + .018);
+  gain.gain.exponentialRampToValueAtTime(.0001, start + duration);
+  oscillator.connect(gain); gain.connect(ctx.destination); oscillator.start(start); oscillator.stop(start + duration + .04);
+}
+function vibrate(pattern) {
+  try { if (typeof navigator?.vibrate === 'function') navigator.vibrate(pattern); } catch {}
 }
 function play(kind) {
-  if (kind === 'possible') { tone(620,0,.09,.03); tone(760,.11,.09,.025); return; }
-  tone(760,0,.11,.05); tone(980,.12,.12,.06); tone(1240,.25,.14,.07);
+  if (kind === 'possible') {
+    tone(660,0,.14,.11,'triangle');
+    tone(840,.12,.16,.13,'triangle');
+    vibrate([55,35,70]);
+    return;
+  }
+  tone(620,0,.18,.16,'square');
+  tone(860,.14,.20,.19,'triangle');
+  tone(1120,.31,.22,.22,'triangle');
+  tone(1360,.50,.18,.18,'square');
+  vibrate([110,55,150,55,210]);
 }
 
 function maybeSound(model, state) {
