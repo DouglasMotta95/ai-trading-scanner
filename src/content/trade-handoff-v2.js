@@ -18,7 +18,10 @@
     const text = clean([el.textContent, el.getAttribute?.('aria-label'), el.getAttribute?.('title'), el.getAttribute?.('data-testid'), el.getAttribute?.('name')].filter(Boolean).join(' '));
     let points = 0;
     for (const token of tokens[direction] || []) if (text.includes(token)) points += token.length >= 5 ? 5 : 3;
+    const opposite = direction === 'BUY' ? 'SELL' : 'BUY';
+    for (const token of tokens[opposite] || []) if (text.includes(token)) points -= token.length >= 5 ? 6 : 4;
     if (el.matches('button,[role="button"],input[type="button"],input[type="submit"]')) points += 3;
+    if (el.matches(':disabled,[aria-disabled="true"]')) points -= 8;
     if (/ats-|scanner/i.test(String(el.id || '') + ' ' + String(el.className || ''))) points -= 10;
     return points;
   }
@@ -34,7 +37,7 @@
     document.getElementById('ats-trade-handoff-toast')?.remove();
   }
 
-  function toast(message, target) {
+  function toast(message, target, ambiguous = false) {
     const direction = String(message.direction || '').toUpperCase();
     const buy = direction === 'BUY';
     const el = document.createElement('div');
@@ -53,7 +56,11 @@
     meta.textContent = [message.asset, message.timeframe, message.expiration ? `exp. ${message.expiration}` : null, Number.isFinite(Number(message.score)) ? `força ${Math.round(Number(message.score))}/100` : null].filter(Boolean).join(' • ');
     const hint = document.createElement('div');
     hint.style.cssText = 'color:#8799aa;font-size:10px;margin-top:6px';
-    hint.textContent = target ? 'Botão da CasaTrade localizado e destacado. Toque nele para confirmar a operação.' : 'Não localizei o botão da CasaTrade com segurança. Confirme diretamente na plataforma.';
+    hint.textContent = target
+      ? 'Botão da CasaTrade localizado e destacado. Toque nele para confirmar a operação.'
+      : ambiguous
+        ? 'Encontrei mais de um botão possível e não vou adivinhar. Confirme diretamente na plataforma.'
+        : 'Não localizei o botão da CasaTrade com segurança. Confirme diretamente na plataforma.';
     el.append(title, meta, hint);
     document.documentElement.appendChild(el);
     setTimeout(() => el.remove(), 6000);
@@ -65,8 +72,11 @@
     const direction = String(message.direction || '').toUpperCase();
     if (!['BUY','SELL'].includes(direction)) { sendResponse({ ok: false, error: 'invalid_direction' }); return false; }
     const elements = [...document.querySelectorAll('button,[role="button"],input[type="button"],input[type="submit"],a')].filter(visible);
-    const ranked = elements.map(el => ({ el, score: score(el, direction) })).filter(item => item.score > 0).sort((a,b) => b.score - a.score);
-    const target = ranked[0]?.el || null;
+    const ranked = elements.map(el => ({ el, score: score(el, direction) })).filter(item => item.score >= 6).sort((a,b) => b.score - a.score);
+    const top = ranked[0] || null;
+    const second = ranked[1] || null;
+    const ambiguous = !!(top && second && top.score - second.score < 2);
+    const target = top && !ambiguous ? top.el : null;
     if (target) {
       target.setAttribute('data-ats-trade-target', direction);
       target.style.outline = direction === 'BUY' ? '3px solid #33e89b' : '3px solid #ff6178';
@@ -75,8 +85,8 @@
       target.style.scrollMargin = '120px';
       target.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
     }
-    toast(message, target);
-    sendResponse({ ok: true, found: !!target, label: target ? clean(target.textContent || target.getAttribute?.('aria-label') || '').slice(0,80) : null });
+    toast(message, target, ambiguous);
+    sendResponse({ ok: true, found: !!target, ambiguous, label: target ? clean(target.textContent || target.getAttribute?.('aria-label') || '').slice(0,80) : null });
     return true;
   });
 })();
