@@ -25,11 +25,15 @@
     return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity || 1) > 0;
   };
 
+  let elementCache = [];
+  let elementCacheAt = 0;
   function deepElements(limit = 6000) {
+    const now = Date.now();
+    if (elementCache.length && now - elementCacheAt < 600) return elementCache.slice(0, limit);
     const out = [];
     const roots = [document];
     const seen = new Set();
-    while (roots.length && out.length < limit) {
+    while (roots.length && out.length < 6000) {
       const root = roots.shift();
       if (!root || seen.has(root)) continue;
       seen.add(root);
@@ -37,11 +41,13 @@
       try { nodes = [...root.querySelectorAll('*')]; } catch {}
       for (const node of nodes) {
         out.push(node);
-        if (out.length >= limit) break;
+        if (out.length >= 6000) break;
         if (node.shadowRoot) roots.push(node.shadowRoot);
       }
     }
-    return out;
+    elementCache = out;
+    elementCacheAt = now;
+    return out.slice(0, limit);
   }
 
   function chartRect() {
@@ -147,7 +153,7 @@
       if (!quote?.price) return;
       const now = Date.now();
       const changed = lastPrice == null || Number(lastPrice) !== Number(quote.price);
-      if (!changed && now - lastSentAt < 1200) return;
+      if (!changed && now - lastSentAt < 1400) return;
       lastPrice = quote.price;
       lastSentAt = now;
       await chrome.runtime.sendMessage({
@@ -164,6 +170,6 @@
     }
   }
 
-  setInterval(tick, 500);
+  setInterval(tick, 750);
   tick();
 })();
