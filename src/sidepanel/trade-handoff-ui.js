@@ -1,5 +1,10 @@
 const atsHandoffButton = direction => document.getElementById(direction === 'BUY' ? 'prepareBuy' : 'prepareSell');
 const atsHandoffStatus = () => document.getElementById('tradeActionStatus');
+const atsNormExpiration = value => {
+  const s = String(value || '').toLowerCase().replace(/\s+/g, '');
+  let m = s.match(/^(\d{1,4})(?:s|seg|segundo|segundos)$/); if (m) return `${Number(m[1])}s`;
+  m = s.match(/^(\d{1,3})(?:m|min|minuto|minutos)$/); return m ? `${Number(m[1]) * 60}s` : null;
+};
 
 async function atsSendToFrame(tabId, frameId, message) {
   if (!tabId || !chrome.tabs?.sendMessage) return null;
@@ -17,6 +22,17 @@ async function atsPrepareTrade(direction) {
   const original = button.textContent;
   button.textContent = direction === 'BUY' ? '🟢 LOCALIZANDO…' : '🔴 LOCALIZANDO…';
   try {
+    const before = await chrome.runtime.sendMessage({ type: 'ATS_READ_SCANNER_STATE' }).catch(() => null);
+    const beforeState = before?.state || {};
+    const desiredExpiration = atsNormExpiration(beforeState.executionPreferences?.expiration || '60s') || '60s';
+    const actualExpiration = atsNormExpiration(beforeState.platformControls?.observed?.expiration || '');
+    if (!actualExpiration || actualExpiration !== desiredExpiration) {
+      if (status) status.textContent = actualExpiration
+        ? `ENTRADA BLOQUEADA: CasaTrade em ${actualExpiration}; ajuste para ${desiredExpiration}.`
+        : `ENTRADA BLOQUEADA: confirme a expiração da CasaTrade (${desiredExpiration}).`;
+      return;
+    }
+
     const response = await chrome.runtime.sendMessage({ type: 'ATS_PREPARE_TRADE', direction }).catch(() => null);
     if (!response?.ok) {
       if (status) status.textContent = 'O sinal já mudou ou não está confirmado. Aguarde a próxima decisão.';
@@ -30,12 +46,12 @@ async function atsPrepareTrade(direction) {
       direction,
       asset: state.asset || intent.asset || null,
       timeframe: state.analysisTimeframe || state.timeframe || intent.timeframe || null,
-      expiration: state.targetExpiration || state.expiration || intent.expiration || null,
+      expiration: actualExpiration,
       score: state.signal?.analysisScore ?? state.signal?.score ?? null
     };
     const handoff = await atsSendToFrame(state.targetTabId, focus.frameId, message);
     if (status) status.textContent = handoff?.found
-      ? `${direction === 'BUY' ? 'COMPRA' : 'VENDA'} preparada: o botão correto da CasaTrade foi destacado. Confirme com seu toque na plataforma.`
+      ? `${direction === 'BUY' ? 'COMPRA' : 'VENDA'} preparada: botão correto destacado. Confirme com seu toque na CasaTrade.`
       : 'Sinal preparado, mas não localizei o botão da CasaTrade com segurança. Confirme diretamente na plataforma.';
   } finally {
     button.textContent = original;
