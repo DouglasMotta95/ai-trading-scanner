@@ -17,8 +17,8 @@ function normAsset(value = '') {
   if (!direct) return '';
   return `${direct[1]}/${direct[2]}${otc ? ' (OTC)' : ''}`;
 }
-const assetId = value => normAsset(value).replace(/\s*\(OTC\)\s*$/i, '');
-const sameAsset = (a, b) => !!assetId(a) && assetId(a) === assetId(b);
+const marketId = value => normAsset(value);
+const sameMarket = (a, b) => !!marketId(a) && marketId(a) === marketId(b);
 
 function normTf(value) {
   const s = clean(value).toUpperCase().replace(/\s+/g, '');
@@ -73,7 +73,7 @@ function candidates(payload = {}) {
 }
 
 function bestForFocus(payload = {}, focus = '') {
-  const rows = candidates(payload).filter(row => sameAsset(row.asset, focus));
+  const rows = candidates(payload).filter(row => sameMarket(row.asset, focus));
   rows.sort((a, b) => Number(b.selected === true) - Number(a.selected === true)
     || Number(b.confidence || 0) - Number(a.confidence || 0)
     || Number(b.observedAt || 0) - Number(a.observedAt || 0));
@@ -82,8 +82,15 @@ function bestForFocus(payload = {}, focus = '') {
 
 function historyFor(payload = {}, focus = '') {
   const source = payload.recentCandles || {};
-  const key = Object.keys(source).find(asset => sameAsset(asset, focus));
+  const key = Object.keys(source).find(asset => sameMarket(asset, focus));
   return key ? sanitizeRows(source[key]) : [];
+}
+
+function stateHistory(state = {}, asset = '') {
+  const source = state.marketHistory || {};
+  const key = Object.keys(source).find(value => sameMarket(value, asset));
+  const fromHistory = key ? sanitizeRows(source[key]) : [];
+  return fromHistory.length ? fromHistory : sanitizeRows(state.candles || []);
 }
 
 function exactClock(state = {}, info = null) {
@@ -95,7 +102,7 @@ function exactClock(state = {}, info = null) {
   if (clock.verified !== true || clean(clock.role) !== 'candle-close') return null;
   if (!['trader-dom-countdown', 'network-server-cycle'].includes(clean(clock.source))) return null;
   if (Date.now() - Number(clock.at || 0) > CLOCK_FRESH_MS) return null;
-  if (!sameAsset(clock.asset, focus.asset)) return null;
+  if (!sameMarket(clock.asset, focus.asset)) return null;
   if (Number(clock.frameId) !== Number(focus.frameId)) return null;
   if (clean(clock.frameHost).toLowerCase() !== clean(focus.frameHost).toLowerCase()) return null;
   if (info && (Number(info.frameId) !== Number(focus.frameId) || info.frameHost !== clean(focus.frameHost).toLowerCase())) return null;
@@ -120,8 +127,10 @@ function resetForSession(state = {}, { asset, timeframe = null, info, reason, so
     analysisTimeframe: timeframe,
     expiration: null,
     targetExpiration: null,
+    serverTime: null,
     candles: [],
     currentCandle: null,
+    marketHistory: {},
     signal: null,
     lastConfirmed: null,
     tradeIntent: null,
@@ -139,6 +148,58 @@ function resetForSession(state = {}, { asset, timeframe = null, info, reason, so
   };
 }
 
+function clockRecord(message = {}, info = {}, asset = '', timeframe = null, secondsRemaining = null) {
+  return {
+    asset, timeframe, secondsRemaining, available: true, verified: true, role: 'candle-close',
+    source: clean(message.clockSource), mode: clean(message.clockMode || 'exact'), confidence: Number(message.confidence || 0),
+    text: clean(message.clockText || ''), token: clean(message.clockToken || ''),
+    frameId: info.frameId, frameHost: info.frameHost, at: Date.now()
+  };
+}
+
+function evaluateAtClock(state = {}, focus = null, clock = null) {
+  if (!focus?.asset || !clock || num(state.price) == null) return state;
+  if (!sameMarket(state.asset, focus.asset)) return state;
+  const timeframe = normTf(clock.timeframe || state.analysisTimeframe || state.timeframe);
+  if (!timeframe) return state;
+  const rows = stateHistory(state, focus.asset);
+  if (rows.length < 2) return state;
+
+  const snapshot = {
+    platformId: 'casatrade', platformName: 'CasaTrade', connection: 'online',
+    asset: normAsset(focus.asset), price: Number(state.price),
+    timeframe, analysisTimeframe: timeframe,
+    expiration: state.targetExpiration || state.expiration || null,
+    secondsRemaining: Number(clock.secondsRemaining),
+    serverTime: Date.now(), candles: rows,
+    capabilities: { ...(state.capabilities || {}), structuredQuotes: true, candles: true },
+    diagnostics: { capture: 'exact-clock-heartbeat', feedQuality: Number(state.diagnostics?.acquisition?.feedQuality || 0) }
+  };
+  const processed = processSnapshot(snapshot, state);
+  if (!processed) return state;
+  return {
+    ...state,
+    ...processed,
+    platformId: 'casatrade', platformName: 'CasaTrade',
+    asset: normAsset(focus.asset), price: Number(state.price),
+    timeframe, analysisTimeframe: timeframe,
+    expiration: state.targetExpiration || state.expiration || null,
+    targetExpiration: state.targetExpiration || state.expiration || null,
+    serverTime: snapshot.serverTime,
+    candles: rows,
+    marketHistory: state.marketHistory || {},
+    lastSeen: state.lastSeen,
+    connection: state.connection,
+    diagnostics: {
+      ...(state.diagnostics || {}),
+      ...(processed.diagnostics || {}),
+      focusedAsset: focus,
+      marketClock: clock,
+      marketSession: state.diagnostics?.marketSession || null
+    }
+  };
+}
+
 async function applyFocus(message = {}, sender = {}) {
   const info = senderMeta(sender);
   if (!info.trusted || message.chartScoped !== true || message.reliable !== true || message.frameRole !== 'trader-frame') return null;
@@ -148,9 +209,9 @@ async function applyFocus(message = {}, sender = {}) {
     if (!licenseActive(state)) return;
     if (state.targetTabId && state.targetTabId !== info.tabId) return;
     const old = state.diagnostics?.focusedAsset || null;
-    const changed = !sameAsset(old?.asset, asset) || Number(old?.frameId) !== Number(info.frameId) || clean(old?.frameHost).toLowerCase() !== info.frameHost;
+    const changed = !sameMarket(old?.asset, asset) || Number(old?.frameId) !== Number(info.frameId) || clean(old?.frameHost).toLowerCase() !== info.frameHost;
     let next = state;
-    if (changed || (state.asset && !sameAsset(state.asset, asset))) {
+    if (changed || (state.asset && !sameMarket(state.asset, asset))) {
       next = resetForSession(state, {
         asset, info, source: clean(message.source || 'visible-chart'),
         reason: `Ativo ${asset} confirmado no gráfico. Sincronizando a sessão ao vivo.`
@@ -186,7 +247,7 @@ async function applyClock(message = {}, sender = {}) {
   return updateScannerState(state => {
     if (!licenseActive(state)) return;
     const focus = state.diagnostics?.focusedAsset || null;
-    if (!focus?.asset || !sameAsset(focus.asset, asset) || Number(focus.frameId) !== Number(info.frameId) || clean(focus.frameHost).toLowerCase() !== info.frameHost) return;
+    if (!focus?.asset || !sameMarket(focus.asset, asset) || Number(focus.frameId) !== Number(info.frameId) || clean(focus.frameHost).toLowerCase() !== info.frameHost) return;
 
     if (!exact || secondsRemaining == null || secondsRemaining < 0) {
       return {
@@ -205,7 +266,7 @@ async function applyClock(message = {}, sender = {}) {
     }
 
     const session = state.diagnostics?.marketSession || {};
-    const sessionChanged = !sameAsset(session.asset, asset) || clean(session.timeframe).toUpperCase() !== clean(timeframe).toUpperCase()
+    const sessionChanged = !sameMarket(session.asset, asset) || clean(session.timeframe).toUpperCase() !== clean(timeframe).toUpperCase()
       || Number(session.frameId) !== Number(info.frameId) || clean(session.frameHost).toLowerCase() !== info.frameHost;
     let next = state;
     if (sessionChanged) {
@@ -214,7 +275,9 @@ async function applyClock(message = {}, sender = {}) {
         reason: `Sessão ${asset} • ${timeframe || '—'} sincronizada ao fechamento real da vela.`
       });
     }
-    return {
+
+    const record = clockRecord(message, info, asset, timeframe, secondsRemaining);
+    const clockState = {
       ...next,
       connection: next.price != null ? 'online' : 'connecting',
       timeframe: timeframe || next.timeframe,
@@ -223,18 +286,22 @@ async function applyClock(message = {}, sender = {}) {
       targetExpiration: message.expiration || next.targetExpiration || null,
       diagnostics: {
         ...(next.diagnostics || {}),
-        marketClock: {
-          asset, timeframe, secondsRemaining, available: true, verified: true, role: 'candle-close',
-          source: clean(message.clockSource), mode: clean(message.clockMode || 'exact'), confidence: Number(message.confidence || 0),
-          text: clean(message.clockText || ''), token: clean(message.clockToken || ''),
-          frameId: info.frameId, frameHost: info.frameHost, at: Date.now()
-        },
+        marketClock: record,
         marketSession: {
           ...(next.diagnostics?.marketSession || {}), asset, timeframe,
           frameId: info.frameId, frameHost: info.frameHost, dataMode: next.price != null ? 'live' : 'syncing'
         }
       }
     };
+
+    // A timeframe/frame/asset change starts an empty session. Never analyze old
+    // candles during that clock tick; wait for the new market feed to hydrate it.
+    if (sessionChanged) return clockState;
+
+    // The exact candle-close clock is the heartbeat of the decision cycle. This
+    // advances BUILDING/POSSIBLE/DECIDING/ENTER/SKIP even if the network feed does
+    // not emit another packet during the final seconds of the current candle.
+    return evaluateAtClock(clockState, focus, record);
   });
 }
 
@@ -251,17 +318,13 @@ async function applyFeed(payload = {}, sender = {}) {
     if (!candidate) return;
 
     const incomingHistory = historyFor(payload, asset);
-    const previousHistory = (() => {
-      const source = state.marketHistory || {};
-      const key = Object.keys(source).find(k => sameAsset(k, asset));
-      return key ? sanitizeRows(source[key]) : [];
-    })();
+    const previousHistory = stateHistory(state, asset);
     const mergedHistory = mergeRows(previousHistory, incomingHistory);
     const marketHistory = { ...(state.marketHistory || {}), [asset]: mergedHistory };
     const clock = exactClock(state, info);
     const timeframe = normTf(clock?.timeframe || state.analysisTimeframe || candidate.timeframe) || null;
     const price = Number(candidate.price);
-    const serverTime = normalizeTime(candidate.timestamp) || num(state.serverTime) || null;
+    const serverTime = normalizeTime(candidate.timestamp) || Date.now();
     const snapshot = {
       platformId: 'casatrade', platformName: 'CasaTrade', connection: 'online', asset, price,
       timeframe, analysisTimeframe: timeframe,
@@ -299,7 +362,8 @@ async function applyFeed(payload = {}, sender = {}) {
         acquisition: {
           stage: clock ? 'diagnosing_next_candle' : 'syncing_clock',
           reason: clock ? `Sessão ao vivo ${asset} • ${timeframe || '—'} sincronizada.` : 'Preço e histórico prontos. Aguardando o fechamento exato da vela.',
-          priceSource: candidate.transport || payload.primaryTransport || 'market', candleCount: mergedHistory.length, requiredCandles: 2, at: Date.now()
+          priceSource: candidate.transport || payload.primaryTransport || 'market', candleCount: mergedHistory.length, requiredCandles: 2,
+          feedQuality: Number(payload.feedQuality || 0), at: Date.now()
         },
         inspector: state.diagnostics?.inspector || null
       }
@@ -316,7 +380,7 @@ async function applyChartPrice(message = {}, sender = {}) {
     if (!licenseActive(state)) return;
     const focus = state.diagnostics?.focusedAsset || null;
     if (!focus?.asset || Number(focus.frameId) !== Number(info.frameId) || clean(focus.frameHost).toLowerCase() !== info.frameHost) return;
-    if (message.asset && !sameAsset(message.asset, focus.asset)) return;
+    if (message.asset && !sameMarket(message.asset, focus.asset)) return;
     const clock = exactClock(state, info);
     return {
       ...state,
@@ -369,7 +433,7 @@ chrome.storage.onChanged.addListener(changes => {
   const focus = state.diagnostics?.focusedAsset || null;
   const session = state.diagnostics?.marketSession || null;
   if (!focus?.asset || !session?.asset) return;
-  const mismatch = (state.asset && !sameAsset(state.asset, session.asset))
+  const mismatch = (state.asset && !sameMarket(state.asset, session.asset))
     || (state.analysisTimeframe && session.timeframe && normTf(state.analysisTimeframe) !== normTf(session.timeframe));
   if (!mismatch) return;
   repairing = true;
