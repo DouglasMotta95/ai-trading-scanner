@@ -51,7 +51,7 @@ test('stable bullish setup can lock next-candle entry in the 15-second decision 
   const deciding = snap(bucket, 45_000, 15);
   assert.notEqual(deciding.signal.state, 'CONFIRM');
   assert.equal(deciding.signal.phase, 'FINAL');
-  assert.equal(deciding.signal.uiState, 'WAIT');
+  assert.equal(deciding.signal.uiState, 'DECIDING');
 
   const enter = snap(bucket, 46_000, 14);
   assert.equal(enter.signal.state, 'CONFIRM');
@@ -79,7 +79,7 @@ test('if no setup confirms by four seconds the next candle is explicitly skipped
   const bucket = Math.floor(1_701_300_000_000 / minute) * minute;
   const out = snap(bucket, 56_000, 4, lateralRows(bucket), 1.001);
   assert.equal(out.signal.state, 'NO_TRADE');
-  assert.equal(out.signal.uiState, 'WAIT');
+  assert.equal(out.signal.uiState, 'SKIP');
   assert.equal(out.signal.provisional, false);
   assert.match(out.signal.reason, /^PULAR PRÓXIMA VELA/);
   assert.equal(out.decisionCycle.locked, 'SKIP');
