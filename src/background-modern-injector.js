@@ -9,7 +9,7 @@ async function inject(tabId) {
     'src/content/chart-frame-market-reader.js',
     'src/content/embedded-feed-bridge.js',
     'src/content/platform-sync.js',
-    'src/content/market-cycle-clock-v3.js',
+    'src/content/market-cycle-clock-v4.js',
     'src/content/casatrade-data-inspector.js',
     'src/content/analysis-visual-overlay-v2.js'
   ];
