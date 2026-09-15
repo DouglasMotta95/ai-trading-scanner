@@ -57,7 +57,7 @@ test('visible chart frame stays authoritative and legacy market writers are igno
   assert.match(focus, /__ATS_FOCUSED_ASSET_META__/);
   assert.match(focus, /reliable: true/);
   assert.match(focus, /chartScoped: true/);
-  assert.match(focus, /frameRole: 'trader-frame'/);
+  assert.match(focus, /const frameRole = traderHost\(host\) \? 'trader-frame' : 'casa-chart-frame'/);
   assert.match(focus, /candidateSamples >= 2 && stableFor >= 220/);
 
   assert.match(market, /const candidate = bestForFocus\(payload, asset\)/);
