@@ -123,7 +123,10 @@
       if (!own || own.length > 100) continue;
       const parentText = clean(el.parentElement?.innerText || el.parentElement?.textContent || '');
       const context = fold(`${own} ${parentText} ${el.id || ''} ${el.className || ''}`).slice(0, 340);
-      if (/hora de compra|buy time|entry time|expira|expiry|expiration|duration|duracao/.test(context)) continue;
+      // Never use the purchase-entry timer or a duration selector as candle-close authority.
+      // CasaTrade's visible "Expira" countdown is allowed because it represents the
+      // running operation/candle boundary and is cross-checked against the selected cycle.
+      if (/hora de compra|buy time|entry time|duration|duracao/.test(context)) continue;
 
       const values = [];
       for (const match of own.matchAll(/\b(\d{1,3}):([0-5]\d)\b/g)) values.push({ seconds: Number(match[1]) * 60 + Number(match[2]), token: match[0] });
@@ -132,7 +135,9 @@
 
       const rect = el.getBoundingClientRect();
       const chartScoped = inOrNearChart(rect, chart);
-      const semantic = /vela|candle|remaining|restante|countdown|timer|fechamento|close/.test(context);
+      const candleSemantic = /vela|candle|remaining|restante|countdown|timer|fechamento|close/.test(context);
+      const expirySemantic = /expira|expiry|expiration/.test(context);
+      const semantic = candleSemantic || expirySemantic;
       if (!semantic && !chartScoped) continue;
 
       for (const value of values) {
@@ -142,8 +147,9 @@
         if (semantic) score += 180;
         if (/vela|candle|fechamento|close/.test(context)) score += 90;
         if (/remaining|restante|countdown|timer/.test(context)) score += 55;
+        if (expirySemantic) score += 45;
         if (/^\d{1,3}:[0-5]\d$/.test(own)) score += 35;
-        rows.push({ ...value, text: own, score, chartScoped });
+        rows.push({ ...value, text: own, score, chartScoped, expirySemantic });
       }
     }
     rows.sort((a, b) => b.score - a.score || a.seconds - b.seconds);
@@ -179,15 +185,18 @@
       const controlsFresh = Number(state.platformControls?.checkedAt || 0) > 0 && Date.now() - Number(state.platformControls.checkedAt) < 5000;
       const expiration = clean(controls.expiration || state.targetExpiration || state.expiration || '') || null;
       const chartTf = selectedChartTf();
-      const cycleTf = (controlsFresh ? tf(expiration) || tf(controls.timeframe) : null)
+      // The selected chart timeframe is the cycle. Never infer it from an absolute
+      // expiration/countdown string because that can convert a live 00:42 into S42.
+      const cycleTf = (controlsFresh ? tf(controls.timeframe) : null)
         || chartTf || tf(state.analysisTimeframe || state.timeframe) || 'M1';
-      const domClock = (!chartTf || chartTf === cycleTf) ? exactDomCountdown(cycleTf) : null;
+      const domClock = exactDomCountdown(cycleTf);
       const diagnostic = derivedCountdown(cycleTf, state);
       const payload = domClock ? {
         type: 'ATS_MARKET_CLOCK_V2', asset: focus.asset, timeframe: cycleTf,
         secondsRemaining: domClock.seconds, expiration, available: true, verified: true,
-        clockRole: 'candle-close', clockSource: 'trader-dom-countdown', clockMode: domClock.chartScoped ? 'chart-geometry-exact' : 'dom-exact',
-        clockText: domClock.text, clockToken: domClock.token, confidence: 99, frameHost: host, at: Date.now()
+        clockRole: 'candle-close', clockSource: 'trader-dom-countdown',
+        clockMode: domClock.expirySemantic ? 'platform-expiry-countdown' : domClock.chartScoped ? 'chart-geometry-exact' : 'dom-exact',
+        clockText: domClock.text, clockToken: domClock.token, confidence: domClock.expirySemantic ? 96 : 99, frameHost: host, at: Date.now()
       } : {
         type: 'ATS_MARKET_CLOCK_V2', asset: focus.asset, timeframe: cycleTf,
         secondsRemaining: diagnostic, expiration, available: false, verified: false,
