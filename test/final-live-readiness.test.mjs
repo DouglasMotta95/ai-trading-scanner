@@ -31,7 +31,8 @@ test('visible chart has a direct price fallback that cannot choose an asset by i
   const manifest = JSON.parse(read('manifest.json'));
   const scripts = manifest.content_scripts.flatMap(row => row.js || []);
 
-  assert.match(reader, /if \(!traderHost\(host\)\) return/);
+  assert.match(reader, /if \(!traderHost\(host\) && !casaHost\(host\)\) return/);
+  assert.match(reader, /focus\.trustedChartFrame !== true/);
   assert.match(reader, /state\.diagnostics\?\.focusedAsset/);
   assert.match(reader, /type: 'ATS_CHART_FRAME_MARKET'/);
   assert.match(market, /async function applyChartPrice/);
