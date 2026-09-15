@@ -46,6 +46,9 @@ const buckets = new Map();
 function allowed(identity) {
   const key = String(identity?.installationId || 'unknown');
   const minute = Math.floor(now() / 60000);
+  if (buckets.size > 2000) {
+    for (const [bucketKey, row] of buckets) if (Number(row?.minute) < minute - 1) buckets.delete(bucketKey);
+  }
   const previous = buckets.get(key);
   if (!previous || previous.minute !== minute) {
     buckets.set(key, { minute, count: 1 });
@@ -57,18 +60,19 @@ function allowed(identity) {
 
 function corsHeaders(req) {
   const origin = String(req.headers.origin || '');
-  const allowedOrigin = !origin || origin.startsWith('chrome-extension://') || origin.startsWith('edge-extension://') ? origin : '';
-  return {
+  const extensionOrigin = origin.startsWith('chrome-extension://') || origin.startsWith('edge-extension://') ? origin : '';
+  const headers = {
     'content-type': 'application/json; charset=utf-8',
     'cache-control': 'no-store',
     'x-content-type-options': 'nosniff',
     'referrer-policy': 'no-referrer',
-    'access-control-allow-origin': allowedOrigin || '*',
     'access-control-allow-headers': 'content-type,authorization',
     'access-control-allow-methods': 'GET,POST,OPTIONS',
     'access-control-max-age': '600',
     'vary': 'Origin'
   };
+  if (extensionOrigin) headers['access-control-allow-origin'] = extensionOrigin;
+  return headers;
 }
 
 function json(req, res, status, data) {
