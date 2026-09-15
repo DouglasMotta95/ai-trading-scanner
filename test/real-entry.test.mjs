@@ -118,17 +118,15 @@ test('completed decisions can be serialized and restored after a worker restart'
   assert.equal(restored.lastConfirmed.entryConfirmed, true);
 });
 
-test('side panel renders only fresh real entries and does not observe its own writes forever', () => {
+test('manual operation card is the single visible execution record and obsolete duplicate entry surface is not mounted', () => {
   const html = fs.readFileSync(new URL('../src/sidepanel/index.html', import.meta.url), 'utf8');
-  const js = fs.readFileSync(new URL('../src/sidepanel/real-entry.js', import.meta.url), 'utf8');
-  assert.match(html, /ENTRADA REAL/i);
-  assert.match(html, /real-entry\.js/);
-  assert.match(js, /ATS_ENTRY_FRESH_MS = 8000/);
-  assert.match(js, /state\?\.lastSeen/);
-  assert.match(js, /atsEntryObserver\?\.disconnect\(\)/);
-  assert.match(js, /target\.textContent === text/);
-  assert.match(js, /PREÇO DE ENTRADA NÃO CONFIRMADO/);
-  assert.match(js, /AGUARDANDO ABERTURA REAL/);
-  assert.match(js, /lastConfirmed\?\.entryPrice/);
-  assert.doesNotMatch(js, /targetLabel/);
+  const manual = fs.readFileSync(new URL('../src/sidepanel/manual-trade-ui.js', import.meta.url), 'utf8');
+  assert.match(html, /manual-trade-ui\.js/);
+  assert.doesNotMatch(html, /real-entry\.js|ENTRADA REAL|id="targetTime"/i);
+  assert.match(manual, /OPERAÇÃO MANUAL/);
+  assert.match(manual, /manualTradeEntry/);
+  assert.match(manual, /manualTradeExit/);
+  assert.match(manual, /manualTradeResult/);
+  assert.match(manual, /matchedSignal/);
+  assert.match(manual, /MANUAL \/ FORA DO TIMING/);
 });
