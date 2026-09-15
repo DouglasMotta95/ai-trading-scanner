@@ -12,7 +12,7 @@ test('visible trader chart is the authoritative asset source', () => {
   assert.match(focused, /reliable: true/);
   assert.match(focused, /pointerup/);
   assert.match(focused, /touchend/);
-  assert.match(market, /message\.type === 'ATS_VISUAL_FOCUS_V2'/);
+  assert.match(market, /message\?\.type === 'ATS_VISUAL_FOCUS_V2'/);
   assert.match(market, /if \(!info\.trusted \|\| message\.chartScoped !== true \|\| message\.reliable !== true/);
 });
 
