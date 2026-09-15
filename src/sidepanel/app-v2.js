@@ -19,6 +19,7 @@ const freshFocus = state => {
     && Number(focus.at) > 0 && Date.now() - Number(focus.at) < 5000;
 };
 const priceText = value => num(value) == null ? '—' : String(value);
+const observedPriceText = (value, reliable = true) => num(value) == null ? '—' : `${reliable ? '' : '≈'}${String(value)}`;
 const marketId = value => {
   const raw = String(value || '').normalize('NFKC').toUpperCase().replace(/\s+/g, ' ').trim();
   if (!raw) return '';
@@ -28,19 +29,35 @@ const marketId = value => {
 };
 const sameMarket = (a, b) => !!marketId(a) && marketId(a) === marketId(b);
 
-function exactClockReady(state = {}) {
+function clockBaseReady(state = {}) {
   const focus = state.diagnostics?.focusedAsset || null;
   const clock = state.diagnostics?.marketClock || null;
   if (!focus || !clock || !state.asset) return false;
   return freshFocus(state)
     && sameMarket(focus.asset, state.asset)
-    && clock.verified === true && clock.available !== false && clock.role === 'candle-close'
-    && ['trader-dom-countdown','network-server-cycle'].includes(String(clock.source || ''))
+    && clock.available !== false && clock.role === 'candle-close'
     && sameMarket(clock.asset, state.asset)
     && Number(clock.frameId) === Number(focus.frameId)
     && String(clock.frameHost || '').toLowerCase() === String(focus.frameHost || '').toLowerCase()
-    && Date.now() - Number(clock.at || 0) < 2200
+    && Date.now() - Number(clock.at || 0) < 2600
     && num(clock.secondsRemaining) != null;
+}
+
+function exactClockReady(state = {}) {
+  const clock = state.diagnostics?.marketClock || null;
+  return clockBaseReady(state)
+    && clock?.verified === true
+    && ['trader-dom-countdown','network-server-cycle'].includes(String(clock.source || ''));
+}
+
+function operationalClockReady(state = {}) {
+  const clock = state.diagnostics?.marketClock || null;
+  if (!clockBaseReady(state)) return false;
+  if (exactClockReady(state)) return true;
+  return clock?.verified !== true
+    && clock?.operational === true
+    && String(clock?.source || '') === 'platform-cycle-derived'
+    && Number(clock?.confidence || 0) >= 50;
 }
 
 function sessionReady(state = {}) {
@@ -48,28 +65,30 @@ function sessionReady(state = {}) {
   const sessionTf = String(session?.timeframe || '').toUpperCase();
   const stateTf = String(state.analysisTimeframe || state.timeframe || '').toUpperCase();
   return activeLicense(state) && state.platformId === 'casatrade' && state.connection === 'online'
-    && !!state.asset && num(state.price) != null && fresh(state) && exactClockReady(state)
+    && !!state.asset && num(state.price) != null && fresh(state) && operationalClockReady(state)
     && sameMarket(session?.asset, state.asset)
     && (!sessionTf || !stateTf || sessionTf === stateTf);
 }
 
 function decisionModel(state = {}) {
   const signal = state.signal || {};
-  if (!activeLicense(state)) return { key: 'BLOCKED', title: 'ATIVAÇÃO NECESSÁRIA', badge: 'BLOQUEADO', detail: 'Ative a licença para iniciar.', className: 'waiting' };
-  if (!freshFocus(state)) return { key: 'SYNC', title: 'IDENTIFICANDO ATIVO', badge: 'SINCRONIZANDO', detail: 'Aguardando o ativo realmente aberto no gráfico.', className: 'waiting' };
-  if (!state.asset || num(state.price) == null) return { key: 'SYNC', title: 'LENDO MERCADO', badge: 'SINCRONIZANDO', detail: 'Ativo confirmado. Aguardando cotação real.', className: 'waiting' };
-  if (!exactClockReady(state)) return { key: 'SYNC', title: 'SINCRONIZANDO VELA', badge: 'RELÓGIO', detail: 'Aguardando o fechamento exato da vela da CasaTrade.', className: 'waiting' };
+  if (!activeLicense(state)) return { key: 'BLOCKED', title: 'ANALISANDO MERCADO ATUAL', badge: 'BLOQUEADO', detail: 'Ative a licença para iniciar.', className: 'waiting' };
+  if (!freshFocus(state)) return { key: 'ANALYZING_MARKET', title: 'ANALISANDO MERCADO ATUAL', badge: 'ANALISANDO', detail: 'Identificando o ativo realmente aberto no gráfico.', className: 'waiting' };
+  if (!state.asset || num(state.price) == null) return { key: 'ANALYZING_MARKET', title: 'ANALISANDO MERCADO ATUAL', badge: 'ANALISANDO', detail: 'Ativo confirmado. Lendo a cotação real.', className: 'waiting' };
+  if (!operationalClockReady(state)) return { key: 'ANALYZING_MARKET', title: 'ANALISANDO MERCADO ATUAL', badge: 'ANALISANDO', detail: 'Sincronizando o ciclo da vela com a CasaTrade.', className: 'waiting' };
   const map = {
-    BUILDING_PATTERN: ['ANALISANDO PRÓXIMA VELA','ANALISANDO','waiting'],
+    ANALYZING_MARKET: ['ANALISANDO MERCADO ATUAL','ANALISANDO','waiting'],
+    BUILDING_PATTERN: ['MONTANDO PADRÃO DA PRÓXIMA VELA','PADRÃO','waiting'],
     POSSIBLE_BUY: ['POSSÍVEL COMPRA','POSSÍVEL','possible'],
     POSSIBLE_SELL: ['POSSÍVEL VENDA','POSSÍVEL','possible'],
-    DECIDING: ['DECIDINDO AGORA','DECIDINDO','possible'],
-    ENTER_BUY: ['ENTRAR COMPRA','ENTRAR','buy'],
-    ENTER_SELL: ['ENTRAR VENDA','ENTRAR','sell'],
-    SKIP: ['PULAR PRÓXIMA VELA','PULAR','no-trade']
+    DECIDING: ['AGUARDAR','AGUARDAR','no-trade'],
+    WAIT: ['AGUARDAR','AGUARDAR','no-trade'],
+    ENTER_BUY: ['ENTRAR NA PRÓXIMA VELA: COMPRA','ENTRAR','buy'],
+    ENTER_SELL: ['ENTRAR NA PRÓXIMA VELA: VENDA','ENTRAR','sell'],
+    SKIP: ['AGUARDAR','AGUARDAR','no-trade']
   };
-  const row = map[signal.uiState] || ['ANALISANDO PRÓXIMA VELA','ANALISANDO','waiting'];
-  return { key: signal.uiState || 'ANALYZING', title: row[0], badge: row[1], className: row[2], detail: signal.reason || 'Analisando as velas e o contexto atual.' };
+  const row = map[signal.uiState] || ['ANALISANDO MERCADO ATUAL','ANALISANDO','waiting'];
+  return { key: signal.uiState || 'ANALYZING_MARKET', title: row[0], badge: row[1], className: row[2], detail: signal.reason || 'Analisando as velas e o contexto atual.' };
 }
 
 function ensureAudio() {
@@ -154,6 +173,7 @@ function render(state = {}) {
   const signal = state.signal || {};
   const current = signal.currentCandle || state.currentCandle || {};
   const ready = sessionReady(state);
+  const exactClock = exactClockReady(state);
 
   renderLicense(state);
   renderCandles(state);
@@ -164,8 +184,12 @@ function render(state = {}) {
   if ($('price')) $('price').textContent = priceText(state.price);
   if ($('timeframe')) $('timeframe').textContent = state.analysisTimeframe || state.timeframe || clock.timeframe || '—';
   if ($('expiration')) $('expiration').textContent = state.targetExpiration || state.expiration || '—';
-  if ($('secondsRemaining')) $('secondsRemaining').textContent = exactClockReady(state) ? Math.max(0, Math.ceil(Number(clock.secondsRemaining))) : '—';
-  if ($('sessionMode')) $('sessionMode').textContent = session.dataMode === 'backfill' ? 'HISTÓRICO SINCRONIZADO' : ready ? 'LIVE' : 'SYNC';
+  if ($('secondsRemaining')) {
+    const seconds = operationalClockReady(state) ? Math.max(0, Math.ceil(Number(clock.secondsRemaining))) : null;
+    $('secondsRemaining').textContent = seconds == null ? '—' : `${exactClock ? '' : '~'}${seconds}`;
+    $('secondsRemaining').title = exactClock ? 'Fechamento sincronizado com a CasaTrade.' : 'Clock temporário estimado; o scanner continua lendo o mercado ao vivo.';
+  }
+  if ($('sessionMode')) $('sessionMode').textContent = session.dataMode === 'backfill' ? 'HISTÓRICO SINCRONIZADO' : ready ? (exactClock ? 'LIVE' : 'LIVE • CLOCK ESTIMADO') : 'SYNC';
 
   const duration = (() => { const tf = String(state.analysisTimeframe || state.timeframe || '').toUpperCase(); let m=tf.match(/^S(\d+)$/); if(m)return Number(m[1]); m=tf.match(/^M(\d+)$/); if(m)return Number(m[1])*60; m=tf.match(/^H(\d+)$/); if(m)return Number(m[1])*3600; return null; })();
   if ($('candleProgress')) {
@@ -174,10 +198,15 @@ function render(state = {}) {
   }
 
   if ($('analysisTitle')) $('analysisTitle').textContent = ready ? `${state.asset || 'Mercado'} • ${state.analysisTimeframe || state.timeframe || '—'}` : model.title;
-  if ($('analysisReason')) $('analysisReason').textContent = ready ? `Sessão #${session.epoch || 1} • ${session.dataMode === 'backfill' ? 'histórico recebido em lote; somente a vela atual é live.' : 'dados ao vivo do gráfico atual.'}` : model.detail;
-  if ($('currentOpen')) $('currentOpen').textContent = priceText(current.open);
-  if ($('currentHigh')) $('currentHigh').textContent = priceText(current.high);
-  if ($('currentLow')) $('currentLow').textContent = priceText(current.low);
+  if ($('analysisReason')) $('analysisReason').textContent = ready
+    ? `Sessão #${session.epoch || 1} • ${session.dataMode === 'backfill' ? 'histórico recebido em lote; somente a vela atual é live.' : exactClock ? 'dados ao vivo e fechamento sincronizado.' : 'dados ao vivo; fechamento exato indisponível, clock estimado identificado no painel.'}`
+    : model.detail;
+
+  const openReliable = current.openReliable !== false;
+  const rangeReliable = current.rangeReliable !== false;
+  if ($('currentOpen')) { $('currentOpen').textContent = observedPriceText(current.open, openReliable); $('currentOpen').title = openReliable ? 'Abertura confirmada pela vela da CasaTrade.' : 'Abertura observada após a conexão; pode não ser o primeiro tick real da vela.'; }
+  if ($('currentHigh')) { $('currentHigh').textContent = observedPriceText(current.high, rangeReliable); $('currentHigh').title = rangeReliable ? 'Máxima da vela da CasaTrade.' : 'Máxima observada pela extensão desde a conexão nesta vela.'; }
+  if ($('currentLow')) { $('currentLow').textContent = observedPriceText(current.low, rangeReliable); $('currentLow').title = rangeReliable ? 'Mínima da vela da CasaTrade.' : 'Mínima observada pela extensão desde a conexão nesta vela.'; }
   if ($('currentClose')) $('currentClose').textContent = priceText(current.close ?? state.price);
 
   if ($('signalTitle')) $('signalTitle').textContent = model.title;
@@ -193,9 +222,14 @@ function render(state = {}) {
   if ($('analyzingNow')) $('analyzingNow').textContent = model.detail;
 
   const confirmed = model.key === 'ENTER_BUY' || model.key === 'ENTER_SELL';
+  const possible = model.key === 'POSSIBLE_BUY' || model.key === 'POSSIBLE_SELL';
   if ($('prepareBuy')) { $('prepareBuy').disabled = model.key !== 'ENTER_BUY'; $('prepareBuy').classList.toggle('selected', model.key === 'ENTER_BUY'); }
   if ($('prepareSell')) { $('prepareSell').disabled = model.key !== 'ENTER_SELL'; $('prepareSell').classList.toggle('selected', model.key === 'ENTER_SELL'); }
-  if ($('tradeActionStatus')) $('tradeActionStatus').textContent = confirmed ? `ENTRADA MANUAL • ${model.key === 'ENTER_BUY' ? 'COMPRA' : 'VENDA'} na próxima abertura` : model.key === 'SKIP' ? 'Não entrar nesta próxima vela.' : 'Aguardando decisão final desta vela.';
+  if ($('tradeActionStatus')) $('tradeActionStatus').textContent = confirmed
+    ? `ENTRADA MANUAL • ${model.key === 'ENTER_BUY' ? 'COMPRA' : 'VENDA'} na próxima abertura`
+    : possible
+      ? 'Padrão possível detectado; aguardando estabilidade para a decisão final.'
+      : 'AGUARDAR • sem confirmação suficiente para entrada.';
 }
 
 async function readState() {
