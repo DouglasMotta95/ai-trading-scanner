@@ -6,7 +6,8 @@
   const fold = value => clean(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
   const host = String(location.hostname || '').toLowerCase().replace(/\.$/, '');
   const traderHost = value => value === 'casatraders.online' || value.endsWith('.casatraders.online') || value === 'ivcasatraders.online' || value.endsWith('.ivcasatraders.online');
-  if (!traderHost(host)) return;
+  const casaHost = value => value === 'casatrade.com' || value.endsWith('.casatrade.com') || value === 'casatrade.io' || value.endsWith('.casatrade.io');
+  if (!traderHost(host) && !casaHost(host)) return;
 
   const num = value => {
     if (typeof value === 'number' && Number.isFinite(value)) return value;
@@ -115,8 +116,6 @@
         for (const value of values) sell.push({ value, score: score + 150, semanticPrice });
         continue;
       }
-      // A plain numeric label close to the canvas can be a Y-axis tick. It is not
-      // a quote unless the DOM itself identifies it as a price/current/last value.
       if (chartScoped && semanticPrice) for (const value of values) semantic.push({ value, score });
     }
 
@@ -146,7 +145,7 @@
       const state = stateResponse?.state || null;
       if (!state?.license || !['active','valid'].includes(String(state.license.status || '').toLowerCase())) return;
       const focus = state.diagnostics?.focusedAsset || null;
-      if (!focus?.asset || focus.reliable !== true || focus.chartScoped !== true || focus.embeddedTrader !== true) return;
+      if (!focus?.asset || focus.reliable !== true || focus.chartScoped !== true || focus.trustedChartFrame !== true) return;
       if (String(focus.frameHost || '').toLowerCase() !== host) return;
 
       const quote = quoteFromDom();
