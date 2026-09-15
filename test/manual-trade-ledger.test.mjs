@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { createManualTrade, resolveManualTrades, manualTradeMetrics } from '../src/core/manual-trades.js';
+import { createManualTrade, resolveManualTrades, resolveManualTradesFromFeed, manualTradeMetrics } from '../src/core/manual-trades.js';
 
 const read = path => fs.readFileSync(new URL('../' + path, import.meta.url), 'utf8');
 
@@ -40,6 +40,20 @@ test('manual result compares exit to actual click quote, not candle color', () =
   assert.equal(result.resultSource, 'target_candle_close');
 });
 
+test('pending manual trade can resolve from feed history even after user switched charts', () => {
+  const state = baseState();
+  const trade = createManualTrade(state, { direction: 'BUY', clickedAt: state.signal.targetStart + 500 }, state.signal.targetStart + 500, 'trade-feed');
+  const payload = {
+    recentCandles: {
+      'GBP/USD': [{ time: state.signal.targetStart, open: 1.2, high: 1.21, low: 1.19, close: 1.205 }],
+      'EUR/USD (OTC)': [{ time: state.signal.targetStart, open: 1.1000, high: 1.1020, low: 1.0990, close: 1.1015 }]
+    }
+  };
+  const result = resolveManualTradesFromFeed([trade], payload, state.signal.targetStart + 61_000).rows[0];
+  assert.equal(result.result, 'WIN');
+  assert.equal(result.exitPrice, 1.1015);
+});
+
 test('manual click outside confirmed direction is recorded but excluded from scanner win rate', () => {
   const state = baseState();
   const trade = createManualTrade(state, { direction: 'SELL', clickedAt: state.signal.targetStart + 1000 }, state.signal.targetStart + 1000, 'trade-3');
@@ -67,4 +81,5 @@ test('manual trade observer is passive and runtime wires ledger without automati
   assert.doesNotMatch(observer, /\.click\s*\(/);
   assert.match(core, /target_candle_close/);
   assert.match(background, /ATS_GET_MANUAL_TRADE_LEDGER/);
+  assert.match(background, /resolveManualTradesFromFeed/);
 });
