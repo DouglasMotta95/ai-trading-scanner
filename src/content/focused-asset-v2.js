@@ -38,11 +38,16 @@
     return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity || 1) > 0;
   };
 
+  let elementCache = [];
+  let elementCacheAt = 0;
+  function invalidateElements() { elementCacheAt = 0; }
   function deepElements(limit = 7000) {
+    const now = Date.now();
+    if (elementCache.length && now - elementCacheAt < 450) return elementCache.slice(0, limit);
     const out = [];
     const roots = [document];
     const seen = new Set();
-    while (roots.length && out.length < limit) {
+    while (roots.length && out.length < 7000) {
       const root = roots.shift();
       if (!root || seen.has(root)) continue;
       seen.add(root);
@@ -50,11 +55,13 @@
       try { nodes = [...root.querySelectorAll('*')]; } catch {}
       for (const node of nodes) {
         out.push(node);
-        if (out.length >= limit) break;
+        if (out.length >= 7000) break;
         if (node.shadowRoot) roots.push(node.shadowRoot);
       }
     }
-    return out;
+    elementCache = out;
+    elementCacheAt = now;
+    return out.slice(0, limit);
   }
 
   function chartRect() {
@@ -233,13 +240,15 @@
     }, delay);
   }
 
-  // Live charts mutate constantly. Coalesce those mutations into one scan instead of
-  // walking thousands of DOM nodes once for every tick/canvas update on Android.
-  const observer = new MutationObserver(() => schedulePublish(120, false));
+  // Live charts mutate constantly. Coalesce those mutations instead of walking the
+  // full DOM for every canvas/label change. Touch/click invalidates the short cache
+  // immediately so a real user asset switch is still picked up without delay.
+  const observer = new MutationObserver(() => schedulePublish(160, false));
   try { observer.observe(document.documentElement, { subtree: true, childList: true, attributes: true, characterData: true }); } catch {}
-  document.addEventListener('pointerup', () => schedulePublish(80, true), true);
-  document.addEventListener('touchend', () => schedulePublish(90, true), true);
-  document.addEventListener('click', () => schedulePublish(90, true), true);
-  setInterval(() => schedulePublish(0, false), 450);
-  setTimeout(() => publish(true), 250);
+  const forceScan = delay => { invalidateElements(); schedulePublish(delay, true); };
+  document.addEventListener('pointerup', () => forceScan(70), true);
+  document.addEventListener('touchend', () => forceScan(80), true);
+  document.addEventListener('click', () => forceScan(80), true);
+  setInterval(() => schedulePublish(0, false), 800);
+  setTimeout(() => { invalidateElements(); publish(true); }, 250);
 })();
