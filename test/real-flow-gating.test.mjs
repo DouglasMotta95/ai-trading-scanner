@@ -40,11 +40,12 @@ test('trade preparation remains confirmation-gated and manual-only', () => {
 test('activation preserves a valid cached session on transient device_locked', () => {
   const control = read('src/background-control.js');
   const license = read('src/services/license.js');
+  const authoritative = license.match(/const AUTHORITATIVE_LICENSE_ERRORS = new Set\(\[([\s\S]*?)\]\);/)?.[1] || '';
   assert.match(control, /response\?\.error === 'device_locked'/);
   assert.match(control, /restoreCachedLicense\(\)/);
   assert.match(control, /syncPending: true/);
-  assert.match(license, /device_locked/);
-  assert.match(license, /device_limit_reached/);
+  assert.doesNotMatch(authoritative, /device_locked/);
+  assert.match(authoritative, /device_limit_reached/);
 });
 
 test('visible chart frame stays authoritative and legacy market writers are ignored', () => {
