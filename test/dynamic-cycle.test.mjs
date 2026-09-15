@@ -3,16 +3,21 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { CandleBuilder } from '../src/core/candles.js';
 const read = path => fs.readFileSync(new URL('../' + path, import.meta.url), 'utf8');
-test('cycle v3 makes selected CasaTrade duration authoritative over a different chart timer', () => {
-  const clock=read('src/content/market-cycle-clock-v3.js');
-  const manifest=JSON.parse(read('manifest.json'));
-  const scripts=manifest.content_scripts.flatMap(row=>row.js||[]);
-  assert.match(clock,/const platformTf = expirationTf \|\| controlTf/);
-  assert.match(clock,/const cycleTf = platformTf \|\| chartTf \|\| stateTf \|\| 'M1'/);
-  assert.match(clock,/const dom = chartTf === cycleTf \? exactDomCountdown\(cycleTf\) : null/);
-  assert.match(clock,/platform-cycle-derived/);
-  assert.ok(scripts.indexOf('src/content/market-cycle-clock-v3.js') < scripts.indexOf('src/content/market-clock-sync.js'));
+
+test('clock v4 keeps CasaTrade cycle authoritative and derived countdown diagnostic only', () => {
+  const clock = read('src/content/market-cycle-clock-v4.js');
+  const manifest = JSON.parse(read('manifest.json'));
+  const scripts = manifest.content_scripts.flatMap(row => row.js || []);
+  assert.match(clock, /const cycleTf = \(controlsFresh \? tf\(expiration\) \|\| tf\(controls\.timeframe\) : null\)/);
+  assert.match(clock, /const domClock = \(!chartTf \|\| chartTf === cycleTf\) \? exactDomCountdown\(cycleTf\) : null/);
+  assert.match(clock, /clockSource: 'trader-dom-countdown'/);
+  assert.match(clock, /clockSource: 'platform-cycle-derived'/);
+  assert.match(clock, /available: false, verified: false/);
+  assert.ok(scripts.includes('src/content/market-cycle-clock-v4.js'));
+  assert.ok(!scripts.includes('src/content/market-cycle-clock-v3.js'));
+  assert.ok(!scripts.includes('src/content/market-clock-sync.js'));
 });
+
 test('M1 seed aggregates to M5 OHLC',()=>{
  const b=new CandleBuilder(300000); const base=1800000000000;
  b.seed([
@@ -23,6 +28,7 @@ test('M1 seed aggregates to M5 OHLC',()=>{
  {time:base+240000,open:8,high:15,low:8,close:14,timeframe:'M1'}]);
  const rows=b.snapshot().closed; assert.equal(rows.length,1); assert.deepEqual([rows[0].open,rows[0].high,rows[0].low,rows[0].close],[10,15,7,14]);
 });
+
 test('orchestrator permits compatible lower timeframe and arbitrary valid cycles',()=>{
   const s=read('src/core/orchestrator-legacy.js');
   assert.match(s,/function parseTimeframeMs\(/);
