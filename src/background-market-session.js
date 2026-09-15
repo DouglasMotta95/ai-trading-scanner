@@ -34,8 +34,13 @@ function senderMeta(sender = {}) {
   let frameHost = '', topHost = '';
   try { frameHost = new URL(sender.url || '').hostname.toLowerCase(); } catch {}
   try { topHost = new URL(sender.tab?.url || '').hostname.toLowerCase(); } catch {}
+  const tabOwned = !!sender.tab?.id && casaHost(topHost);
+  const embeddedTrader = tabOwned && Number(sender.frameId) !== 0 && traderHost(frameHost);
+  const casaOwnedChart = tabOwned && casaHost(frameHost);
   return {
-    trusted: !!sender.tab?.id && sender.frameId !== 0 && traderHost(frameHost) && casaHost(topHost),
+    trusted: embeddedTrader || casaOwnedChart,
+    embeddedTrader,
+    casaOwnedChart,
     frameHost, topHost, frameId: sender.frameId, tabId: sender.tab?.id || null
   };
 }
@@ -97,7 +102,7 @@ function exactClock(state = {}, info = null) {
   const focus = state.diagnostics?.focusedAsset || null;
   const clock = state.diagnostics?.marketClock || null;
   if (!focus || !clock || !focus.asset) return null;
-  if (focus.reliable !== true || focus.chartScoped !== true || focus.embeddedTrader !== true) return null;
+  if (focus.reliable !== true || focus.chartScoped !== true || focus.trustedChartFrame !== true) return null;
   if (Date.now() - Number(focus.at || 0) > FOCUS_FRESH_MS) return null;
   if (clock.verified !== true || clean(clock.role) !== 'candle-close') return null;
   if (!['trader-dom-countdown', 'network-server-cycle'].includes(clean(clock.source))) return null;
@@ -202,7 +207,8 @@ function evaluateAtClock(state = {}, focus = null, clock = null) {
 
 async function applyFocus(message = {}, sender = {}) {
   const info = senderMeta(sender);
-  if (!info.trusted || message.chartScoped !== true || message.reliable !== true || message.frameRole !== 'trader-frame') return null;
+  const role = clean(message.frameRole || '');
+  if (!info.trusted || message.chartScoped !== true || message.reliable !== true || !['trader-frame', 'casa-chart-frame'].includes(role)) return null;
   const asset = normAsset(message.asset);
   if (!asset) return null;
   return updateScannerState(state => {
@@ -217,6 +223,7 @@ async function applyFocus(message = {}, sender = {}) {
         reason: `Ativo ${asset} confirmado no gráfico. Sincronizando a sessão ao vivo.`
       });
     }
+    const embeddedTrader = traderHost(info.frameHost);
     return {
       ...next,
       targetTabId: info.tabId,
@@ -226,8 +233,9 @@ async function applyFocus(message = {}, sender = {}) {
         focusedAsset: {
           asset, at: Date.now(), stableSince: changed ? Date.now() : Number(old?.stableSince || old?.at || Date.now()),
           score: Number(message.score || 0), samples: Number(message.samples || 0), reliable: true,
-          visual: true, explicit: message.explicit === true, chartScoped: true, embeddedTrader: true,
-          frameRole: 'trader-frame', frameId: info.frameId, frameHost: info.frameHost,
+          visual: message.visual !== false, explicit: message.explicit === true, chartScoped: true,
+          trustedChartFrame: true, embeddedTrader, casaTradeFrame: casaHost(info.frameHost),
+          frameRole: embeddedTrader ? 'trader-frame' : 'casa-chart-frame', frameId: info.frameId, frameHost: info.frameHost,
           source: clean(message.source || 'visible-chart')
         }
       }
@@ -294,13 +302,7 @@ async function applyClock(message = {}, sender = {}) {
       }
     };
 
-    // A timeframe/frame/asset change starts an empty session. Never analyze old
-    // candles during that clock tick; wait for the new market feed to hydrate it.
     if (sessionChanged) return clockState;
-
-    // The exact candle-close clock is the heartbeat of the decision cycle. This
-    // advances BUILDING/POSSIBLE/DECIDING/ENTER/SKIP even if the network feed does
-    // not emit another packet during the final seconds of the current candle.
     return evaluateAtClock(clockState, focus, record);
   });
 }
