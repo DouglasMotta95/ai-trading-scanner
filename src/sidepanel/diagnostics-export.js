@@ -1,0 +1,126 @@
+(() => {
+  const BUTTON_ID = 'copyScannerDiagnostics';
+  const STATUS_ID = 'copyScannerDiagnosticsStatus';
+
+  const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
+  const clean = (value, max = 180) => String(value ?? '').normalize('NFKC').replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
+
+  function ensureUi() {
+    if (document.getElementById(BUTTON_ID)) return;
+    const card = document.querySelector('.preferences-card');
+    if (!card) return;
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px;padding-top:12px;border-top:1px solid rgba(255,255,255,.06)';
+    const button = document.createElement('button');
+    button.id = BUTTON_ID;
+    button.type = 'button';
+    button.textContent = 'COPIAR DIAGNÓSTICO';
+    button.style.cssText = 'border:1px solid rgba(126,222,196,.28);background:rgba(126,222,196,.08);color:#bff4e5;border-radius:10px;padding:10px 12px;font:800 11px system-ui;letter-spacing:.5px;cursor:pointer';
+    const status = document.createElement('small');
+    status.id = STATUS_ID;
+    status.textContent = 'Sem chaves, tokens ou dados de login.';
+    status.style.cssText = 'color:#718599;font:600 10px system-ui';
+    row.append(button, status);
+    card.appendChild(row);
+    button.addEventListener('click', copyDiagnostics);
+  }
+
+  async function message(payload) {
+    try { return await chrome.runtime.sendMessage(payload); } catch { return null; }
+  }
+
+  function sanitizeState(state = {}, manual = null) {
+    const focus = state.diagnostics?.focusedAsset || {};
+    const clock = state.diagnostics?.marketClock || {};
+    const session = state.diagnostics?.marketSession || {};
+    const acquisition = state.diagnostics?.acquisition || {};
+    const signal = state.signal || {};
+    const account = state.accountMetrics || {};
+    const quality = state.assetQuality || {};
+    const lastManual = manual?.metrics?.last || (Array.isArray(manual?.rows) ? manual.rows.at(-1) : null);
+    return {
+      generatedAt: new Date().toISOString(),
+      extensionVersion: chrome.runtime.getManifest().version,
+      platform: clean(state.platformId || state.platformName || ''),
+      connection: clean(state.connection || ''),
+      scanner: clean(state.scanner || ''),
+      asset: clean(state.asset || focus.asset || ''),
+      timeframe: clean(state.analysisTimeframe || state.timeframe || clock.timeframe || ''),
+      price: num(state.price),
+      lastSeenAgeMs: Number(state.lastSeen) > 0 ? Math.max(0, Date.now() - Number(state.lastSeen)) : null,
+      focus: {
+        asset: clean(focus.asset || ''), reliable: focus.reliable === true, chartScoped: focus.chartScoped === true,
+        frameId: num(focus.frameId), source: clean(focus.source || '')
+      },
+      clock: {
+        verified: clock.verified === true, available: clock.available !== false, role: clean(clock.role || ''),
+        source: clean(clock.source || ''), secondsRemaining: num(clock.secondsRemaining), timeframe: clean(clock.timeframe || ''),
+        ageMs: Number(clock.at) > 0 ? Math.max(0, Date.now() - Number(clock.at)) : null
+      },
+      session: {
+        epoch: num(session.epoch), asset: clean(session.asset || ''), timeframe: clean(session.timeframe || ''),
+        dataMode: clean(session.dataMode || ''), frameId: num(session.frameId)
+      },
+      acquisition: { stage: clean(acquisition.stage || ''), reason: clean(acquisition.reason || '', 240) },
+      signal: {
+        uiState: clean(signal.uiState || signal.state || ''), direction: clean(signal.direction || ''),
+        score: num(signal.analysisScore ?? signal.score), setup: clean(signal.setup || ''),
+        reason: clean(signal.reason || '', 260), waitingFor: signal.waitingFor && typeof signal.waitingFor === 'object' ? {
+          type: clean(signal.waitingFor.type || ''), direction: clean(signal.waitingFor.direction || ''),
+          level: num(signal.waitingFor.level), current: num(signal.waitingFor.current), required: num(signal.waitingFor.required)
+        } : null
+      },
+      assetQuality: {
+        label: clean(quality.label || quality.title || ''), score: num(quality.score), context: clean(quality.context || ''), bias: clean(quality.bias || '')
+      },
+      bankroll: {
+        balance: num(account.balance), stake: num(account.stake), payoutPct: num(account.payoutPct), currency: clean(account.currency || '', 8),
+        riskPct: num(account.riskPct), sessionDelta: num(account.sessionDelta), confidence: account.confidence || null
+      },
+      candlesAvailable: Array.isArray(state.candles) ? state.candles.length : 0,
+      lastManualTrade: lastManual ? {
+        asset: clean(lastManual.asset || ''), timeframe: clean(lastManual.timeframe || ''), direction: clean(lastManual.direction || ''),
+        entryPrice: num(lastManual.entryPrice), exitPrice: num(lastManual.exitPrice), result: clean(lastManual.result || lastManual.status || ''),
+        matchedSignal: lastManual.matchedSignal === true, resultSource: clean(lastManual.resultSource || '')
+      } : null
+    };
+  }
+
+  async function writeText(text) {
+    if (navigator.clipboard?.writeText) {
+      try { await navigator.clipboard.writeText(text); return true; } catch {}
+    }
+    try {
+      const area = document.createElement('textarea');
+      area.value = text;
+      area.style.cssText = 'position:fixed;opacity:0;pointer-events:none;left:-9999px;top:-9999px';
+      document.body.appendChild(area);
+      area.focus(); area.select();
+      const ok = document.execCommand('copy');
+      area.remove();
+      return !!ok;
+    } catch { return false; }
+  }
+
+  async function copyDiagnostics() {
+    const button = document.getElementById(BUTTON_ID);
+    const status = document.getElementById(STATUS_ID);
+    if (button) { button.disabled = true; button.textContent = 'GERANDO…'; }
+    try {
+      const [stateReply, manualReply] = await Promise.all([
+        message({ type: 'ATS_READ_SCANNER_STATE' }),
+        message({ type: 'ATS_GET_MANUAL_TRADE_LEDGER' })
+      ]);
+      const report = sanitizeState(stateReply?.state || {}, manualReply?.ok ? manualReply : null);
+      const text = `AI Trading Scanner — diagnóstico seguro\n${JSON.stringify(report, null, 2)}`;
+      const ok = await writeText(text);
+      if (status) status.textContent = ok ? 'DIAGNÓSTICO COPIADO — pode colar no chat.' : 'Não consegui copiar automaticamente.';
+      if (button) button.textContent = ok ? 'COPIADO ✓' : 'TENTAR NOVAMENTE';
+      setTimeout(() => { if (button) button.textContent = 'COPIAR DIAGNÓSTICO'; }, 2200);
+    } finally {
+      if (button) button.disabled = false;
+    }
+  }
+
+  ensureUi();
+})();
