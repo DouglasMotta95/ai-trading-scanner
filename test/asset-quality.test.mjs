@@ -40,6 +40,7 @@ test('clean opened asset is rated good without changing the entry decision', () 
   assert.equal(quality.tradable, true);
   assert.equal(quality.action, 'PROCURAR ENTRADA');
   assert.equal(quality.bias, 'COMPRADOR');
+  assert.equal(quality.label, 'ATIVO BOM PARA OPERAR');
   assert.ok(quality.score >= 68);
 });
 
@@ -92,7 +93,7 @@ test('side panel exposes opened-asset quality before the next-candle decision', 
   assert.match(ui, /ATS_READ_SCANNER_STATE/);
   assert.match(ui, /chrome\.storage\.onChanged/);
   assert.doesNotMatch(ui, /updateScannerState|processSnapshot/);
-  assert.match(quality, /ATIVO BOM PARA TRABALHAR/);
+  assert.match(quality, /ATIVO BOM PARA OPERAR/);
   assert.match(quality, /PROCURE OUTRO ATIVO/);
   assert.match(quality, /ATENÇÃO: \$\{directionText\} ESTICADA/);
 });
