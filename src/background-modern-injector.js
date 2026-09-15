@@ -17,6 +17,7 @@ async function inject(tabId) {
     'src/content/trade-handoff-v2.js'
   ];
   const mainWorld = [
+    'src/content/standalone-instrument-probe.js',
     'src/content/worker-probe.js',
     'src/content/canvas-probe.js',
     'src/content/network-probe.js'
