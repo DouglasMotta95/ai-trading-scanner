@@ -25,6 +25,22 @@
       <div><span>MODO</span><b id="sessionMode">SYNC</b></div>
     </section>
 
+    <section id="assetQualityCard" class="card asset-quality-card waiting">
+      <div class="section-head">
+        <div>
+          <span class="eyebrow">QUALIDADE DO ATIVO</span>
+          <h2 id="assetQualityTitle">AVALIANDO ATIVO</h2>
+        </div>
+        <span id="assetQualityBadge" class="badge warn">SINCRONIZANDO</span>
+      </div>
+      <p id="assetQualityReason" class="asset-quality-reason">Lendo as velas reais deste ativo.</p>
+      <div class="asset-quality-grid">
+        <div><span>NOTA</span><b id="assetQualityScore">—</b></div>
+        <div><span>CONTEXTO</span><b id="assetQualityContext">—</b></div>
+        <div><span>VIÉS</span><b id="assetQualityBias">—</b></div>
+      </div>
+    </section>
+
     <section id="decisionCard" class="card decision-card">
       <div class="section-head">
         <div>
@@ -132,6 +148,7 @@
   </main>
 
   <script src="app-v2.js"></script>
+  <script type="module" src="asset-quality-ui.js"></script>
   <script type="module" src="account-login.js"></script>
   <script src="real-entry.js"></script>
 </body>
