@@ -33,13 +33,16 @@ test('bankroll reader covers unlabeled top balance plus CasaTrade Invest and Luc
   assert.match(observer, /if \(el\.shadowRoot\) roots\.push\(el\.shadowRoot\)/);
 });
 
-test('network candle clock needs advancing near-real server timestamps and never overrides healthy DOM clock', () => {
+test('network candle clock accepts advancing server time or a verified current structured candle boundary without overriding healthy DOM clock', () => {
   const bridge = read('src/content/embedded-feed-bridge.js');
   assert.match(bridge, /currentClock\?\.source === 'trader-dom-countdown'/);
-  assert.match(bridge, /Math\.abs\(now - serverTime\) > 7000/);
+  assert.match(bridge, /Math\.abs\(now - serverTime\) <= 7000/);
   assert.match(bridge, /serverDelta > 0 && serverDelta <= 5000/);
   assert.match(bridge, /Math\.abs\(serverDelta - localDelta\) <= 1800/);
   assert.match(bridge, /if \(count < 2/);
+  assert.match(bridge, /structuredCandleBoundary/);
+  assert.match(bridge, /now >= openAt \+ durationMs \+ 1200/);
   assert.match(bridge, /clockSource: 'network-server-cycle'/);
   assert.match(bridge, /clockMode: 'structured-server-time'/);
+  assert.match(bridge, /clockMode: 'structured-current-candle-boundary'/);
 });
