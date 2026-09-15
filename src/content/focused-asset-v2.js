@@ -20,8 +20,7 @@
     const add = (base, quote, otc) => {
       if (!QUOTES.has(quote)) return;
       const asset = `${base}/${quote}${otc ? ' (OTC)' : ''}`;
-      const id = asset.replace(/\s*\(OTC\)\s*$/i, '');
-      if (!seen.has(id)) { seen.add(id); out.push(asset); }
+      if (!seen.has(asset)) { seen.add(asset); out.push(asset); }
     };
     for (const match of raw.matchAll(pairRe)) add(match[1], match[2], /OTC/i.test(match[0]));
     if (!out.length) for (const match of raw.matchAll(compactFxRe)) add(match[1], match[2], /OTC/i.test(match[0]));
@@ -29,7 +28,9 @@
   }
 
   const canonicalAsset = value => assetsIn(value)[0] || '';
-  const identity = value => canonicalAsset(value).replace(/\s*\(OTC\)\s*$/i, '');
+  // OTC and regular quotes are different live markets. Never collapse them when
+  // deciding which chart owns the scanner session.
+  const identity = value => canonicalAsset(value);
   const sameAsset = (a, b) => !!identity(a) && identity(a) === identity(b);
   const visible = el => {
     if (!el || !(el instanceof Element)) return false;
