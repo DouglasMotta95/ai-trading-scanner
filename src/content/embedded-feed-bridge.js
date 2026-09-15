@@ -4,7 +4,9 @@
 
   const host = String(location.hostname || '').toLowerCase().replace(/\.$/, '');
   const trusted = host === 'casatraders.online' || host.endsWith('.casatraders.online') ||
-    host === 'ivcasatraders.online' || host.endsWith('.ivcasatraders.online');
+    host === 'ivcasatraders.online' || host.endsWith('.ivcasatraders.online') ||
+    host === 'casatrade.com' || host.endsWith('.casatrade.com') ||
+    host === 'casatrade.io' || host.endsWith('.casatrade.io');
   if (!trusted) return;
 
   let lastSentAt = 0;
