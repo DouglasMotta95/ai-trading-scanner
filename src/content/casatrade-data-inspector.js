@@ -8,6 +8,8 @@
   if (!traderHost(host)) return;
 
   const quotes = new Set(['USDT','USDC','USD','EUR','GBP','JPY','AUD','CAD','CHF','NZD','BRL','BTC','ETH']);
+  const SENSITIVE = /token|auth|cookie|session|password|secret|bearer|csrf|api[-_]?key|credential/i;
+  const TRADE_EVIDENCE = /trade|order|position|deal|result|outcome|payout|profit|win|loss|settle|settled|closed|close_reason|expiry|expiration/i;
   function normAsset(value = '') {
     const raw = clean(value).toUpperCase();
     const otc = /(?:\(|\b|[_-])OTC(?:\)|\b)?/i.test(raw);
@@ -19,9 +21,13 @@
   const sameAsset = (a, b) => !!id(a) && id(a) === id(b);
   const safeEndpoint = value => {
     try {
-      const url = new URL(String(value || ''), location.href);
+      const url = new URL(String(value || '').replace(/^(ws|fetch|xhr):/, ''), location.href);
       return `${url.origin}${url.pathname}`.slice(0, 240);
     } catch { return ''; }
+  };
+  const safeKey = value => {
+    const key = clean(value).slice(0, 64);
+    return key && !SENSITIVE.test(key) ? key : '';
   };
 
   let lastSent = 0;
@@ -40,10 +46,20 @@
     const recent = payload.recentCandles && typeof payload.recentCandles === 'object' ? payload.recentCandles : {};
     const historyKey = focus ? Object.keys(recent).find(key => sameAsset(key, focus)) : null;
     const candleCount = historyKey && Array.isArray(recent[historyKey]) ? recent[historyKey].length : 0;
+    const keys = (Array.isArray(payload.keys) ? payload.keys : []).map(safeKey).filter(Boolean).slice(0, 80);
+    const endpoints = (Array.isArray(payload.endpoints) ? payload.endpoints : []).map(safeEndpoint).filter(Boolean).slice(-12);
+    const tradeKeys = keys.filter(key => TRADE_EVIDENCE.test(key)).slice(0, 30);
+    const tradeEndpoints = endpoints.filter(endpoint => TRADE_EVIDENCE.test(endpoint)).slice(-12);
     const snapshot = {
       transports: { messages: payload.messages || {}, connections: payload.connections || {}, primary: payload.primaryTransport || null },
-      endpoints: (Array.isArray(payload.endpoints) ? payload.endpoints : []).map(safeEndpoint).filter(Boolean).slice(-12),
-      keys: (Array.isArray(payload.keys) ? payload.keys : []).filter(key => !/token|auth|cookie|session|password|secret|bearer|csrf|api[-_]?key|credential/i.test(String(key))).slice(0, 80),
+      endpoints,
+      keys,
+      tradeEvidence: {
+        detected: tradeKeys.length > 0 || tradeEndpoints.length > 0,
+        keys: tradeKeys,
+        endpoints: tradeEndpoints,
+        observedAt: Date.now()
+      },
       rawCandidateCount: rows.length,
       candleCount,
       focusedCandidate: candidate ? {
