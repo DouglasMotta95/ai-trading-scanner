@@ -21,8 +21,11 @@ function candidate(previous = {}, snapshot = {}, key, atKey, now) {
   const oldConfidence = Math.max(0, num(previous.confidence?.[key]) || 0);
   const oldAt = Number(previous[atKey] || 0);
   const oldFresh = oldAt > 0 && now - oldAt <= METRIC_FRESH_MS;
+  const positiveRequired = key === 'balance' || key === 'stake' || key === 'payout';
 
-  if (value == null || confidence < MIN_CONFIDENCE[key]) return { value: oldValue, confidence: oldConfidence, at: oldAt, accepted: false };
+  if (value == null || (positiveRequired && value <= 0) || confidence < MIN_CONFIDENCE[key]) {
+    return { value: oldFresh && oldValue != null && (!positiveRequired || oldValue > 0) ? oldValue : null, confidence: oldFresh ? oldConfidence : 0, at: oldFresh ? oldAt : 0, accepted: false };
+  }
   if (oldValue == null || !oldFresh || confidence >= oldConfidence) return { value, confidence, at: now, accepted: true };
   return { value: oldValue, confidence: oldConfidence, at: oldAt, accepted: false };
 }
@@ -41,15 +44,15 @@ function mergeMetric(previous = {}, snapshot = {}, tabId) {
   const previousStartConfidence = sameTab ? Math.max(0, num(previous.startBalanceConfidence) || 0) : 0;
   let startBalance = previousStart;
   let startBalanceConfidence = previousStartConfidence;
-  if (currentBalance != null && (startBalance == null || (balance.accepted && balance.confidence > previousStartConfidence && Number(previous.balanceAt || 0) && now - Number(previous.balanceAt || 0) < 2500))) {
+  if (currentBalance != null && currentBalance > 0 && (startBalance == null || startBalance <= 0 || (balance.accepted && balance.confidence > previousStartConfidence && Number(previous.balanceAt || 0) && now - Number(previous.balanceAt || 0) < 2500))) {
     startBalance = currentBalance;
     startBalanceConfidence = balance.confidence;
   }
 
-  const riskPct = currentBalance != null && currentBalance > 0 && currentStake != null && currentStake >= 0
+  const riskPct = currentBalance != null && currentBalance > 0 && currentStake != null && currentStake > 0
     ? Math.round((currentStake / currentBalance) * 10000) / 100
     : null;
-  const sessionDelta = currentBalance != null && startBalance != null
+  const sessionDelta = currentBalance != null && startBalance != null && startBalance > 0
     ? Math.round((currentBalance - startBalance) * 100) / 100
     : null;
 
