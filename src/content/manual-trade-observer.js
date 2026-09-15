@@ -42,7 +42,7 @@
     if (!text) return null;
     const buy = tokenScore(text, buyTokens);
     const sell = tokenScore(text, sellTokens);
-    if (Math.max(buy, sell) < 4 || buy === sell) return null;
+    if (Math.max(buy, sell) < 3 || buy === sell) return null;
     return buy > sell ? 'BUY' : 'SELL';
   }
 
