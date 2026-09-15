@@ -1,5 +1,5 @@
 import { storageLocalGet, storageLocalSet } from './services/chrome-compat.js';
-import { mergeRadarSnapshot, topRadarRows } from './core/asset-radar.js';
+import { mergeRadarSnapshot, topRadarRows, marketId } from './core/asset-radar.js';
 
 const KEY = 'atsAssetRadarV1';
 let cached = { rows: [], updatedAt: 0 };
@@ -42,7 +42,11 @@ chrome.storage.onChanged.addListener(changes => {
   const state = changes.scannerState.newValue || {};
   const focus = state.diagnostics?.focusedAsset?.asset || state.asset || '';
   if (!focus || !loaded) return;
-  cached = { ...cached, rows: (cached.rows || []).map(row => ({ ...row, focused: String(row.asset || '').toUpperCase() === String(focus || '').toUpperCase() })) };
+  const focusId = marketId(focus);
+  const rows = (cached.rows || []).map(row => ({ ...row, focused: !!focusId && marketId(row.asset) === focusId }));
+  if (JSON.stringify(rows.map(row => [row.asset, row.focused])) === JSON.stringify((cached.rows || []).map(row => [row.asset, row.focused]))) return;
+  cached = { ...cached, rows, updatedAt: Date.now() };
+  storageLocalSet({ [KEY]: cached }).catch(() => {});
 });
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
