@@ -74,7 +74,7 @@ test('live market identity keeps OTC distinct from the regular pair', () => {
   const focus = read('src/content/focused-asset-v2.js');
   assert.match(market, /\$\{direct\[1\]\}\/\$\{direct\[2\]\}\$\{otc \? ' \(OTC\)' : ''\}/);
   assert.match(market, /const sameMarket = \(a, b\) => !!marketId\(a\) && marketId\(a\) === marketId\(b\)/);
-  assert.match(focus, /OTC and regular quotes are different live markets/);
+  assert.match(focus, /const asset = `\$\{base\}\/\$\{quote\}\$\{otc \? ' \(OTC\)' : ''\}`/);
   assert.match(focus, /const identity = value => canonicalAsset\(value\)/);
   assert.doesNotMatch(market, /replace\([^\n]+OTC[^\n]+''\)/);
 });
@@ -91,7 +91,7 @@ test('single live market session keeps visual chart focus authoritative without 
   assert.ok(!scripts.includes('src/content/generic-adapter.js'));
   assert.ok(!scripts.includes('src/content/network-bridge.js'));
   assert.match(focus, /type: 'ATS_VISUAL_FOCUS_V2'/);
-  assert.match(focus, /frameRole: 'trader-frame'/);
+  assert.match(focus, /const frameRole = traderHost\(host\) \? 'trader-frame' : 'casa-chart-frame'/);
   assert.match(market, /const focus = state\.diagnostics\?\.focusedAsset/);
   assert.match(market, /const candidate = bestForFocus\(payload, asset\)/);
   assert.match(market, /if \(!candidate\) return/);
