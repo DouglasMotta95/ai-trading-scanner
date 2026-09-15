@@ -8,6 +8,8 @@
   const traderHost = value => value === 'casatraders.online' || value.endsWith('.casatraders.online') || value === 'ivcasatraders.online' || value.endsWith('.ivcasatraders.online');
   const casaHost = value => value === 'casatrade.com' || value.endsWith('.casatrade.com') || value === 'casatrade.io' || value.endsWith('.casatrade.io');
   if (!traderHost(host) && !casaHost(host)) return;
+  const sendMessage = globalThis.__ATS_SEND_MESSAGE__;
+  if (typeof sendMessage !== 'function') return;
 
   const num = value => {
     if (typeof value === 'number' && Number.isFinite(value)) return value;
@@ -141,7 +143,7 @@
     if (busy) return;
     busy = true;
     try {
-      const stateResponse = await chrome.runtime.sendMessage({ type: 'ATS_READ_SCANNER_STATE' }).catch(() => null);
+      const stateResponse = await sendMessage({ type: 'ATS_READ_SCANNER_STATE' });
       const state = stateResponse?.state || null;
       if (!state?.license || !['active','valid'].includes(String(state.license.status || '').toLowerCase())) return;
       const focus = state.diagnostics?.focusedAsset || null;
@@ -155,7 +157,7 @@
       if (!changed && now - lastSentAt < 1400) return;
       lastPrice = quote.price;
       lastSentAt = now;
-      await chrome.runtime.sendMessage({
+      await sendMessage({
         type: 'ATS_CHART_FRAME_MARKET',
         asset: focus.asset,
         price: quote.price,
@@ -163,7 +165,7 @@
         confidence: quote.confidence,
         frameHost: host,
         at: now
-      }).catch(() => null);
+      });
     } finally {
       busy = false;
     }
