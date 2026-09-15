@@ -40,18 +40,23 @@ test('POSSIBLE is preparation only and does not start more than 30 seconds befor
   assert.notEqual(out.signal.uiState, 'POSSIBLE_SELL');
 });
 
-test('stable bullish setup can lock next-candle entry in the 15-second decision window', () => {
+test('stable bullish bias becomes POSSIBLE after two observations and stays visible until final ENTER', () => {
   resetOrchestrator();
   const bucket = Math.floor(1_701_100_000_000 / minute) * minute;
 
-  snap(bucket, 35_000, 25);
+  const first = snap(bucket, 35_000, 25);
+  assert.notEqual(first.signal.uiState, 'POSSIBLE_BUY');
+  assert.notEqual(first.signal.state, 'WATCH');
+
   const possible = snap(bucket, 36_000, 24);
   assert.equal(possible.signal.uiState, 'POSSIBLE_BUY');
+  assert.equal(possible.signal.state, 'WATCH');
+  assert.ok(possible.signal.analysisScore >= 44);
 
-  const deciding = snap(bucket, 45_000, 15);
-  assert.notEqual(deciding.signal.state, 'CONFIRM');
-  assert.equal(deciding.signal.phase, 'FINAL');
-  assert.equal(deciding.signal.uiState, 'WAIT');
+  const finalCandidate = snap(bucket, 45_000, 15);
+  assert.notEqual(finalCandidate.signal.state, 'CONFIRM');
+  assert.equal(finalCandidate.signal.phase, 'POSSIBLE');
+  assert.equal(finalCandidate.signal.uiState, 'POSSIBLE_BUY');
 
   const enter = snap(bucket, 46_000, 14);
   assert.equal(enter.signal.state, 'CONFIRM');
@@ -79,7 +84,7 @@ test('if no setup confirms by four seconds the next candle is explicitly skipped
   const bucket = Math.floor(1_701_300_000_000 / minute) * minute;
   const out = snap(bucket, 56_000, 4, lateralRows(bucket), 1.001);
   assert.equal(out.signal.state, 'NO_TRADE');
-  assert.equal(out.signal.uiState, 'WAIT');
+  assert.equal(out.signal.uiState, 'SKIP');
   assert.equal(out.signal.provisional, false);
   assert.match(out.signal.reason, /^PULAR PRÓXIMA VELA/);
   assert.equal(out.decisionCycle.locked, 'SKIP');

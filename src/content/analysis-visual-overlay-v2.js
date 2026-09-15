@@ -10,45 +10,54 @@
   const allowed = value => value === 'casatrade.com' || value.endsWith('.casatrade.com') || value === 'casatrade.io' || value.endsWith('.casatrade.io') || traderHost(value);
   const inTraderFrame = traderHost(host);
   if (!allowed(host)) return;
+  const sendMessage = globalThis.__ATS_SEND_MESSAGE__;
+  if (typeof sendMessage !== 'function') return;
 
   const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
-  const identity = value => String(value || '').toUpperCase().replace(/\s*\(\s*OTC\s*\)\s*$/i, '').replace(/\s+/g, '');
-  const sameAsset = (a, b) => !!identity(a) && identity(a) === identity(b);
+  const marketId = value => {
+    const raw = String(value || '').normalize('NFKC').toUpperCase().replace(/\s+/g, ' ').trim();
+    if (!raw) return '';
+    const otc = /(?:\(|\b|[_-])OTC(?:\)|\b)?/i.test(raw);
+    const pair = raw.match(/\b([A-Z0-9]{2,20})\s*[\/_-]\s*([A-Z0-9]{2,12})/i);
+    return pair ? `${pair[1]}/${pair[2]}${otc ? ' (OTC)' : ''}` : raw;
+  };
+  const sameMarket = (a, b) => !!marketId(a) && marketId(a) === marketId(b);
   const visible = el => {
     if (!el || !(el instanceof Element)) return false;
-    const r = el.getBoundingClientRect();
-    const s = getComputedStyle(el);
+    const r = el.getBoundingClientRect(); const s = getComputedStyle(el);
     return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden' && Number(s.opacity || 1) > 0;
   };
 
-  function deepElements(limit = 6500) {
-    const out = [];
-    const roots = [document];
-    const seen = new Set();
-    while (roots.length && out.length < limit) {
-      const root = roots.shift();
-      if (!root || seen.has(root)) continue;
-      seen.add(root);
-      let nodes = [];
-      try { nodes = [...root.querySelectorAll('*')]; } catch {}
-      for (const node of nodes) {
-        out.push(node);
-        if (out.length >= limit) break;
-        if (node.shadowRoot) roots.push(node.shadowRoot);
-      }
+  let cache = [], cacheAt = 0;
+  function deepElements(limit = 5000) {
+    const now = Date.now();
+    if (cache.length && now - cacheAt < 600) return cache.slice(0, limit);
+    const out = [], roots = [document], seen = new Set();
+    while (roots.length && out.length < 6000) {
+      const root = roots.shift(); if (!root || seen.has(root)) continue; seen.add(root);
+      let rows = []; try { rows = [...root.querySelectorAll('*')]; } catch {}
+      for (const el of rows) { out.push(el); if (el.shadowRoot) roots.push(el.shadowRoot); if (out.length >= 6000) break; }
     }
-    return out;
+    cache = out; cacheAt = now; return out.slice(0, limit);
   }
-
+  function lowerChartBoundary(rect) {
+    let boundary = rect.bottom;
+    for (const el of deepElements(3500)) {
+      if (!visible(el)) continue;
+      const own = String(el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+      if (!own || own.length > 80 || !/^(portf[oó]lio total|portfolio total|posi[cç][aã]o|positions?)$/i.test(own)) continue;
+      const r = el.getBoundingClientRect();
+      if (r.top > rect.top + 160 && r.top < boundary) boundary = r.top - 6;
+    }
+    return Math.max(rect.top + 150, boundary);
+  }
   function fallbackChartRect() {
-    if (!inTraderFrame) return null;
-    const left = Math.max(40, innerWidth * .045);
-    const top = Math.max(55, innerHeight * .08);
+    const left = Math.max(40, innerWidth * .045), top = Math.max(55, innerHeight * .08);
     const right = Math.max(left + 280, innerWidth * .82);
-    const bottom = Math.max(top + 190, innerHeight * .90);
+    const provisional = { left, top, right, bottom: Math.max(top + 190, innerHeight * .78) };
+    const bottom = lowerChartBoundary({ ...provisional, width: right - left, height: provisional.bottom - top });
     return { left, top, right, bottom, width: right - left, height: bottom - top };
   }
-
   function chartRect() {
     const rows = [];
     for (const el of deepElements()) {
@@ -56,193 +65,104 @@
       const tag = String(el.tagName || '').toLowerCase();
       const meta = `${el.className || ''} ${el.id || ''} ${el.getAttribute?.('data-testid') || ''}`.toLowerCase();
       if (tag !== 'canvas' && tag !== 'svg' && !/chart|candle|graph|trading|plot/.test(meta)) continue;
-      const r = el.getBoundingClientRect();
-      if (r.width < 240 || r.height < 150) continue;
-      let score = r.width * r.height;
-      if (tag === 'canvas') score *= 2.2;
-      if (/chart|candle|trading|plot/.test(meta)) score *= 1.45;
-      if (r.left < innerWidth * .15) score *= 1.15;
+      const r = el.getBoundingClientRect(); if (r.width < 240 || r.height < 150) continue;
+      let score = r.width * r.height; if (tag === 'canvas') score *= 2.2; if (/chart|candle|trading|plot/.test(meta)) score *= 1.45;
       rows.push({ rect: r, score });
     }
     rows.sort((a, b) => b.score - a.score);
-    return rows[0]?.rect || fallbackChartRect();
+    const raw = rows[0]?.rect || fallbackChartRect();
+    const bottom = lowerChartBoundary(raw);
+    return { left: raw.left, top: raw.top, right: raw.right, bottom, width: raw.width, height: bottom - raw.top };
   }
-
   function priceMapper(rect, state) {
-    const currentPrice = num(state?.price);
-    const labels = [];
-    for (const el of deepElements(3500)) {
-      if (!visible(el)) continue;
-      const raw = String(el.textContent || el.innerText || '').trim();
-      if (!/^\d{1,8}(?:[.,]\d{2,10})$/.test(raw)) continue;
-      const price = Number(raw.replace(',', '.'));
-      if (!Number.isFinite(price) || price <= 0) continue;
-      if (currentPrice != null && (price < currentPrice * .15 || price > currentPrice * 6)) continue;
-      const r = el.getBoundingClientRect();
-      const y = r.top + r.height / 2;
-      if (r.left < rect.right - 190 || r.left > rect.right + 140 || y < rect.top - 12 || y > rect.bottom + 12) continue;
-      labels.push({ price, y });
-    }
-    const unique = labels.filter((row, i, arr) => arr.findIndex(other => Math.abs(other.price - row.price) < 1e-12) === i);
-    if (unique.length >= 2) {
-      const meanP = unique.reduce((s, r) => s + r.price, 0) / unique.length;
-      const meanY = unique.reduce((s, r) => s + r.y, 0) / unique.length;
-      const denom = unique.reduce((s, r) => s + (r.price - meanP) ** 2, 0);
-      if (denom > 0) {
-        const slope = unique.reduce((s, r) => s + (r.price - meanP) * (r.y - meanY), 0) / denom;
-        if (Number.isFinite(slope) && Math.abs(slope) > 1e-9) return price => meanY + slope * (price - meanP) - rect.top;
-      }
-    }
-
-    const candles = [...(Array.isArray(state?.candles) ? state.candles.slice(-12) : [])];
+    const candles = [...(Array.isArray(state?.candles) ? state.candles.slice(-14) : [])];
     if (state?.currentCandle) candles.push(state.currentCandle);
-    const lows = candles.map(c => num(c?.low)).filter(v => v != null);
-    const highs = candles.map(c => num(c?.high)).filter(v => v != null);
-    if (currentPrice != null) { lows.push(currentPrice); highs.push(currentPrice); }
+    const lows = candles.map(c => num(c?.low)).filter(v => v != null), highs = candles.map(c => num(c?.high)).filter(v => v != null);
+    const current = num(state?.price); if (current != null) { lows.push(current); highs.push(current); }
     if (!lows.length || !highs.length) return null;
-    let low = Math.min(...lows), high = Math.max(...highs);
-    let span = high - low;
-    if (!Number.isFinite(span) || span <= 0) span = Math.max(Math.abs(currentPrice || 1) * .001, 1e-8);
-    low -= span * .16;
-    high += span * .16;
+    let low = Math.min(...lows), high = Math.max(...highs), span = high - low;
+    if (!(span > 0)) span = Math.max(Math.abs(current || 1) * .001, 1e-8);
+    low -= span * .12; high += span * .12;
     return price => ((high - price) / Math.max(1e-12, high - low)) * rect.height;
   }
 
-  let prefs = { ...DEFAULT_PREFS };
-  let state = null;
-  let root = null;
-  let busy = false;
-
+  let prefs = { ...DEFAULT_PREFS }, state = null, root = null, busy = false;
   function ensureRoot() {
     if (root?.isConnected) return root;
-    root = document.createElement('div');
-    root.id = 'ats-analysis-visual-overlay-v2';
-    Object.assign(root.style, {
-      position: 'fixed',
-      zIndex: '2147483646',
-      pointerEvents: 'none',
-      userSelect: 'none',
-      contain: 'layout style paint',
-      overflow: 'visible'
-    });
-    document.documentElement.appendChild(root);
-    return root;
+    root = document.createElement('div'); root.id = 'ats-analysis-visual-overlay-v2';
+    Object.assign(root.style, { position: 'fixed', zIndex: '2147483646', pointerEvents: 'none', userSelect: 'none', contain: 'layout style paint', overflow: 'hidden' });
+    document.documentElement.appendChild(root); return root;
   }
-
-  function integrityOk() {
+  function marketIntegrityOk() {
     if (!state || state.connection !== 'online' || !state.asset || num(state.price) == null) return false;
-    const focus = state.diagnostics?.focusedAsset;
-    if (!focus?.asset || !sameAsset(focus.asset, state.asset)) return false;
-    if (focus.at && Date.now() - Number(focus.at) > 10000) return false;
-    if (!state.lastSeen || Date.now() - Number(state.lastSeen) > 10000) return false;
-    return true;
+    const focus = state.diagnostics?.focusedAsset, session = state.diagnostics?.marketSession;
+    if (focus?.reliable !== true || focus?.chartScoped !== true || focus?.trustedChartFrame !== true) return false;
+    if (focus?.embeddedTrader !== true && focus?.casaTradeFrame !== true) return false;
+    if (!sameMarket(focus?.asset, state.asset)) return false;
+    if (!sameMarket(session?.asset, state.asset)) return false;
+    return !focus.at || Date.now() - Number(focus.at) <= 10000;
   }
-
+  function clockIntegrityOk() {
+    if (!marketIntegrityOk()) return false;
+    const focus = state.diagnostics?.focusedAsset, clock = state.diagnostics?.marketClock;
+    if (clock?.verified !== true || clock?.available === false || clock?.role !== 'candle-close') return false;
+    if (!['trader-dom-countdown','network-server-cycle'].includes(String(clock?.source || ''))) return false;
+    if (!sameMarket(clock?.asset, state.asset)) return false;
+    return Number(clock?.frameId) === Number(focus?.frameId) && Date.now() - Number(clock?.at || 0) <= 2200;
+  }
+  function fallbackLevels() {
+    const rows = Array.isArray(state?.candles) ? state.candles.slice(-10) : [];
+    const valid = rows.filter(c => num(c?.low) != null && num(c?.high) != null);
+    return valid.length < 3 ? {} : { support: Math.min(...valid.map(c => Number(c.low))), resistance: Math.max(...valid.map(c => Number(c.high))) };
+  }
+  function activeTrigger(analytics = {}, waiting = {}) {
+    if (!clockIntegrityOk()) return null;
+    const ui = String(state?.signal?.uiState || '').toUpperCase();
+    const dir = ui.includes('BUY') ? 'BUY' : ui.includes('SELL') ? 'SELL' : String(state?.signal?.direction || waiting.direction || '').toUpperCase();
+    if (!['BUY','SELL'].includes(dir)) return null;
+    const level = num(waiting.level) ?? (dir === 'BUY' ? num(analytics.breakoutHigh) : num(analytics.breakoutLow));
+    return level == null ? null : { direction: dir, price: level };
+  }
   function render() {
-    if (!prefs.overlayEnabled || !integrityOk()) { if (root) root.hidden = true; return; }
-    const rect = chartRect();
-    if (!rect) { if (root) root.hidden = true; return; }
-    const yFor = priceMapper(rect, state);
-    if (!yFor) { if (root) root.hidden = true; return; }
-    const hostRoot = ensureRoot();
-    hostRoot.hidden = false;
-    Object.assign(hostRoot.style, {
-      left: `${Math.round(rect.left)}px`,
-      top: `${Math.round(rect.top)}px`,
-      width: `${Math.round(rect.width)}px`,
-      height: `${Math.round(rect.height)}px`
-    });
-    hostRoot.replaceChildren();
-
+    if (!prefs.overlayEnabled || !marketIntegrityOk()) { if (root) root.hidden = true; return; }
+    const rect = chartRect(), yFor = priceMapper(rect, state); if (!rect || !yFor) { if (root) root.hidden = true; return; }
+    const box = ensureRoot(); box.hidden = false;
+    Object.assign(box.style, { left: `${Math.round(rect.left)}px`, top: `${Math.round(rect.top)}px`, width: `${Math.round(rect.width)}px`, height: `${Math.round(rect.height)}px` });
+    box.replaceChildren();
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svg.setAttribute('width', '100%');
-    svg.setAttribute('height', '100%');
-    svg.setAttribute('viewBox', `0 0 ${Math.max(1, rect.width)} ${Math.max(1, rect.height)}`);
-    svg.style.pointerEvents = 'none';
-    svg.style.overflow = 'visible';
-    hostRoot.appendChild(svg);
-
-    const analytics = state.signal?.analytics || {};
-    const waiting = state.signal?.waitingFor || {};
+    svg.setAttribute('width','100%'); svg.setAttribute('height','100%'); svg.setAttribute('viewBox',`0 0 ${Math.max(1,rect.width)} ${Math.max(1,rect.height)}`);
+    svg.style.pointerEvents = 'none'; svg.style.overflow = 'hidden'; box.appendChild(svg);
+    const analytics = { ...fallbackLevels(), ...(state.signal?.analytics || {}) };
+    void analytics.breakoutHigh; void analytics.breakoutLow;
     const drawn = [];
-    const addLine = (price, label, stroke, dash = '', active = false) => {
-      const value = num(price);
-      if (value == null) return;
-      const tolerance = Math.max(Math.abs(value) * .000002, 1e-10);
-      if (drawn.some(v => Math.abs(v - value) <= tolerance)) return;
-      drawn.push(value);
-      const y = yFor(value);
-      if (!Number.isFinite(y) || y < -20 || y > rect.height + 20) return;
-      const line = document.createElementNS(svg.namespaceURI, 'line');
-      line.setAttribute('x1', '0');
-      line.setAttribute('x2', String(rect.width));
-      line.setAttribute('y1', String(y));
-      line.setAttribute('y2', String(y));
-      line.setAttribute('stroke', stroke);
-      line.setAttribute('stroke-width', active ? '4' : '2.5');
-      line.setAttribute('opacity', active ? '1' : '.92');
-      if (dash) line.setAttribute('stroke-dasharray', dash);
-      svg.appendChild(line);
-
-      const text = document.createElementNS(svg.namespaceURI, 'text');
-      text.setAttribute('x', '10');
-      text.setAttribute('y', String(Math.max(15, y - 6)));
-      text.setAttribute('fill', stroke);
-      text.setAttribute('font-size', active ? '13' : '12');
-      text.setAttribute('font-weight', '900');
-      text.setAttribute('paint-order', 'stroke');
-      text.setAttribute('stroke', '#10151d');
-      text.setAttribute('stroke-width', '3');
-      text.setAttribute('stroke-linejoin', 'round');
-      text.textContent = `${active ? '▶ ' : ''}${label} ${String(value)}`;
-      svg.appendChild(text);
+    const addLine = (price, label, stroke, active = false) => {
+      const value = num(price); if (value == null) return;
+      const y = yFor(value); if (!Number.isFinite(y) || y < 4 || y > rect.height - 4) return;
+      if (drawn.some(v => Math.abs(v - value) <= Math.max(Math.abs(value) * .000002, 1e-10))) return; drawn.push(value);
+      const line = document.createElementNS(svg.namespaceURI,'line');
+      line.setAttribute('x1','0'); line.setAttribute('x2',String(rect.width)); line.setAttribute('y1',String(y)); line.setAttribute('y2',String(y));
+      line.setAttribute('stroke',stroke); line.setAttribute('stroke-width',active ? '3.5' : '1.8'); line.setAttribute('stroke-dasharray',active ? '8 5' : '5 5'); svg.appendChild(line);
+      const txt = document.createElementNS(svg.namespaceURI,'text'); txt.setAttribute('x','8'); txt.setAttribute('y',String(Math.max(14,y-5)));
+      txt.setAttribute('fill',stroke); txt.setAttribute('font-size',active ? '12.5' : '10.5'); txt.setAttribute('font-weight','900'); txt.setAttribute('paint-order','stroke'); txt.setAttribute('stroke','#10151d'); txt.setAttribute('stroke-width','3');
+      txt.textContent = `${label} ${value}`; svg.appendChild(txt);
     };
-
-    addLine(state.price, 'Preço atual', '#ffffff', '2 5');
-    addLine(analytics.resistance, 'Resistência', '#f0b56d', '5 5');
-    addLine(analytics.support, 'Suporte', '#79bfff', '5 5');
-    addLine(analytics.breakoutHigh, 'Gatilho compra ↑', '#58d6ad', '8 5', waiting.type === 'breakout' && waiting.direction === 'BUY');
-    addLine(analytics.breakoutLow, 'Gatilho venda ↓', '#f07b94', '8 5', waiting.type === 'breakout' && waiting.direction === 'SELL');
-    const waitLevel = num(waiting.level);
-    if (waitLevel != null) addLine(waitLevel, 'Aguardando', '#d8c36a', '3 4');
-
-    const status = document.createElementNS(svg.namespaceURI, 'text');
-    status.setAttribute('x', '12');
-    status.setAttribute('y', '20');
-    status.setAttribute('fill', '#fff');
-    status.setAttribute('font-size', '13');
-    status.setAttribute('font-weight', '900');
-    status.setAttribute('paint-order', 'stroke');
-    status.setAttribute('stroke', '#10151d');
-    status.setAttribute('stroke-width', '4');
-    const score = Math.round(Number(state.signal?.analysisScore ?? state.signal?.score ?? 0));
-    const seconds = num(state.diagnostics?.marketClock?.secondsRemaining ?? state.signal?.secondsRemaining);
-    const regime = state.signal?.regime?.type || 'identificando';
-    status.textContent = `${state.signal?.uiState || 'ANALISANDO'} • score ${score} • ${seconds == null ? '—' : Math.ceil(seconds)}s • ${regime}`;
-    svg.appendChild(status);
+    addLine(analytics.resistance, 'Resistência relevante', '#f0b56d');
+    addLine(analytics.support, 'Suporte relevante', '#79bfff');
+    const waiting = state.signal?.waitingFor || {};
+    const trigger = activeTrigger(analytics, waiting);
+    if (trigger) {
+      addLine(trigger.price, trigger.direction === 'BUY' ? 'Entrada COMPRA' : 'Entrada VENDA', trigger.direction === 'BUY' ? '#58d6ad' : '#f07b94', true);
+    }
+    // Deliberately no generic syncing banner on the chart: only actionable lines belong here.
   }
-
   async function refresh() {
-    if (busy) return;
-    busy = true;
-    try {
-      const response = await chrome.runtime.sendMessage({ type: 'ATS_READ_SCANNER_STATE' }).catch(() => null);
-      state = response?.state || null;
-      render();
-    } finally { busy = false; }
+    if (busy) return; busy = true;
+    try { const reply = await sendMessage({ type: 'ATS_READ_SCANNER_STATE' }); state = reply?.state || null; render(); } finally { busy = false; }
   }
-
-  chrome.storage.local.get(PREF_KEY, stored => {
-    void chrome.runtime?.lastError;
-    prefs = { ...DEFAULT_PREFS, ...(stored?.[PREF_KEY] || {}) };
-    refresh();
+  chrome.storage?.local?.get?.(PREF_KEY, stored => { prefs = { ...DEFAULT_PREFS, ...(stored?.[PREF_KEY] || {}) }; refresh().catch(() => {}); });
+  chrome.storage?.onChanged?.addListener?.(changes => {
+    if (changes[PREF_KEY]) { prefs = { ...DEFAULT_PREFS, ...(changes[PREF_KEY].newValue || {}) }; render(); }
+    if (changes.scannerState) { state = changes.scannerState.newValue || null; render(); }
   });
-  chrome.storage.onChanged.addListener(changes => {
-    if (!changes[PREF_KEY]) return;
-    prefs = { ...DEFAULT_PREFS, ...(changes[PREF_KEY].newValue || {}) };
-    if (!prefs.overlayEnabled && root) root.hidden = true;
-    else refresh();
-  });
-  setInterval(refresh, 350);
-  refresh();
+  setInterval(() => refresh().catch(() => {}), 1000); refresh().catch(() => {});
 })();

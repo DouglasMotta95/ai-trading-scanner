@@ -7,7 +7,7 @@ const casaHost = value => value === 'casatrade.com' || value.endsWith('.casatrad
 const traderHost = value => value === 'casatraders.online' || value.endsWith('.casatraders.online') || value === 'ivcasatraders.online' || value.endsWith('.ivcasatraders.online');
 const licenseActive = state => ['active', 'valid'].includes(String(state?.license?.status || '').toLowerCase());
 const FOCUS_FRESH_MS = 2600;
-const CLOCK_FRESH_MS = 1400;
+const CLOCK_FRESH_MS = 2200;
 let integrityRepairing = false;
 
 function normAsset(value = '') {
@@ -146,6 +146,7 @@ async function applyClock(message = {}, sender = {}) {
     const expiration = clean(message.expiration || '') || null;
     const exact = message.available === true
       && message.verified === true
+      && clean(message.clockRole) === 'candle-close'
       && clean(message.clockSource) === 'trader-dom-countdown'
       && num(message.secondsRemaining) != null
       && num(message.secondsRemaining) >= 0;
@@ -164,9 +165,16 @@ async function applyClock(message = {}, sender = {}) {
             timeframe,
             expiration,
             verified: false,
+            role: 'candle-close',
             source: clean(message.clockSource || 'trader-dom-unavailable'),
             frameId: sender.frameId,
             frameHost: info.frameHost,
+            at: Date.now()
+          },
+          acquisition: {
+            ...(state.diagnostics?.acquisition || {}),
+            stage: 'syncing_clock',
+            reason: 'Ativo e cotação encontrados. Sincronizando o fechamento da vela visível no gráfico.',
             at: Date.now()
           },
           integrity: { state: 'awaiting_exact_clock', expectedAsset: focus, at: Date.now() }
@@ -181,6 +189,7 @@ async function applyClock(message = {}, sender = {}) {
       timeframe,
       expiration,
       verified: true,
+      role: 'candle-close',
       source: 'trader-dom-countdown',
       text: clean(message.clockText || ''),
       token: clean(message.clockToken || ''),
@@ -221,7 +230,19 @@ async function applyClock(message = {}, sender = {}) {
       ...processed,
       analysisTimeframe: timeframe,
       targetExpiration: expiration,
-      diagnostics: { ...(state.diagnostics || {}), marketClock, integrity: { state: 'matched', expectedAsset: focus, at: Date.now() } }
+      diagnostics: {
+        ...(state.diagnostics || {}),
+        marketClock,
+        acquisition: {
+          ...(state.diagnostics?.acquisition || {}),
+          stage: processed?.signal?.state === 'SEARCHING' ? 'reading_history' : 'diagnosing_next_candle',
+          reason: processed?.signal?.reason || 'Relógio da vela sincronizado. Diagnosticando a próxima vela.',
+          candleCount: Number(processed?.signal?.candleCount ?? state.candles?.length ?? 0),
+          requiredCandles: 2,
+          at: Date.now()
+        },
+        integrity: { state: 'matched', expectedAsset: focus, at: Date.now() }
+      }
     };
   });
 }
@@ -241,6 +262,7 @@ function clockValid(state, now = Date.now()) {
   const clock = state?.diagnostics?.marketClock || null;
   return focusValid(state, now)
     && clock?.verified === true
+    && clean(clock?.role) === 'candle-close'
     && clean(clock?.source) === 'trader-dom-countdown'
     && now - Number(clock?.at || 0) < CLOCK_FRESH_MS
     && sameAsset(clock?.asset, focus?.asset)
@@ -289,6 +311,12 @@ function enforceStateIntegrity(nextState = {}) {
       signal: null,
       diagnostics: {
         ...(nextState.diagnostics || {}),
+        acquisition: {
+          ...(nextState.diagnostics?.acquisition || {}),
+          stage: 'syncing_clock',
+          reason: 'Sincronizando a decisão com o fechamento real da vela do gráfico.',
+          at: now
+        },
         integrity: { state: 'signal_blocked_without_exact_clock', expectedAsset: focusAsset, at: now }
       }
     };

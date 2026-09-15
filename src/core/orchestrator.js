@@ -6,23 +6,40 @@ import {
 } from './orchestrator-legacy.js';
 import { ANALYST_THRESHOLDS } from './analysis.js';
 
-// The 0.10.4 analyst remains the source of price-action, regime and indicator analysis.
-// This wrapper only turns that live analysis into one bounded decision per target candle.
-const POSSIBLE_HITS = 2;
+// Price action/indicators remain in the legacy analyst. This wrapper owns exactly
+// one bounded decision for each target candle: ENTER BUY, ENTER SELL or SKIP.
 const CONFIRM_HITS = 2;
-const CANDIDATE_MAX_GAP_MS = 8000;
-
-const PRE_SIGNAL_WINDOW_SECONDS = 30;
-const DECISION_WINDOW_SECONDS = 15;
-const SKIP_LOCK_SECONDS = 4;
 const DECISION_HIT_GAP_MS = 2500;
 const cycles = new Map();
+const wrapperCompletedDecisions = new Map();
+const WRAPPER_ROW_PREFIX = 'wrapper-cycle:';
 
 const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
 const clean = value => String(value ?? '').trim();
 const directionOf = signal => ['BUY', 'SELL'].includes(signal?.analysisDirection)
   ? signal.analysisDirection
   : ['BUY', 'SELL'].includes(signal?.direction) ? signal.direction : null;
+const assetIdentity = value => clean(value).toUpperCase().replace(/\s*\(\s*OTC\s*\)\s*$/i, '');
+const sameAsset = (a, b) => !!assetIdentity(a) && assetIdentity(a) === assetIdentity(b);
+
+function timeframeMs(value = 'M1') {
+  const tf = clean(value).toUpperCase();
+  let match = tf.match(/^S(\d+)$/); if (match) return Math.max(1, Number(match[1])) * 1000;
+  match = tf.match(/^M(\d+)$/); if (match) return Math.max(1, Number(match[1])) * 60_000;
+  match = tf.match(/^H(\d+)$/); if (match) return Math.max(1, Number(match[1])) * 3_600_000;
+  return 60_000;
+}
+
+function decisionWindows(snapshot = {}, signal = {}) {
+  const timeframe = clean(snapshot.analysisTimeframe || snapshot.timeframe || signal.timeframe || 'M1').toUpperCase();
+  const duration = Math.max(2, Math.round(timeframeMs(timeframe) / 1000));
+  // M1 keeps 30/15/4. Longer candles get more preparation without waiting
+  // several minutes; short candles scale down automatically.
+  const pre = Math.max(2, Math.min(duration - 1, 60, Math.round(duration * .50)));
+  const decision = Math.max(1, Math.min(pre - 1, 30, Math.round(duration * .25)));
+  const skip = Math.max(1, Math.min(decision, 8, Math.round(duration * .067)));
+  return { pre, decision, skip, duration, timeframe };
+}
 
 function cycleKey(snapshot = {}, signal = {}) {
   const asset = clean(snapshot.asset || 'unknown');
@@ -41,9 +58,9 @@ function targetStartOf(snapshot = {}, signal = {}) {
 }
 
 function decisionQuality(signal = {}, direction = null) {
-  if (!direction) return false;
+  if (!direction) return { qualifies: false, setup: null };
   const score = Number(signal.analysisScore ?? signal.score ?? 0);
-  if (score < ANALYST_THRESHOLDS.confirmScore) return false;
+  if (score < ANALYST_THRESHOLDS.confirmScore) return { qualifies: false, setup: null };
 
   const analytics = signal.analytics || {};
   const power = Number(direction === 'BUY' ? analytics.buyPower : analytics.sellPower) || 0;
@@ -51,19 +68,35 @@ function decisionQuality(signal = {}, direction = null) {
   const rejectionStrength = Number(analytics.rejectionStrength || 0);
   const directionalRejection = analytics.rejectionDirection === direction
     || Number(direction === 'BUY' ? analytics.rejectionBuy : analytics.rejectionSell) >= ANALYST_THRESHOLDS.rejectionStrength;
-  const continuation = analytics.continuationDirection === direction
-    && Number(analytics.continuationScore || 0) >= 55;
-  const momentum = analytics.momentumDirection === direction
-    && Number(analytics.momentumScore || 0) >= 40;
+  const continuation = analytics.continuationDirection === direction && Number(analytics.continuationScore || 0) >= 55;
+  const momentum = analytics.momentumDirection === direction && Number(analytics.momentumScore || 0) >= 40;
   const strongCandle = currentStrength >= ANALYST_THRESHOLDS.candleStrength;
   const rejection = directionalRejection && rejectionStrength >= ANALYST_THRESHOLDS.rejectionStrength;
-  const scoreMomentum = score >= 62 && momentum;
   const regime = String(signal.regime?.type || '').toLowerCase();
 
-  if (regime === 'range') {
-    return power >= 55 && score >= 68 && (rejection || continuation || (strongCandle && momentum));
-  }
-  return power >= 50 && (strongCandle || rejection || continuation || scoreMomentum);
+  // Setup-specific gates increase useful frequency without lowering the approved
+  // 44/58/62/50 analyst thresholds. A continuation no longer has to look like a
+  // rejection and a rejection no longer has to look like momentum.
+  const setups = regime === 'range'
+    ? [
+        { name: 'rejeição no range', ok: power >= 52 && rejection },
+        { name: 'continuação confirmada no range', ok: power >= 55 && score >= 64 && continuation && momentum }
+      ]
+    : [
+        { name: 'rejeição', ok: power >= 48 && rejection },
+        { name: 'continuação', ok: power >= 50 && continuation },
+        { name: 'momentum', ok: power >= 50 && strongCandle && momentum },
+        { name: 'confluência forte', ok: power >= 48 && score >= 68 && momentum && (strongCandle || continuation) }
+      ];
+  const matched = setups.find(item => item.ok) || null;
+  return { qualifies: !!matched, setup: matched?.name || null };
+}
+
+function possibleQuality(signal = {}, direction = null, score = 0) {
+  if (!direction || Number(score) < ANALYST_THRESHOLDS.possibleScore) return false;
+  const stableDirection = clean(signal.stability?.possibleDirection).toUpperCase();
+  const publishedDirection = clean(signal.direction).toUpperCase();
+  return stableDirection === direction || (signal.state === 'WATCH' && publishedDirection === direction);
 }
 
 function seedCycle(key, snapshot, signal, state = {}) {
@@ -72,17 +105,9 @@ function seedCycle(key, snapshot, signal, state = {}) {
   if (!cycle && stored?.key === key) cycle = { ...stored };
   if (!cycle) {
     cycle = {
-      key,
-      targetStart: targetStartOf(snapshot, signal),
-      candidateDirection: null,
-      confirmHits: 0,
-      lastHitAt: null,
-      locked: null,
-      direction: null,
-      score: 0,
-      reason: null,
-      decidedAt: null,
-      resolved: false
+      key, targetStart: targetStartOf(snapshot, signal), candidateDirection: null,
+      confirmHits: 0, lastHitAt: null, locked: null, direction: null, score: 0,
+      setup: null, reason: null, decidedAt: null, resolved: false
     };
   }
   cycles.set(key, cycle);
@@ -107,21 +132,14 @@ function observeDecision(cycle, direction, qualifies, at) {
 
 function appendTrace(state = {}, row = {}) {
   const rows = Array.isArray(state.decisionTrace) ? state.decisionTrace : [];
-  const withoutSame = rows.filter(item => item?.key !== row.key);
-  return [...withoutSame, row].slice(-24);
+  return [...rows.filter(item => item?.key !== row.key), row].slice(-40);
 }
 
 function enterSignal(signal, cycle, direction, score, reason = null) {
   return {
-    ...signal,
-    state: 'CONFIRM',
-    direction,
-    diagnosis: direction,
-    uiState: direction === 'BUY' ? 'ENTER_BUY' : 'ENTER_SELL',
-    provisional: false,
-    phase: 'FINAL',
-    score,
-    analysisScore: score,
+    ...signal, state: 'CONFIRM', direction, diagnosis: direction,
+    uiState: direction === 'BUY' ? 'ENTER_BUY' : 'ENTER_SELL', provisional: false, phase: 'FINAL',
+    score, analysisScore: score, setup: cycle.setup || signal.setup || null,
     reason: reason || `ENTRAR NA PRÓXIMA VELA: ${direction === 'BUY' ? 'COMPRA' : 'VENDA'} — padrão confirmado para a próxima abertura.`,
     hint: reason || `ENTRAR NA PRÓXIMA VELA: ${direction === 'BUY' ? 'COMPRA' : 'VENDA'}.`,
     targetStart: cycle.targetStart
@@ -130,78 +148,121 @@ function enterSignal(signal, cycle, direction, score, reason = null) {
 
 function skipSignal(signal, reason) {
   return {
-    ...signal,
-    state: 'NO_TRADE',
-    direction: null,
-    diagnosis: 'WAIT',
-    uiState: 'WAIT',
-    provisional: false,
-    phase: 'FINAL',
-    reason,
-    hint: reason
+    ...signal, state: 'NO_TRADE', direction: null, diagnosis: 'WAIT', uiState: 'SKIP',
+    provisional: false, phase: 'FINAL', reason, hint: reason
   };
 }
 
-function decidingSignal(signal) {
+function possibleSignal(signal, windows, direction, score) {
   const seconds = Math.max(0, Math.ceil(Number(signal.secondsRemaining || 0)));
-  const waiting = clean(signal.waitingFor?.text || signal.reason || 'checando força, rejeição, continuidade e momentum');
-  const reason = `DECIDINDO A PRÓXIMA VELA • ${seconds}s restantes — ${waiting}`;
+  const side = direction === 'BUY' ? 'COMPRA' : 'VENDA';
+  const waiting = clean(signal.waitingFor?.text || signal.reason || 'aguardando confirmação final do padrão');
+  const reason = `POSSÍVEL ${side} • ${seconds}s restantes — ${waiting}`;
   return {
     ...signal,
-    state: 'WAIT',
-    direction: null,
-    diagnosis: 'WAIT',
-    uiState: 'WAIT',
-    provisional: true,
-    phase: 'FINAL',
-    reason,
-    hint: reason
+    state: 'WATCH', direction, diagnosis: direction,
+    uiState: direction === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL',
+    provisional: true, phase: 'POSSIBLE', score, analysisScore: score,
+    reason, hint: reason, decisionWindow: windows
   };
 }
 
-function buildingSignal(signal) {
+function decidingSignal(signal, windows) {
+  const seconds = Math.max(0, Math.ceil(Number(signal.secondsRemaining || 0)));
+  const waiting = clean(signal.waitingFor?.text || signal.reason || 'checando força, rejeição, continuação e momentum');
+  const reason = `DECIDINDO A PRÓXIMA VELA • ${seconds}s restantes — ${waiting}`;
+  return { ...signal, state: 'WAIT', direction: null, diagnosis: 'WAIT', uiState: 'DECIDING', provisional: true, phase: 'FINAL', reason, hint: reason, decisionWindow: windows };
+}
+
+function buildingSignal(signal, windows) {
   const direction = directionOf(signal);
   const reason = direction
     ? `Montando a leitura da próxima vela • viés ${direction === 'BUY' ? 'comprador' : 'vendedor'} em formação.`
     : (signal.waitingFor?.text || 'Montando a leitura da próxima vela com as velas recentes e a vela atual.');
+  return { ...signal, state: 'WAIT', direction: null, diagnosis: 'WAIT', uiState: 'BUILDING_PATTERN', provisional: true, phase: 'BUILDING', reason, hint: reason, decisionWindow: windows };
+}
+
+function targetCandle(snapshot = {}, result = {}, targetBucket, tfMs) {
+  const current = result?.currentCandle || null;
+  const currentTime = num(current?.time ?? current?.timestamp);
+  if (currentTime != null && Math.floor(currentTime / tfMs) * tfMs === targetBucket) return current;
+  const rows = Array.isArray(snapshot.candles) ? snapshot.candles : [];
+  for (let index = rows.length - 1; index >= 0; index -= 1) {
+    const row = rows[index];
+    let time = num(row?.time ?? row?.timestamp);
+    if (time != null && time > 0 && time < 1e12) time *= 1000;
+    if (time == null || Math.floor(time / tfMs) * tfMs !== targetBucket) continue;
+    return row;
+  }
+  return null;
+}
+
+function completedFromCycle(cycle, snapshot = {}, result = {}) {
+  const now = num(snapshot.serverTime) ?? Date.now();
+  const asset = clean(snapshot.asset || '');
+  const timeframe = clean(snapshot.analysisTimeframe || snapshot.timeframe || result?.signal?.timeframe || 'M1').toUpperCase();
+  const tfMs = timeframeMs(timeframe);
+  const targetStart = Number(cycle.targetStart);
+  if (!Number.isFinite(targetStart) || targetStart <= 0) return null;
+  const targetBucket = Math.round(targetStart / tfMs) * tfMs;
+  if (now < targetBucket) return null;
+  const exactTarget = targetCandle(snapshot, result, targetBucket, tfMs);
+  const entryPrice = num(exactTarget?.open);
+  const entryConfirmed = entryPrice != null;
   return {
-    ...signal,
-    state: 'WAIT',
-    direction: null,
-    diagnosis: 'WAIT',
-    uiState: 'BUILDING_PATTERN',
-    provisional: true,
-    phase: 'BUILDING',
-    reason,
-    hint: reason
+    state: 'CONFIRM', direction: cycle.direction, score: Number(cycle.score || 0), time: targetBucket,
+    targetStart: targetBucket, entryPrice: entryConfirmed ? entryPrice : null,
+    entryTime: entryConfirmed ? targetBucket : null, entryConfirmed,
+    entryStatus: entryConfirmed ? 'confirmed' : 'unconfirmed',
+    entryReason: entryConfirmed ? null : 'Preço de entrada não confirmado: a vela-alvo não foi observada.',
+    capturedAt: entryConfirmed ? now : null, asset, timeframe
   };
 }
 
-function resolveWrapperDecision(snapshot = {}, result = {}, currentKey = '') {
+function wrapperCompletionKey(decision = {}) {
+  return `${assetIdentity(decision.asset)}|${clean(decision.timeframe).toUpperCase()}|${Number(decision.targetStart || 0)}`;
+}
+function rememberWrapperCompleted(decision = {}) {
+  if (!decision || decision.state !== 'CONFIRM') return;
+  const key = wrapperCompletionKey(decision);
+  if (!key || key.endsWith('|0')) return;
+  wrapperCompletedDecisions.set(key, { ...decision });
+  if (wrapperCompletedDecisions.size > 50) {
+    const oldest = [...wrapperCompletedDecisions.entries()].sort((a, b) => Number(a[1]?.targetStart || 0) - Number(b[1]?.targetStart || 0))[0]?.[0];
+    if (oldest) wrapperCompletedDecisions.delete(oldest);
+  }
+}
+function latestWrapperCompleted(snapshot = {}) {
+  const asset = clean(snapshot.asset || '');
+  const timeframe = clean(snapshot.analysisTimeframe || snapshot.timeframe || 'M1').toUpperCase();
+  return [...wrapperCompletedDecisions.values()].filter(row => sameAsset(row?.asset, asset) && clean(row?.timeframe).toUpperCase() === timeframe)
+    .sort((a, b) => Number(b?.targetStart || 0) - Number(a?.targetStart || 0))[0] || null;
+}
+function newerDecision(a, b) {
+  if (!a) return b || null;
+  if (!b) return a;
+  return Number(b.targetStart || b.time || 0) > Number(a.targetStart || a.time || 0) ? b : a;
+}
+
+function resolveWrapperDecision(snapshot = {}, result = {}, currentKey = '', state = {}) {
   const now = num(snapshot.serverTime) ?? Date.now();
   const asset = clean(snapshot.asset || '');
   const timeframe = clean(snapshot.analysisTimeframe || snapshot.timeframe || 'M1').toUpperCase();
-  for (const cycle of cycles.values()) {
+  const candidates = [...cycles.values()];
+  const persisted = state?.decisionCycle;
+  if (persisted?.locked === 'ENTER' && !persisted.resolved && !candidates.some(row => row?.key === persisted.key)) candidates.push({ ...persisted });
+  for (const cycle of candidates) {
     if (!cycle || cycle.key === currentKey || cycle.locked !== 'ENTER' || cycle.resolved) continue;
-    if (!cycle.key.startsWith(`${asset}|${timeframe}|`)) continue;
+    const cycleAsset = clean(cycle.key).split('|')[0] || asset;
+    const cycleTimeframe = clean(cycle.key).split('|')[1] || timeframe;
+    if (!sameAsset(cycleAsset, asset) || cycleTimeframe.toUpperCase() !== timeframe) continue;
     if (!Number.isFinite(Number(cycle.targetStart)) || now < Number(cycle.targetStart)) continue;
-    const entryPrice = num(result.currentCandle?.open) ?? num(snapshot.price);
+    const completed = completedFromCycle(cycle, snapshot, result);
+    if (!completed) continue;
     cycle.resolved = true;
-    return {
-      state: 'CONFIRM',
-      direction: cycle.direction,
-      score: Number(cycle.score || 0),
-      time: Number(cycle.targetStart),
-      targetStart: Number(cycle.targetStart),
-      entryPrice,
-      entryTime: Number(cycle.targetStart),
-      entryConfirmed: entryPrice != null,
-      entryStatus: entryPrice != null ? 'confirmed' : 'unconfirmed',
-      entryReason: entryPrice != null ? null : 'Preço de entrada não confirmado na abertura da vela-alvo.',
-      capturedAt: entryPrice != null ? now : null,
-      asset,
-      timeframe
-    };
+    cycles.set(cycle.key, cycle);
+    rememberWrapperCompleted(completed);
+    return completed;
   }
   return null;
 }
@@ -210,88 +271,62 @@ export function processSnapshot(snapshot = {}, state = {}) {
   const result = legacyProcessSnapshot(snapshot, state);
   const signal = result?.signal;
   if (!signal) return result;
-
   const secondsRemaining = num(signal.secondsRemaining);
   if (secondsRemaining == null) return result;
+
+  const windows = decisionWindows(snapshot, signal);
   const key = cycleKey(snapshot, signal);
   const cycle = seedCycle(key, snapshot, signal, state);
   const at = num(snapshot.serverTime) ?? Date.now();
   const score = Number(signal.analysisScore ?? signal.score ?? 0);
   const direction = directionOf(signal);
-  const rolledLastConfirmed = result.lastConfirmed || resolveWrapperDecision(snapshot, result, key);
+  const canShowPossible = possibleQuality(signal, direction, score);
+  const recovered = resolveWrapperDecision(snapshot, result, key, state);
+  const rolledLastConfirmed = newerDecision(newerDecision(result.lastConfirmed, latestWrapperCompleted(snapshot)), recovered);
 
   if (cycle.locked === 'ENTER') {
-    return {
-      ...result,
-      lastConfirmed: rolledLastConfirmed || result.lastConfirmed,
-      signal: enterSignal(signal, cycle, cycle.direction, Math.max(score, Number(cycle.score || 0)), cycle.reason),
-      decisionCycle: { ...cycle }
-    };
+    return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: enterSignal(signal, cycle, cycle.direction, Math.max(score, Number(cycle.score || 0)), cycle.reason), decisionCycle: { ...cycle } };
   }
   if (cycle.locked === 'SKIP') {
-    return {
-      ...result,
-      lastConfirmed: rolledLastConfirmed || result.lastConfirmed,
-      signal: skipSignal(signal, cycle.reason || 'PULAR PRÓXIMA VELA — padrão não confirmou a tempo.'),
-      decisionCycle: { ...cycle }
-    };
+    return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: skipSignal(signal, cycle.reason || 'PULAR PRÓXIMA VELA — padrão não confirmou a tempo.'), decisionCycle: { ...cycle } };
   }
 
-  if (secondsRemaining > PRE_SIGNAL_WINDOW_SECONDS) {
-    const nextSignal = signal.state === 'WATCH' ? buildingSignal(signal) : signal;
-    return {
-      ...result,
-      lastConfirmed: rolledLastConfirmed || result.lastConfirmed,
-      signal: nextSignal,
-      decisionCycle: { ...cycle }
-    };
+  if (secondsRemaining > windows.pre) {
+    const nextSignal = signal.state === 'WATCH' || signal.provisional ? buildingSignal(signal, windows) : signal;
+    return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: nextSignal, decisionCycle: { ...cycle } };
   }
-
-  if (secondsRemaining > DECISION_WINDOW_SECONDS) {
-    return {
-      ...result,
-      lastConfirmed: rolledLastConfirmed || result.lastConfirmed,
-      decisionCycle: { ...cycle }
-    };
+  if (secondsRemaining > windows.decision) {
+    const nextSignal = canShowPossible ? possibleSignal(signal, windows, direction, score) : signal;
+    return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: nextSignal, decisionCycle: { ...cycle } };
   }
 
   if (signal.state === 'CONFIRM' && ['BUY', 'SELL'].includes(signal.direction)) {
     cycle.locked = 'ENTER';
     cycle.direction = signal.direction;
     cycle.score = Math.max(score, Number(signal.score || 0));
+    cycle.setup = signal.setup || 'analista';
     cycle.reason = signal.reason;
     cycle.decidedAt = at;
     cycles.set(key, cycle);
-    const trace = appendTrace(state, {
-      key, targetStart: cycle.targetStart, decision: 'ENTER', direction: cycle.direction,
-      score: cycle.score, reason: cycle.reason, decidedAt: at
-    });
+    const trace = appendTrace(state, { key, targetStart: cycle.targetStart, decision: 'ENTER', direction: cycle.direction, score: cycle.score, setup: cycle.setup, reason: cycle.reason, decidedAt: at });
     return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, decisionCycle: { ...cycle }, decisionTrace: trace };
   }
 
-  const qualifies = decisionQuality(signal, direction);
-  const stable = observeDecision(cycle, direction, qualifies, at);
+  const quality = decisionQuality(signal, direction);
+  const stable = observeDecision(cycle, direction, quality.qualifies, at);
+  if (quality.qualifies) cycle.setup = quality.setup;
   if (stable) {
     cycle.locked = 'ENTER';
     cycle.direction = direction;
     cycle.score = score;
-    cycle.reason = `ENTRAR NA PRÓXIMA VELA: ${direction === 'BUY' ? 'COMPRA' : 'VENDA'} — score ${Math.round(score)}/100 com confirmação direcional estável.`;
+    cycle.reason = `ENTRAR NA PRÓXIMA VELA: ${direction === 'BUY' ? 'COMPRA' : 'VENDA'} — ${cycle.setup || 'setup'} confirmado, score ${Math.round(score)}/100.`;
     cycle.decidedAt = at;
     cycles.set(key, cycle);
-    const trace = appendTrace(state, {
-      key, targetStart: cycle.targetStart, decision: 'ENTER', direction,
-      score, reason: cycle.reason, decidedAt: at
-    });
-    return {
-      ...result,
-      lastConfirmed: rolledLastConfirmed || result.lastConfirmed,
-      signal: enterSignal(signal, cycle, direction, score, cycle.reason),
-      decisionCycle: { ...cycle },
-      decisionTrace: trace
-    };
+    const trace = appendTrace(state, { key, targetStart: cycle.targetStart, decision: 'ENTER', direction, score, setup: cycle.setup, reason: cycle.reason, decidedAt: at });
+    return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: enterSignal(signal, cycle, direction, score, cycle.reason), decisionCycle: { ...cycle }, decisionTrace: trace };
   }
 
-  if (secondsRemaining <= SKIP_LOCK_SECONDS) {
+  if (secondsRemaining <= windows.skip) {
     const blocker = clean(signal.waitingFor?.text || signal.reason || 'qualidade insuficiente para a próxima vela');
     cycle.locked = 'SKIP';
     cycle.direction = null;
@@ -299,37 +334,39 @@ export function processSnapshot(snapshot = {}, state = {}) {
     cycle.reason = `PULAR PRÓXIMA VELA — ${blocker}`;
     cycle.decidedAt = at;
     cycles.set(key, cycle);
-    const trace = appendTrace(state, {
-      key, targetStart: cycle.targetStart, decision: 'SKIP', direction: null,
-      score, reason: cycle.reason, decidedAt: at
-    });
-    return {
-      ...result,
-      lastConfirmed: rolledLastConfirmed || result.lastConfirmed,
-      signal: skipSignal(signal, cycle.reason),
-      decisionCycle: { ...cycle },
-      decisionTrace: trace
-    };
+    const trace = appendTrace(state, { key, targetStart: cycle.targetStart, decision: 'SKIP', direction: null, score, setup: cycle.setup, reason: cycle.reason, decidedAt: at });
+    return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: skipSignal(signal, cycle.reason), decisionCycle: { ...cycle }, decisionTrace: trace };
   }
 
   cycles.set(key, cycle);
-  return {
-    ...result,
-    lastConfirmed: rolledLastConfirmed || result.lastConfirmed,
-    signal: decidingSignal(signal),
-    decisionCycle: { ...cycle }
-  };
+  const nextSignal = canShowPossible
+    ? possibleSignal(signal, windows, direction, score)
+    : decidingSignal(signal, windows);
+  return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: nextSignal, decisionCycle: { ...cycle } };
 }
 
 export function resetOrchestrator() {
   cycles.clear();
+  wrapperCompletedDecisions.clear();
   legacyResetOrchestrator();
 }
 
 export function serializeCompletedDecisions() {
-  return legacySerializeCompletedDecisions();
+  const legacyRows = legacySerializeCompletedDecisions();
+  const legacyKeys = new Set(legacyRows.map(row => wrapperCompletionKey(row?.decision || {})).filter(key => key && !key.endsWith('|0')));
+  const wrapperRows = [...wrapperCompletedDecisions.entries()].filter(([key]) => !legacyKeys.has(key)).slice(-50).map(([key, decision]) => ({ key: `${WRAPPER_ROW_PREFIX}${key}`, decision: { ...decision } }));
+  return [...legacyRows, ...wrapperRows].slice(-50);
 }
 
 export function restoreCompletedDecisions(rows = []) {
-  return legacyRestoreCompletedDecisions(rows);
+  wrapperCompletedDecisions.clear();
+  const legacyRows = [];
+  for (const row of Array.isArray(rows) ? rows.slice(-50) : []) {
+    const key = clean(row?.key);
+    const decision = row?.decision;
+    if (!key || !decision || typeof decision !== 'object') continue;
+    if (key.startsWith(WRAPPER_ROW_PREFIX)) wrapperCompletedDecisions.set(key.slice(WRAPPER_ROW_PREFIX.length), { ...decision });
+    else legacyRows.push(row);
+  }
+  return legacyRestoreCompletedDecisions(legacyRows);
 }

@@ -13,8 +13,20 @@ const CONFIRM_HITS = 2;
 const POSSIBLE_HOLD_MS = 2500;
 const CANDIDATE_MAX_GAP_MS = 8000;
 
+function parseTimeframeMs(value = '') {
+  const tf = clean(value).toUpperCase().replace(/\s+/g, '');
+  if (TIMEFRAMES[tf]) return TIMEFRAMES[tf];
+  let match = tf.match(/^S(\d{1,5})$/);
+  if (match && Number(match[1]) > 0) return Number(match[1]) * 1000;
+  match = tf.match(/^M(\d{1,4})$/);
+  if (match && Number(match[1]) > 0) return Number(match[1]) * 60_000;
+  match = tf.match(/^H(\d{1,3})$/);
+  if (match && Number(match[1]) > 0) return Number(match[1]) * 3_600_000;
+  return null;
+}
+
 function timeframeMs(value = 'M1') {
-  return TIMEFRAMES[clean(value).toUpperCase()] || TIMEFRAMES.M1;
+  return parseTimeframeMs(value) || TIMEFRAMES.M1;
 }
 
 function builderKey(snapshot = {}) {
@@ -41,23 +53,32 @@ function validCandle(raw = {}) {
 
 function sameTimeframe(raw = {}, wanted = 'M1') {
   const tf = clean(raw?.timeframe).toUpperCase();
-  return !tf || tf === clean(wanted).toUpperCase();
+  const target = clean(wanted).toUpperCase();
+  if (!tf || tf === target) return true;
+  const sourceMs = parseTimeframeMs(tf);
+  const targetMs = timeframeMs(target);
+  return Number.isFinite(sourceMs) && sourceMs > 0 && sourceMs < targetMs && targetMs % sourceMs === 0;
 }
 
 function currentFromSnapshot(candles = [], bucket, timeframeMsValue, timeframeLabel, price) {
-  const row = [...(Array.isArray(candles) ? candles : [])].reverse().find(raw => {
-    if (!sameTimeframe(raw, timeframeLabel)) return false;
-    const t = candleTime(raw);
-    return t != null && Math.floor(t / timeframeMsValue) * timeframeMsValue === bucket;
-  });
-  const c = row ? validCandle(row) : null;
-  if (!c) return null;
+  const rows = (Array.isArray(candles) ? candles : [])
+    .map(raw => ({ raw, time: candleTime(raw), candle: validCandle(raw) }))
+    .filter(row => row.candle && row.time != null && sameTimeframe(row.raw, timeframeLabel)
+      && Math.floor(row.time / timeframeMsValue) * timeframeMsValue === bucket)
+    .sort((a, b) => a.time - b.time);
+  if (!rows.length) return null;
+  const first = rows[0].candle;
+  const last = rows[rows.length - 1].candle;
+  const high = Math.max(price, ...rows.map(row => row.candle.high));
+  const low = Math.min(price, ...rows.map(row => row.candle.low));
   return {
-    ...c,
     time: bucket,
-    high: Math.max(c.high, price),
-    low: Math.min(c.low, price),
-    close: price
+    open: first.open,
+    high,
+    low,
+    close: price,
+    ticks: rows.reduce((sum, row) => sum + Number(row.candle.ticks || 1), 0),
+    sourceClose: last.close
   };
 }
 
