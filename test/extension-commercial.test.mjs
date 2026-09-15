@@ -32,6 +32,7 @@ test('manifest only injects supported CasaTrade-owned or legacy trader capture s
 
   const focusedRow = manifest.content_scripts.find(row => (row.js || []).includes('src/content/focused-asset-v2.js'));
   assert.ok(focusedRow);
+  assert.ok(focusedRow.js.includes('src/content/focused-asset-alias-bridge.js'));
   for (const trusted of [
     'https://casatrade.com/*','https://*.casatrade.com/*','https://casatrade.io/*','https://*.casatrade.io/*',
     'https://casatraders.online/*','https://*.casatraders.online/*','https://ivcasatraders.online/*','https://*.ivcasatraders.online/*'
@@ -50,11 +51,12 @@ test('platform detection is strict and returns null for unrelated or embedded-fr
   assert.equal(detectPlatform('app.casatrade.com')?.id, 'casatrade');
 });
 
-test('sidepanel is focused on access, current market and next-candle decision', () => {
+test('sidepanel is focused on access, opened asset, chart data and one next-candle decision', () => {
   const html = read('src/sidepanel/index.html');
-  for (const heading of ['Live Decision','PRÓXIMA VELA','MERCADO ATUAL','ACESSO']) assert.match(html, new RegExp(heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'));
+  for (const heading of ['Live Decision','PRÓXIMA VELA','GRÁFICO ATUAL','ACESSO']) assert.match(html, new RegExp(heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'));
   for (const removed of ['EMA 9','EMA 21','BACKTEST','RELATÓRIO SEMANAL','CORRELAÇÃO','CALENDÁRIO','NOTÍCIAS','MELHORES OPORTUNIDADES','RADAR MULTIATIVO','POR QUE A IA']) assert.doesNotMatch(html.toUpperCase(), standalone(removed));
-  for (const id of ['licenseCard','analysisTitle','asset','price','secondsRemaining','timeframe','expiration','recentCandles','prepareBuy','prepareSell','signalTitle','signalReason','decisionText','targetTime']) assert.match(html, new RegExp(`id=["']${id}["']`));
+  for (const id of ['licenseCard','assetQualityCard','asset','price','secondsRemaining','timeframe','expiration','recentCandles','prepareBuy','prepareSell','signalTitle','signalReason','decisionText']) assert.match(html, new RegExp(`id=["']${id}["']`));
+  for (const repeated of ['analysisTitle','analyzingNow','targetTime','lastConfirmed']) assert.doesNotMatch(html, new RegExp(`id=["']${repeated}["']`));
   assert.doesNotMatch(html, /tradeAmount|analysisTimeframe|targetExpiration|syncPlatformBtn|signalHistory/);
   assert.match(html, /app-v2\.js/);
   assert.doesNotMatch(html, /app\.js/);
@@ -105,6 +107,7 @@ test('market feed is filtered to the authoritative visible chart market before i
   const market = read('src/background-market-session.js');
 
   assert.ok(scripts.includes('src/content/focused-asset-v2.js'));
+  assert.ok(scripts.includes('src/content/focused-asset-alias-bridge.js'));
   assert.ok(scripts.includes('src/content/embedded-feed-bridge.js'));
   assert.ok(!scripts.includes('src/content/generic-adapter.js'));
   assert.ok(!scripts.includes('src/content/network-bridge.js'));
