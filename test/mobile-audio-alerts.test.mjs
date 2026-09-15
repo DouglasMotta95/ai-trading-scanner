@@ -6,7 +6,7 @@ const source = fs.readFileSync(new URL('../src/sidepanel/app-v2.js', import.meta
 const manifest = JSON.parse(fs.readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
 
 test('mobile alerts are intentionally stronger, include haptic fallback and preview when enabled', () => {
-  assert.equal(manifest.version, '0.11.12');
+  assert.equal(manifest.version, '0.11.13');
   assert.match(source, /navigator\?\.vibrate/);
   assert.match(source, /vibrate\(\[55,35,70\]\)/);
   assert.match(source, /vibrate\(\[110,55,150,55,210\]\)/);
