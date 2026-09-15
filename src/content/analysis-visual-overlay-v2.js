@@ -12,8 +12,14 @@
   if (!allowed(host)) return;
 
   const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
-  const identity = value => String(value || '').toUpperCase().replace(/\s*\(\s*OTC\s*\)\s*$/i, '').replace(/\s+/g, '');
-  const sameAsset = (a, b) => !!identity(a) && identity(a) === identity(b);
+  const marketId = value => {
+    const raw = String(value || '').normalize('NFKC').toUpperCase().replace(/\s+/g, ' ').trim();
+    if (!raw) return '';
+    const otc = /(?:\(|\b|[_-])OTC(?:\)|\b)?/i.test(raw);
+    const pair = raw.match(/\b([A-Z0-9]{2,20})\s*[\/_-]\s*([A-Z0-9]{2,12})/i);
+    return pair ? `${pair[1]}/${pair[2]}${otc ? ' (OTC)' : ''}` : raw;
+  };
+  const sameMarket = (a, b) => !!marketId(a) && marketId(a) === marketId(b);
   const visible = el => {
     if (!el || !(el instanceof Element)) return false;
     const r = el.getBoundingClientRect();
@@ -21,11 +27,15 @@
     return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden' && Number(s.opacity || 1) > 0;
   };
 
+  let elementCache = [];
+  let elementCacheAt = 0;
   function deepElements(limit = 5000) {
+    const now = Date.now();
+    if (elementCache.length && now - elementCacheAt < 650) return elementCache.slice(0, limit);
     const out = [];
     const roots = [document];
     const seen = new Set();
-    while (roots.length && out.length < limit) {
+    while (roots.length && out.length < 6000) {
       const root = roots.shift();
       if (!root || seen.has(root)) continue;
       seen.add(root);
@@ -33,11 +43,13 @@
       try { nodes = [...root.querySelectorAll('*')]; } catch {}
       for (const node of nodes) {
         out.push(node);
-        if (out.length >= limit) break;
+        if (out.length >= 6000) break;
         if (node.shadowRoot) roots.push(node.shadowRoot);
       }
     }
-    return out;
+    elementCache = out;
+    elementCacheAt = now;
+    return out.slice(0, limit);
   }
 
   function fallbackChartRect() {
@@ -129,8 +141,16 @@
     if (!state || state.connection !== 'online' || !state.asset || num(state.price) == null) return false;
     const focus = state.diagnostics?.focusedAsset;
     const session = state.diagnostics?.marketSession;
-    if (!focus?.asset || !sameAsset(focus.asset, state.asset)) return false;
-    if (session?.asset && !sameAsset(session.asset, state.asset)) return false;
+    const clock = state.diagnostics?.marketClock;
+    if (focus?.reliable !== true || focus?.chartScoped !== true || focus?.embeddedTrader !== true) return false;
+    if (!sameMarket(focus?.asset, state.asset)) return false;
+    if (!sameMarket(session?.asset, state.asset)) return false;
+    if (Number(session?.frameId) !== Number(focus?.frameId) || String(session?.frameHost || '').toLowerCase() !== String(focus?.frameHost || '').toLowerCase()) return false;
+    if (clock?.verified !== true || clock?.available === false || clock?.role !== 'candle-close') return false;
+    if (!['trader-dom-countdown','network-server-cycle'].includes(String(clock?.source || ''))) return false;
+    if (!sameMarket(clock?.asset, state.asset)) return false;
+    if (Number(clock?.frameId) !== Number(focus?.frameId) || String(clock?.frameHost || '').toLowerCase() !== String(focus?.frameHost || '').toLowerCase()) return false;
+    if (Date.now() - Number(clock?.at || 0) > 2200) return false;
     if (focus.at && Date.now() - Number(focus.at) > 10000) return false;
     if (!state.lastSeen || Date.now() - Number(state.lastSeen) > 10000) return false;
     return true;
@@ -208,13 +228,7 @@
     addLine(analytics.support, 'Suporte relevante', '#79bfff', '5 5');
     const trigger = activeTrigger(analytics, waiting);
     if (trigger) {
-      addLine(
-        trigger.price,
-        trigger.direction === 'BUY' ? 'Entrada COMPRA' : 'Entrada VENDA',
-        trigger.direction === 'BUY' ? '#58d6ad' : '#f07b94',
-        '8 5',
-        true
-      );
+      addLine(trigger.price, trigger.direction === 'BUY' ? 'Entrada COMPRA' : 'Entrada VENDA', trigger.direction === 'BUY' ? '#58d6ad' : '#f07b94', '8 5', true);
     }
 
     const status = document.createElementNS(svg.namespaceURI, 'text');
@@ -249,6 +263,6 @@
     if (!prefs.overlayEnabled && root) root.hidden = true;
     else refresh();
   });
-  setInterval(refresh, 500);
+  setInterval(refresh, 750);
   refresh();
 })();
