@@ -10,13 +10,12 @@ const AUTHORITATIVE_LICENSE_ERRORS = new Set([
   'license_not_found',
   'license_inactive',
   'license_expired',
-  'device_limit_reached',
-  'device_locked'
+  'device_limit_reached'
 ]);
 
 export const PUBLIC_LICENSE_API = 'https://ats-control-center-v07-production.up.railway.app';
 const base = () => PUBLIC_LICENSE_API;
-const normalizedError = error => String(error || '') === 'device_locked' ? 'device_limit_reached' : String(error || '');
+const normalizedError = error => String(error || '');
 
 export const isDevBuild = () => !chrome.runtime.getManifest().update_url;
 export const licenseRequired = () => true;
