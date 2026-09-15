@@ -94,10 +94,9 @@ function decisionQuality(signal = {}, direction = null) {
 
 function possibleQuality(signal = {}, direction = null, score = 0) {
   if (!direction || Number(score) < ANALYST_THRESHOLDS.possibleScore) return false;
-  const regime = String(signal.regime?.type || '').toLowerCase();
-  if (regime !== 'range') return true;
   const stableDirection = clean(signal.stability?.possibleDirection).toUpperCase();
-  return stableDirection === direction || Number(score) >= ANALYST_THRESHOLDS.confirmScore;
+  const publishedDirection = clean(signal.direction).toUpperCase();
+  return stableDirection === direction || (signal.state === 'WATCH' && publishedDirection === direction);
 }
 
 function seedCycle(key, snapshot, signal, state = {}) {
