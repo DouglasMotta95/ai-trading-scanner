@@ -4,12 +4,14 @@ import fs from 'node:fs';
 import { CandleBuilder } from '../src/core/candles.js';
 const read = path => fs.readFileSync(new URL('../' + path, import.meta.url), 'utf8');
 
-test('clock v4 keeps CasaTrade cycle authoritative and derived countdown diagnostic only', () => {
+test('clock v4 keeps the selected chart cycle authoritative and never turns expiry countdown into timeframe', () => {
   const clock = read('src/content/market-cycle-clock-v4.js');
   const manifest = JSON.parse(read('manifest.json'));
   const scripts = manifest.content_scripts.flatMap(row => row.js || []);
-  assert.match(clock, /const cycleTf = \(controlsFresh \? tf\(expiration\) \|\| tf\(controls\.timeframe\) : null\)/);
-  assert.match(clock, /const domClock = \(!chartTf \|\| chartTf === cycleTf\) \? exactDomCountdown\(cycleTf\) : null/);
+  assert.match(clock, /const cycleTf = \(controlsFresh \? tf\(controls\.timeframe\) : null\)/);
+  assert.match(clock, /\|\| chartTf \|\| tf\(state\.analysisTimeframe \|\| state\.timeframe\) \|\| 'M1'/);
+  assert.doesNotMatch(clock, /tf\(expiration\)\s*\|\|\s*tf\(controls\.timeframe\)/);
+  assert.match(clock, /const domClock = exactDomCountdown\(cycleTf\)/);
   assert.match(clock, /clockSource: 'trader-dom-countdown'/);
   assert.match(clock, /clockSource: 'platform-cycle-derived'/);
   assert.match(clock, /available: false, verified: false/);
