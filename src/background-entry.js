@@ -5,4 +5,5 @@ import './background-market-session.js';
 import './background-modern-injector.js';
 import './background-shadow-calibration.js';
 import './background-asset-radar.js';
+import './background-manual-trades.js';
 import './background-control.js';
