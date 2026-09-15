@@ -8,6 +8,8 @@
     host === 'casatrade.com' || host.endsWith('.casatrade.com') ||
     host === 'casatrade.io' || host.endsWith('.casatrade.io');
   if (!trusted) return;
+  const sendMessage = globalThis.__ATS_SEND_MESSAGE__;
+  if (typeof sendMessage !== 'function') return;
 
   const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
   const marketId = value => {
@@ -51,13 +53,12 @@
     if (clockBusy) return;
     clockBusy = true;
     try {
-      const response = await chrome.runtime.sendMessage({ type: 'ATS_READ_SCANNER_STATE' }).catch(() => null);
+      const response = await sendMessage({ type: 'ATS_READ_SCANNER_STATE' });
       const state = response?.state || null;
       const focus = state?.diagnostics?.focusedAsset || null;
       if (!focus?.asset || focus.reliable !== true || focus.chartScoped !== true || focus.trustedChartFrame !== true) return;
       if (String(focus.frameHost || '').toLowerCase() !== host) return;
 
-      // The visible DOM countdown always wins when it is healthy.
       const currentClock = state?.diagnostics?.marketClock || null;
       if (currentClock?.verified === true && currentClock?.source === 'trader-dom-countdown'
         && Date.now() - Number(currentClock.at || 0) < 2200) return;
@@ -94,14 +95,14 @@
       let secondsRemaining = Math.ceil((durationMs - elapsed) / 1000);
       if (!Number.isFinite(secondsRemaining) || secondsRemaining <= 0 || secondsRemaining > duration) secondsRemaining = duration;
       lastClockSentAt = now;
-      await chrome.runtime.sendMessage({
+      await sendMessage({
         type: 'ATS_MARKET_CLOCK_V2', asset: focus.asset, timeframe, secondsRemaining,
         expiration: state.targetExpiration || state.expiration || candidate?.expiration || null,
         available: true, verified: true, clockRole: 'candle-close',
         clockSource: 'network-server-cycle', clockMode: 'structured-server-time',
         clockText: 'Tempo do servidor confirmado pelo feed estruturado', clockToken: `${secondsRemaining}s`,
         confidence: Math.min(99, Math.max(55, confidence)), frameHost: host, at: now
-      }).catch(() => null);
+      });
     } finally {
       clockBusy = false;
     }
@@ -114,7 +115,7 @@
     if (now - lastSentAt < 80) return;
     lastSentAt = now;
     const payload = data.payload || {};
-    chrome.runtime.sendMessage({ type: 'ATS_EMBEDDED_FEED', payload }).catch(() => {});
+    sendMessage({ type: 'ATS_EMBEDDED_FEED', payload }).catch(() => {});
     maybePublishStructuredClock(payload).catch(() => {});
   });
 })();
