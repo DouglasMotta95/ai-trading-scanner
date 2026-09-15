@@ -9,16 +9,17 @@ const root = path.resolve(__dirname, '..');
 const read = file => fs.readFileSync(path.join(root, file), 'utf8');
 const standalone = term => new RegExp(`(?:^|[^A-ZÀ-ÖØ-Þ])${term}(?:$|[^A-ZÀ-ÖØ-Þ])`);
 
-test('sidepanel exposes only the focused access, market and next-candle decision surface', () => {
+test('sidepanel exposes one opened-asset surface and one next-candle decision surface', () => {
   const html = read('src/sidepanel/index.html');
   const app = read('src/sidepanel/app-v2.js');
 
-  for (const heading of ['Live Decision','PRÓXIMA VELA','MERCADO ATUAL','ACESSO']) assert.match(html, new RegExp(heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'));
+  for (const heading of ['Live Decision','PRÓXIMA VELA','GRÁFICO ATUAL','ACESSO']) assert.match(html, new RegExp(heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'));
   for (const id of [
-    'activateLicense','analysisTitle','asset','price','secondsRemaining','timeframe','expiration',
+    'activateLicense','assetQualityCard','asset','price','secondsRemaining','timeframe','expiration',
     'currentOpen','currentHigh','currentLow','currentClose','recentCandles','recentCandleCount',
-    'signalTitle','signalReason','decisionText','signalScore','targetTime','prepareBuy','prepareSell'
+    'signalTitle','signalReason','decisionText','signalScore','prepareBuy','prepareSell'
   ]) assert.match(html, new RegExp(`id=["']${id}["']`));
+  for (const repeated of ['analysisTitle','analyzingNow','targetTime','lastConfirmed']) assert.doesNotMatch(html, new RegExp(`id=["']${repeated}["']`));
 
   assert.match(html, /app-v2\.js/);
   assert.match(app, /ATS_ACTIVATE_LICENSE/);
