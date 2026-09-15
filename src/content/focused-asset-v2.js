@@ -10,13 +10,14 @@
   if (!traderHost(host) && !casaHost(host)) return;
   const frameRole = traderHost(host) ? 'trader-frame' : 'casa-chart-frame';
 
+  // OTC and regular quotes are different live markets.
   const QUOTES = new Set(['USDT','USDC','USD','EUR','GBP','JPY','AUD','CAD','CHF','NZD','BRL','BTC','ETH']);
   const pairRe = /\b([A-Z0-9]{2,20})\s*[\/_-]\s*([A-Z0-9]{2,12})(?:\s*\(\s*OTC\s*\)|\s+OTC)?/gi;
   const compactFxRe = /\b([A-Z]{3})([A-Z]{3})(?:\s*\(\s*OTC\s*\)|[_-]?OTC)?\b/gi;
 
   function assetsIn(value = '') {
     const raw = clean(value).toUpperCase();
-    if (!raw || raw.length > 160) return [];
+    if (!raw || raw.length > 180) return [];
     const out = [];
     const seen = new Set();
     const add = (base, quote, otc) => {
@@ -125,36 +126,63 @@
     return rect.right >= chart.left - padX && rect.left <= chart.right + padX && rect.bottom >= top && rect.top <= bottom;
   }
 
+  let recentInteraction = { asset: '', at: 0 };
+  const interactionFresh = asset => sameAsset(recentInteraction.asset, asset) && Date.now() - Number(recentInteraction.at || 0) < 2600;
+
+  function elementAssetText(el) {
+    return clean([
+      el?.getAttribute?.('aria-label'), el?.getAttribute?.('title'),
+      el?.getAttribute?.('data-symbol'), el?.getAttribute?.('data-asset'), el?.getAttribute?.('data-instrument'),
+      el?.getAttribute?.('data-testid'), el?.innerText, el?.textContent
+    ].filter(Boolean).join(' ')).slice(0, 180);
+  }
+
+  function touchedAsset(event) {
+    const path = typeof event?.composedPath === 'function' ? event.composedPath() : [event?.target];
+    for (const node of path.slice(0, 8)) {
+      if (!(node instanceof Element) || !visible(node)) continue;
+      const assets = assetsIn(elementAssetText(node));
+      if (assets.length === 1) return assets[0];
+    }
+    return '';
+  }
+
   function scanWinner() {
     const chart = chartRect();
     const rows = [];
     for (const el of deepElements()) {
       if (!visible(el)) continue;
-      const text = clean(el.getAttribute?.('aria-label') || el.getAttribute?.('title') || el.innerText || el.textContent || '');
-      if (!text || text.length > 72) continue;
+      const text = elementAssetText(el);
+      if (!text || text.length > 180) continue;
       const assets = assetsIn(text);
       if (assets.length !== 1) continue;
+      const asset = assets[0];
       const rect = el.getBoundingClientRect();
       const selection = selectionEvidence(el);
       if (selection.rejected) continue;
       const context = contextOf(el);
       const chartScoped = nearChart(rect, chart) || /chart|tradingview|instrument|symbol|asset|header/.test(context);
-      if (!chartScoped && !selection.explicit) continue;
-      if (/watchlist|asset-list|instrument-list|listbox|search|history|portfolio|ranking|modal|drawer|dropdown|menu/.test(context) && !selection.explicit) continue;
+      const listContext = /watchlist|asset-list|instrument-list|listbox|search|history|portfolio|ranking|modal|drawer|dropdown|menu/.test(context);
+      // A selected row in the asset list is not market authority. The visible chart/header is.
+      if (listContext && !chartScoped) continue;
+      if (!chartScoped) continue;
+      const interaction = interactionFresh(asset);
       let score = selection.score;
       if (chartScoped) score += 520;
       if (chart && nearChart(rect, chart)) score += 480;
       if (/chart|tradingview|instrument|symbol|header/.test(context)) score += 180;
-      if (text.length <= 32) score += 70;
-      rows.push({ asset: assets[0], score, explicit: selection.explicit, chartScoped, top: rect.top, left: rect.left });
+      if (interaction) score += 900;
+      if (text.length <= 40) score += 70;
+      rows.push({ asset, score, explicit: selection.explicit, interaction, chartScoped, top: rect.top, left: rect.left });
     }
 
     const grouped = new Map();
     for (const row of rows) {
       const id = identity(row.asset);
-      const current = grouped.get(id) || { asset: row.asset, score: -Infinity, explicit: false, chartHits: 0, hits: 0, top: row.top, left: row.left };
+      const current = grouped.get(id) || { asset: row.asset, score: -Infinity, explicit: false, interaction: false, chartHits: 0, hits: 0, top: row.top, left: row.left };
       current.score = Math.max(current.score, row.score);
       current.explicit ||= row.explicit;
+      current.interaction ||= row.interaction;
       current.chartHits += row.chartScoped ? 1 : 0;
       current.hits += 1;
       current.top = Math.min(current.top, row.top);
@@ -163,14 +191,16 @@
     }
 
     const winners = [...grouped.values()].map(row => ({ ...row, score: row.score + Math.min(150, row.chartHits * 35) }));
-    winners.sort((a, b) => Number(b.explicit) - Number(a.explicit) || b.chartHits - a.chartHits || b.score - a.score || a.top - b.top || a.left - b.left);
+    winners.sort((a, b) => Number(b.interaction) - Number(a.interaction)
+      || Number(b.explicit) - Number(a.explicit)
+      || b.chartHits - a.chartHits || b.score - a.score || a.top - b.top || a.left - b.left);
     const first = winners[0] || null;
     const second = winners[1] || null;
-    if (!first) return null;
-    if (!first.explicit && first.chartHits < 1) return null;
+    if (!first || first.chartHits < 1) return null;
     if (second && !sameAsset(first.asset, second.asset)) {
       const gap = Number(first.score || 0) - Number(second.score || 0);
-      if (gap < (first.explicit ? 120 : 280)) return null;
+      const minimumGap = first.interaction ? 70 : first.explicit ? 120 : 280;
+      if (gap < minimumGap) return null;
     }
     return { ...first, chartFound: !!chart };
   }
@@ -197,7 +227,7 @@
       if (sameAsset(candidate, winner.asset)) candidateSamples += 1;
       else { candidate = winner.asset; candidateSince = now; candidateSamples = 1; }
       const stableFor = Math.max(0, now - candidateSince);
-      const reliable = winner.explicit || (candidateSamples >= 2 && stableFor >= 220) || (candidateSamples >= 3);
+      const reliable = winner.interaction || winner.explicit || (candidateSamples >= 2 && stableFor >= 220) || (candidateSamples >= 3);
       if (!reliable) return;
       if (!force && sameAsset(lastPublished, winner.asset) && now - lastPublishedAt < 650) return;
       lastPublished = winner.asset;
@@ -211,12 +241,14 @@
         reliable: true,
         visual: true,
         explicit: winner.explicit === true,
+        interactionHint: winner.interaction === true,
+        interactionAt: winner.interaction ? Number(recentInteraction.at || now) : null,
         chartScoped: true,
         chartFound: winner.chartFound === true,
         frameHost: host,
         frameRole,
         at: now,
-        source: winner.explicit ? 'chart-frame-explicit' : 'chart-frame-scoped'
+        source: winner.interaction ? 'chart-frame-user-confirmed' : winner.explicit ? 'chart-frame-explicit' : 'chart-frame-scoped'
       };
       globalThis.__ATS_FOCUSED_ASSET_VALUE__ = winner.asset;
       globalThis.__ATS_FOCUSED_ASSET_META__ = common;
@@ -243,10 +275,15 @@
 
   const observer = new MutationObserver(() => schedulePublish(160, false));
   try { observer.observe(document.documentElement, { subtree: true, childList: true, attributes: true, characterData: true }); } catch {}
-  const forceScan = delay => { invalidateElements(); schedulePublish(delay, true); };
-  document.addEventListener('pointerup', () => forceScan(70), true);
-  document.addEventListener('touchend', () => forceScan(80), true);
-  document.addEventListener('click', () => forceScan(80), true);
+  const noteInteraction = event => {
+    const asset = touchedAsset(event);
+    if (asset) recentInteraction = { asset, at: Date.now() };
+    invalidateElements();
+    schedulePublish(70, true);
+  };
+  document.addEventListener('pointerup', noteInteraction, true);
+  document.addEventListener('touchend', noteInteraction, true);
+  document.addEventListener('click', noteInteraction, true);
   setInterval(() => schedulePublish(0, false), 800);
   setTimeout(() => { invalidateElements(); publish(true); }, 250);
 })();
