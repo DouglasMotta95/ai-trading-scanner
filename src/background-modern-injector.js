@@ -10,7 +10,9 @@ async function inject(tabId) {
     'src/content/market-cycle-clock-v4.js',
     'src/content/casatrade-data-inspector.js',
     'src/content/analysis-visual-overlay-v2.js',
-    'src/content/manual-trade-observer.js'
+    'src/content/manual-trade-observer.js',
+    'src/content/account-metrics-observer.js',
+    'src/content/trade-handoff-v2.js'
   ];
   const mainWorld = [
     'src/content/worker-probe.js',
