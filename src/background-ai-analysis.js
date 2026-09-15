@@ -48,7 +48,8 @@ function shouldReusePreviousFinal(state = {}, stage = '') {
   const previous = state.aiAudit;
   if (!previous || previous.status !== 'ready' || previous.cycleKey !== cycleKey(state)) return false;
   const currentDirection = directionOf(state);
-  return currentDirection === 'WAIT' || previous.scannerDirection === currentDirection;
+  if (currentDirection === 'WAIT') return false;
+  return previous.scannerDirection === currentDirection;
 }
 
 function trimAttempts() {
