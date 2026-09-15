@@ -21,7 +21,7 @@
     return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden' && Number(s.opacity || 1) > 0;
   };
 
-  function deepElements(limit = 6500) {
+  function deepElements(limit = 5000) {
     const out = [];
     const roots = [document];
     const seen = new Set();
@@ -71,7 +71,7 @@
   function priceMapper(rect, state) {
     const currentPrice = num(state?.price);
     const labels = [];
-    for (const el of deepElements(3500)) {
+    for (const el of deepElements(3000)) {
       if (!visible(el)) continue;
       const raw = String(el.textContent || el.innerText || '').trim();
       if (!/^\d{1,8}(?:[.,]\d{2,10})$/.test(raw)) continue;
@@ -118,12 +118,8 @@
     root = document.createElement('div');
     root.id = 'ats-analysis-visual-overlay-v2';
     Object.assign(root.style, {
-      position: 'fixed',
-      zIndex: '2147483646',
-      pointerEvents: 'none',
-      userSelect: 'none',
-      contain: 'layout style paint',
-      overflow: 'visible'
+      position: 'fixed', zIndex: '2147483646', pointerEvents: 'none', userSelect: 'none',
+      contain: 'layout style paint', overflow: 'visible'
     });
     document.documentElement.appendChild(root);
     return root;
@@ -132,10 +128,29 @@
   function integrityOk() {
     if (!state || state.connection !== 'online' || !state.asset || num(state.price) == null) return false;
     const focus = state.diagnostics?.focusedAsset;
+    const session = state.diagnostics?.marketSession;
     if (!focus?.asset || !sameAsset(focus.asset, state.asset)) return false;
+    if (session?.asset && !sameAsset(session.asset, state.asset)) return false;
     if (focus.at && Date.now() - Number(focus.at) > 10000) return false;
     if (!state.lastSeen || Date.now() - Number(state.lastSeen) > 10000) return false;
     return true;
+  }
+
+  function activeDirection() {
+    const ui = String(state?.signal?.uiState || '').toUpperCase();
+    const dir = String(state?.signal?.direction || state?.signal?.analysisDirection || state?.signal?.waitingFor?.direction || '').toUpperCase();
+    if (ui.includes('BUY') || dir === 'BUY') return 'BUY';
+    if (ui.includes('SELL') || dir === 'SELL') return 'SELL';
+    return null;
+  }
+
+  function activeTrigger(analytics = {}, waiting = {}) {
+    const direction = activeDirection();
+    if (!direction) return null;
+    const waitingLevel = num(waiting.level);
+    if (waitingLevel != null) return { direction, price: waitingLevel };
+    const fallback = direction === 'BUY' ? num(analytics.breakoutHigh) : num(analytics.breakoutLow);
+    return fallback == null ? null : { direction, price: fallback };
   }
 
   function render() {
@@ -147,10 +162,8 @@
     const hostRoot = ensureRoot();
     hostRoot.hidden = false;
     Object.assign(hostRoot.style, {
-      left: `${Math.round(rect.left)}px`,
-      top: `${Math.round(rect.top)}px`,
-      width: `${Math.round(rect.width)}px`,
-      height: `${Math.round(rect.height)}px`
+      left: `${Math.round(rect.left)}px`, top: `${Math.round(rect.top)}px`,
+      width: `${Math.round(rect.width)}px`, height: `${Math.round(rect.height)}px`
     });
     hostRoot.replaceChildren();
 
@@ -174,47 +187,40 @@
       const y = yFor(value);
       if (!Number.isFinite(y) || y < -20 || y > rect.height + 20) return;
       const line = document.createElementNS(svg.namespaceURI, 'line');
-      line.setAttribute('x1', '0');
-      line.setAttribute('x2', String(rect.width));
-      line.setAttribute('y1', String(y));
-      line.setAttribute('y2', String(y));
-      line.setAttribute('stroke', stroke);
-      line.setAttribute('stroke-width', active ? '4' : '2.5');
-      line.setAttribute('opacity', active ? '1' : '.92');
+      line.setAttribute('x1', '0'); line.setAttribute('x2', String(rect.width));
+      line.setAttribute('y1', String(y)); line.setAttribute('y2', String(y));
+      line.setAttribute('stroke', stroke); line.setAttribute('stroke-width', active ? '4' : '2.2');
+      line.setAttribute('opacity', active ? '1' : '.82');
       if (dash) line.setAttribute('stroke-dasharray', dash);
       svg.appendChild(line);
 
       const text = document.createElementNS(svg.namespaceURI, 'text');
-      text.setAttribute('x', '10');
-      text.setAttribute('y', String(Math.max(15, y - 6)));
-      text.setAttribute('fill', stroke);
-      text.setAttribute('font-size', active ? '13' : '12');
-      text.setAttribute('font-weight', '900');
-      text.setAttribute('paint-order', 'stroke');
-      text.setAttribute('stroke', '#10151d');
-      text.setAttribute('stroke-width', '3');
+      text.setAttribute('x', '10'); text.setAttribute('y', String(Math.max(15, y - 6)));
+      text.setAttribute('fill', stroke); text.setAttribute('font-size', active ? '13' : '11.5');
+      text.setAttribute('font-weight', '900'); text.setAttribute('paint-order', 'stroke');
+      text.setAttribute('stroke', '#10151d'); text.setAttribute('stroke-width', '3');
       text.setAttribute('stroke-linejoin', 'round');
       text.textContent = `${active ? '▶ ' : ''}${label} ${String(value)}`;
       svg.appendChild(text);
     };
 
-    addLine(state.price, 'Preço atual', '#ffffff', '2 5');
-    addLine(analytics.resistance, 'Resistência', '#f0b56d', '5 5');
-    addLine(analytics.support, 'Suporte', '#79bfff', '5 5');
-    addLine(analytics.breakoutHigh, 'Gatilho compra ↑', '#58d6ad', '8 5', waiting.type === 'breakout' && waiting.direction === 'BUY');
-    addLine(analytics.breakoutLow, 'Gatilho venda ↓', '#f07b94', '8 5', waiting.type === 'breakout' && waiting.direction === 'SELL');
-    const waitLevel = num(waiting.level);
-    if (waitLevel != null) addLine(waitLevel, 'Aguardando', '#d8c36a', '3 4');
+    addLine(analytics.resistance, 'Resistência relevante', '#f0b56d', '5 5');
+    addLine(analytics.support, 'Suporte relevante', '#79bfff', '5 5');
+    const trigger = activeTrigger(analytics, waiting);
+    if (trigger) {
+      addLine(
+        trigger.price,
+        trigger.direction === 'BUY' ? 'Entrada COMPRA' : 'Entrada VENDA',
+        trigger.direction === 'BUY' ? '#58d6ad' : '#f07b94',
+        '8 5',
+        true
+      );
+    }
 
     const status = document.createElementNS(svg.namespaceURI, 'text');
-    status.setAttribute('x', '12');
-    status.setAttribute('y', '20');
-    status.setAttribute('fill', '#fff');
-    status.setAttribute('font-size', '13');
-    status.setAttribute('font-weight', '900');
-    status.setAttribute('paint-order', 'stroke');
-    status.setAttribute('stroke', '#10151d');
-    status.setAttribute('stroke-width', '4');
+    status.setAttribute('x', '12'); status.setAttribute('y', '20'); status.setAttribute('fill', '#fff');
+    status.setAttribute('font-size', '13'); status.setAttribute('font-weight', '900');
+    status.setAttribute('paint-order', 'stroke'); status.setAttribute('stroke', '#10151d'); status.setAttribute('stroke-width', '4');
     const score = Math.round(Number(state.signal?.analysisScore ?? state.signal?.score ?? 0));
     const seconds = num(state.diagnostics?.marketClock?.secondsRemaining ?? state.signal?.secondsRemaining);
     const regime = state.signal?.regime?.type || 'identificando';
@@ -243,6 +249,6 @@
     if (!prefs.overlayEnabled && root) root.hidden = true;
     else refresh();
   });
-  setInterval(refresh, 350);
+  setInterval(refresh, 500);
   refresh();
 })();
