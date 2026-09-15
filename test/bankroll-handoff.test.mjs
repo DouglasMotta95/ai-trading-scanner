@@ -4,10 +4,10 @@ import fs from 'node:fs';
 
 const read = path => fs.readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
-test('0.11.7 wires passive bankroll observation and safe trade handoff', () => {
+test('0.11.8 wires passive bankroll observation and safe trade handoff', () => {
   const manifest = JSON.parse(read('manifest.json'));
   const files = manifest.content_scripts.flatMap(row => row.js || []);
-  assert.equal(manifest.version, '0.11.7');
+  assert.equal(manifest.version, '0.11.8');
   assert.ok(files.includes('src/content/account-metrics-observer.js'));
   assert.ok(files.includes('src/content/trade-handoff-v2.js'));
 
