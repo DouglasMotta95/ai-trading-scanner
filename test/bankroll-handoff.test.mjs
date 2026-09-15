@@ -26,10 +26,13 @@ test('0.11.4 wires passive bankroll observation and safe trade handoff', () => {
   assert.doesNotMatch(handoff, /\.click\s*\(/);
 });
 
-test('bankroll state is descriptive and extension buttons require confirmed signal first', () => {
+test('bankroll state is descriptive, confidence-aware and extension buttons require confirmed signal first', () => {
   const bg = read('src/background-account-metrics.js');
   assert.match(bg, /currentStake \/ currentBalance/);
   assert.match(bg, /sessionDelta/);
+  assert.match(bg, /MIN_CONFIDENCE/);
+  assert.match(bg, /METRIC_FRESH_MS/);
+  assert.match(bg, /confidence >= oldConfidence/);
   assert.match(bg, /ATS_GET_ACCOUNT_METRICS/);
 
   const ui = read('src/sidepanel/trade-handoff-ui.js');
