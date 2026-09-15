@@ -5,27 +5,25 @@
   const runtime = globalThis.chrome?.runtime;
   if (!runtime || typeof runtime.sendMessage !== 'function') return;
 
-  const nativeSendMessage = runtime.sendMessage.bind(runtime);
+  // Android extension browsers such as Quetta may expose callback-only
+  // chrome.runtime.sendMessage. Keep one explicit bridge instead of assuming
+  // the native call returns a Promise.
+  globalThis.__ATS_SEND_MESSAGE__ = message => new Promise(resolve => {
+    let settled = false;
+    const finish = response => {
+      if (settled) return;
+      settled = true;
+      try { void runtime.lastError; } catch {}
+      resolve(response ?? null);
+    };
 
-  runtime.sendMessage = (...input) => {
-    const args = [...input];
-    const userCallback = typeof args.at(-1) === 'function' ? args.pop() : null;
-
-    return new Promise(resolve => {
-      let settled = false;
-      const finish = response => {
-        if (settled) return;
-        settled = true;
-        try { void runtime.lastError; } catch {}
-        try { userCallback?.(response); } catch {}
-        resolve(response ?? null);
-      };
-
-      try {
-        nativeSendMessage(...args, finish);
-      } catch {
-        finish(null);
+    try {
+      const returned = runtime.sendMessage(message, finish);
+      if (returned && typeof returned.then === 'function') {
+        returned.then(finish).catch(() => finish(null));
       }
-    });
-  };
+    } catch {
+      finish(null);
+    }
+  });
 })();
