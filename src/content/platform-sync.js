@@ -5,6 +5,8 @@
   const host = String(location.hostname || '').toLowerCase().replace(/\.$/, '');
   const isCasaTradeHost = value => value === 'casatrade.com' || value.endsWith('.casatrade.com') || value === 'casatrade.io' || value.endsWith('.casatrade.io');
   if (!isCasaTradeHost(host)) return;
+  const sendMessage = globalThis.__ATS_SEND_MESSAGE__;
+  if (typeof sendMessage !== 'function') return;
 
   const clean = v => String(v ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
   const fold = v => clean(v).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
@@ -177,7 +179,7 @@
 
   async function read(seed = null) {
     const observed = seed || readDom();
-    const state = await chrome.runtime.sendMessage({ type: 'ATS_GET_STATE' }).catch(() => null);
+    const state = await sendMessage({ type: 'ATS_GET_STATE' });
     if (!state || state.platformId !== 'casatrade' || state.connection !== 'online') return observed;
     if (!observed.timeframe) {
       const tf = normTf(state.timeframe);
