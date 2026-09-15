@@ -1,14 +1,15 @@
 {
   "manifest_version": 3,
   "name": "AI Trading Scanner",
-  "version": "0.11.11",
+  "version": "0.11.12",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArDZEDqmjiphJQ4FBhEvxfVBwyAOVeme/dFP5Axh0OOB3KKFtubALdF4RqqnTfxUgGnW/6DhDGlc8asFHN0lRMDEkbv+RcqXIoeQb/EUwDG6QAzBSSxHZh8gCjITjU3Ba2YZ0tkM5aSamxSG7wZIqgQjz4qyc6xOlVNuMcHpz+ucQhapy1dn+0elnHwIjMISemIEEfWMBDkNxqES6XJEGA+MqQpB2+qQYQ0tLryWM7XGRBFabwfs8F6rLvtATf3Y8cgJzn6SL85i22qcy8zmhvWzlM0OC0/CfNULXuaoq1fBlihmicu/psTg/n4BBVSuCtsVb2XBKodgR7cxrFP4PawIDAQAB",
-  "description": "Scanner de sinais para CasaTrade com leitura de mercado real, radar observacional, rastreio de entradas manuais e controle passivo de banca.",
+  "description": "Scanner de sinais para CasaTrade com leitura de mercado real, motor técnico e segunda leitura Gemini no servidor.",
   "permissions": ["storage","activeTab","scripting","sidePanel"],
   "host_permissions": [
     "https://casatrade.com/*","https://*.casatrade.com/*","https://casatrade.io/*","https://*.casatrade.io/*",
     "https://casatraders.online/*","https://*.casatraders.online/*","https://ivcasatraders.online/*","https://*.ivcasatraders.online/*",
-    "https://ats-control-center-v07-production.up.railway.app/*"
+    "https://ats-control-center-v07-production.up.railway.app/*",
+    "https://ai-trading-scanner-production-62f2.up.railway.app/*"
   ],
   "background": { "service_worker": "src/background-entry.js", "type": "module" },
   "action": { "default_title": "AI Trading Scanner" },
@@ -74,5 +75,5 @@
       ]
     }
   ],
-  "version_name": "0.11.11-live-clock-switch-expiration-bankroll-overlay"
+  "version_name": "0.11.12-gemini-live-second-opinion"
 }
