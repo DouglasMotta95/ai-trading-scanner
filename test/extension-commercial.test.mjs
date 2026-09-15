@@ -18,7 +18,6 @@ const REMOVED = [
   'src/content/history-adapter.js',
   'src/background-platform-sync.js'
 ];
-
 const standalone = term => new RegExp(`(?:^|[^A-ZÀ-ÖØ-Þ])${term}(?:$|[^A-ZÀ-ÖØ-Þ])`);
 
 test('manifest only injects supported CasaTrade capture scripts and trusted embedded trader frames', () => {
@@ -29,9 +28,7 @@ test('manifest only injects supported CasaTrade capture scripts and trusted embe
   assert.equal(manifest.optional_host_permissions, undefined);
   const serialized = JSON.stringify(manifest);
   assert.doesNotMatch(serialized, /history-adapter|chart-overlay|background-platform-sync/);
-  for (const host of manifest.content_scripts.flatMap(x => x.matches || [])) {
-    assert.match(host, /casatrade\.(com|io)|(?:iv)?casatraders\.online/);
-  }
+  for (const host of manifest.content_scripts.flatMap(x => x.matches || [])) assert.match(host, /casatrade\.(com|io)|(?:iv)?casatraders\.online/);
 });
 
 test('platform detection is strict and returns null for unrelated or embedded-frame-only hosts', async () => {
@@ -45,12 +42,14 @@ test('platform detection is strict and returns null for unrelated or embedded-fr
   assert.equal(detectPlatform('app.casatrade.com')?.id, 'casatrade');
 });
 
-test('sidepanel is focused on license, live candle analysis and next entry', () => {
+test('sidepanel is focused on access, current market and next-candle decision', () => {
   const html = read('src/sidepanel/index.html');
-  for (const heading of ['1. LICENÇA','2. VELA EM ANÁLISE','3. PRÓXIMA VELA']) assert.match(html, new RegExp(heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
-  for (const removed of ['RSI','MACD','EMA 9','EMA 21','SUPORTE','RESISTÊNCIA','BACKTEST','RELATÓRIO SEMANAL','CORRELAÇÃO','CALENDÁRIO','NOTÍCIAS','MELHORES OPORTUNIDADES','RADAR MULTIATIVO','POR QUE A IA']) assert.doesNotMatch(html.toUpperCase(), standalone(removed));
+  for (const heading of ['Live Decision','PRÓXIMA VELA','MERCADO ATUAL','ACESSO']) assert.match(html, new RegExp(heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'));
+  for (const removed of ['EMA 9','EMA 21','BACKTEST','RELATÓRIO SEMANAL','CORRELAÇÃO','CALENDÁRIO','NOTÍCIAS','MELHORES OPORTUNIDADES','RADAR MULTIATIVO','POR QUE A IA']) assert.doesNotMatch(html.toUpperCase(), standalone(removed));
   for (const id of ['licenseCard','analysisTitle','asset','price','secondsRemaining','timeframe','expiration','recentCandles','prepareBuy','prepareSell','signalTitle','signalReason','decisionText','targetTime']) assert.match(html, new RegExp(`id=["']${id}["']`));
   assert.doesNotMatch(html, /tradeAmount|analysisTimeframe|targetExpiration|syncPlatformBtn|signalHistory/);
+  assert.match(html, /app-v2\.js/);
+  assert.doesNotMatch(html, /app\.js/);
 });
 
 test('removed unauthorized files are physically absent', () => {
@@ -73,54 +72,44 @@ test('no extension source references removed modules', () => {
   for (const name of ['ai-scoring.js','backtest.js','correlation.js','market-structure.js','reporting.js','chart-overlay.js','history-adapter.js','background-platform-sync.js']) assert.doesNotMatch(body, new RegExp(name.replace('.', '\\.')));
 });
 
-test('background clears unsupported active-tab market state and blocks foreign snapshots', () => {
-  const background = read('src/background.js');
-  assert.match(background, /marketCleared/);
-  assert.match(background, /platform_not_registered/);
-  assert.match(background, /if \(!platform \|\| !sameTarget/);
-  assert.match(background, /asset: null/);
-  assert.match(background, /price: null/);
-  assert.match(background, /signal: null/);
+test('runtime background uses a single market authority instead of the legacy market writers', () => {
+  const entry = read('src/background-entry.js');
+  assert.match(entry, /background-market-session\.js/);
+  assert.match(entry, /background-control\.js/);
+  assert.doesNotMatch(entry, /background\.js/);
+  assert.doesNotMatch(entry, /background-augment\.js/);
+  assert.doesNotMatch(entry, /background-integrity\.js/);
+  assert.doesNotMatch(entry, /background-chart-market\.js/);
 });
 
-test('platform readers remain wired to real CasaTrade controls', () => {
-  const background = read('src/background.js');
+test('platform reader remains wired to real CasaTrade controls', () => {
   const content = read('src/content/platform-sync.js');
-  assert.match(background, /ATS_READ_PLATFORM_CONTROLS/);
-  assert.match(background, /platformControls/);
+  const control = read('src/background-control.js');
   assert.match(content, /ATS_PLATFORM_READ/);
   assert.match(content, /comprar\|vender\|buy\|sell/);
+  assert.match(control, /ATS_CONNECT_ACTIVE_TAB/);
 });
 
-test('market feed is filtered to the authoritative visible chart asset before it can drive a decision', () => {
+test('market feed is filtered to the authoritative visible chart market before it can drive a decision', () => {
   const manifest = JSON.parse(read('manifest.json'));
+  const scripts = manifest.content_scripts.flatMap(row => row.js || []);
   const focus = read('src/content/focused-asset-v2.js');
-  const augment = read('src/background-augment.js');
-  const generic = read('src/content/generic-adapter.js');
-  const evidence = read('src/core/market-evidence.js');
+  const market = read('src/background-market-session.js');
 
-  assert.ok(manifest.content_scripts.some(x => (x.js || []).includes('src/content/focused-asset-v2.js')));
+  assert.ok(scripts.includes('src/content/focused-asset-v2.js'));
+  assert.ok(scripts.includes('src/content/embedded-feed-bridge.js'));
+  assert.ok(!scripts.includes('src/content/generic-adapter.js'));
+  assert.ok(!scripts.includes('src/content/network-bridge.js'));
   assert.match(focus, /ATS_VISUAL_FOCUS_V2/);
   assert.match(focus, /chartScoped: true/);
   assert.match(focus, /frameRole: 'trader-frame'/);
-
-  assert.match(augment, /focusedAssets/);
-  assert.match(augment, /function chooseCandidate\(payload = \{\}, preferredAsset = ''\)/);
-  assert.match(augment, /filter\(row => sameAsset\(row\.asset, focus\)\)/);
-  assert.match(augment, /const frameMatchesFocus =/);
-  assert.match(augment, /if \(!frameMatchesFocus\) return/);
-  assert.match(augment, /function authoritativeClock\(/);
-  assert.match(augment, /if \(!clock\) return base/);
-
-  assert.match(generic, /bestDomAsset/);
-  assert.match(generic, /bestNetworkQuote\(''\)/);
-  assert.match(generic, /dom-fallback/);
-  assert.match(generic, /network-fallback/);
-
-  assert.match(evidence, /resolveMarketEvidence/);
-  assert.match(evidence, /focusCorroborated/);
-  assert.match(evidence, /confidence \|\| 0\) >= 82/);
-  assert.match(evidence, /seenCount \|\| 0\) >= 2/);
+  assert.match(market, /function bestForFocus\(payload = \{\}, focus = ''\)/);
+  assert.match(market, /filter\(row => sameMarket\(row\.asset, focus\)\)/);
+  assert.match(market, /Number\(focus\.frameId\) !== Number\(info\.frameId\)/);
+  assert.match(market, /const candidate = bestForFocus\(payload, asset\)/);
+  assert.match(market, /if \(!candidate\) return/);
+  assert.match(market, /const clock = exactClock\(state, info\)/);
+  assert.match(market, /if \(clock\) processed = processSnapshot/);
 });
 
 test('trade handoff highlights but never executes financial action automatically', () => {
@@ -132,10 +121,9 @@ test('trade handoff highlights but never executes financial action automatically
 
 test('license persistence remains cache-first', () => {
   const license = read('src/services/license.js');
-  const panel = read('src/sidepanel/app.js');
   assert.match(license, /atsLastValidLicense/);
   assert.match(license, /REOPEN_CACHE_GRACE_MS/);
   assert.match(license, /AUTHORITATIVE_LICENSE_ERRORS/);
-  assert.match(panel, /atsLastValidLicense/);
-  assert.match(panel, /effectiveLicense/);
+  assert.match(license, /device_locked/);
+  assert.match(license, /device_limit_reached/);
 });
