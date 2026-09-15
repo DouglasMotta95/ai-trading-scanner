@@ -28,6 +28,7 @@ const BUILD_KEY = 'atsLoadedBuildVersion';
     expiration: null,
     targetExpiration: null,
     platformControls: null,
+    accountMetrics: null,
     diagnostics: {
       build: { version, previousVersion: previousVersion || null, changedAt: Date.now() }
     }
