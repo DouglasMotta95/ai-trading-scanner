@@ -107,7 +107,8 @@
     const focus = state.diagnostics?.focusedAsset, clock = state.diagnostics?.marketClock;
     if (clock?.verified !== true || clock?.available === false || clock?.role !== 'candle-close') return false;
     if (!['trader-dom-countdown','network-server-cycle'].includes(String(clock?.source || ''))) return false;
-    return sameMarket(clock?.asset, state.asset) && Number(clock?.frameId) === Number(focus?.frameId) && Date.now() - Number(clock?.at || 0) <= 2200;
+    if (!sameMarket(clock?.asset, state.asset)) return false;
+    return Number(clock?.frameId) === Number(focus?.frameId) && Date.now() - Number(clock?.at || 0) <= 2200;
   }
   function fallbackLevels() {
     const rows = Array.isArray(state?.candles) ? state.candles.slice(-10) : [];
@@ -149,7 +150,9 @@
     addLine(analytics.support, 'Suporte relevante', '#79bfff');
     const waiting = state.signal?.waitingFor || {};
     const trigger = activeTrigger(analytics, waiting);
-    if (trigger) addLine(trigger.price, trigger.direction === 'BUY' ? 'Entrada COMPRA' : 'Entrada VENDA', trigger.direction === 'BUY' ? '#58d6ad' : '#f07b94', true);
+    if (trigger) {
+      addLine(trigger.price, trigger.direction === 'BUY' ? 'Entrada COMPRA' : 'Entrada VENDA', trigger.direction === 'BUY' ? '#58d6ad' : '#f07b94', true);
+    }
     // Deliberately no generic syncing banner on the chart: only actionable lines belong here.
   }
   async function refresh() {
