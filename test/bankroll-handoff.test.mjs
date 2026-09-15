@@ -14,11 +14,15 @@ test('0.11.3 wires passive bankroll observation and safe trade handoff', () => {
   const observer = read('src/content/account-metrics-observer.js');
   assert.match(observer, /ATS_ACCOUNT_METRICS/);
   assert.match(observer, /platform-dom-labelled/);
+  assert.match(observer, /\\d\[\\d\.?,?\\s\]\*/);
   assert.doesNotMatch(observer, /\.click\s*\(/);
 
   const handoff = read('src/content/trade-handoff-v2.js');
   assert.match(handoff, /ATS_HIGHLIGHT_TRADE/);
   assert.match(handoff, /scrollIntoView/);
+  assert.match(handoff, /const ambiguous =/);
+  assert.match(handoff, /top\.score - second\.score < 2/);
+  assert.match(handoff, /item\.score >= 6/);
   assert.doesNotMatch(handoff, /\.click\s*\(/);
 });
 
@@ -39,6 +43,6 @@ test('Gemini secret is reserved for backend environment only', () => {
   const env = read('backend/.env.example');
   const manifest = read('manifest.json');
   assert.match(env, /^GEMINI_API_KEY=$/m);
-  assert.match(env, /^GEMINI_MODEL=gemini-3\.6-flash$/m);
+  assert.match(env, /^GEMINI_MODEL=gemini-3\.8-flash$/m);
   assert.doesNotMatch(manifest, /GEMINI_API_KEY|generativelanguage\.googleapis\.com/);
 });
