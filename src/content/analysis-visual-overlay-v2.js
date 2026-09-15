@@ -98,7 +98,8 @@
     const focus = state.diagnostics?.focusedAsset, session = state.diagnostics?.marketSession;
     if (focus?.reliable !== true || focus?.chartScoped !== true || focus?.trustedChartFrame !== true) return false;
     if (focus?.embeddedTrader !== true && focus?.casaTradeFrame !== true) return false;
-    if (!sameMarket(focus?.asset, state.asset) || !sameMarket(session?.asset, state.asset)) return false;
+    if (!sameMarket(focus?.asset, state.asset)) return false;
+    if (!sameMarket(session?.asset, state.asset)) return false;
     return !focus.at || Date.now() - Number(focus.at) <= 10000;
   }
   function clockIntegrityOk() {
@@ -146,7 +147,8 @@
     };
     addLine(analytics.resistance, 'Resistência relevante', '#f0b56d');
     addLine(analytics.support, 'Suporte relevante', '#79bfff');
-    const trigger = activeTrigger(analytics, state.signal?.waitingFor || {});
+    const waiting = state.signal?.waitingFor || {};
+    const trigger = activeTrigger(analytics, waiting);
     if (trigger) addLine(trigger.price, trigger.direction === 'BUY' ? 'Entrada COMPRA' : 'Entrada VENDA', trigger.direction === 'BUY' ? '#58d6ad' : '#f07b94', true);
     // Deliberately no generic syncing banner on the chart: only actionable lines belong here.
   }
