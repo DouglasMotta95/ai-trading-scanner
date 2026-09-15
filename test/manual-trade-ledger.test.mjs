@@ -56,6 +56,7 @@ test('manual trade observer is passive and runtime wires ledger without automati
   const manifest = JSON.parse(read('manifest.json'));
   const entry = read('src/background-entry.js');
   const background = read('src/background-manual-trades.js');
+  const core = read('src/core/manual-trades.js');
   const injector = read('src/background-modern-injector.js');
   const scripts = manifest.content_scripts.flatMap(row => row.js || []);
   assert.ok(scripts.includes('src/content/manual-trade-observer.js'));
@@ -64,6 +65,6 @@ test('manual trade observer is passive and runtime wires ledger without automati
   assert.match(observer, /addEventListener\('click'/);
   assert.match(observer, /ATS_MANUAL_TRADE_CLICK/);
   assert.doesNotMatch(observer, /\.click\s*\(/);
-  assert.match(background, /target_candle_close/);
+  assert.match(core, /target_candle_close/);
   assert.match(background, /ATS_GET_MANUAL_TRADE_LEDGER/);
 });
