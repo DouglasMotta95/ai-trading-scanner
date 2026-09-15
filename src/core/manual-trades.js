@@ -102,34 +102,51 @@ export function mergeManualTrade(rows = [], trade = null, limit = 500) {
   return list.sort((a,b) => Number(a.clickedAt || 0) - Number(b.clickedAt || 0)).slice(-limit);
 }
 
+function resolveWithCandles(row, candles = [], now = Date.now()) {
+  if (!row || row.status !== 'PENDING' || row.result || num(row.entryPrice) == null || num(row.targetStart) == null) return row;
+  const tfMs = timeframeMs(row.timeframe);
+  const targetBucket = Math.round(Number(row.targetStart) / tfMs) * tfMs;
+  const candle = (Array.isArray(candles) ? candles : []).find(item => {
+    const time = normalizeCandleTime(item?.time ?? item?.timestamp);
+    return time != null && Math.floor(time / tfMs) * tfMs === targetBucket;
+  });
+  if (!candle) return row;
+  const exitPrice = num(candle.close);
+  if (exitPrice == null) return row;
+  const entryPrice = Number(row.entryPrice);
+  const result = exitPrice === entryPrice ? 'DRAW'
+    : row.direction === 'BUY' ? (exitPrice > entryPrice ? 'WIN' : 'LOSS')
+      : (exitPrice < entryPrice ? 'WIN' : 'LOSS');
+  return {
+    ...row, status: 'RESOLVED', result, exitPrice,
+    exitAt: targetBucket + tfMs, resolvedAt: now,
+    resultSource: 'target_candle_close'
+  };
+}
+
 export function resolveManualTrades(rows = [], state = {}, now = Date.now()) {
   const candles = Array.isArray(state.candles) ? state.candles : [];
   const stateAsset = marketId(state.asset || '');
   const stateTf = clean(state.analysisTimeframe || state.timeframe || '').toUpperCase();
   const resolved = [];
   const next = (Array.isArray(rows) ? rows : []).map(row => {
+    if (!row || !sameMarket(row.asset, stateAsset) || clean(row.timeframe).toUpperCase() !== stateTf) return row;
+    const out = resolveWithCandles(row, candles, now);
+    if (out !== row && out.result) resolved.push(out);
+    return out;
+  });
+  return { rows: next, resolved };
+}
+
+export function resolveManualTradesFromFeed(rows = [], payload = {}, now = Date.now()) {
+  const recent = payload?.recentCandles && typeof payload.recentCandles === 'object' ? payload.recentCandles : {};
+  const resolved = [];
+  const next = (Array.isArray(rows) ? rows : []).map(row => {
     if (!row || row.status !== 'PENDING' || row.result) return row;
-    if (!sameMarket(row.asset, stateAsset) || clean(row.timeframe).toUpperCase() !== stateTf) return row;
-    if (num(row.entryPrice) == null || num(row.targetStart) == null) return row;
-    const tfMs = timeframeMs(row.timeframe);
-    const targetBucket = Math.round(Number(row.targetStart) / tfMs) * tfMs;
-    const candle = candles.find(item => {
-      const time = normalizeCandleTime(item?.time ?? item?.timestamp);
-      return time != null && Math.floor(time / tfMs) * tfMs === targetBucket;
-    });
-    if (!candle) return row;
-    const exitPrice = num(candle.close);
-    if (exitPrice == null) return row;
-    const entryPrice = Number(row.entryPrice);
-    const result = exitPrice === entryPrice ? 'DRAW'
-      : row.direction === 'BUY' ? (exitPrice > entryPrice ? 'WIN' : 'LOSS')
-        : (exitPrice < entryPrice ? 'WIN' : 'LOSS');
-    const out = {
-      ...row, status: 'RESOLVED', result, exitPrice,
-      exitAt: targetBucket + tfMs, resolvedAt: now,
-      resultSource: 'target_candle_close'
-    };
-    resolved.push(out);
+    const key = Object.keys(recent).find(asset => sameMarket(asset, row.asset));
+    if (!key) return row;
+    const out = resolveWithCandles(row, recent[key], now);
+    if (out !== row && out.result) resolved.push(out);
     return out;
   });
   return { rows: next, resolved };
