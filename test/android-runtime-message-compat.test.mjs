@@ -29,6 +29,7 @@ test('Android runtime bridge loads before every isolated live reader, including 
   const relevantGroups = manifest.content_scripts.filter(row => (row.js || []).some(file => [
     'src/content/focused-asset-v2.js',
     'src/content/embedded-feed-bridge.js',
+    'src/content/platform-sync.js',
     'src/content/market-cycle-clock-v4.js',
     'src/content/account-metrics-observer.js',
     'src/content/analysis-visual-overlay-v2.js'
@@ -41,7 +42,7 @@ test('Android runtime bridge loads before every isolated live reader, including 
 
   const injector = read('src/background-modern-injector.js');
   const compat = injector.indexOf("'src/content/runtime-message-compat.js'");
-  for (const file of ['focused-asset-v2.js','embedded-feed-bridge.js','market-cycle-clock-v4.js','account-metrics-observer.js','analysis-visual-overlay-v2.js']) {
+  for (const file of ['focused-asset-v2.js','embedded-feed-bridge.js','platform-sync.js','market-cycle-clock-v4.js','account-metrics-observer.js','analysis-visual-overlay-v2.js']) {
     assert.ok(injector.indexOf(file) > compat, `${file} must load after runtime compatibility`);
   }
 });
@@ -50,6 +51,7 @@ test('critical Quetta live readers do not assume chrome.runtime.sendMessage retu
   for (const file of [
     'src/content/chart-frame-market-reader.js',
     'src/content/embedded-feed-bridge.js',
+    'src/content/platform-sync.js',
     'src/content/market-cycle-clock-v4.js',
     'src/content/account-metrics-observer.js',
     'src/content/analysis-visual-overlay-v2.js'
