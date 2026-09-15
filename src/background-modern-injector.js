@@ -3,6 +3,7 @@ async function inject(tabId) {
   const isolated = [
     'src/content/runtime-message-compat.js',
     'src/content/device-anchor.js',
+    'src/content/focused-asset-alias-bridge.js',
     'src/content/focused-asset-protocol.js',
     'src/content/focused-asset-v2.js',
     'src/content/chart-frame-market-reader.js',
