@@ -13,17 +13,24 @@ const num = value => value == null || value === '' ? null : Number.isFinite(Numb
 const activeLicense = state => ['active','valid'].includes(String(state?.license?.status || '').toLowerCase());
 const fresh = state => Number(state?.lastSeen) > 0 && Date.now() - Number(state.lastSeen) < 8000;
 const priceText = value => num(value) == null ? '—' : String(value);
+const marketId = value => {
+  const raw = String(value || '').normalize('NFKC').toUpperCase().replace(/\s+/g, ' ').trim();
+  if (!raw) return '';
+  const otc = /(?:\(|\b|[_-])OTC(?:\)|\b)?/i.test(raw);
+  const pair = raw.match(/\b([A-Z0-9]{2,20})\s*[\/_-]\s*([A-Z0-9]{2,12})/i);
+  return pair ? `${pair[1]}/${pair[2]}${otc ? ' (OTC)' : ''}` : raw;
+};
+const sameMarket = (a, b) => !!marketId(a) && marketId(a) === marketId(b);
 
 function exactClockReady(state = {}) {
   const focus = state.diagnostics?.focusedAsset || null;
   const clock = state.diagnostics?.marketClock || null;
   if (!focus || !clock || !state.asset) return false;
-  const normalize = value => String(value || '').toUpperCase().replace(/\s*\(\s*OTC\s*\)\s*$/i, '').replace(/\s+/g, '');
   return focus.reliable === true && focus.chartScoped === true && focus.embeddedTrader === true
-    && normalize(focus.asset) === normalize(state.asset)
+    && sameMarket(focus.asset, state.asset)
     && clock.verified === true && clock.available !== false && clock.role === 'candle-close'
     && ['trader-dom-countdown','network-server-cycle'].includes(String(clock.source || ''))
-    && normalize(clock.asset) === normalize(state.asset)
+    && sameMarket(clock.asset, state.asset)
     && Number(clock.frameId) === Number(focus.frameId)
     && String(clock.frameHost || '').toLowerCase() === String(focus.frameHost || '').toLowerCase()
     && Date.now() - Number(clock.at || 0) < 2200
@@ -32,9 +39,12 @@ function exactClockReady(state = {}) {
 
 function sessionReady(state = {}) {
   const session = state.diagnostics?.marketSession || null;
+  const sessionTf = String(session?.timeframe || '').toUpperCase();
+  const stateTf = String(state.analysisTimeframe || state.timeframe || '').toUpperCase();
   return activeLicense(state) && state.platformId === 'casatrade' && state.connection === 'online'
     && !!state.asset && num(state.price) != null && fresh(state) && exactClockReady(state)
-    && !!session?.asset;
+    && sameMarket(session?.asset, state.asset)
+    && (!sessionTf || !stateTf || sessionTf === stateTf);
 }
 
 function decisionModel(state = {}) {
