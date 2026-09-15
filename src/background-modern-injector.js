@@ -4,6 +4,7 @@ async function inject(tabId) {
   if (!tabId || !chrome.scripting?.executeScript) return;
   const isolated = [
     'src/content/device-anchor.js',
+    'src/content/focused-asset-protocol.js',
     'src/content/focused-asset-v2.js',
     'src/content/chart-frame-market-reader.js',
     'src/content/embedded-feed-bridge.js',
