@@ -5,6 +5,8 @@
   const host = String(location.hostname || '').toLowerCase().replace(/\.$/, '');
   const allowed = value => value === 'casatrade.com' || value.endsWith('.casatrade.com') || value === 'casatrade.io' || value.endsWith('.casatrade.io') || value === 'casatraders.online' || value.endsWith('.casatraders.online') || value === 'ivcasatraders.online' || value.endsWith('.ivcasatraders.online');
   if (!allowed(host)) return;
+  const sendMessage = globalThis.__ATS_SEND_MESSAGE__;
+  if (typeof sendMessage !== 'function') return;
 
   const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
   const visible = el => {
@@ -165,7 +167,7 @@
   let lastKey = '';
   let lastSent = 0;
   let timer = 0;
-  function scan() {
+  async function scan() {
     timer = 0;
     const balance = labeledCandidate(BALANCE_RE) || topBarBalanceCandidate();
     const stake = stakeFromInput() || labeledCandidate(STAKE_RE);
@@ -189,11 +191,11 @@
     if (key === lastKey && now - lastSent < 5000) return;
     lastKey = key;
     lastSent = now;
-    chrome.runtime.sendMessage({ type: 'ATS_ACCOUNT_METRICS', snapshot }).catch(() => {});
+    await sendMessage({ type: 'ATS_ACCOUNT_METRICS', snapshot });
   }
   function schedule(delay = 180) {
     if (timer) return;
-    timer = setTimeout(scan, delay);
+    timer = setTimeout(() => { scan().catch(() => {}); }, delay);
   }
 
   new MutationObserver(() => schedule(350)).observe(document.documentElement, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['value','aria-label'] });
