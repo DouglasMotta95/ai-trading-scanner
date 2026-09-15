@@ -16,7 +16,6 @@ function bullish(bucket) {
     { time: bucket, open: 1.078, high: 1.115, low: 1.075, close: 1.110, timeframe: 'M1' }
   ];
 }
-
 function snapshot(bucket, offset, candles = bullish(bucket)) {
   return {
     platformId: 'casatrade', asset: 'EUR/USD', price: candles.at(-1).close,
@@ -57,11 +56,12 @@ test('slow but consistent twenty-candle drift is a trend, not automatically rang
   assert.ok(regime.efficiency >= .48);
 });
 
-test('overlay shows the levels and live engine state used for analysis', () => {
-  const overlay = read('src/content/analysis-visual-overlay.js');
-  for (const label of ['Preço atual', 'Resistência', 'Suporte', 'Gatilho compra', 'Gatilho venda', 'Aguardando:', 'Tendência alta', 'Mercado lateral']) {
-    assert.ok(overlay.includes(label), `missing overlay diagnostic: ${label}`);
-  }
-  assert.match(overlay, /waiting\?\.type === 'breakout'/);
-  assert.match(overlay, /pointerEvents = 'none'/);
+test('overlay shows only relevant support, resistance and one directional entry trigger', () => {
+  const overlay = read('src/content/analysis-visual-overlay-v2.js');
+  for (const label of ['Resistência relevante', 'Suporte relevante', 'Entrada COMPRA', 'Entrada VENDA']) assert.ok(overlay.includes(label), `missing overlay line: ${label}`);
+  for (const legacy of ['Preço atual', 'Gatilho compra', 'Gatilho venda', 'Aguardando:']) assert.ok(!overlay.includes(legacy), `legacy overlay clutter remained: ${legacy}`);
+  assert.match(overlay, /const trigger = activeTrigger\(analytics, waiting\)/);
+  assert.match(overlay, /if \(trigger\) \{/);
+  assert.match(overlay, /pointerEvents: 'none'/);
+  assert.match(overlay, /sameMarket\(focus\?\.asset, state\.asset\)/);
 });
