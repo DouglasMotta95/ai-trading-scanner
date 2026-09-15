@@ -12,6 +12,12 @@ if ($('extensionVersion')) $('extensionVersion').textContent = `v${chrome.runtim
 const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
 const activeLicense = state => ['active','valid'].includes(String(state?.license?.status || '').toLowerCase());
 const fresh = state => Number(state?.lastSeen) > 0 && Date.now() - Number(state.lastSeen) < 8000;
+const freshFocus = state => {
+  const focus = state?.diagnostics?.focusedAsset || null;
+  return !!focus?.asset && focus.reliable === true && focus.chartScoped === true && focus.trustedChartFrame === true
+    && (focus.embeddedTrader === true || focus.casaTradeFrame === true)
+    && Number(focus.at) > 0 && Date.now() - Number(focus.at) < 5000;
+};
 const priceText = value => num(value) == null ? '—' : String(value);
 const marketId = value => {
   const raw = String(value || '').normalize('NFKC').toUpperCase().replace(/\s+/g, ' ').trim();
@@ -26,7 +32,7 @@ function exactClockReady(state = {}) {
   const focus = state.diagnostics?.focusedAsset || null;
   const clock = state.diagnostics?.marketClock || null;
   if (!focus || !clock || !state.asset) return false;
-  return focus.reliable === true && focus.chartScoped === true && focus.embeddedTrader === true
+  return freshFocus(state)
     && sameMarket(focus.asset, state.asset)
     && clock.verified === true && clock.available !== false && clock.role === 'candle-close'
     && ['trader-dom-countdown','network-server-cycle'].includes(String(clock.source || ''))
@@ -50,7 +56,7 @@ function sessionReady(state = {}) {
 function decisionModel(state = {}) {
   const signal = state.signal || {};
   if (!activeLicense(state)) return { key: 'BLOCKED', title: 'ATIVAÇÃO NECESSÁRIA', badge: 'BLOQUEADO', detail: 'Ative a licença para iniciar.', className: 'waiting' };
-  if (!state.diagnostics?.focusedAsset?.asset) return { key: 'SYNC', title: 'IDENTIFICANDO ATIVO', badge: 'SINCRONIZANDO', detail: 'Aguardando o ativo realmente aberto no gráfico.', className: 'waiting' };
+  if (!freshFocus(state)) return { key: 'SYNC', title: 'IDENTIFICANDO ATIVO', badge: 'SINCRONIZANDO', detail: 'Aguardando o ativo realmente aberto no gráfico.', className: 'waiting' };
   if (!state.asset || num(state.price) == null) return { key: 'SYNC', title: 'LENDO MERCADO', badge: 'SINCRONIZANDO', detail: 'Ativo confirmado. Aguardando cotação real.', className: 'waiting' };
   if (!exactClockReady(state)) return { key: 'SYNC', title: 'SINCRONIZANDO VELA', badge: 'RELÓGIO', detail: 'Aguardando o fechamento exato da vela da CasaTrade.', className: 'waiting' };
   const map = {
@@ -154,7 +160,7 @@ function render(state = {}) {
   maybeSound(model, state);
 
   if ($('connectionBadge')) { $('connectionBadge').textContent = ready ? 'AO VIVO' : 'SINCRONIZANDO'; $('connectionBadge').className = `badge ${ready ? 'ok' : 'warn'}`; }
-  if ($('asset')) $('asset').textContent = state.asset || state.diagnostics?.focusedAsset?.asset || '—';
+  if ($('asset')) $('asset').textContent = freshFocus(state) ? (state.diagnostics?.focusedAsset?.asset || state.asset || '—') : '—';
   if ($('price')) $('price').textContent = priceText(state.price);
   if ($('timeframe')) $('timeframe').textContent = state.analysisTimeframe || state.timeframe || clock.timeframe || '—';
   if ($('expiration')) $('expiration').textContent = state.targetExpiration || state.expiration || '—';
@@ -229,7 +235,12 @@ async function loadPrefs() {
 async function setPref(key, value) {
   prefs = { ...prefs, [key]: !!value };
   await chrome.storage.local.set({ [UI_PREF_KEY]: prefs });
-  if (value && /Sound/.test(key)) ensureAudio();
+  if (value && /Sound/.test(key)) {
+    ensureAudio();
+    // Play an immediate preview so mobile browsers unlock audio and the user can verify the volume now.
+    if (key === 'possibleSoundEnabled') play('possible');
+    if (key === 'confirmSoundEnabled') play('confirm');
+  }
 }
 
 $('activateLicense')?.addEventListener('click', () => activate().catch(() => {}));
