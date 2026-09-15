@@ -4,6 +4,8 @@ const host = value => String(value || '').toLowerCase().replace(/\.$/, '');
 const casaHost = value => value === 'casatrade.com' || value.endsWith('.casatrade.com') || value === 'casatrade.io' || value.endsWith('.casatrade.io');
 const traderHost = value => value === 'casatraders.online' || value.endsWith('.casatraders.online') || value === 'ivcasatraders.online' || value.endsWith('.ivcasatraders.online');
 const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
+const MIN_CONFIDENCE = { balance: 8, stake: 8, payout: 9 };
+const METRIC_FRESH_MS = 5000;
 
 function senderTrusted(sender = {}) {
   let frameHost = '', topHost = '';
@@ -12,18 +14,38 @@ function senderTrusted(sender = {}) {
   return !!sender.tab?.id && casaHost(topHost) && (casaHost(frameHost) || traderHost(frameHost));
 }
 
+function candidate(previous = {}, snapshot = {}, key, atKey, now) {
+  const value = num(snapshot[key === 'payout' ? 'payoutPct' : key]);
+  const confidence = Math.max(0, num(snapshot.confidence?.[key]) || 0);
+  const oldValue = num(previous[key === 'payout' ? 'payoutPct' : key]);
+  const oldConfidence = Math.max(0, num(previous.confidence?.[key]) || 0);
+  const oldAt = Number(previous[atKey] || 0);
+  const oldFresh = oldAt > 0 && now - oldAt <= METRIC_FRESH_MS;
+
+  if (value == null || confidence < MIN_CONFIDENCE[key]) return { value: oldValue, confidence: oldConfidence, at: oldAt, accepted: false };
+  if (oldValue == null || !oldFresh || confidence >= oldConfidence) return { value, confidence, at: now, accepted: true };
+  return { value: oldValue, confidence: oldConfidence, at: oldAt, accepted: false };
+}
+
 function mergeMetric(previous = {}, snapshot = {}, tabId) {
   const now = Date.now();
   const sameTab = Number(previous.tabId || 0) === Number(tabId || 0);
-  const balance = num(snapshot.balance);
-  const stake = num(snapshot.stake);
-  const payoutPct = num(snapshot.payoutPct);
-  const previousBalance = sameTab ? num(previous.balance) : null;
-  const startBalance = sameTab && num(previous.startBalance) != null
-    ? Number(previous.startBalance)
-    : balance != null ? balance : previousBalance;
-  const currentBalance = balance != null ? balance : previousBalance;
-  const currentStake = stake != null ? stake : (sameTab ? num(previous.stake) : null);
+  const base = sameTab ? previous : {};
+  const balance = candidate(base, snapshot, 'balance', 'balanceAt', now);
+  const stake = candidate(base, snapshot, 'stake', 'stakeAt', now);
+  const payout = candidate(base, snapshot, 'payout', 'payoutAt', now);
+
+  const currentBalance = balance.value;
+  const currentStake = stake.value;
+  const previousStart = sameTab ? num(previous.startBalance) : null;
+  const previousStartConfidence = sameTab ? Math.max(0, num(previous.startBalanceConfidence) || 0) : 0;
+  let startBalance = previousStart;
+  let startBalanceConfidence = previousStartConfidence;
+  if (currentBalance != null && (startBalance == null || (balance.accepted && balance.confidence > previousStartConfidence && Number(previous.balanceAt || 0) && now - Number(previous.balanceAt || 0) < 2500))) {
+    startBalance = currentBalance;
+    startBalanceConfidence = balance.confidence;
+  }
+
   const riskPct = currentBalance != null && currentBalance > 0 && currentStake != null && currentStake >= 0
     ? Math.round((currentStake / currentBalance) * 10000) / 100
     : null;
@@ -31,20 +53,26 @@ function mergeMetric(previous = {}, snapshot = {}, tabId) {
     ? Math.round((currentBalance - startBalance) * 100) / 100
     : null;
 
+  const incomingCurrency = String(snapshot.currency || '').slice(0, 8) || null;
+  const currency = incomingCurrency && (balance.accepted || stake.accepted)
+    ? incomingCurrency
+    : String(base.currency || '').slice(0, 8) || null;
+
   return {
     tabId: Number(tabId || 0),
     balance: currentBalance,
     stake: currentStake,
-    payoutPct: payoutPct != null ? payoutPct : (sameTab ? num(previous.payoutPct) : null),
-    currency: String(snapshot.currency || (sameTab ? previous.currency : '') || '').slice(0, 8) || null,
+    payoutPct: payout.value,
+    currency,
     startBalance,
+    startBalanceConfidence,
     sessionDelta,
     riskPct,
-    balanceAt: balance != null ? now : (sameTab ? Number(previous.balanceAt || 0) : 0),
-    stakeAt: stake != null ? now : (sameTab ? Number(previous.stakeAt || 0) : 0),
-    payoutAt: payoutPct != null ? now : (sameTab ? Number(previous.payoutAt || 0) : 0),
-    source: String(snapshot.source || 'platform-dom-labelled').slice(0, 48),
-    confidence: snapshot.confidence && typeof snapshot.confidence === 'object' ? snapshot.confidence : {},
+    balanceAt: balance.at,
+    stakeAt: stake.at,
+    payoutAt: payout.at,
+    source: String(snapshot.source || base.source || 'platform-dom-labelled').slice(0, 48),
+    confidence: { balance: balance.confidence, stake: stake.confidence, payout: payout.confidence },
     observedAt: now
   };
 }
