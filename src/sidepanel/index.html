@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="styles.css">
   <link rel="stylesheet" href="asset-quality.css">
   <link rel="stylesheet" href="premium-v2.css">
+  <link rel="stylesheet" href="ai-analysis.css">
 </head>
 <body>
   <main class="shell">
@@ -25,6 +26,13 @@
       <div class="progress-track"><div id="candleProgress" class="progress-fill"></div></div><p id="signalReason" class="signal-reason">Aguardando dados reais da CasaTrade.</p>
       <div class="trade-actions" aria-label="Direção da próxima vela"><button id="prepareBuy" class="trade-choice buy-choice" disabled>🟢 COMPRA</button><button id="prepareSell" class="trade-choice sell-choice" disabled>🔴 VENDA</button></div><p id="tradeActionStatus" class="manual-note">Aguardando decisão final desta vela.</p>
     </section>
+    <section id="aiAuditCard" class="card ai-audit-card">
+      <div class="section-head"><div><span class="eyebrow">IA GEMINI • SEGUNDA LEITURA</span><h2 id="aiAuditTitle">AGUARDANDO O SCANNER</h2></div><span id="aiAuditBadge" class="badge">EM ESPERA</span></div>
+      <p id="aiAuditSummary" class="ai-audit-summary">A Gemini entra como segunda leitura quando o scanner encontra um possível sinal para a próxima vela.</p>
+      <div class="ai-audit-grid"><div><span>DIREÇÃO IA</span><b id="aiAuditDirection">—</b></div><div><span>ALINHAMENTO</span><b id="aiAuditAlignment">—</b></div><div><span>IMPACTO EXPLICATIVO</span><b id="aiAuditImpact">—</b></div></div>
+      <ul id="aiAuditEvidence" class="ai-audit-evidence" hidden></ul>
+      <div class="ai-audit-foot"><span id="aiAuditMeta">Motor técnico principal ativo • IA ainda não acionada</span><b>SEM EXECUÇÃO AUTOMÁTICA</b></div>
+    </section>
     <section class="card live-card"><div class="section-head"><div><span class="eyebrow">GRÁFICO ATUAL</span><h2>Preço e últimas velas</h2></div><span class="quote-pill">COTAÇÃO <b id="price">—</b></span></div><div class="candle-ohlc"><div><span>ABERTURA</span><b id="currentOpen">—</b></div><div><span>MÁXIMA</span><b id="currentHigh">—</b></div><div><span>MÍNIMA</span><b id="currentLow">—</b></div><div><span>ATUAL</span><b id="currentClose">—</b></div></div><div class="recent-head"><span>ÚLTIMAS 10 VELAS FECHADAS</span><b id="recentCandleCount">0/10</b></div><div id="recentCandles" class="recent-candles" aria-label="Últimas 10 velas"></div></section>
     <section class="card radar-card"><div class="section-head"><div><span class="eyebrow">RADAR DE OUTROS ATIVOS</span><h2>Onde vale olhar depois</h2></div><span id="assetRadarBadge" class="badge warn">COLETANDO</span></div><div id="assetRadarList" class="asset-radar-list"></div><p id="assetRadarNote" class="radar-note">O ativo aberto é avaliado acima; o radar mostra apenas outros mercados observados.</p></section>
     <section id="validationCard" class="card validation-card" hidden><div class="section-head"><div><span class="eyebrow">VALIDAÇÃO REAL</span><h2>Como o motor está performando</h2></div><span id="validationBadge" class="badge warn">0 RESOLVIDOS</span></div><div class="validation-grid"><div><span>ENTRADAS</span><b id="validationEntries">0</b></div><div><span>WIN</span><b id="validationWins">0</b></div><div><span>LOSS</span><b id="validationLosses">0</b></div><div><span>ACERTO</span><b id="validationWinRate">—</b></div><div><span>WIN PULADO</span><b id="validationSkippedWins">0</b></div><div><span>LOSS EVITADO</span><b id="validationAvoidedLosses">0</b></div></div><div class="validation-detail"><span>AMOSTRA <b id="validationSample">PEQUENA</b></span><span>MELHOR ATIVO <b id="validationBestAsset">Aguardando amostra</b></span><span>MELHOR SETUP <b id="validationBestSetup">Aguardando amostra</b></span><span>ERRO MAIS COMUM <b id="validationLossReason">Nenhum padrão ainda</b></span></div><p id="validationNote" class="muted">Amostra ainda pequena. Use estes números para calibração, não como promessa de taxa futura.</p></section>
@@ -37,6 +45,6 @@
     </section>
     <section id="licenseCard" class="card license-card"><div class="section-head"><div><span class="eyebrow">ACESSO</span><h2 id="licenseTitle">Verificando licença…</h2></div><span id="licenseHealth" class="badge">—</span></div><p id="licenseText" class="muted">Aguardando status do acesso.</p><div id="activationBox" class="activation-box" hidden><input id="licenseKey" autocomplete="off" placeholder="Cole sua chave ATS"><button id="activateLicense" class="primary">ATIVAR</button></div></section>
   </main>
-  <script src="app-v2.js"></script><script src="ui-shell-v2.js"></script><script type="module" src="asset-quality-ui.js"></script><script type="module" src="signal-guidance-ui.js"></script><script src="radar-ui.js"></script><script src="validation-ui.js"></script><script src="manual-trade-ui.js"></script><script src="bankroll-ui.js"></script><script src="trade-handoff-ui.js"></script><script src="expiration-guard-ui.js"></script><script src="diagnostics-export.js"></script><script type="module" src="account-login.js"></script>
+  <script src="app-v2.js"></script><script src="ui-shell-v2.js"></script><script type="module" src="asset-quality-ui.js"></script><script type="module" src="signal-guidance-ui.js"></script><script type="module" src="ai-analysis-ui.js"></script><script src="radar-ui.js"></script><script src="validation-ui.js"></script><script src="manual-trade-ui.js"></script><script src="bankroll-ui.js"></script><script src="trade-handoff-ui.js"></script><script src="expiration-guard-ui.js"></script><script src="diagnostics-export.js"></script><script type="module" src="account-login.js"></script>
 </body>
 </html>
