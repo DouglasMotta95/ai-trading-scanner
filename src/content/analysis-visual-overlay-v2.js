@@ -53,7 +53,7 @@
   }
 
   function fallbackChartRect() {
-    if (!inTraderFrame) return null;
+    if (!allowed(host)) return null;
     const left = Math.max(40, innerWidth * .045);
     const top = Math.max(55, innerHeight * .08);
     const right = Math.max(left + 280, innerWidth * .82);
@@ -142,7 +142,8 @@
     const focus = state.diagnostics?.focusedAsset;
     const session = state.diagnostics?.marketSession;
     const clock = state.diagnostics?.marketClock;
-    if (focus?.reliable !== true || focus?.chartScoped !== true || focus?.embeddedTrader !== true) return false;
+    if (focus?.reliable !== true || focus?.chartScoped !== true || focus?.trustedChartFrame !== true) return false;
+    if (focus?.embeddedTrader !== true && focus?.casaTradeFrame !== true) return false;
     if (!sameMarket(focus?.asset, state.asset)) return false;
     if (!sameMarket(session?.asset, state.asset)) return false;
     if (Number(session?.frameId) !== Number(focus?.frameId) || String(session?.frameHost || '').toLowerCase() !== String(focus?.frameHost || '').toLowerCase()) return false;
