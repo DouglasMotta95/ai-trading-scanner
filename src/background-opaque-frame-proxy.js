@@ -19,8 +19,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const frameId = Number(sender.frameId);
   let topHost = '';
   try { topHost = new URL(sender.tab?.url || '').hostname; } catch {}
+  const senderUrl = String(sender.url || '');
+  const senderOpaque = opaqueUrl(senderUrl) || !senderUrl || String(sender.origin || '') === 'null';
   const payload = message.payload && typeof message.payload === 'object' ? message.payload : null;
-  if (!tabId || !Number.isInteger(frameId) || frameId === 0 || !casaHost(topHost) || !opaqueUrl(sender.url) || !payload || !ALLOWED_TYPES.has(payload.type)) {
+
+  // Some Android Chromium forks report an opaque child frame with frameId 0 or
+  // omit sender.url entirely. A normal CasaTrade top frame still has an https URL,
+  // so only an opaque/missing sender URL can use this recovery path.
+  if (!tabId || !Number.isInteger(frameId) || !casaHost(topHost) || !senderOpaque || !payload || !ALLOWED_TYPES.has(payload.type)) {
     sendResponse({ ok: false, ignored: true });
     return false;
   }
