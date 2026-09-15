@@ -92,6 +92,14 @@ function decisionQuality(signal = {}, direction = null) {
   return { qualifies: !!matched, setup: matched?.name || null };
 }
 
+function possibleQuality(signal = {}, direction = null, score = 0) {
+  if (!direction || Number(score) < ANALYST_THRESHOLDS.possibleScore) return false;
+  const regime = String(signal.regime?.type || '').toLowerCase();
+  if (regime !== 'range') return true;
+  const stableDirection = clean(signal.stability?.possibleDirection).toUpperCase();
+  return stableDirection === direction || Number(score) >= ANALYST_THRESHOLDS.confirmScore;
+}
+
 function seedCycle(key, snapshot, signal, state = {}) {
   const stored = state?.decisionCycle;
   let cycle = cycles.get(key);
@@ -143,6 +151,20 @@ function skipSignal(signal, reason) {
   return {
     ...signal, state: 'NO_TRADE', direction: null, diagnosis: 'WAIT', uiState: 'SKIP',
     provisional: false, phase: 'FINAL', reason, hint: reason
+  };
+}
+
+function possibleSignal(signal, windows, direction, score) {
+  const seconds = Math.max(0, Math.ceil(Number(signal.secondsRemaining || 0)));
+  const side = direction === 'BUY' ? 'COMPRA' : 'VENDA';
+  const waiting = clean(signal.waitingFor?.text || signal.reason || 'aguardando confirmação final do padrão');
+  const reason = `POSSÍVEL ${side} • ${seconds}s restantes — ${waiting}`;
+  return {
+    ...signal,
+    state: 'WATCH', direction, diagnosis: direction,
+    uiState: direction === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL',
+    provisional: true, phase: 'POSSIBLE', score, analysisScore: score,
+    reason, hint: reason, decisionWindow: windows
   };
 }
 
@@ -259,6 +281,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
   const at = num(snapshot.serverTime) ?? Date.now();
   const score = Number(signal.analysisScore ?? signal.score ?? 0);
   const direction = directionOf(signal);
+  const canShowPossible = possibleQuality(signal, direction, score);
   const recovered = resolveWrapperDecision(snapshot, result, key, state);
   const rolledLastConfirmed = newerDecision(newerDecision(result.lastConfirmed, latestWrapperCompleted(snapshot)), recovered);
 
@@ -274,7 +297,8 @@ export function processSnapshot(snapshot = {}, state = {}) {
     return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: nextSignal, decisionCycle: { ...cycle } };
   }
   if (secondsRemaining > windows.decision) {
-    return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, decisionCycle: { ...cycle } };
+    const nextSignal = canShowPossible ? possibleSignal(signal, windows, direction, score) : signal;
+    return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: nextSignal, decisionCycle: { ...cycle } };
   }
 
   if (signal.state === 'CONFIRM' && ['BUY', 'SELL'].includes(signal.direction)) {
@@ -316,7 +340,10 @@ export function processSnapshot(snapshot = {}, state = {}) {
   }
 
   cycles.set(key, cycle);
-  return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: decidingSignal(signal, windows), decisionCycle: { ...cycle } };
+  const nextSignal = canShowPossible
+    ? possibleSignal(signal, windows, direction, score)
+    : decidingSignal(signal, windows);
+  return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: nextSignal, decisionCycle: { ...cycle } };
 }
 
 export function resetOrchestrator() {
