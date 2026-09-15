@@ -5,6 +5,10 @@ function pct(value) {
 }
 
 function render(metrics = {}) {
+  const resolved = Math.max(0, Number(metrics.resolved || 0));
+  const card = $('validationCard');
+  if (card) card.hidden = resolved === 0;
+
   if ($('validationSample')) $('validationSample').textContent = metrics.sampleStatus || 'PEQUENA';
   if ($('validationEntries')) $('validationEntries').textContent = String(metrics.entries || 0);
   if ($('validationWins')) $('validationWins').textContent = String(metrics.entryWins || 0);
@@ -21,11 +25,11 @@ function render(metrics = {}) {
   if ($('validationLossReason')) $('validationLossReason').textContent = topLoss ? `${topLoss.reason} • ${topLoss.count}` : 'Nenhum padrão ainda';
 
   if ($('validationBadge')) {
-    $('validationBadge').textContent = `${metrics.resolved || 0} RESOLVIDOS`;
-    $('validationBadge').className = `badge ${(metrics.resolved || 0) >= 50 ? 'ok' : 'warn'}`;
+    $('validationBadge').textContent = `${resolved} RESOLVIDOS`;
+    $('validationBadge').className = `badge ${resolved >= 50 ? 'ok' : 'warn'}`;
   }
   if ($('validationNote')) {
-    $('validationNote').textContent = (metrics.resolved || 0) < 50
+    $('validationNote').textContent = resolved < 50
       ? 'Amostra ainda pequena. Use estes números para calibração, não como promessa de taxa futura.'
       : 'Amostra útil para comparar ativos, setups e filtros. Continue acumulando dados antes de alterar regras centrais.';
   }
