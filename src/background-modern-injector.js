@@ -1,6 +1,7 @@
 async function inject(tabId) {
   if (!tabId || !chrome.scripting?.executeScript) return false;
   const isolated = [
+    'src/content/runtime-message-compat.js',
     'src/content/device-anchor.js',
     'src/content/focused-asset-protocol.js',
     'src/content/focused-asset-v2.js',
