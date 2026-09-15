@@ -94,5 +94,5 @@ test('side panel exposes opened-asset quality before the next-candle decision', 
   assert.doesNotMatch(ui, /updateScannerState|processSnapshot/);
   assert.match(quality, /ATIVO BOM PARA TRABALHAR/);
   assert.match(quality, /PROCURE OUTRO ATIVO/);
-  assert.match(quality, /ALTA ESTICADA/);
+  assert.match(quality, /ATENÇÃO: \$\{directionText\} ESTICADA/);
 });
