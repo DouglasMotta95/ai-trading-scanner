@@ -10,6 +10,8 @@
   const allowed = value => value === 'casatrade.com' || value.endsWith('.casatrade.com') || value === 'casatrade.io' || value.endsWith('.casatrade.io') || traderHost(value);
   const inTraderFrame = traderHost(host);
   if (!allowed(host)) return;
+  const sendMessage = globalThis.__ATS_SEND_MESSAGE__;
+  if (typeof sendMessage !== 'function') return;
 
   const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
   const marketId = value => {
@@ -137,24 +139,40 @@
     return root;
   }
 
-  function integrityOk() {
+  function marketIntegrityOk() {
     if (!state || state.connection !== 'online' || !state.asset || num(state.price) == null) return false;
     const focus = state.diagnostics?.focusedAsset;
     const session = state.diagnostics?.marketSession;
-    const clock = state.diagnostics?.marketClock;
     if (focus?.reliable !== true || focus?.chartScoped !== true || focus?.trustedChartFrame !== true) return false;
     if (focus?.embeddedTrader !== true && focus?.casaTradeFrame !== true) return false;
     if (!sameMarket(focus?.asset, state.asset)) return false;
     if (!sameMarket(session?.asset, state.asset)) return false;
     if (Number(session?.frameId) !== Number(focus?.frameId) || String(session?.frameHost || '').toLowerCase() !== String(focus?.frameHost || '').toLowerCase()) return false;
+    if (focus.at && Date.now() - Number(focus.at) > 10000) return false;
+    if (!state.lastSeen || Date.now() - Number(state.lastSeen) > 10000) return false;
+    return true;
+  }
+
+  function clockIntegrityOk() {
+    if (!marketIntegrityOk()) return false;
+    const focus = state.diagnostics?.focusedAsset;
+    const clock = state.diagnostics?.marketClock;
     if (clock?.verified !== true || clock?.available === false || clock?.role !== 'candle-close') return false;
     if (!['trader-dom-countdown','network-server-cycle'].includes(String(clock?.source || ''))) return false;
     if (!sameMarket(clock?.asset, state.asset)) return false;
     if (Number(clock?.frameId) !== Number(focus?.frameId) || String(clock?.frameHost || '').toLowerCase() !== String(focus?.frameHost || '').toLowerCase()) return false;
-    if (Date.now() - Number(clock?.at || 0) > 2200) return false;
-    if (focus.at && Date.now() - Number(focus.at) > 10000) return false;
-    if (!state.lastSeen || Date.now() - Number(state.lastSeen) > 10000) return false;
-    return true;
+    return Date.now() - Number(clock?.at || 0) <= 2200;
+  }
+
+  function fallbackLevels() {
+    const rows = [...(Array.isArray(state?.candles) ? state.candles.slice(-10) : [])];
+    if (state?.currentCandle) rows.push(state.currentCandle);
+    const valid = rows.map(row => ({ low: num(row?.low), high: num(row?.high) })).filter(row => row.low != null && row.high != null);
+    if (valid.length < 3) return {};
+    return {
+      support: Math.min(...valid.map(row => row.low)),
+      resistance: Math.max(...valid.map(row => row.high))
+    };
   }
 
   function activeDirection() {
@@ -166,6 +184,7 @@
   }
 
   function activeTrigger(analytics = {}, waiting = {}) {
+    if (!clockIntegrityOk()) return null;
     const direction = activeDirection();
     if (!direction) return null;
     const waitingLevel = num(waiting.level);
@@ -175,7 +194,7 @@
   }
 
   function render() {
-    if (!prefs.overlayEnabled || !integrityOk()) { if (root) root.hidden = true; return; }
+    if (!prefs.overlayEnabled || !marketIntegrityOk()) { if (root) root.hidden = true; return; }
     const rect = chartRect();
     if (!rect) { if (root) root.hidden = true; return; }
     const yFor = priceMapper(rect, state);
@@ -196,7 +215,7 @@
     svg.style.overflow = 'visible';
     hostRoot.appendChild(svg);
 
-    const analytics = state.signal?.analytics || {};
+    const analytics = { ...fallbackLevels(), ...(state.signal?.analytics || {}) };
     const waiting = state.signal?.waitingFor || {};
     const drawn = [];
     const addLine = (price, label, stroke, dash = '', active = false) => {
@@ -237,9 +256,11 @@
     status.setAttribute('font-size', '13'); status.setAttribute('font-weight', '900');
     status.setAttribute('paint-order', 'stroke'); status.setAttribute('stroke', '#10151d'); status.setAttribute('stroke-width', '4');
     const score = Math.round(Number(state.signal?.analysisScore ?? state.signal?.score ?? 0));
-    const seconds = num(state.diagnostics?.marketClock?.secondsRemaining ?? state.signal?.secondsRemaining);
+    const seconds = clockIntegrityOk() ? num(state.diagnostics?.marketClock?.secondsRemaining ?? state.signal?.secondsRemaining) : null;
     const regime = state.signal?.regime?.type || 'identificando';
-    status.textContent = `${state.signal?.uiState || 'ANALISANDO'} • score ${score} • ${seconds == null ? '—' : Math.ceil(seconds)}s • ${regime}`;
+    status.textContent = clockIntegrityOk()
+      ? `${state.signal?.uiState || 'ANALISANDO'} • score ${score} • ${seconds == null ? '—' : Math.ceil(seconds)}s • ${regime}`
+      : `SUPORTE / RESISTÊNCIA • SINCRONIZANDO VELA`;
     svg.appendChild(status);
   }
 
@@ -247,7 +268,7 @@
     if (busy) return;
     busy = true;
     try {
-      const response = await chrome.runtime.sendMessage({ type: 'ATS_READ_SCANNER_STATE' }).catch(() => null);
+      const response = await sendMessage({ type: 'ATS_READ_SCANNER_STATE' });
       state = response?.state || null;
       render();
     } finally { busy = false; }
