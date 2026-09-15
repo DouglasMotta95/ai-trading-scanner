@@ -4,13 +4,13 @@ import fs from 'node:fs';
 
 const read = path => fs.readFileSync(new URL('../' + path, import.meta.url), 'utf8');
 
-test('focused asset is sourced only from the embedded trader chart frame', () => {
+test('focused asset is sourced only from a trusted visible chart document', () => {
   const focus = read('src/content/focused-asset-v2.js');
-  assert.match(focus, /if \(!traderHost\(host\)\) return/);
+  assert.match(focus, /if \(!traderHost\(host\) && !casaHost\(host\)\) return/);
+  assert.match(focus, /const frameRole = traderHost\(host\) \? 'trader-frame' : 'casa-chart-frame'/);
   assert.match(focus, /function chartRect\(\)/);
   assert.match(focus, /function nearChart\(rect, chart\)/);
   assert.match(focus, /chartScoped: true/);
-  assert.match(focus, /frameRole: 'trader-frame'/);
   assert.doesNotMatch(focus, /type:\s*'ATS_FOCUSED_ASSET'/);
 });
 
@@ -21,12 +21,15 @@ test('ambiguous simultaneous asset labels are rejected instead of guessing a pai
   assert.match(focus, /assets\.length !== 1/);
 });
 
-test('background accepts focus only from a trusted embedded trader frame', () => {
+test('background accepts focus only from CasaTrade-owned charts or trusted legacy trader frames', () => {
   const market = read('src/background-market-session.js');
-  assert.match(market, /sender\.frameId !== 0 && traderHost\(frameHost\) && casaHost\(topHost\)/);
+  assert.match(market, /const tabOwned = !!sender\.tab\?\.id && casaHost\(topHost\)/);
+  assert.match(market, /const embeddedTrader = tabOwned && Number\(sender\.frameId\) !== 0 && traderHost\(frameHost\)/);
+  assert.match(market, /const casaOwnedChart = tabOwned && casaHost\(frameHost\)/);
+  assert.match(market, /trusted: embeddedTrader \|\| casaOwnedChart/);
   assert.match(market, /message\.chartScoped !== true/);
   assert.match(market, /message\.reliable !== true/);
-  assert.match(market, /message\.frameRole !== 'trader-frame'/);
+  assert.match(market, /\['trader-frame', 'casa-chart-frame'\]\.includes\(role\)/);
   assert.match(market, /message\?\.type === 'ATS_VISUAL_FOCUS_V2'/);
 });
 
@@ -41,9 +44,10 @@ test('asset, timeframe or frame switch hard-resets state that could leak the pre
   assert.match(market, /session-integrity/);
 });
 
-test('clock v4 accepts exact candle-close time and rejects purchase or expiry timers', () => {
+test('clock v4 accepts exact candle-close time from trusted chart documents and rejects purchase or expiry timers', () => {
   const clock = read('src/content/market-cycle-clock-v4.js');
-  assert.match(clock, /if \(!traderHost\(host\)\) return/);
+  assert.match(clock, /if \(!traderHost\(host\) && !casaHost\(host\)\) return/);
+  assert.match(clock, /focus\.trustedChartFrame !== true/);
   assert.match(clock, /hora de compra\|buy time\|entry time\|expira\|expiry\|expiration\|duration\|duracao/);
   assert.match(clock, /clockRole: 'candle-close'/);
   assert.match(clock, /clockSource: 'trader-dom-countdown'/);
