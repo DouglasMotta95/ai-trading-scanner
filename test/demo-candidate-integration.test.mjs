@@ -18,6 +18,6 @@ test('demo candidate keeps current focus, waiting guidance and range gate togeth
   assert.match(analysis, /waitingFor/);
   assert.match(focusedAsset, /ariaSelected === 'true'/);
   assert.match(focusedAsset, /__ATS_FOCUSED_ASSET_VALUE__/);
-  assert.match(focusedAsset, /frameRole: 'trader-frame'/);
+  assert.match(focusedAsset, /const frameRole = traderHost\(host\) \? 'trader-frame' : 'casa-chart-frame'/);
   assert.match(entry, /background-market-session\.js/);
 });
