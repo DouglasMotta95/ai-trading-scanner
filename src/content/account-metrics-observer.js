@@ -81,7 +81,7 @@
     if (!PAYOUT_RE.test(source)) return null;
     const match = source.match(/(-?\d{1,3}(?:[.,]\d+)?)\s*%/);
     const value = match ? parseNumber(match[1]) : null;
-    return value != null && value >= 0 && value <= 100 ? value : null;
+    return value != null && value > 0 && value <= 100 ? value : null;
   }
 
   function labeledCandidate(labelRe) {
@@ -97,7 +97,7 @@
       const areas = [own, context, clean(el.parentElement?.textContent), clean(el.parentElement?.parentElement?.textContent)].filter(x => x && x.length <= 320);
       for (let depth = 0; depth < areas.length; depth++) {
         const parsed = moneyFromText(areas[depth], labelRe);
-        if (!parsed) continue;
+        if (!parsed || parsed.value <= 0) continue;
         const score = 10 - depth * 2 + (parsed.currency ? 3 : 0) + (el.matches('strong,b') ? 1 : 0);
         if (!best || score > best.score) best = { ...parsed, score };
       }
@@ -115,7 +115,7 @@
       if (!STAKE_RE.test(meta)) continue;
       const raw = 'value' in el ? el.value : el.textContent;
       const value = parseNumber(raw);
-      if (value == null || value < 0 || value > 1e8) continue;
+      if (value == null || value <= 0 || value > 1e8) continue;
       const score = 14 + (currencyFrom(meta) ? 2 : 0);
       if (!best || score > best.score) best = { value, currency: currencyFrom(meta), score };
     }
@@ -133,7 +133,7 @@
       const match = own.match(moneyToken);
       if (!match) continue;
       const value = parseNumber(match[0]);
-      if (value == null || value < 0 || value > 1e9) continue;
+      if (value == null || value <= 0 || value > 1e9) continue;
       const rect = el.getBoundingClientRect();
       const context = localText(el, 1).toLowerCase();
       if (/lucro|profit|payout|retorno|return|comprar|buy|vender|sell|valor|amount|invest|expira|expiry/.test(context)) continue;
