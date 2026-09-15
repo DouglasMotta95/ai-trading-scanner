@@ -11,50 +11,64 @@
     <header class="topbar">
       <div>
         <span class="eyebrow">AI TRADING SCANNER</span>
-        <h1>Próxima vela</h1>
+        <h1>Live Decision</h1>
       </div>
-      <span id="extensionVersion" class="version">v—</span>
+      <div class="top-status">
+        <span id="connectionBadge" class="badge warn">SINCRONIZANDO</span>
+        <span id="extensionVersion" class="version">v—</span>
+      </div>
     </header>
 
-    <section id="licenseCard" class="card">
+    <section class="market-hero">
+      <div><span>ATIVO AO VIVO</span><b id="asset">—</b></div>
+      <div><span>CICLO</span><b id="timeframe">—</b></div>
+      <div><span>MODO</span><b id="sessionMode">SYNC</b></div>
+    </section>
+
+    <section id="decisionCard" class="card decision-card">
       <div class="section-head">
         <div>
-          <span class="eyebrow">1. LICENÇA</span>
-          <h2 id="licenseTitle">Verificando licença…</h2>
+          <span class="eyebrow">PRÓXIMA VELA</span>
+          <h2 id="signalTitle">SINCRONIZANDO</h2>
         </div>
-        <span id="licenseHealth" class="badge">—</span>
+        <span id="signalBadge" class="badge warn">AGUARDANDO</span>
       </div>
-      <p id="licenseText" class="muted">Aguardando status do acesso.</p>
-      <div id="activationBox" class="activation-box" hidden>
-        <input id="licenseKey" autocomplete="off" placeholder="Cole sua chave ATS">
-        <button id="activateLicense" class="primary">ATIVAR</button>
+
+      <div id="decisionBanner" class="decision-banner waiting">
+        <strong id="decisionText">SINCRONIZANDO MERCADO</strong>
+        <span id="decisionSubtext">Lendo o gráfico atual da CasaTrade.</span>
       </div>
+
+      <div class="clock-stage">
+        <div class="clock-ring">
+          <b id="secondsRemaining">—</b>
+          <span>SEGUNDOS</span>
+        </div>
+        <div class="clock-details">
+          <span>Expiração <b id="expiration">—</b></span>
+          <span>Setup <b id="setupType">—</b></span>
+          <span>Força <b id="signalScore">—</b></span>
+        </div>
+      </div>
+      <div class="progress-track"><div id="candleProgress" class="progress-fill"></div></div>
+
+      <p id="signalReason" class="signal-reason">Aguardando dados reais da CasaTrade.</p>
+      <div class="trade-actions" aria-label="Direção da próxima vela">
+        <button id="prepareBuy" class="trade-choice buy-choice" disabled>🟢 COMPRA</button>
+        <button id="prepareSell" class="trade-choice sell-choice" disabled>🔴 VENDA</button>
+      </div>
+      <p id="tradeActionStatus" class="manual-note">Aguardando decisão final desta vela.</p>
     </section>
 
     <section class="card live-card">
       <div class="section-head">
         <div>
-          <span class="eyebrow">2. VELA EM ANÁLISE</span>
+          <span class="eyebrow">MERCADO ATUAL</span>
           <h2 id="analysisTitle">Aguardando CasaTrade</h2>
         </div>
-        <span id="connectionBadge" class="badge warn">CONECTANDO</span>
+        <span class="quote-pill">COTAÇÃO <b id="price">—</b></span>
       </div>
-
-      <div class="market-line">
-        <div><span>ATIVO</span><b id="asset">—</b></div>
-        <div><span>COTAÇÃO</span><b id="price">—</b></div>
-      </div>
-
-      <div class="candle-clock">
-        <div class="clock-value"><b id="secondsRemaining">—</b><span>seg restantes</span></div>
-        <div class="clock-meta">
-          <span>Vela <b id="timeframe">M1</b></span>
-          <span>Expiração <b id="expiration">—</b></span>
-        </div>
-      </div>
-
-      <div class="progress-track"><div id="candleProgress" class="progress-fill"></div></div>
-      <p id="analysisReason" class="muted">A extensão acompanha as velas anteriores e a vela atual em tempo real.</p>
+      <p id="analysisReason" class="muted">Sincronizando a sessão do gráfico.</p>
 
       <div class="candle-ohlc">
         <div><span>ABERTURA</span><b id="currentOpen">—</b></div>
@@ -68,65 +82,57 @@
         <b id="recentCandleCount">0/10</b>
       </div>
       <div id="recentCandles" class="recent-candles" aria-label="Últimas 10 velas"></div>
+
+      <div class="decision-history">
+        <span>ÚLTIMO CONFIRMADO</span>
+        <b id="lastConfirmed">Nenhuma entrada confirmada nesta sessão.</b>
+        <span>ANALISANDO AGORA</span>
+        <b id="analyzingNow">Aguardando dados reais.</b>
+        <span>ENTRADA REAL</span>
+        <b id="targetTime">—</b>
+      </div>
     </section>
 
-    <section id="decisionCard" class="card decision-card">
+    <section class="card preferences-card">
       <div class="section-head">
         <div>
-          <span class="eyebrow">3. PRÓXIMA VELA</span>
-          <h2 id="signalTitle">ANALISANDO</h2>
+          <span class="eyebrow">FERRAMENTAS</span>
+          <h2>Alertas e gráfico</h2>
         </div>
-        <span id="signalBadge" class="badge">AGUARDANDO</span>
+        <span class="badge">OPCIONAL</span>
       </div>
-
-      <div id="decisionBanner" class="decision-banner waiting">
-        <strong id="decisionText">ANALISANDO</strong>
-        <span id="decisionSubtext">O pré-sinal aparece nos últimos 30s e a decisão final é recalculada até o fechamento.</span>
-      </div>
-
-      <p class="signal-reason"><span>ÚLTIMO CONFIRMADO</span><br><b id="lastConfirmed">Nenhuma decisão finalizada nesta sessão.</b></p>
-      <p class="signal-reason"><span>ANALISANDO AGORA</span><br><b id="analyzingNow">Aguardando dados reais da CasaTrade.</b></p>
-
-      <p id="signalReason" class="signal-reason">Aguardando dados reais da CasaTrade.</p>
-      <div class="decision-meta">
-        <span>Força do padrão <b id="signalScore">—</b></span>
-        <span>Entrada real <b id="targetTime">—</b></span>
-      </div>
-
-      <div class="trade-actions" aria-label="Direção da próxima vela">
-        <button id="prepareBuy" class="trade-choice buy-choice" disabled>🟢 COMPRA</button>
-        <button id="prepareSell" class="trade-choice sell-choice" disabled>🔴 VENDA</button>
-      </div>
-      <p id="tradeActionStatus" class="manual-note">COMPRA/VENDA só libera quando a confirmação final estiver pronta.</p>
+      <label class="toggle-row" for="overlayToggle">
+        <span><b>Linhas no gráfico</b><small>Suporte, resistência e gatilhos no gráfico atual.</small></span>
+        <input id="overlayToggle" type="checkbox" role="switch" aria-label="Linhas no gráfico">
+      </label>
+      <label class="toggle-row" for="possibleSoundToggle">
+        <span><b>Som de possível sinal</b><small>Aviso discreto durante a preparação.</small></span>
+        <input id="possibleSoundToggle" type="checkbox" role="switch" aria-label="Som de possível sinal">
+      </label>
+      <label class="toggle-row" for="confirmSoundToggle">
+        <span><b>Som de entrada confirmada</b><small>Aviso forte quando a decisão final libera entrada.</small></span>
+        <input id="confirmSoundToggle" type="checkbox" role="switch" aria-label="Som de entrada confirmada">
+      </label>
     </section>
 
-  <section class="card preferences-card">
-    <div class="section-head">
-      <div>
-        <span class="eyebrow">4. ALERTAS</span>
-        <h2>Visual e som</h2>
+    <section id="licenseCard" class="card license-card">
+      <div class="section-head">
+        <div>
+          <span class="eyebrow">ACESSO</span>
+          <h2 id="licenseTitle">Verificando licença…</h2>
+        </div>
+        <span id="licenseHealth" class="badge">—</span>
       </div>
-      <span class="badge">OPCIONAL</span>
-    </div>
-    <p class="muted">Todos começam desligados. Ative somente o que quiser usar durante a análise.</p>
-    <label class="toggle-row" for="overlayToggle">
-      <span><b>Linhas no gráfico</b><small>Mostra rompimento e tendência sobre a CasaTrade.</small></span>
-      <input id="overlayToggle" type="checkbox" role="switch" aria-label="Linhas no gráfico">
-    </label>
-    <label class="toggle-row" for="possibleSoundToggle">
-      <span><b>Som de possível sinal</b><small>Aviso discreto quando entra em POSSÍVEL COMPRA/VENDA.</small></span>
-      <input id="possibleSoundToggle" type="checkbox" role="switch" aria-label="Som de possível sinal">
-    </label>
-    <label class="toggle-row" for="confirmSoundToggle">
-      <span><b>Som de entrada confirmada</b><small>Aviso mais perceptível ao entrar em ENTRAR NA PRÓXIMA VELA.</small></span>
-      <input id="confirmSoundToggle" type="checkbox" role="switch" aria-label="Som de entrada confirmada">
-    </label>
-  </section>
-</main>
+      <p id="licenseText" class="muted">Aguardando status do acesso.</p>
+      <div id="activationBox" class="activation-box" hidden>
+        <input id="licenseKey" autocomplete="off" placeholder="Cole sua chave ATS">
+        <button id="activateLicense" class="primary">ATIVAR</button>
+      </div>
+    </section>
+  </main>
 
-<script src="app.js"></script>
-<script src="live-integrity-ui.js"></script>
-<script type="module" src="account-login.js"></script>
-<script src="real-entry.js"></script>
+  <script src="app-v2.js"></script>
+  <script type="module" src="account-login.js"></script>
+  <script src="real-entry.js"></script>
 </body>
 </html>
