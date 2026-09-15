@@ -4,10 +4,10 @@ import fs from 'node:fs';
 
 const read = path => fs.readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
-test('0.11.6 wires passive bankroll observation and safe trade handoff', () => {
+test('0.11.7 wires passive bankroll observation and safe trade handoff', () => {
   const manifest = JSON.parse(read('manifest.json'));
   const files = manifest.content_scripts.flatMap(row => row.js || []);
-  assert.equal(manifest.version, '0.11.6');
+  assert.equal(manifest.version, '0.11.7');
   assert.ok(files.includes('src/content/account-metrics-observer.js'));
   assert.ok(files.includes('src/content/trade-handoff-v2.js'));
 
@@ -20,6 +20,7 @@ test('0.11.6 wires passive bankroll observation and safe trade handoff', () => {
   assert.match(observer, /invest/);
   assert.match(observer, /lucro\|profit/);
   assert.match(observer, /shadowRoot/);
+  assert.match(observer, /parsed\.value <= 0/);
   assert.doesNotMatch(observer, /\.click\s*\(/);
 
   const handoff = read('src/content/trade-handoff-v2.js');
@@ -31,13 +32,14 @@ test('0.11.6 wires passive bankroll observation and safe trade handoff', () => {
   assert.doesNotMatch(handoff, /\.click\s*\(/);
 });
 
-test('bankroll state is descriptive, confidence-aware and extension buttons require confirmed signal first', () => {
+test('bankroll state is descriptive, confidence-aware and rejects false zero metrics', () => {
   const bg = read('src/background-account-metrics.js');
   assert.match(bg, /currentStake \/ currentBalance/);
   assert.match(bg, /sessionDelta/);
   assert.match(bg, /MIN_CONFIDENCE/);
   assert.match(bg, /METRIC_FRESH_MS/);
   assert.match(bg, /confidence >= oldConfidence/);
+  assert.match(bg, /positiveRequired && value <= 0/);
   assert.match(bg, /ATS_GET_ACCOUNT_METRICS/);
 
   const ui = read('src/sidepanel/trade-handoff-ui.js');
