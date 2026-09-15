@@ -25,7 +25,8 @@
     ['AVALANCHE', 'AVAX/USD'], ['AVAX', 'AVAX/USD'],
     ['POLKADOT', 'DOT/USD'], ['DOT', 'DOT/USD']
   ]);
-  const STOP = new Set(['BUY','SELL','CALL','PUT','OTC','USD','USDT','USDC','TIME','TIMER','PRICE','ASSET','ATIVO','VALOR','SALDO','PAYOUT']);
+  const QUOTES = new Set(['USD','USDT','USDC','EUR','GBP','JPY','AUD','CAD','CHF','NZD','BRL','BTC','ETH']);
+  const STOP = new Set(['BUY','SELL','CALL','PUT','OTC','USD','USDT','USDC','TIME','TIMER','PRICE','ASSET','ATIVO','VALOR','SALDO','PAYOUT','LIVE','SYNC','CONECTAR','ENTRAR','VELA','GRAFICO','GRÁFICO']);
   const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
   const fold = value => clean(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
   const visible = el => {
@@ -35,9 +36,22 @@
     return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity || 1) > 0;
   };
 
+  function directPairFromText(value = '') {
+    const raw = fold(value);
+    if (!raw || raw.length > 120) return '';
+    const otc = /(?:\(|\b|[_-])OTC(?:\)|\b)?/.test(raw);
+    const direct = raw.match(/\b([A-Z0-9]{2,20})\s*[\/_-]\s*([A-Z0-9]{2,12})(?:\s*\(\s*OTC\s*\)|\s+OTC)?/);
+    if (direct && QUOTES.has(direct[2])) return `${direct[1]}/${direct[2]}${otc ? ' (OTC)' : ''}`;
+    const compact = raw.match(/\b([A-Z]{3})([A-Z]{3})(?:[_-]?OTC)?\b/);
+    if (compact && QUOTES.has(compact[2])) return `${compact[1]}/${compact[2]}${otc ? ' (OTC)' : ''}`;
+    return '';
+  }
+
   function canonicalFromText(value = '', allowGenericTicker = false) {
     const raw = fold(value);
-    if (!raw || raw.length > 100) return '';
+    if (!raw || raw.length > 120) return '';
+    const direct = directPairFromText(raw);
+    if (direct) return direct;
     const otc = /(?:\(|\b|[_-])OTC(?:\)|\b)?/.test(raw);
     const stripped = raw.replace(/\(\s*OTC\s*\)|\bOTC\b/g, ' ').replace(/\s+/g, ' ').trim();
     for (const [label, pair] of ALIASES) {
@@ -45,7 +59,7 @@
       if (re.test(stripped)) return `${pair}${otc ? ' (OTC)' : ''}`;
     }
     if (!allowGenericTicker) return '';
-    const ticker = stripped.match(/^([A-Z0-9]{2,8})$/)?.[1] || '';
+    const ticker = stripped.match(/^([A-Z]{2,8})$/)?.[1] || '';
     if (!ticker || STOP.has(ticker)) return '';
     return `${ticker}/USD${otc ? ' (OTC)' : ''}`;
   }
@@ -54,7 +68,7 @@
     el?.getAttribute?.('aria-label'), el?.getAttribute?.('title'), el?.getAttribute?.('data-symbol'),
     el?.getAttribute?.('data-asset'), el?.getAttribute?.('data-instrument'), el?.getAttribute?.('data-testid'),
     el?.innerText, el?.textContent
-  ].filter(Boolean).join(' ')).slice(0, 100);
+  ].filter(Boolean).join(' ')).slice(0, 120);
 
   function contextOf(el) {
     const parts = [];
@@ -74,18 +88,35 @@
     return false;
   }
 
+  function looksLikeListContext(el) {
+    return /watchlist|asset-list|instrument-list|listbox|search|history|portfolio|ranking|modal|drawer|dropdown|menu/.test(contextOf(el));
+  }
+
+  function upperChartArea(el) {
+    const rect = el?.getBoundingClientRect?.();
+    if (!rect) return false;
+    return rect.top >= 0 && rect.top <= Math.max(220, innerHeight * .46) && rect.left < innerWidth * .88;
+  }
+
   let recentInteraction = { asset: '', at: 0 };
   let lastSent = { asset: '', at: 0 };
 
   function eventAsset(event) {
     const path = typeof event?.composedPath === 'function' ? event.composedPath() : [event?.target];
-    for (const node of path.slice(0, 8)) {
+    for (const node of path.slice(0, 10)) {
       if (!(node instanceof Element) || !visible(node)) continue;
       const text = metaText(node);
-      const asset = canonicalFromText(text, false);
-      if (asset) return asset;
+      const direct = canonicalFromText(text, false);
+      if (direct) return direct;
       const context = contextOf(node);
       if (/asset|ativo|instrument|symbol|market|list|option|row/.test(context)) {
+        const generic = canonicalFromText(text, true);
+        if (generic) return generic;
+      }
+      // CasaTrade currently renders some asset rows with obfuscated classes. A
+      // concise alphabetic token directly clicked by the user is therefore a
+      // valid short-lived fallback, while numbers/timers/payouts stay rejected.
+      if (text.length <= 24 && !/[\d%]/.test(text)) {
         const generic = canonicalFromText(text, true);
         if (generic) return generic;
       }
@@ -105,8 +136,8 @@
     };
     await sendMessage({
       type: 'ATS_VISUAL_FOCUS_V2', asset, score, samples: 3,
-      reliable: true, visual: true, explicit: true, interactionHint: source === 'user-selected-alias',
-      interactionAt: source === 'user-selected-alias' ? now : null,
+      reliable: true, visual: true, explicit: true, interactionHint: source === 'user-selected-alias' || source === 'user-selected-token',
+      interactionAt: source === 'user-selected-alias' || source === 'user-selected-token' ? now : null,
       chartScoped: true, chartFound: true, frameHost: host, frameRole, source, at: now
     }).catch(() => {});
   }
@@ -115,27 +146,30 @@
     const rows = [];
     let seen = 0;
     for (const el of document.querySelectorAll('*')) {
-      if (++seen > 5000 || !visible(el)) continue;
+      if (++seen > 6000 || !visible(el)) continue;
       const text = metaText(el);
       if (!text) continue;
       const context = contextOf(el);
+      const direct = directPairFromText(text);
       const strongContext = /chart|header|asset|ativo|instrument|symbol|market|selected|current/.test(context);
-      const asset = canonicalFromText(text, strongContext && text.length <= 28);
+      const asset = direct || canonicalFromText(text, strongContext && text.length <= 28);
       if (!asset) continue;
       const isSelected = selected(el);
       const interacted = recentInteraction.asset === asset && Date.now() - recentInteraction.at < 3500;
-      if (!strongContext && !isSelected && !interacted) continue;
+      const directHeader = !!direct && text.length <= 48 && upperChartArea(el) && !looksLikeListContext(el);
+      if (!strongContext && !isSelected && !interacted && !directHeader) continue;
       let score = strongContext ? 500 : 0;
+      if (directHeader) score += 720;
       if (isSelected) score += 500;
       if (interacted) score += 900;
       if (text.length <= 24) score += 80;
-      rows.push({ asset, score, source: interacted ? 'user-selected-alias' : 'visible-name-alias' });
+      rows.push({ asset, score, source: interacted ? 'user-selected-alias' : directHeader ? 'visible-direct-pair' : 'visible-name-alias' });
     }
     rows.sort((a, b) => b.score - a.score);
     const first = rows[0];
     const second = rows[1];
     if (!first) return;
-    if (second && second.asset !== first.asset && first.score - second.score < 180 && first.source !== 'user-selected-alias') return;
+    if (second && second.asset !== first.asset && first.score - second.score < 180 && !first.source.startsWith('user-selected')) return;
     publish(first.asset, first.source, first.score).catch(() => {});
   }
 
@@ -143,9 +177,8 @@
     const asset = eventAsset(event);
     if (!asset) return;
     recentInteraction = { asset, at: Date.now() };
-    // A direct user selection is a strong short-lived fallback when CasaTrade's
-    // chart header only exposes a human name such as TRON instead of TRX/USD.
-    setTimeout(() => publish(asset, 'user-selected-alias', 1800).catch(() => {}), 80);
+    const source = /\//.test(asset) ? 'user-selected-alias' : 'user-selected-token';
+    setTimeout(() => publish(asset, source, 1900).catch(() => {}), 80);
     setTimeout(scanVisibleAlias, 160);
   };
 
