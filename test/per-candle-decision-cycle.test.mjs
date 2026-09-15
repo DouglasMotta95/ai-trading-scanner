@@ -40,18 +40,24 @@ test('POSSIBLE is preparation only and does not start more than 30 seconds befor
   assert.notEqual(out.signal.uiState, 'POSSIBLE_SELL');
 });
 
-test('stable bullish setup can lock next-candle entry in the 15-second decision window', () => {
+test('score-qualified bullish bias is visible as POSSIBLE before a two-hit final ENTER', () => {
   resetOrchestrator();
   const bucket = Math.floor(1_701_100_000_000 / minute) * minute;
 
-  snap(bucket, 35_000, 25);
+  const possibleEarly = snap(bucket, 35_000, 25);
+  assert.equal(possibleEarly.signal.uiState, 'POSSIBLE_BUY');
+  assert.equal(possibleEarly.signal.state, 'WATCH');
+  assert.ok(possibleEarly.signal.analysisScore >= 44);
+
   const possible = snap(bucket, 36_000, 24);
   assert.equal(possible.signal.uiState, 'POSSIBLE_BUY');
+  assert.ok(possible.signal.secondsRemaining <= 30);
+  assert.ok(possible.signal.secondsRemaining > 15);
 
-  const deciding = snap(bucket, 45_000, 15);
-  assert.notEqual(deciding.signal.state, 'CONFIRM');
-  assert.equal(deciding.signal.phase, 'FINAL');
-  assert.equal(deciding.signal.uiState, 'DECIDING');
+  const finalCandidate = snap(bucket, 45_000, 15);
+  assert.notEqual(finalCandidate.signal.state, 'CONFIRM');
+  assert.equal(finalCandidate.signal.phase, 'POSSIBLE');
+  assert.equal(finalCandidate.signal.uiState, 'POSSIBLE_BUY');
 
   const enter = snap(bucket, 46_000, 14);
   assert.equal(enter.signal.state, 'CONFIRM');
