@@ -6,8 +6,11 @@ const num = value => value == null || value === '' ? null : Number.isFinite(Numb
 const traderHost = value => value === 'casatraders.online' || value.endsWith('.casatraders.online') || value === 'ivcasatraders.online' || value.endsWith('.ivcasatraders.online');
 const casaHost = value => value === 'casatrade.com' || value.endsWith('.casatrade.com') || value === 'casatrade.io' || value.endsWith('.casatrade.io');
 const licenseActive = state => ['active', 'valid'].includes(String(state?.license?.status || '').toLowerCase());
-const CLOCK_FRESH_MS = 2200;
+const CLOCK_FRESH_MS = 2600;
 const FOCUS_FRESH_MS = 5000;
+const EXACT_CLOCK_SOURCES = new Set(['trader-dom-countdown', 'network-server-cycle']);
+const FALLBACK_CLOCK_SOURCE = 'platform-cycle-derived';
+const FALLBACK_MIN_CONFIDENCE = 50;
 
 function normAsset(value = '') {
   const raw = clean(value).toUpperCase();
@@ -27,6 +30,15 @@ function normTf(value) {
   m = s.match(/^H(\d{1,3})$/); if (m && Number(m[1]) > 0) return `H${Number(m[1])}`;
   m = s.match(/^(\d{1,5})S$/); if (m && Number(m[1]) > 0) return `S${Number(m[1])}`;
   m = s.match(/^(\d{1,4})M$/); if (m && Number(m[1]) > 0) return `M${Number(m[1])}`;
+  return null;
+}
+
+function timeframeSeconds(value) {
+  const timeframe = normTf(value);
+  if (!timeframe) return null;
+  if (timeframe[0] === 'S') return Number(timeframe.slice(1));
+  if (timeframe[0] === 'M') return Number(timeframe.slice(1)) * 60;
+  if (timeframe[0] === 'H') return Number(timeframe.slice(1)) * 3600;
   return null;
 }
 
@@ -98,21 +110,39 @@ function stateHistory(state = {}, asset = '') {
   return fromHistory.length ? fromHistory : sanitizeRows(state.candles || []);
 }
 
-function exactClock(state = {}, info = null) {
+function clockMatchesFocus(state = {}, info = null) {
   const focus = state.diagnostics?.focusedAsset || null;
   const clock = state.diagnostics?.marketClock || null;
   if (!focus || !clock || !focus.asset) return null;
   if (focus.reliable !== true || focus.chartScoped !== true || focus.trustedChartFrame !== true) return null;
   if (Date.now() - Number(focus.at || 0) > FOCUS_FRESH_MS) return null;
-  if (clock.verified !== true || clean(clock.role) !== 'candle-close') return null;
-  if (!['trader-dom-countdown', 'network-server-cycle'].includes(clean(clock.source))) return null;
+  if (clean(clock.role) !== 'candle-close' || clock.available === false) return null;
   if (Date.now() - Number(clock.at || 0) > CLOCK_FRESH_MS) return null;
   if (!sameMarket(clock.asset, focus.asset)) return null;
   if (Number(clock.frameId) !== Number(focus.frameId)) return null;
   if (clean(clock.frameHost).toLowerCase() !== clean(focus.frameHost).toLowerCase()) return null;
   if (info && (Number(info.frameId) !== Number(focus.frameId) || info.frameHost !== clean(focus.frameHost).toLowerCase())) return null;
-  if (num(clock.secondsRemaining) == null) return null;
+  const remaining = num(clock.secondsRemaining);
+  const duration = timeframeSeconds(clock.timeframe || state.analysisTimeframe || state.timeframe);
+  if (remaining == null || remaining < 0 || (duration && remaining > duration + 2)) return null;
   return clock;
+}
+
+function exactClock(state = {}, info = null) {
+  const clock = clockMatchesFocus(state, info);
+  if (!clock || clock.verified !== true || !EXACT_CLOCK_SOURCES.has(clean(clock.source))) return null;
+  return clock;
+}
+
+function usableClock(state = {}, info = null) {
+  const clock = clockMatchesFocus(state, info);
+  if (!clock) return null;
+  if (clock.verified === true && EXACT_CLOCK_SOURCES.has(clean(clock.source))) return clock;
+  const fallback = clock.verified !== true
+    && clock.operational === true
+    && clean(clock.source) === FALLBACK_CLOCK_SOURCE
+    && Number(clock.confidence || 0) >= FALLBACK_MIN_CONFIDENCE;
+  return fallback ? clock : null;
 }
 
 function nextEpoch(previous = {}) {
@@ -154,12 +184,51 @@ function resetForSession(state = {}, { asset, timeframe = null, info, reason, so
 }
 
 function clockRecord(message = {}, info = {}, asset = '', timeframe = null, secondsRemaining = null) {
+  const verified = message.verified === true;
   return {
-    asset, timeframe, secondsRemaining, available: true, verified: true, role: 'candle-close',
-    source: clean(message.clockSource), mode: clean(message.clockMode || 'exact'), confidence: Number(message.confidence || 0),
+    asset, timeframe, secondsRemaining, available: true, verified,
+    operational: verified || message.operational === true,
+    quality: verified ? 'exact' : 'fallback', role: 'candle-close',
+    source: clean(message.clockSource), mode: clean(message.clockMode || (verified ? 'exact' : 'fallback')),
+    confidence: Number(message.confidence || 0),
     text: clean(message.clockText || ''), token: clean(message.clockToken || ''),
     frameId: info.frameId, frameHost: info.frameHost, at: Date.now()
   };
+}
+
+function structuredCurrent(rows = [], timeframe = null, at = Date.now()) {
+  const duration = timeframeSeconds(timeframe);
+  if (!duration) return null;
+  const durationMs = duration * 1000;
+  const bucket = Math.floor(at / durationMs) * durationMs;
+  return sanitizeRows(rows).filter(row => {
+    const rowTime = Number(row.time);
+    return rowTime >= bucket && rowTime < bucket + durationMs;
+  }).sort((a, b) => Number(a.time) - Number(b.time)).at(-1) || null;
+}
+
+function annotateCurrentOhlc(processed = {}, rows = [], timeframe = null, at = Date.now()) {
+  if (!processed || typeof processed !== 'object') return processed;
+  const current = processed.currentCandle || processed.signal?.currentCandle || null;
+  if (!current) return processed;
+  const structured = structuredCurrent(rows, timeframe, at);
+  const enriched = {
+    ...current,
+    source: structured ? 'structured-casatrade' : 'live-price-observed',
+    openReliable: !!structured,
+    rangeReliable: !!structured,
+    partial: !structured
+  };
+  return {
+    ...processed,
+    currentCandle: enriched,
+    signal: processed.signal ? { ...processed.signal, currentCandle: enriched } : processed.signal
+  };
+}
+
+function processLiveSnapshot(snapshot = {}, state = {}, rows = []) {
+  const processed = processSnapshot(snapshot, state);
+  return annotateCurrentOhlc(processed, rows, snapshot.analysisTimeframe || snapshot.timeframe, Number(snapshot.serverTime) || Date.now());
 }
 
 function evaluateAtClock(state = {}, focus = null, clock = null) {
@@ -178,9 +247,13 @@ function evaluateAtClock(state = {}, focus = null, clock = null) {
     secondsRemaining: Number(clock.secondsRemaining),
     serverTime: Date.now(), candles: rows,
     capabilities: { ...(state.capabilities || {}), structuredQuotes: true, candles: true },
-    diagnostics: { capture: 'exact-clock-heartbeat', feedQuality: Number(state.diagnostics?.acquisition?.feedQuality || 0) }
+    diagnostics: {
+      capture: clock.verified === true ? 'exact-clock-heartbeat' : 'fallback-clock-heartbeat',
+      clockQuality: clock.verified === true ? 'exact' : 'fallback',
+      feedQuality: Number(state.diagnostics?.acquisition?.feedQuality || 0)
+    }
   };
-  const processed = processSnapshot(snapshot, state);
+  const processed = processLiveSnapshot(snapshot, state, rows);
   if (!processed) return state;
   return {
     ...state,
@@ -249,26 +322,36 @@ async function applyClock(message = {}, sender = {}) {
   const asset = normAsset(message.asset);
   const timeframe = normTf(message.timeframe);
   const secondsRemaining = num(message.secondsRemaining);
+  const duration = timeframeSeconds(timeframe);
+  const source = clean(message.clockSource);
   const exact = message.verified === true && message.available !== false && clean(message.clockRole) === 'candle-close'
-    && ['trader-dom-countdown', 'network-server-cycle'].includes(clean(message.clockSource));
+    && EXACT_CLOCK_SOURCES.has(source);
+  const fallback = message.verified !== true && message.available !== false && message.operational === true
+    && clean(message.clockRole) === 'candle-close' && source === FALLBACK_CLOCK_SOURCE
+    && Number(message.confidence || 0) >= FALLBACK_MIN_CONFIDENCE;
+  const validRemaining = secondsRemaining != null && secondsRemaining >= 0 && (!duration || secondsRemaining <= duration + 2);
 
   return updateScannerState(state => {
     if (!licenseActive(state)) return;
     const focus = state.diagnostics?.focusedAsset || null;
     if (!focus?.asset || !sameMarket(focus.asset, asset) || Number(focus.frameId) !== Number(info.frameId) || clean(focus.frameHost).toLowerCase() !== info.frameHost) return;
 
-    if (!exact || secondsRemaining == null || secondsRemaining < 0) {
+    // A fallback may keep the analyst moving, but it must never replace a fresh
+    // exact CasaTrade clock that is already authoritative for this same frame.
+    if (fallback && exactClock(state, info)) return state;
+
+    if ((!exact && !fallback) || !validRemaining) {
       return {
         ...state,
         signal: null,
         diagnostics: {
           ...(state.diagnostics || {}),
           marketClock: {
-            asset, timeframe, available: false, verified: false, role: 'candle-close',
+            asset, timeframe, available: false, verified: false, operational: false, role: 'candle-close',
             source: clean(message.clockSource || 'unverified'), mode: clean(message.clockMode || ''),
             frameId: info.frameId, frameHost: info.frameHost, at: Date.now()
           },
-          acquisition: { ...(state.diagnostics?.acquisition || {}), stage: 'syncing_clock', reason: 'Aguardando o fechamento exato da vela da CasaTrade.', at: Date.now() }
+          acquisition: { ...(state.diagnostics?.acquisition || {}), stage: 'syncing_clock', reason: 'Sincronizando o relógio da vela com a CasaTrade.', at: Date.now() }
         }
       };
     }
@@ -279,13 +362,15 @@ async function applyClock(message = {}, sender = {}) {
     let next = state;
     if (sessionChanged) {
       next = resetForSession(state, {
-        asset, timeframe, info, source: 'exact-candle-clock',
-        reason: `Sessão ${asset} • ${timeframe || '—'} sincronizada ao fechamento real da vela.`
+        asset, timeframe, info, source: exact ? 'exact-candle-clock' : 'fallback-candle-clock',
+        reason: exact
+          ? `Sessão ${asset} • ${timeframe || '—'} sincronizada ao fechamento real da vela.`
+          : `Sessão ${asset} • ${timeframe || '—'} em leitura ao vivo com clock temporário de contingência.`
       });
     }
 
     const record = clockRecord(message, info, asset, timeframe, secondsRemaining);
-    const clockState = {
+    let clockState = {
       ...next,
       connection: next.price != null ? 'online' : 'connecting',
       timeframe: timeframe || next.timeframe,
@@ -298,12 +383,21 @@ async function applyClock(message = {}, sender = {}) {
         marketSession: {
           ...(next.diagnostics?.marketSession || {}), asset, timeframe,
           frameId: info.frameId, frameHost: info.frameHost, dataMode: next.price != null ? 'live' : 'syncing'
+        },
+        acquisition: {
+          ...(next.diagnostics?.acquisition || {}),
+          stage: next.price != null ? 'diagnosing_next_candle' : 'syncing_price',
+          reason: exact
+            ? 'Relógio exato da vela sincronizado com a CasaTrade.'
+            : 'Relógio exato indisponível; análise ao vivo continua com clock temporário identificado como estimado.',
+          clockQuality: exact ? 'exact' : 'fallback', at: Date.now()
         }
       }
     };
 
     if (sessionChanged) return clockState;
-    return evaluateAtClock(clockState, focus, record);
+    clockState = evaluateAtClock(clockState, focus, record);
+    return clockState;
   });
 }
 
@@ -323,10 +417,13 @@ async function applyFeed(payload = {}, sender = {}) {
     const previousHistory = stateHistory(state, asset);
     const mergedHistory = mergeRows(previousHistory, incomingHistory);
     const marketHistory = { ...(state.marketHistory || {}), [asset]: mergedHistory };
-    const clock = exactClock(state, info);
+    const clock = usableClock(state, info);
     const timeframe = normTf(clock?.timeframe || state.analysisTimeframe || candidate.timeframe) || null;
     const price = Number(candidate.price);
-    const serverTime = normalizeTime(candidate.timestamp) || Date.now();
+    const sourceTimestamp = normalizeTime(candidate.timestamp);
+    // candidate.timestamp is often the candle OPEN timestamp and can remain static
+    // for the full minute. Runtime observation time must advance for stability logic.
+    const serverTime = Date.now();
     const snapshot = {
       platformId: 'casatrade', platformName: 'CasaTrade', connection: 'online', asset, price,
       timeframe, analysisTimeframe: timeframe,
@@ -334,16 +431,21 @@ async function applyFeed(payload = {}, sender = {}) {
       secondsRemaining: clock ? Number(clock.secondsRemaining) : null,
       serverTime, candles: mergedHistory,
       capabilities: { ...(state.capabilities || {}), structuredQuotes: true, candles: mergedHistory.length >= 2 },
-      diagnostics: { capture: `embedded:${candidate.transport || payload.primaryTransport || 'market'}`, feedQuality: Number(payload.feedQuality || 0) }
+      diagnostics: {
+        capture: `embedded:${candidate.transport || payload.primaryTransport || 'market'}`,
+        sourceTimestamp,
+        clockQuality: clock?.verified === true ? 'exact' : clock ? 'fallback' : 'missing',
+        feedQuality: Number(payload.feedQuality || 0)
+      }
     };
 
     let processed = null;
-    if (clock) processed = processSnapshot(snapshot, { ...state, marketHistory });
+    if (clock) processed = processLiveSnapshot(snapshot, { ...state, marketHistory }, mergedHistory);
     const historicalJump = incomingHistory.length > 1 && mergedHistory.length - previousHistory.length > 1;
     const next = processed || {
       ...state, asset, price, timeframe, analysisTimeframe: timeframe, serverTime,
       candles: mergedHistory, lastSeen: Date.now(), connection: 'online', marketHistory,
-      signal: null
+      ...(!clock ? { signal: null } : {})
     };
     return {
       ...next,
@@ -363,7 +465,12 @@ async function applyFeed(payload = {}, sender = {}) {
         },
         acquisition: {
           stage: clock ? 'diagnosing_next_candle' : 'syncing_clock',
-          reason: clock ? `Sessão ao vivo ${asset} • ${timeframe || '—'} sincronizada.` : 'Preço e histórico prontos. Aguardando o fechamento exato da vela.',
+          reason: clock
+            ? clock.verified === true
+              ? `Sessão ao vivo ${asset} • ${timeframe || '—'} sincronizada.`
+              : `Sessão ao vivo ${asset} • ${timeframe || '—'} usando clock temporário estimado até a CasaTrade expor o fechamento exato.`
+            : 'Preço e histórico prontos. Sincronizando o relógio da vela.',
+          clockQuality: clock?.verified === true ? 'exact' : clock ? 'fallback' : 'missing',
           priceSource: candidate.transport || payload.primaryTransport || 'market', candleCount: mergedHistory.length, requiredCandles: 2,
           feedQuality: Number(payload.feedQuality || 0), at: Date.now()
         },
@@ -383,8 +490,8 @@ async function applyChartPrice(message = {}, sender = {}) {
     const focus = state.diagnostics?.focusedAsset || null;
     if (!focus?.asset || Number(focus.frameId) !== Number(info.frameId) || clean(focus.frameHost).toLowerCase() !== info.frameHost) return;
     if (message.asset && !sameMarket(message.asset, focus.asset)) return;
-    const clock = exactClock(state, info);
-    return {
+    const clock = usableClock(state, info);
+    let next = {
       ...state,
       asset: normAsset(focus.asset), price, lastSeen: Date.now(), connection: 'online',
       ...(!clock ? { signal: null } : {}),
@@ -394,11 +501,16 @@ async function applyChartPrice(message = {}, sender = {}) {
         acquisition: {
           ...(state.diagnostics?.acquisition || {}),
           stage: clock ? 'diagnosing_next_candle' : 'syncing_clock',
-          reason: clock ? 'Cotação e relógio da vela sincronizados.' : 'Cotação do gráfico pronta. Aguardando fechamento exato da vela.',
+          reason: clock
+            ? clock.verified === true ? 'Cotação e relógio da vela sincronizados.' : 'Cotação ao vivo; clock temporário estimado em uso.'
+            : 'Cotação do gráfico pronta. Sincronizando o relógio da vela.',
+          clockQuality: clock?.verified === true ? 'exact' : clock ? 'fallback' : 'missing',
           priceSource: clean(message.priceSource || 'visible-chart'), at: Date.now()
         }
       }
     };
+    if (clock) next = evaluateAtClock(next, focus, clock);
+    return next;
   });
 }
 
