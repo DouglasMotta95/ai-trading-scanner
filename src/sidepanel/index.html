@@ -35,13 +35,13 @@
     </section>
 
     <section id="assetQualityCard" class="card asset-quality-card waiting">
-      <div class="section-head"><div><span class="eyebrow">QUALIDADE DO ATIVO</span><h2 id="assetQualityTitle">AVALIANDO ATIVO</h2></div><span id="assetQualityBadge" class="badge warn">SINCRONIZANDO</span></div>
+      <div class="section-head"><div><span class="eyebrow">QUALIDADE DO ATIVO ABERTO</span><h2 id="assetQualityTitle">AVALIANDO ATIVO</h2></div><span id="assetQualityBadge" class="badge warn">SINCRONIZANDO</span></div>
       <p id="assetQualityReason" class="asset-quality-reason">Lendo as velas reais deste ativo.</p>
       <div class="asset-quality-grid"><div><span>NOTA</span><b id="assetQualityScore">—</b></div><div><span>CONTEXTO</span><b id="assetQualityContext">—</b></div><div><span>VIÉS</span><b id="assetQualityBias">—</b></div></div>
     </section>
 
     <section id="decisionCard" class="card decision-card">
-      <div class="section-head"><div><span class="eyebrow">PRÓXIMA VELA</span><h2 id="signalTitle">SINCRONIZANDO</h2></div><span id="signalBadge" class="badge warn">AGUARDANDO</span></div>
+      <div class="section-head"><div><span class="eyebrow">DECISÃO DA PRÓXIMA VELA</span><h2 id="signalTitle">SINCRONIZANDO</h2></div><span id="signalBadge" class="badge warn">AGUARDANDO</span></div>
       <div id="decisionBanner" class="decision-banner waiting"><span class="decision-icon" aria-hidden="true"></span><strong id="decisionText">SINCRONIZANDO MERCADO</strong><span id="decisionSubtext">Lendo o gráfico atual da CasaTrade.</span></div>
       <div id="triggerCard" class="trigger-card waiting">
         <div class="trigger-top"><span id="triggerTitle">PROCURANDO GATILHO</span><span class="confidence-pill"><small id="technicalConfidenceLabel">SEM CONFIANÇA SUFICIENTE</small><b id="technicalConfidence">0/100</b></span></div>
@@ -57,20 +57,18 @@
       <p id="tradeActionStatus" class="manual-note">Aguardando decisão final desta vela.</p>
     </section>
 
-    <section class="card radar-card">
-      <div class="section-head"><div><span class="eyebrow">RADAR DE ATIVOS</span><h2>Onde vale olhar agora</h2></div><span id="assetRadarBadge" class="badge warn">COLETANDO</span></div>
-      <div id="assetRadarList" class="asset-radar-list"></div><p id="assetRadarNote" class="radar-note">O radar compara mercados observados; somente o ativo aberto pode gerar entrada.</p>
-    </section>
-
     <section class="card live-card">
-      <div class="section-head"><div><span class="eyebrow">MERCADO ATUAL</span><h2 id="analysisTitle">Aguardando CasaTrade</h2></div><span class="quote-pill">COTAÇÃO <b id="price">—</b></span></div>
-      <p id="analysisReason" class="muted">Sincronizando a sessão do gráfico.</p>
+      <div class="section-head"><div><span class="eyebrow">GRÁFICO ATUAL</span><h2>Preço e últimas velas</h2></div><span class="quote-pill">COTAÇÃO <b id="price">—</b></span></div>
       <div class="candle-ohlc"><div><span>ABERTURA</span><b id="currentOpen">—</b></div><div><span>MÁXIMA</span><b id="currentHigh">—</b></div><div><span>MÍNIMA</span><b id="currentLow">—</b></div><div><span>ATUAL</span><b id="currentClose">—</b></div></div>
       <div class="recent-head"><span>ÚLTIMAS 10 VELAS FECHADAS</span><b id="recentCandleCount">0/10</b></div><div id="recentCandles" class="recent-candles" aria-label="Últimas 10 velas"></div>
-      <div class="decision-history"><span>ÚLTIMO CONFIRMADO</span><b id="lastConfirmed">Nenhuma entrada confirmada nesta sessão.</b><span>ANALISANDO AGORA</span><b id="analyzingNow">Aguardando dados reais.</b><span>ENTRADA REAL</span><b id="targetTime">—</b></div>
     </section>
 
-    <section class="card validation-card">
+    <section class="card radar-card">
+      <div class="section-head"><div><span class="eyebrow">RADAR DE OUTROS ATIVOS</span><h2>Onde vale olhar depois</h2></div><span id="assetRadarBadge" class="badge warn">COLETANDO</span></div>
+      <div id="assetRadarList" class="asset-radar-list"></div><p id="assetRadarNote" class="radar-note">O ativo aberto é avaliado acima; o radar mostra apenas outros mercados observados.</p>
+    </section>
+
+    <section id="validationCard" class="card validation-card" hidden>
       <div class="section-head"><div><span class="eyebrow">VALIDAÇÃO REAL</span><h2>Como o motor está performando</h2></div><span id="validationBadge" class="badge warn">0 RESOLVIDOS</span></div>
       <div class="validation-grid"><div><span>ENTRADAS</span><b id="validationEntries">0</b></div><div><span>WIN</span><b id="validationWins">0</b></div><div><span>LOSS</span><b id="validationLosses">0</b></div><div><span>ACERTO</span><b id="validationWinRate">—</b></div><div><span>WIN PULADO</span><b id="validationSkippedWins">0</b></div><div><span>LOSS EVITADO</span><b id="validationAvoidedLosses">0</b></div></div>
       <div class="validation-detail"><span>AMOSTRA <b id="validationSample">PEQUENA</b></span><span>MELHOR ATIVO <b id="validationBestAsset">Aguardando amostra</b></span><span>MELHOR SETUP <b id="validationBestSetup">Aguardando amostra</b></span><span>ERRO MAIS COMUM <b id="validationLossReason">Nenhum padrão ainda</b></span></div>
