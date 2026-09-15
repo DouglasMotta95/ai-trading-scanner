@@ -8,7 +8,8 @@
   const fold = value => clean(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
   const host = String(location.hostname || '').toLowerCase().replace(/\.$/, '');
   const traderHost = value => value === 'casatraders.online' || value.endsWith('.casatraders.online') || value === 'ivcasatraders.online' || value.endsWith('.ivcasatraders.online');
-  if (!traderHost(host)) return;
+  const casaHost = value => value === 'casatrade.com' || value.endsWith('.casatrade.com') || value === 'casatrade.io' || value.endsWith('.casatrade.io');
+  if (!traderHost(host) && !casaHost(host)) return;
 
   function tf(value) {
     const s = fold(value).replace(/\s+/g, '');
@@ -171,7 +172,7 @@
       const state = response?.state || null;
       if (!state?.license || !['active','valid'].includes(String(state.license.status || '').toLowerCase())) return;
       const focus = state.diagnostics?.focusedAsset || null;
-      if (!focus?.asset || focus.reliable !== true || focus.chartScoped !== true || focus.embeddedTrader !== true) return;
+      if (!focus?.asset || focus.reliable !== true || focus.chartScoped !== true || focus.trustedChartFrame !== true) return;
       if (String(focus.frameHost || '').toLowerCase() !== host) return;
 
       const controls = state.platformControls?.observed || {};
