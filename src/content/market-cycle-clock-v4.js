@@ -10,6 +10,8 @@
   const traderHost = value => value === 'casatraders.online' || value.endsWith('.casatraders.online') || value === 'ivcasatraders.online' || value.endsWith('.ivcasatraders.online');
   const casaHost = value => value === 'casatrade.com' || value.endsWith('.casatrade.com') || value === 'casatrade.io' || value.endsWith('.casatrade.io');
   if (!traderHost(host) && !casaHost(host)) return;
+  const sendMessage = globalThis.__ATS_SEND_MESSAGE__;
+  if (typeof sendMessage !== 'function') return;
 
   function tf(value) {
     const s = fold(value).replace(/\s+/g, '');
@@ -123,9 +125,6 @@
       if (!own || own.length > 100) continue;
       const parentText = clean(el.parentElement?.innerText || el.parentElement?.textContent || '');
       const context = fold(`${own} ${parentText} ${el.id || ''} ${el.className || ''}`).slice(0, 340);
-      // Never use the purchase-entry timer or a duration selector as candle-close authority.
-      // CasaTrade's visible "Expira" countdown is allowed because it represents the
-      // running operation/candle boundary and is cross-checked against the selected cycle.
       if (/hora de compra|buy time|entry time|duration|duracao/.test(context)) continue;
 
       const values = [];
@@ -174,7 +173,7 @@
     if (busy) return;
     busy = true;
     try {
-      const response = await chrome.runtime.sendMessage({ type: 'ATS_READ_SCANNER_STATE' }).catch(() => null);
+      const response = await sendMessage({ type: 'ATS_READ_SCANNER_STATE' });
       const state = response?.state || null;
       if (!state?.license || !['active','valid'].includes(String(state.license.status || '').toLowerCase())) return;
       const focus = state.diagnostics?.focusedAsset || null;
@@ -185,8 +184,6 @@
       const controlsFresh = Number(state.platformControls?.checkedAt || 0) > 0 && Date.now() - Number(state.platformControls.checkedAt) < 5000;
       const expiration = clean(controls.expiration || state.targetExpiration || state.expiration || '') || null;
       const chartTf = selectedChartTf();
-      // The selected chart timeframe is the cycle. Never infer it from an absolute
-      // expiration/countdown string because that can convert a live 00:42 into S42.
       const cycleTf = (controlsFresh ? tf(controls.timeframe) : null)
         || chartTf || tf(state.analysisTimeframe || state.timeframe) || 'M1';
       const domClock = exactDomCountdown(cycleTf);
@@ -207,7 +204,7 @@
       const key = `${payload.asset}|${cycleTf}|${payload.secondsRemaining}|${payload.available}|${payload.clockMode}`;
       if (key === lastKey && Date.now() - lastAt < 700) return;
       lastKey = key; lastAt = Date.now();
-      await chrome.runtime.sendMessage(payload).catch(() => null);
+      await sendMessage(payload);
     } finally { busy = false; }
   }
 
