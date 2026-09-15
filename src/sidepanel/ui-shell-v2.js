@@ -91,6 +91,11 @@ chrome.storage.onChanged.addListener(changes => {
   if (changes[PREF_KEY]) syncToggleClasses(changes[PREF_KEY].newValue || {});
 });
 
+// Secondary UI modules are loaded from this single shell so the sidepanel keeps
+// one explicit HTML surface while optional cards can evolve independently.
+import(chrome.runtime.getURL('src/sidepanel/manual-trade-ui.js')).catch(() => {});
+import(chrome.runtime.getURL('src/sidepanel/trial-ui.js')).catch(() => {});
+
 (async () => {
   await loadPrefs();
   const response = await chrome.runtime.sendMessage({ type: 'ATS_READ_SCANNER_STATE' }).catch(() => null);
