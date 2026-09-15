@@ -41,11 +41,15 @@
     return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden' && Number(s.opacity || 1) > 0;
   }
 
+  let elementCache = [];
+  let elementCacheAt = 0;
   function nodes(limit = 6500) {
+    const now = Date.now();
+    if (elementCache.length && now - elementCacheAt < 450) return elementCache.slice(0, limit);
     const out = [];
     const roots = [document];
     const seen = new Set();
-    while (roots.length && out.length < limit) {
+    while (roots.length && out.length < 7000) {
       const root = roots.shift();
       if (!root || seen.has(root)) continue;
       seen.add(root);
@@ -53,11 +57,13 @@
       try { rows = [...root.querySelectorAll('*')]; } catch {}
       for (const el of rows) {
         out.push(el);
-        if (out.length >= limit) break;
+        if (out.length >= 7000) break;
         if (el.shadowRoot) roots.push(el.shadowRoot);
       }
     }
-    return out;
+    elementCache = out;
+    elementCacheAt = now;
+    return out.slice(0, limit);
   }
 
   function chartRect() {
@@ -171,9 +177,9 @@
       const controls = state.platformControls?.observed || {};
       const controlsFresh = Number(state.platformControls?.checkedAt || 0) > 0 && Date.now() - Number(state.platformControls.checkedAt) < 5000;
       const expiration = clean(controls.expiration || state.targetExpiration || state.expiration || '') || null;
-      const cycleTf = (controlsFresh ? tf(expiration) || tf(controls.timeframe) : null)
-        || selectedChartTf() || tf(state.analysisTimeframe || state.timeframe) || 'M1';
       const chartTf = selectedChartTf();
+      const cycleTf = (controlsFresh ? tf(expiration) || tf(controls.timeframe) : null)
+        || chartTf || tf(state.analysisTimeframe || state.timeframe) || 'M1';
       const domClock = (!chartTf || chartTf === cycleTf) ? exactDomCountdown(cycleTf) : null;
       const diagnostic = derivedCountdown(cycleTf, state);
       const payload = domClock ? {
@@ -195,6 +201,6 @@
     } finally { busy = false; }
   }
 
-  setInterval(tick, 500);
+  setInterval(tick, 650);
   tick();
 })();
