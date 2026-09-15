@@ -37,7 +37,7 @@ test('mobile focus tracker uses the visible trader chart and reacts immediately 
   assert.match(focus, /frameRole: 'trader-frame'/);
   assert.match(focus, /document\.addEventListener\('touchend'/);
   assert.match(focus, /invalidateElements\(\)/);
-  assert.match(market, /message\.type === 'ATS_VISUAL_FOCUS_V2'/);
+  assert.match(market, /message\?\.type === 'ATS_VISUAL_FOCUS_V2'/);
   assert.match(market, /message\.chartScoped !== true/);
   const focused = manifest.content_scripts.find(row => row.js?.includes('src/content/focused-asset-v2.js'));
   assert.equal(focused.all_frames, true);
