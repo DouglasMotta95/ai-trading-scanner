@@ -87,6 +87,17 @@ async function connectActiveTab() {
 
   const next = await updateScannerState(current => {
     const sameTab = Number(current.targetTabId) === Number(tab.id);
+    const focus = current.diagnostics?.focusedAsset || null;
+    const focusFresh = Number(focus?.at || 0) > 0 && Date.now() - Number(focus.at) < 2500;
+    const dataFresh = Number(current.lastSeen || 0) > 0 && Date.now() - Number(current.lastSeen) < 2500;
+    const preserveLive = sameTab && current.connection === 'online' && focusFresh && dataFresh
+      && focus?.reliable === true && focus?.trustedChartFrame === true;
+    const diagnostics = { ...(current.diagnostics || {}) };
+    if (!preserveLive) {
+      delete diagnostics.focusedAsset;
+      delete diagnostics.marketClock;
+      delete diagnostics.marketSession;
+    }
     return {
       ...current,
       license,
@@ -94,16 +105,20 @@ async function connectActiveTab() {
       platformName: platform.name,
       targetTabId: tab.id,
       scanner: 'scanning',
-      connection: sameTab && current.connection === 'online' ? 'online' : 'connecting',
-      ...(sameTab ? {} : {
+      connection: preserveLive ? 'online' : 'connecting',
+      ...(!preserveLive ? {
         asset: null, price: null, timeframe: null, analysisTimeframe: null,
-        expiration: null, targetExpiration: null, candles: [], currentCandle: null,
-        signal: null, lastConfirmed: null, tradeIntent: null, lastSeen: null
-      }),
+        expiration: null, targetExpiration: null, candles: [], currentCandle: null, marketHistory: {},
+        signal: null, lastConfirmed: null, tradeIntent: null, lastSeen: null, platformControls: null
+      } : {}),
       diagnostics: {
-        ...(current.diagnostics || {}),
+        ...diagnostics,
         target: { host: new URL(tab.url).hostname, tabId: tab.id, connectedAt: Date.now(), pipeline: 'single-session' },
-        acquisition: { stage: 'confirming_asset', reason: 'CasaTrade conectada. Confirmando o gráfico ativo.', at: Date.now() }
+        acquisition: {
+          stage: preserveLive ? 'diagnosing_next_candle' : 'confirming_asset',
+          reason: preserveLive ? 'Sessão ao vivo preservada e conferida.' : 'CasaTrade conectada. Confirmando novamente o gráfico ativo.',
+          at: Date.now()
+        }
       }
     };
   });
@@ -117,9 +132,6 @@ async function activate(key = '') {
   const response = await activateLicense(settings, clean(key));
   let license = response?.license || null;
 
-  // A device-anchor restored build can receive a transient device_locked while
-  // the previous valid cache is still authoritative. Keep the valid local session
-  // and retry synchronization instead of forcing an admin reset.
   if (!response?.ok && response?.error === 'device_locked') {
     const restored = await restoreCachedLicense().catch(() => null);
     if (activeLicense(restored)) license = { ...restored, error: 'device_locked', syncPending: true };
@@ -251,8 +263,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  // Legacy market writers are intentionally ignored. The only authority for
-  // asset/price/history/clock/signal is background-market-session.js.
   if (['ATS_PLATFORM_SNAPSHOT', 'ATS_DOM_CATALOG', 'ATS_NETWORK_DIAGNOSTIC'].includes(type)) {
     sendResponse({ ok: true, ignored: true, reason: 'single_session_market_authority' });
     return false;
