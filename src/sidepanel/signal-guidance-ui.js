@@ -2,6 +2,7 @@ import { assessEntryConfidence } from '../core/entry-confidence.js';
 
 const $ = id => document.getElementById(id);
 const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
+const clean = value => String(value ?? '').replace(/\s+/g, ' ').trim();
 
 function fmt(value) {
   const n = num(value);
@@ -12,49 +13,80 @@ function fmt(value) {
 }
 
 function guidance(state = {}) {
-  const signal = state.signal || {};
-  const waiting = signal.waitingFor || {};
-  const ui = String(signal.uiState || '');
-  const direction = ui.includes('BUY') || signal.analysisDirection === 'BUY' ? 'BUY'
-    : ui.includes('SELL') || signal.analysisDirection === 'SELL' ? 'SELL' : null;
+  const technical = state.signal || {};
+  const decision = state.professionalDecision || {};
+  const ui = clean(decision.uiState).toUpperCase();
+  const direction = clean(decision.direction).toUpperCase();
   const side = direction === 'BUY' ? 'COMPRA' : direction === 'SELL' ? 'VENDA' : 'ENTRADA';
+  const timeReady = decision.timeReady === true && decision.expirationReady === true;
 
-  if (ui === 'ENTER_BUY' || ui === 'ENTER_SELL') {
-    return { tone: direction === 'BUY' ? 'buy' : 'sell', title: 'GATILHO CONFIRMADO', value: `ENTRAR ${side}`, hint: 'Entrada manual na abertura da próxima vela. O sinal fica travado até a virada.' };
-  }
-  if (ui === 'SKIP') return { tone: 'skip', title: 'SEM GATILHO VÁLIDO', value: 'PULAR PRÓXIMA VELA', hint: 'A confirmação mínima não chegou dentro desta vela.' };
-  if (!['POSSIBLE_BUY','POSSIBLE_SELL','DECIDING'].includes(ui)) {
-    return { tone: 'waiting', title: 'PROCURANDO GATILHO', value: 'ANALISANDO', hint: 'Lendo estrutura, força, rompimento, rejeição e continuidade antes de antecipar a próxima vela.' };
-  }
-
-  if (waiting.type === 'breakout' && num(waiting.level) != null) {
+  if (!timeReady) {
     return {
-      tone: 'possible', title: `GATILHO DE ${side}`,
-      value: `${direction === 'BUY' ? 'ROMPER ACIMA DE' : 'ROMPER ABAIXO DE'} ${fmt(waiting.level)}`,
-      hint: `Possível ${side.toLowerCase()}. Aguardando o preço atingir e confirmar esse nível antes da próxima vela.`
+      tone: 'skip',
+      title: 'TEMPO CASATRADE',
+      value: 'AGUARDAR',
+      hint: clean(decision.reason || 'Countdown, timeframe ou expiração real ainda não foram confirmados.')
     };
   }
-  if (waiting.type === 'rejection') return { tone: 'possible', title: `REJEIÇÃO PARA ${side}`, value: `${Math.round(Number(waiting.current || 0))}% / ${Math.round(Number(waiting.required || 0))}%`, hint: waiting.text || 'Aguardando rejeição suficiente no nível atual.' };
-  if (waiting.type === 'power') return { tone: 'possible', title: `PODER ${direction === 'BUY' ? 'COMPRADOR' : 'VENDEDOR'}`, value: `${Math.round(Number(waiting.current || 0))}% / ${Math.round(Number(waiting.required || 0))}%`, hint: waiting.text || 'Aguardando força direcional suficiente.' };
-  if (waiting.type === 'candle_strength') return { tone: 'possible', title: 'FORÇA DA VELA', value: `${Math.round(Number(waiting.current || 0))}% / ${Math.round(Number(waiting.required || 0))}%`, hint: waiting.text || 'Aguardando a vela atual ganhar força.' };
-  if (waiting.type === 'continuation') return { tone: 'possible', title: `CONTINUAÇÃO ${side}`, value: `${Math.round(Number(waiting.current || 0))}% / ${Math.round(Number(waiting.required || 0))}%`, hint: waiting.text || 'Aguardando continuidade consistente.' };
-  if (waiting.type === 'possible_score' || waiting.type === 'confirm_score') return { tone: 'possible', title: 'FORÇA DO PADRÃO', value: `${Math.round(Number(waiting.current || 0))}/100 → ${Math.round(Number(waiting.required || 0))}/100`, hint: waiting.text || 'Aguardando o padrão alcançar a confirmação.' };
-  return { tone: 'possible', title: `POSSÍVEL ${side}`, value: 'AGUARDANDO CONFIRMAÇÃO', hint: waiting.text || 'Aguardando nova confirmação estável antes da próxima vela.' };
+
+  if (ui === 'ENTER_BUY' || ui === 'ENTER_SELL') {
+    return {
+      tone: direction === 'BUY' ? 'buy' : 'sell',
+      title: 'GATILHO CONFIRMADO',
+      value: `ENTRAR ${side}`,
+      hint: `${clean(decision.reason || 'Confluência mantida durante o hold.')} Entrada manual somente na próxima vela.`
+    };
+  }
+
+  if (ui === 'POSSIBLE_BUY' || ui === 'POSSIBLE_SELL') {
+    const remaining = Math.ceil(Math.max(0, Number(decision.holdRemainingMs || 0)) / 1000);
+    const suffix = remaining > 0 ? ` • hold ${remaining}s` : '';
+    return {
+      tone: 'possible',
+      title: `POSSÍVEL ${side}`,
+      value: `PRÓXIMA VELA${suffix}`,
+      hint: clean(decision.reason || 'Padrão encontrado; aguardando estabilidade antes de confirmar.')
+    };
+  }
+
+  if (ui === 'BUILDING_PATTERN') {
+    return {
+      tone: 'waiting',
+      title: 'MONTANDO PADRÃO',
+      value: 'PRÓXIMA VELA',
+      hint: clean(decision.reason || 'Lendo força, rejeição, continuidade, momentum e estrutura.')
+    };
+  }
+
+  if (ui === 'ANALYZING_MARKET') {
+    return {
+      tone: 'waiting',
+      title: 'ANALISANDO MERCADO',
+      value: 'AGUARDAR',
+      hint: clean(decision.reason || 'Confirmando o mercado atual antes de procurar um setup.')
+    };
+  }
+
+  const waiting = technical.waitingFor || {};
+  if (waiting.type === 'breakout' && num(waiting.level) != null) {
+    return { tone: 'skip', title: 'AGUARDAR', value: `NÍVEL ${fmt(waiting.level)}`, hint: clean(decision.reason || waiting.text || 'Rompimento ainda não confirmou.') };
+  }
+  return { tone: 'skip', title: 'AGUARDAR', value: 'SEM ENTRADA', hint: clean(decision.reason || 'Padrão sem qualidade suficiente.') };
 }
 
 function render(state = {}) {
-  const confidence = assessEntryConfidence(state);
+  const technicalConfidence = assessEntryConfidence(state);
+  const decision = state.professionalDecision || {};
+  const score = Number.isFinite(Number(decision.score)) ? Math.round(Number(decision.score)) : technicalConfidence.score;
   const guide = guidance(state);
   const card = $('triggerCard');
   if (card) card.className = `trigger-card ${guide.tone}`;
   if ($('triggerTitle')) $('triggerTitle').textContent = guide.title;
   if ($('triggerValue')) $('triggerValue').textContent = guide.value;
   if ($('triggerHint')) $('triggerHint').textContent = guide.hint;
-  if ($('technicalConfidence')) $('technicalConfidence').textContent = `${confidence.score}/100`;
-  if ($('technicalConfidenceLabel')) $('technicalConfidenceLabel').textContent = confidence.label;
-  if ($('confidenceNote')) $('confidenceNote').textContent = confidence.calibratedProbability == null
-    ? 'Confiança técnica interna; a taxa real é mostrada na validação abaixo.'
-    : `Probabilidade calibrada: ${confidence.calibratedProbability}%`;
+  if ($('technicalConfidence')) $('technicalConfidence').textContent = `${Math.max(0, Math.min(100, score || 0))}/100`;
+  if ($('technicalConfidenceLabel')) $('technicalConfidenceLabel').textContent = decision.uiState?.startsWith('ENTER_') ? 'CONFIRMADO' : decision.uiState?.startsWith('POSSIBLE_') ? 'EM HOLD' : technicalConfidence.label;
+  if ($('confidenceNote')) $('confidenceNote').textContent = 'Força técnica interna; não representa garantia de resultado.';
 }
 
 async function readState() {

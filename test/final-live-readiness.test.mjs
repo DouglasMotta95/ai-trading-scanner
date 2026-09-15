@@ -4,15 +4,16 @@ import fs from 'node:fs';
 
 const read = path => fs.readFileSync(new URL('../' + path, import.meta.url), 'utf8');
 
-test('embedded feed updates market data while exact candle clock remains the decision authority', () => {
+test('embedded feed can keep observation moving while the professional decision keeps exact time authority', () => {
   const market = read('src/background-market-session.js');
-  assert.match(market, /function exactClock\(state = \{\}, info = null\)/);
-  assert.match(market, /clean\(clock\.role\) !== 'candle-close'/);
+  const policy = read('src/background-decision-policy.js');
+  assert.match(market, /function usableClock\(state = \{\}, info = null\)/);
   assert.match(market, /const candidate = bestForFocus\(payload, asset\)/);
-  assert.match(market, /const clock = exactClock\(state, info\)/);
-  assert.match(market, /if \(clock\) processed = processSnapshot/);
+  assert.match(market, /if \(clock\) processed = processLiveSnapshot/);
   assert.match(market, /function evaluateAtClock\(/);
-  assert.match(market, /return evaluateAtClock\(clockState, focus, record\)/);
+  assert.match(policy, /EXACT_CLOCK_SOURCES/);
+  assert.match(policy, /clock\.verified !== true/);
+  assert.match(policy, /uiState: 'WAIT'/);
 });
 
 test('stored candle history is reused for the exact live market instead of waiting for new candles', () => {
@@ -53,19 +54,23 @@ test('live chart focus scans are coalesced and user interaction still forces a f
   assert.doesNotMatch(focus, /new MutationObserver\(\(\) => publish\(false\)\)/);
 });
 
-test('sidepanel never presents a live tradable state without authoritative candle-close clock', () => {
+test('sidepanel never presents a tradable state without exact CasaTrade clock and observed expiration', () => {
   const html = read('src/sidepanel/index.html');
   const panel = read('src/sidepanel/app-v2.js');
+  const control = read('src/background-control.js');
   assert.match(html, /app-v2\.js/);
   assert.match(panel, /function exactClockReady\(state = \{\}\)/);
   assert.match(panel, /clock\.role === 'candle-close'/);
-  assert.match(panel, /SINCRONIZANDO VELA/);
-  assert.match(panel, /Aguardando o fechamento exato da vela da CasaTrade/);
-  assert.match(panel, /prepareBuy'\)\.disabled = model\.key !== 'ENTER_BUY'/);
-  assert.match(panel, /prepareSell'\)\.disabled = model\.key !== 'ENTER_SELL'/);
+  assert.match(panel, /function entryTimeReady\(state = \{\}\)/);
+  assert.match(panel, /actualExpiration/);
+  assert.match(panel, /ESTIMADO • BLOQUEADO/);
+  assert.match(panel, /model\.actionable && model\.direction === 'BUY' && timeReady/);
+  assert.match(panel, /model\.actionable && model\.direction === 'SELL' && timeReady/);
+  assert.match(control, /function exactTradeReady\(state = \{\}\)/);
+  assert.match(control, /error: 'time_not_synchronized'/);
 });
 
-test('approved signal thresholds are unchanged by final live-readiness hardening', () => {
+test('approved base signal thresholds remain unchanged by the professional policy layer', () => {
   const analysis = read('src/core/analysis.js');
   assert.match(analysis, /possibleScore:\s*44/);
   assert.match(analysis, /confirmScore:\s*58/);

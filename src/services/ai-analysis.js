@@ -14,29 +14,34 @@ const candle = value => {
 
 export function aiSnapshot(state = {}) {
   const signal = state.signal || {};
+  const professional = state.professionalDecision || {};
   const clock = state.diagnostics?.marketClock || {};
   const rows = (Array.isArray(state.candles) ? state.candles : []).map(candle).filter(Boolean).slice(-10);
   const current = candle(signal.currentCandle || state.currentCandle || {});
+  const effectiveUi = text(professional.uiState || signal.uiState, 32);
+  const effectiveDirection = ['BUY', 'SELL'].includes(String(professional.direction || signal.direction || '').toUpperCase())
+    ? String(professional.direction || signal.direction).toUpperCase()
+    : null;
   return {
     asset: text(state.asset, 64),
     marketType: text(state.instrumentType && state.instrumentType !== 'unknown' ? state.instrumentType : state.marketType, 40),
-    timeframe: text(state.analysisTimeframe || signal.timeframe || state.timeframe, 24),
-    expiration: text(state.targetExpiration || signal.targetExpiration || state.expiration, 24),
+    timeframe: text(professional.timeframe || state.analysisTimeframe || signal.timeframe || state.timeframe, 24),
+    expiration: text(professional.actualExpiration || state.platformControls?.observed?.expiration || state.targetExpiration || signal.targetExpiration || state.expiration, 24),
     price: num(state.price),
-    secondsRemaining: num(signal.secondsRemaining ?? state.secondsRemaining),
+    secondsRemaining: num(professional.secondsRemaining ?? signal.secondsRemaining ?? state.secondsRemaining),
     targetStart: num(signal.targetStart),
     currentCandle: current,
     candles: rows,
     signal: {
       state: text(signal.state, 24),
-      uiState: text(signal.uiState, 32),
+      uiState: effectiveUi,
       phase: text(signal.phase, 24),
-      direction: ['BUY', 'SELL'].includes(String(signal.direction || '').toUpperCase()) ? String(signal.direction).toUpperCase() : null,
-      analysisDirection: ['BUY', 'SELL'].includes(String(signal.analysisDirection || '').toUpperCase()) ? String(signal.analysisDirection).toUpperCase() : null,
-      score: num(signal.score),
+      direction: effectiveDirection,
+      analysisDirection: ['BUY', 'SELL'].includes(String(signal.analysisDirection || '').toUpperCase()) ? String(signal.analysisDirection).toUpperCase() : effectiveDirection,
+      score: num(professional.score ?? signal.score),
       analysisScore: num(signal.analysisScore),
       setup: text(signal.setup, 80),
-      reason: text(signal.reason, 260),
+      reason: text(professional.reason || signal.reason, 260),
       waitingFor: signal.waitingFor && typeof signal.waitingFor === 'object' ? {
         direction: ['BUY', 'SELL'].includes(String(signal.waitingFor.direction || '').toUpperCase()) ? String(signal.waitingFor.direction).toUpperCase() : null,
         text: text(signal.waitingFor.text, 220),
@@ -64,7 +69,7 @@ export function aiSnapshot(state = {}) {
       } : {}
     },
     clock: {
-      verified: clock.verified === true,
+      verified: clock.verified === true && professional.timeReady === true,
       role: text(clock.role, 32),
       source: text(clock.source, 48)
     }

@@ -9,9 +9,11 @@ const DEFAULT_LICENSE = Object.freeze({
 });
 const SESSION_HISTORY_KEY = 'atsSessionSignalHistory';
 const SHADOW_KEY = 'atsShadowCalibrationV1';
+const EXACT_CLOCK_SOURCES = new Set(['trader-dom-countdown', 'network-server-cycle']);
 
 const activeLicense = license => ['active', 'valid'].includes(String(license?.status || '').toLowerCase());
 const clean = value => String(value ?? '').trim();
+const sameAsset = (a, b) => clean(a).toUpperCase().replace(/\s*\(\s*OTC\s*\)\s*$/i, '') === clean(b).toUpperCase().replace(/\s*\(\s*OTC\s*\)\s*$/i, '') && !!clean(a) && !!clean(b);
 
 function platformFromUrl(url = '') {
   try { return detectPlatform(new URL(url).hostname); } catch { return null; }
@@ -24,6 +26,7 @@ function clearMarket(state = {}, extra = {}) {
     asset: null, price: null, timeframe: null, analysisTimeframe: null,
     expiration: null, targetExpiration: null, serverTime: null,
     candles: [], currentCandle: null, marketHistory: {}, signal: null,
+    professionalDecision: null, aiAudit: null,
     tradeIntent: null, lastConfirmed: null, lastSeen: null,
     platformControls: null,
     diagnostics: { ...(extra.diagnostics || {}) },
@@ -109,7 +112,8 @@ async function connectActiveTab() {
       ...(!preserveLive ? {
         asset: null, price: null, timeframe: null, analysisTimeframe: null,
         expiration: null, targetExpiration: null, candles: [], currentCandle: null, marketHistory: {},
-        signal: null, lastConfirmed: null, tradeIntent: null, lastSeen: null, platformControls: null
+        signal: null, professionalDecision: null, aiAudit: null,
+        lastConfirmed: null, tradeIntent: null, lastSeen: null, platformControls: null
       } : {}),
       diagnostics: {
         ...diagnostics,
@@ -168,6 +172,22 @@ async function readSessionHistory() {
   };
 }
 
+function exactTradeReady(state = {}) {
+  const clock = state.diagnostics?.marketClock || {};
+  const focus = state.diagnostics?.focusedAsset || {};
+  const professional = state.professionalDecision || {};
+  const actualExpiration = clean(state.platformControls?.observed?.expiration || '');
+  const controlsFresh = Number(state.platformControls?.checkedAt || 0) > 0 && Date.now() - Number(state.platformControls.checkedAt) < 7000;
+  if (professional.timeReady !== true || professional.expirationReady !== true || professional.actionable !== true) return false;
+  if (clock.verified !== true || clock.available === false || clock.role !== 'candle-close' || !EXACT_CLOCK_SOURCES.has(clean(clock.source))) return false;
+  if (Date.now() - Number(clock.at || 0) >= 3000) return false;
+  if (!sameAsset(clock.asset, state.asset) || !sameAsset(focus.asset, state.asset)) return false;
+  if (Number(clock.frameId) !== Number(focus.frameId)) return false;
+  if (clean(clock.frameHost).toLowerCase() !== clean(focus.frameHost).toLowerCase()) return false;
+  if (!actualExpiration || !controlsFresh) return false;
+  return true;
+}
+
 async function manualIntent(direction = '') {
   direction = String(direction || '').toUpperCase();
   if (!['BUY', 'SELL'].includes(direction)) return { ok: false, error: 'invalid_direction' };
@@ -175,9 +195,18 @@ async function manualIntent(direction = '') {
   const signalDirection = String(state.signal?.direction || '').toUpperCase();
   const confirmed = state.signal?.state === 'CONFIRM' || ['ENTER_BUY', 'ENTER_SELL'].includes(String(state.signal?.uiState || ''));
   if (!confirmed || signalDirection !== direction) return { ok: false, error: 'signal_not_confirmed', state };
+
+  const professional = state.professionalDecision || {};
+  const expectedUi = direction === 'BUY' ? 'ENTER_BUY' : 'ENTER_SELL';
+  if (professional.uiState !== expectedUi || professional.direction !== direction || professional.actionable !== true) {
+    return { ok: false, error: 'professional_signal_not_confirmed', state };
+  }
+  if (!exactTradeReady(state)) return { ok: false, error: 'time_not_synchronized', state };
+
+  const actualExpiration = clean(state.platformControls?.observed?.expiration || state.targetExpiration || state.expiration || '') || null;
   const intent = {
     direction, asset: state.asset, timeframe: state.analysisTimeframe || state.timeframe,
-    expiration: state.targetExpiration || state.expiration || null,
+    expiration: actualExpiration,
     targetStart: state.signal?.targetStart || null,
     mode: 'manual-only', createdAt: Date.now()
   };
@@ -250,7 +279,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (type === 'ATS_SET_SCANNER') {
-    updateScannerState(current => ({ ...current, scanner: message.enabled ? 'scanning' : 'idle', ...(message.enabled ? {} : { signal: null, tradeIntent: null }) }))
+    updateScannerState(current => ({ ...current, scanner: message.enabled ? 'scanning' : 'idle', ...(message.enabled ? {} : { signal: null, professionalDecision: null, tradeIntent: null }) }))
       .then(state => sendResponse({ ok: true, state }))
       .catch(error => sendResponse({ ok: false, error: String(error?.message || error) }));
     return true;

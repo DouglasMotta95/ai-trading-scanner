@@ -8,13 +8,6 @@ const impact = $('aiAuditImpact');
 const evidence = $('aiAuditEvidence');
 const meta = $('aiAuditMeta');
 const card = $('aiAuditCard');
-const decisionCard = $('decisionCard');
-const syncStrip = $('syncStrip');
-
-// The next-candle decision is the primary action surface. Keep it at the top,
-// immediately after synchronization status, and keep Gemini directly below it.
-if (syncStrip && decisionCard) syncStrip.after(decisionCard);
-if (decisionCard && card) decisionCard.after(card);
 
 let topStatus = $('aiTopStatus');
 if (!topStatus) {
@@ -41,8 +34,8 @@ function setTop(text, cls = '') {
 function pct(value) { const n = Number(value); return Number.isFinite(n) ? `${Math.max(0, Math.min(100, Math.round(n)))}/100` : '—'; }
 function impactText(value) {
   const n = Number(value);
-  if (!Number.isFinite(n) || n === 0) return '0 pts';
-  return `${n > 0 ? '+' : ''}${Math.round(n)} pts`;
+  if (!Number.isFinite(n) || n === 0) return 'NEUTRO';
+  return n > 0 ? 'REFORÇA' : 'ENFRAQUECE';
 }
 
 function resetEvidence(rows = []) {
@@ -61,12 +54,26 @@ function render(state = {}) {
   if (!card) return;
   card.classList.remove('loading', 'reinforce', 'caution', 'error');
 
+  if (ai.status === 'disabled' || state.analystPreferences?.geminiEnabled === false) {
+    setTop('IA DESATIVADA');
+    setText(title, 'GEMINI DESATIVADA');
+    setText(badge, 'OFF');
+    if (badge) badge.className = 'badge';
+    setText(summary, 'A segunda leitura está desligada nas configurações. O motor técnico continua ativo.');
+    setText(direction, '—');
+    setText(alignment, '—');
+    setText(impact, '—');
+    resetEvidence([]);
+    setText(meta, 'Motor técnico principal ativo • Gemini off');
+    return;
+  }
+
   if (!ai.status) {
     setTop('IA EM ESPERA');
     setText(title, 'AGUARDANDO O SCANNER');
     setText(badge, 'EM ESPERA');
     if (badge) badge.className = 'badge';
-    setText(summary, 'A Gemini entra como segunda leitura quando o scanner encontra um possível sinal para a próxima vela.');
+    setText(summary, 'A Gemini só entra depois de um possível sinal técnico com tempo CasaTrade sincronizado.');
     setText(direction, '—');
     setText(alignment, '—');
     setText(impact, '—');
@@ -81,25 +88,25 @@ function render(state = {}) {
     setText(title, 'GEMINI ANALISANDO');
     setText(badge, 'AO VIVO');
     if (badge) badge.className = 'badge warn';
-    setText(summary, 'Comparando o mesmo ativo, as velas recentes, força, momentum, rejeição, continuidade e regime do motor técnico.');
+    setText(summary, 'Revisando o mesmo setup, ativo e ciclo já encontrados pelo scanner técnico.');
     setText(direction, ai.scannerDirection || '—');
     setText(alignment, 'ANALISANDO');
     setText(impact, '—');
     resetEvidence([]);
-    setText(meta, 'Segunda leitura independente • sem alterar o sinal enquanto processa');
+    setText(meta, 'Segunda leitura • não altera o clock da CasaTrade');
     return;
   }
 
   if (ai.status === 'error') {
     card.classList.add('error');
-    setTop('IA FALLBACK', 'warn');
-    setText(title, 'IA TEMPORARIAMENTE INDISPONÍVEL');
-    setText(badge, 'FALLBACK');
+    setTop('IA INDISPONÍVEL', 'warn');
+    setText(title, 'GEMINI TEMPORARIAMENTE INDISPONÍVEL');
+    setText(badge, 'NEUTRA');
     if (badge) badge.className = 'badge warn';
-    setText(summary, 'O motor técnico continua funcionando normalmente. A camada Gemini não bloqueia nem inventa sinal quando a API falha.');
+    setText(summary, 'O motor técnico continua ativo. A Gemini não inventa confirmação quando a API falha.');
     setText(direction, ai.scannerDirection || '—');
     setText(alignment, '—');
-    setText(impact, '0 pts');
+    setText(impact, 'NEUTRO');
     resetEvidence([]);
     setText(meta, `Erro: ${String(ai.error || 'ai_analysis_failed').slice(0, 60)}`);
     return;

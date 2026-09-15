@@ -11,9 +11,10 @@ test('CasaTrade exact clock is never clobbered by the diagnostic fallback writer
   assert.match(clock, /clockSource: 'network-server-cycle', clockMode: 'state-current-candle-boundary'/);
 });
 
-test('missing exact countdown falls back honestly without freezing the analyst', () => {
+test('fallback can keep market observation moving but never authorizes a user entry', () => {
   const clock = read('src/content/market-cycle-clock-v4.js');
   const background = read('src/background-market-session.js');
+  const policy = read('src/background-decision-policy.js');
   const ui = read('src/sidepanel/app-v2.js');
 
   assert.match(clock, /verified: false, operational: true/);
@@ -22,13 +23,14 @@ test('missing exact countdown falls back honestly without freezing the analyst',
   assert.match(background, /function usableClock\(state = \{\}, info = null\)/);
   assert.match(background, /clock\.operational === true/);
   assert.match(background, /FALLBACK_CLOCK_SOURCE = 'platform-cycle-derived'/);
-  assert.match(background, /if \(clock\) processed = processLiveSnapshot/);
+  assert.match(policy, /clock\.verified !== true/);
+  assert.match(policy, /uiState: 'WAIT'/);
   assert.match(ui, /function operationalClockReady\(state = \{\}\)/);
-  assert.match(ui, /fresh\(state\) && operationalClockReady\(state\)/);
-  assert.match(ui, /LIVE • CLOCK ESTIMADO/);
+  assert.match(ui, /function entryTimeReady\(state = \{\}\)/);
+  assert.match(ui, /ESTIMADO • BLOQUEADO/);
 });
 
-test('current OHLC keeps real observed prices and labels partial candle honestly', () => {
+test('current OHLC keeps only real observed prices and labels partial candle honestly', () => {
   const background = read('src/background-market-session.js');
   const ui = read('src/sidepanel/app-v2.js');
 
@@ -38,10 +40,9 @@ test('current OHLC keeps real observed prices and labels partial candle honestly
   assert.match(background, /rangeReliable: !!structured/);
   assert.match(background, /partial: !structured/);
   assert.match(background, /const serverTime = Date\.now\(\);/);
-  assert.match(ui, /observedPriceText/);
-  assert.match(ui, /Abertura observada após a conexão/);
-  assert.match(ui, /Máxima observada pela extensão desde a conexão/);
-  assert.match(ui, /Mínima observada pela extensão desde a conexão/);
+  assert.match(ui, /source: 'live-price-observed'/);
+  assert.match(ui, /OHLC parcial montado apenas com preços reais observados/);
+  assert.match(ui, /const mark = row\.approximate \? '≈' : ''/);
 });
 
 test('principal analyst states stay single and stable in the side panel', () => {
@@ -50,9 +51,9 @@ test('principal analyst states stay single and stable in the side panel', () => 
   assert.match(ui, /MONTANDO PADRÃO DA PRÓXIMA VELA/);
   assert.match(ui, /POSSÍVEL COMPRA/);
   assert.match(ui, /POSSÍVEL VENDA/);
-  assert.match(ui, /ENTRAR NA PRÓXIMA VELA: COMPRA/);
-  assert.match(ui, /ENTRAR NA PRÓXIMA VELA: VENDA/);
+  assert.match(ui, /ENTRAR: COMPRA/);
+  assert.match(ui, /ENTRAR: VENDA/);
   assert.match(ui, /AGUARDAR/);
   assert.doesNotMatch(ui, /DECIDINDO AGORA/);
-  assert.doesNotMatch(ui, /PULAR PRÓXIMA VELA'/);
+  assert.doesNotMatch(ui, /PULAR PRÓXIMA VELA/);
 });

@@ -8,41 +8,62 @@
   <link rel="stylesheet" href="asset-quality.css">
   <link rel="stylesheet" href="premium-v2.css">
   <link rel="stylesheet" href="ai-analysis.css">
+  <link rel="stylesheet" href="professional.css">
 </head>
 <body>
   <main class="shell">
     <header class="topbar">
-      <div class="brand-lockup"><span class="brand-orb" aria-hidden="true"><i></i></span><div><span class="eyebrow">AI TRADING SCANNER</span><h1>Live Decision</h1></div></div>
+      <div class="brand-lockup"><span class="brand-orb" aria-hidden="true"><i></i></span><div><span class="eyebrow">AI TRADING SCANNER</span><h1>Live Analyst</h1></div></div>
       <div class="top-status"><button id="connectScanner" class="connect-btn" type="button"><span class="connect-dot"></span><b id="connectScannerText">CONECTAR</b></button><span id="connectionBadge" class="badge warn">SINCRONIZANDO</span><span id="extensionVersion" class="version">v—</span></div>
     </header>
-    <section id="syncStrip" class="sync-strip syncing" aria-live="polite"><span class="scan-pulse" aria-hidden="true"></span><div><b id="syncTitle">PREPARANDO LEITURA AO VIVO</b><span id="syncText">Identificando ativo, preço, histórico e relógio da vela.</span></div><span class="loading-dots" aria-hidden="true"><i></i><i></i><i></i></span></section>
-    <section class="market-hero"><div><span>ATIVO AO VIVO</span><b id="asset">—</b></div><div><span>CICLO</span><b id="timeframe">—</b></div><div><span>MODO</span><b id="sessionMode">SYNC</b></div></section>
-    <section id="assetQualityCard" class="card asset-quality-card waiting"><div class="section-head"><div><span class="eyebrow">QUALIDADE DO ATIVO ABERTO</span><h2 id="assetQualityTitle">AVALIANDO ATIVO</h2></div><span id="assetQualityBadge" class="badge warn">SINCRONIZANDO</span></div><p id="assetQualityReason" class="asset-quality-reason">Lendo as velas reais deste ativo.</p><div class="asset-quality-grid"><div><span>NOTA</span><b id="assetQualityScore">—</b></div><div><span>CONTEXTO</span><b id="assetQualityContext">—</b></div><div><span>VIÉS</span><b id="assetQualityBias">—</b></div></div></section>
+
+    <section id="syncStrip" class="sync-strip syncing" aria-live="polite"><span class="scan-pulse" aria-hidden="true"></span><div><b id="syncTitle">PREPARANDO LEITURA AO VIVO</b><span id="syncText">Confirmando ativo, preço, velas e tempo real da CasaTrade.</span></div><span class="loading-dots" aria-hidden="true"><i></i><i></i><i></i></span></section>
+
+    <section class="market-hero professional-hero">
+      <div><span>ATIVO</span><b id="asset">—</b></div>
+      <div><span>TIMEFRAME</span><b id="timeframe">—</b></div>
+      <div><span>COUNTDOWN</span><b id="heroCountdown">—</b></div>
+      <div><span>TEMPO</span><b id="heroTimeStatus">SYNC</b></div>
+    </section>
+
     <section id="decisionCard" class="card decision-card">
-      <div class="section-head"><div><span class="eyebrow">DECISÃO DA PRÓXIMA VELA</span><h2 id="signalTitle">SINCRONIZANDO</h2></div><span id="signalBadge" class="badge warn">AGUARDANDO</span></div>
-      <div id="decisionBanner" class="decision-banner waiting"><span class="decision-icon" aria-hidden="true"></span><strong id="decisionText">SINCRONIZANDO MERCADO</strong><span id="decisionSubtext">Lendo o gráfico atual da CasaTrade.</span></div>
-      <div id="triggerCard" class="trigger-card waiting"><div class="trigger-top"><span id="triggerTitle">PROCURANDO GATILHO</span><span class="confidence-pill"><small id="technicalConfidenceLabel">SEM CONFIANÇA SUFICIENTE</small><b id="technicalConfidence">0/100</b></span></div><strong id="triggerValue">ANALISANDO</strong><p id="triggerHint">Lendo estrutura, força, rompimento, rejeição e continuidade.</p><small id="confidenceNote">Confiança técnica interna; a taxa real aparece na validação.</small></div>
-      <div class="clock-stage"><div class="clock-ring"><span class="clock-sweep" aria-hidden="true"></span><b id="secondsRemaining">—</b><span>SEGUNDOS</span></div><div class="clock-details"><span>Expiração <b id="expiration">—</b></span><span>Setup <b id="setupType">—</b></span><span>Força <b id="signalScore">—</b></span></div></div>
-      <div class="progress-track"><div id="candleProgress" class="progress-fill"></div></div><p id="signalReason" class="signal-reason">Aguardando dados reais da CasaTrade.</p>
-      <div class="trade-actions" aria-label="Direção da próxima vela"><button id="prepareBuy" class="trade-choice buy-choice" disabled>🟢 COMPRA</button><button id="prepareSell" class="trade-choice sell-choice" disabled>🔴 VENDA</button></div><p id="tradeActionStatus" class="manual-note">Aguardando decisão final desta vela.</p>
+      <div class="section-head"><div><span class="eyebrow">DECISÃO DA PRÓXIMA VELA</span><h2 id="signalTitle">ANALISANDO MERCADO ATUAL</h2></div><span id="signalBadge" class="badge warn">AGUARDAR</span></div>
+      <div id="decisionBanner" class="decision-banner waiting" aria-live="assertive"><span class="decision-icon" aria-hidden="true"></span><strong id="decisionText">ANALISANDO MERCADO ATUAL</strong><span id="decisionSubtext">Uma decisão por vez. A entrada só libera com o tempo real confirmado.</span></div>
+      <div id="triggerCard" class="trigger-card waiting"><div class="trigger-top"><span id="triggerTitle">GATILHO TÉCNICO</span><span class="confidence-pill"><small id="technicalConfidenceLabel">FORÇA DO PADRÃO</small><b id="technicalConfidence">0/100</b></span></div><strong id="triggerValue">ANALISANDO</strong><p id="triggerHint">Lendo força, rejeição, momentum e estrutura.</p><small id="confidenceNote">A confiança é técnica; não representa garantia de resultado.</small></div>
+      <div class="clock-stage"><div class="clock-ring"><span class="clock-sweep" aria-hidden="true"></span><b id="secondsRemaining">—</b><span>SEGUNDOS</span></div><div class="clock-details"><span>Tempo CasaTrade <b id="timeSyncStatus">AGUARDANDO</b></span><span>Expiração real <b id="expiration">—</b></span><span>Setup <b id="setupType">—</b></span><span>Força <b id="signalScore">—</b></span></div></div>
+      <div class="progress-track"><div id="candleProgress" class="progress-fill"></div></div>
+      <p id="signalReason" class="signal-reason">Aguardando dados reais da CasaTrade.</p>
+      <div class="trade-actions" aria-label="Ação manual para a próxima vela"><button id="prepareBuy" class="trade-choice buy-choice" disabled>🟢 COMPRA</button><button id="prepareSell" class="trade-choice sell-choice" disabled>🔴 VENDA</button></div>
+      <p id="tradeActionStatus" class="manual-note">Botões bloqueados até ENTRAR + tempo CasaTrade sincronizado.</p>
     </section>
+
+    <section id="assetQualityCard" class="card asset-quality-card waiting"><div class="section-head"><div><span class="eyebrow">CONTEXTO DO ATIVO</span><h2 id="assetQualityTitle">AVALIANDO MERCADO</h2></div><span id="assetQualityBadge" class="badge warn">SINCRONIZANDO</span></div><p id="assetQualityReason" class="asset-quality-reason">Lendo as velas reais deste ativo.</p><div class="asset-quality-grid"><div><span>QUALIDADE</span><b id="assetQualityScore">—</b></div><div><span>CONTEXTO</span><b id="assetQualityContext">—</b></div><div><span>VIÉS</span><b id="assetQualityBias">—</b></div></div></section>
+
+    <section class="card live-card"><div class="section-head"><div><span class="eyebrow">VELA ATUAL • DADOS REAIS</span><h2>Preço e OHLC</h2></div><span class="quote-pill">COTAÇÃO <b id="price">—</b></span></div><div class="candle-ohlc"><div><span>ABERTURA</span><b id="currentOpen">—</b></div><div><span>MÁXIMA</span><b id="currentHigh">—</b></div><div><span>MÍNIMA</span><b id="currentLow">—</b></div><div><span>ATUAL</span><b id="currentClose">—</b></div></div><p id="ohlcQuality" class="ohlc-quality">Aguardando OHLC da vela atual.</p><div class="recent-head"><span>ÚLTIMAS 10 VELAS REAIS</span><b id="recentCandleCount">0/10</b></div><div id="recentCandles" class="recent-candles" aria-label="Últimas 10 velas"></div></section>
+
     <section id="aiAuditCard" class="card ai-audit-card">
-      <div class="section-head"><div><span class="eyebrow">IA GEMINI • SEGUNDA LEITURA</span><h2 id="aiAuditTitle">AGUARDANDO O SCANNER</h2></div><span id="aiAuditBadge" class="badge">EM ESPERA</span></div>
-      <p id="aiAuditSummary" class="ai-audit-summary">A Gemini entra como segunda leitura quando o scanner encontra um possível sinal para a próxima vela.</p>
-      <div class="ai-audit-grid"><div><span>DIREÇÃO IA</span><b id="aiAuditDirection">—</b></div><div><span>ALINHAMENTO</span><b id="aiAuditAlignment">—</b></div><div><span>IMPACTO EXPLICATIVO</span><b id="aiAuditImpact">—</b></div></div>
+      <div class="section-head"><div><span class="eyebrow">GEMINI • SEGUNDA LEITURA</span><h2 id="aiAuditTitle">AGUARDANDO O SCANNER</h2></div><span id="aiAuditBadge" class="badge">EM ESPERA</span></div>
+      <p id="aiAuditSummary" class="ai-audit-summary">A Gemini só entra depois de um possível sinal técnico com tempo sincronizado.</p>
+      <div class="ai-audit-grid"><div><span>DIREÇÃO IA</span><b id="aiAuditDirection">—</b></div><div><span>ALINHAMENTO</span><b id="aiAuditAlignment">—</b></div><div><span>LEITURA</span><b id="aiAuditImpact">—</b></div></div>
       <ul id="aiAuditEvidence" class="ai-audit-evidence" hidden></ul>
-      <div class="ai-audit-foot"><span id="aiAuditMeta">Motor técnico principal ativo • IA ainda não acionada</span><b>SEM EXECUÇÃO AUTOMÁTICA</b></div>
+      <div class="ai-audit-foot"><span id="aiAuditMeta">Motor técnico principal ativo</span><b>SEM EXECUÇÃO AUTOMÁTICA</b></div>
     </section>
-    <section class="card live-card"><div class="section-head"><div><span class="eyebrow">GRÁFICO ATUAL</span><h2>Preço e últimas velas</h2></div><span class="quote-pill">COTAÇÃO <b id="price">—</b></span></div><div class="candle-ohlc"><div><span>ABERTURA</span><b id="currentOpen">—</b></div><div><span>MÁXIMA</span><b id="currentHigh">—</b></div><div><span>MÍNIMA</span><b id="currentLow">—</b></div><div><span>ATUAL</span><b id="currentClose">—</b></div></div><div class="recent-head"><span>ÚLTIMAS 10 VELAS FECHADAS</span><b id="recentCandleCount">0/10</b></div><div id="recentCandles" class="recent-candles" aria-label="Últimas 10 velas"></div></section>
+
+    <section class="card preferences-card professional-settings"><div class="section-head"><div><span class="eyebrow">CONFIGURAÇÃO PRÉVIA</span><h2>Seu perfil de análise</h2></div><span class="badge">PREFERÊNCIAS</span></div>
+      <label class="setting-row" for="analystMode"><span><b>Modo</b><small>Normal usa 2 fatores; Só A+ exige confluência mais forte.</small></span><select id="analystMode" aria-label="Modo do analista"><option value="NORMAL">Normal</option><option value="A_PLUS">Só A+</option></select></label>
+      <label class="setting-row" for="alertLevel"><span><b>Som</b><small>Off, discreto ou forte. Sem alerta a cada tick.</small></span><select id="alertLevel" aria-label="Nível de som"><option value="off">Off</option><option value="discrete">Discreto</option><option value="strong">Forte</option></select></label>
+      <label class="setting-row" for="holdSeconds"><span><b>Hold de confirmação</b><small>Tempo mínimo que o padrão precisa se manter antes de ENTRAR.</small></span><select id="holdSeconds" aria-label="Hold de confirmação"><option value="3">3 s</option><option value="4">4 s</option><option value="5">5 s</option></select></label>
+      <label class="setting-row" for="desiredExpiration"><span><b>Preferência de expiração</b><small>Somente preferência. O tempo ao vivo sempre vem da CasaTrade.</small></span><select id="desiredExpiration" aria-label="Preferência de expiração"><option value="AUTO">Automático / seguir CasaTrade</option><option value="30s">30 s</option><option value="60s">1 min</option><option value="120s">2 min</option><option value="300s">5 min</option></select></label>
+      <label class="toggle-row" for="overlayToggle"><span><b>Linhas no gráfico</b><small>Suporte, resistência e gatilho do setup atual.</small></span><input id="overlayToggle" type="checkbox" role="switch" aria-label="Linhas no gráfico"></label>
+      <label class="toggle-row" for="geminiToggle"><span><b>Gemini</b><small>Segunda leitura depois do possível sinal. Nunca controla o clock.</small></span><input id="geminiToggle" type="checkbox" role="switch" aria-label="Gemini"></label>
+      <p id="expirationGuardStatus" class="expiration-guard-status warn">AGUARDANDO EXPIRAÇÃO REAL DA CASATRADE.</p>
+      <div hidden aria-hidden="true"><input id="possibleSoundToggle" type="checkbox"><input id="confirmSoundToggle" type="checkbox"></div>
+    </section>
+
     <section class="card radar-card"><div class="section-head"><div><span class="eyebrow">RADAR DE OUTROS ATIVOS</span><h2>Onde vale olhar depois</h2></div><span id="assetRadarBadge" class="badge warn">COLETANDO</span></div><div id="assetRadarList" class="asset-radar-list"></div><p id="assetRadarNote" class="radar-note">O ativo aberto é avaliado acima; o radar mostra apenas outros mercados observados.</p></section>
+
     <section id="validationCard" class="card validation-card" hidden><div class="section-head"><div><span class="eyebrow">VALIDAÇÃO REAL</span><h2>Como o motor está performando</h2></div><span id="validationBadge" class="badge warn">0 RESOLVIDOS</span></div><div class="validation-grid"><div><span>ENTRADAS</span><b id="validationEntries">0</b></div><div><span>WIN</span><b id="validationWins">0</b></div><div><span>LOSS</span><b id="validationLosses">0</b></div><div><span>ACERTO</span><b id="validationWinRate">—</b></div><div><span>WIN PULADO</span><b id="validationSkippedWins">0</b></div><div><span>LOSS EVITADO</span><b id="validationAvoidedLosses">0</b></div></div><div class="validation-detail"><span>AMOSTRA <b id="validationSample">PEQUENA</b></span><span>MELHOR ATIVO <b id="validationBestAsset">Aguardando amostra</b></span><span>MELHOR SETUP <b id="validationBestSetup">Aguardando amostra</b></span><span>ERRO MAIS COMUM <b id="validationLossReason">Nenhum padrão ainda</b></span></div><p id="validationNote" class="muted">Amostra ainda pequena. Use estes números para calibração, não como promessa de taxa futura.</p></section>
-    <section class="card preferences-card"><div class="section-head"><div><span class="eyebrow">FERRAMENTAS</span><h2>Alertas e gráfico</h2></div><span class="badge">OPCIONAL</span></div>
-      <label class="toggle-row" for="overlayToggle"><span><b>Linhas no gráfico</b><small>Suporte, resistência e apenas o gatilho ativo do sinal atual.</small></span><input id="overlayToggle" type="checkbox" role="switch" aria-label="Linhas no gráfico"></label>
-      <label class="toggle-row" for="possibleSoundToggle"><span><b>Som de possível sinal</b><small>Aviso discreto durante a preparação.</small></span><input id="possibleSoundToggle" type="checkbox" role="switch" aria-label="Som de possível sinal"></label>
-      <label class="toggle-row" for="confirmSoundToggle"><span><b>Som de entrada confirmada</b><small>Aviso forte quando a decisão final libera entrada.</small></span><input id="confirmSoundToggle" type="checkbox" role="switch" aria-label="Som de entrada confirmada"></label>
-      <label class="toggle-row" for="desiredExpiration"><span><b>Expiração da entrada</b><small>Uma entrada só é liberada quando a CasaTrade estiver neste mesmo tempo.</small></span><select id="desiredExpiration" aria-label="Expiração desejada"><option value="30s">30 s</option><option value="60s" selected>1 min</option><option value="120s">2 min</option><option value="300s">5 min</option></select></label>
-      <p id="expirationGuardStatus" class="expiration-guard-status warn" style="margin:10px 0 0;font-size:11px;font-weight:800;color:#f0c56e">CONFIRMANDO EXPIRAÇÃO — alvo 1 min.</p>
-    </section>
+
     <section id="licenseCard" class="card license-card"><div class="section-head"><div><span class="eyebrow">ACESSO</span><h2 id="licenseTitle">Verificando licença…</h2></div><span id="licenseHealth" class="badge">—</span></div><p id="licenseText" class="muted">Aguardando status do acesso.</p><div id="activationBox" class="activation-box" hidden><input id="licenseKey" autocomplete="off" placeholder="Cole sua chave ATS"><button id="activateLicense" class="primary">ATIVAR</button></div></section>
   </main>
   <script src="app-v2.js"></script><script src="ui-shell-v2.js"></script><script type="module" src="asset-quality-ui.js"></script><script type="module" src="signal-guidance-ui.js"></script><script type="module" src="ai-analysis-ui.js"></script><script src="radar-ui.js"></script><script src="validation-ui.js"></script><script src="manual-trade-ui.js"></script><script src="bankroll-ui.js"></script><script src="trade-handoff-ui.js"></script><script src="expiration-guard-ui.js"></script><script src="diagnostics-export.js"></script><script type="module" src="account-login.js"></script>

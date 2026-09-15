@@ -1,0 +1,271 @@
+import { readScannerState, updateScannerState } from './services/scanner-state-atomic.js';
+
+// Product policy layer. The technical engine can keep collecting evidence with an
+// estimated clock, but the user-facing decision is never promoted while CasaTrade
+// time is not authoritative. This also owns Normal/A+ confluence and the stable hold.
+const EXACT_CLOCK_SOURCES = new Set(['trader-dom-countdown', 'network-server-cycle']);
+const CLOCK_FRESH_MS = 3000;
+const FOCUS_FRESH_MS = 5500;
+const DEFAULT_PREFS = Object.freeze({ mode: 'NORMAL', geminiEnabled: true, holdSeconds: 3, preferredExpiration: null });
+
+const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
+const text = value => String(value ?? '').trim();
+const clamp = (value, min, max) => Math.max(min, Math.min(max, Number(value) || 0));
+const marketId = value => {
+  const raw = text(value).normalize('NFKC').toUpperCase().replace(/\s+/g, ' ');
+  if (!raw) return '';
+  const otc = /(?:\(|\b|[_-])OTC(?:\)|\b)?/i.test(raw);
+  const pair = raw.match(/\b([A-Z0-9]{2,20})\s*[\/_-]\s*([A-Z0-9]{2,12})/i);
+  return pair ? `${pair[1]}/${pair[2]}${otc ? ' (OTC)' : ''}` : raw;
+};
+const sameMarket = (a, b) => !!marketId(a) && marketId(a) === marketId(b);
+const normTf = value => {
+  const raw = text(value).toUpperCase().replace(/\s+/g, '');
+  let match = raw.match(/^([SMH])(\d{1,5})$/);
+  if (match && Number(match[2]) > 0) return `${match[1]}${Number(match[2])}`;
+  match = raw.match(/^(\d{1,4})(?:M|MIN)$/);
+  if (match && Number(match[1]) > 0) return `M${Number(match[1])}`;
+  match = raw.match(/^(\d{1,5})S$/);
+  if (match && Number(match[1]) > 0) return `S${Number(match[1])}`;
+  return null;
+};
+const normExp = value => {
+  const raw = text(value).toLowerCase().replace(/\s+/g, '');
+  let match = raw.match(/^(\d{1,5})(?:s|seg|segundo|segundos)$/);
+  if (match) return `${Number(match[1])}s`;
+  match = raw.match(/^(\d{1,4})(?:m|min|minuto|minutos)$/);
+  if (match) return `${Number(match[1]) * 60}s`;
+  match = raw.match(/^(\d{1,3}):(\d{2})$/);
+  if (match) return `${Number(match[1]) * 60 + Number(match[2])}s`;
+  return null;
+};
+
+function preferences(state = {}) {
+  const raw = state.analystPreferences || {};
+  return {
+    mode: text(raw.mode).toUpperCase() === 'A_PLUS' ? 'A_PLUS' : 'NORMAL',
+    geminiEnabled: raw.geminiEnabled !== false,
+    holdSeconds: clamp(raw.holdSeconds ?? DEFAULT_PREFS.holdSeconds, 3, 5),
+    preferredExpiration: normExp(raw.preferredExpiration || state.executionPreferences?.expiration || '')
+  };
+}
+
+function focusReady(state = {}) {
+  const focus = state.diagnostics?.focusedAsset || null;
+  if (!focus?.asset || !state.asset) return false;
+  return focus.reliable === true
+    && focus.chartScoped === true
+    && focus.trustedChartFrame === true
+    && (focus.embeddedTrader === true || focus.casaTradeFrame === true)
+    && sameMarket(focus.asset, state.asset)
+    && Number(focus.at || 0) > 0
+    && Date.now() - Number(focus.at) < FOCUS_FRESH_MS;
+}
+
+export function exactCasaTradeTime(state = {}) {
+  const focus = state.diagnostics?.focusedAsset || null;
+  const clock = state.diagnostics?.marketClock || null;
+  if (!focusReady(state) || !clock) return { ready: false, reason: 'Ativo/gráfico ainda não confirmado.' };
+  if (clock.available === false || clock.verified !== true || clock.role !== 'candle-close') {
+    return { ready: false, reason: 'Relógio exato da vela ainda não foi confirmado.' };
+  }
+  if (!EXACT_CLOCK_SOURCES.has(text(clock.source))) return { ready: false, reason: 'Fonte de tempo não autoritativa.' };
+  if (!sameMarket(clock.asset, state.asset)) return { ready: false, reason: 'Relógio pertence a outro ativo.' };
+  if (Number(clock.frameId) !== Number(focus.frameId)) return { ready: false, reason: 'Relógio pertence a outro gráfico.' };
+  if (text(clock.frameHost).toLowerCase() !== text(focus.frameHost).toLowerCase()) return { ready: false, reason: 'Relógio pertence a outro frame.' };
+  if (Date.now() - Number(clock.at || 0) >= CLOCK_FRESH_MS) return { ready: false, reason: 'Relógio da CasaTrade ficou desatualizado.' };
+  if (num(clock.secondsRemaining) == null) return { ready: false, reason: 'Countdown da CasaTrade indisponível.' };
+
+  const liveTf = normTf(clock.timeframe);
+  const stateTf = normTf(state.analysisTimeframe || state.timeframe);
+  const controlTf = normTf(state.platformControls?.observed?.timeframe);
+  if (!liveTf) return { ready: false, reason: 'Timeframe real ainda não foi confirmado.' };
+  if (stateTf && liveTf !== stateTf) return { ready: false, reason: 'Timeframe interno divergiu do gráfico.' };
+  if (controlTf && liveTf !== controlTf) return { ready: false, reason: 'Timeframe visível divergiu do clock da vela.' };
+  return { ready: true, timeframe: liveTf, secondsRemaining: Number(clock.secondsRemaining), source: clock.source };
+}
+
+export function CasaTradeExpiration(state = {}) {
+  const controls = state.platformControls || {};
+  const observed = normExp(controls.observed?.expiration);
+  const fresh = Number(controls.checkedAt || 0) > 0 && Date.now() - Number(controls.checkedAt) < 7000;
+  if (!observed || !fresh) return { ready: false, actual: observed, reason: 'Expiração real da CasaTrade ainda não foi confirmada.' };
+  return { ready: true, actual: observed, reason: 'Expiração lida diretamente da CasaTrade.' };
+}
+
+function completeCandles(state = {}) {
+  return (Array.isArray(state.candles) ? state.candles : []).filter(row =>
+    [row?.open, row?.high, row?.low, row?.close].every(value => num(value) != null)
+  );
+}
+
+function signalDirection(signal = {}) {
+  const ui = text(signal.uiState).toUpperCase();
+  if (ui.includes('BUY')) return 'BUY';
+  if (ui.includes('SELL')) return 'SELL';
+  const direction = text(signal.analysisDirection || signal.direction).toUpperCase();
+  return ['BUY', 'SELL'].includes(direction) ? direction : null;
+}
+
+function confluence(signal = {}, direction = null) {
+  if (!direction) return { count: 0, factors: [] };
+  const a = signal.analytics || {};
+  const factors = [];
+  const power = Number(direction === 'BUY' ? a.buyPower : a.sellPower) || 0;
+  if (power >= 50) factors.push(direction === 'BUY' ? 'poder comprador' : 'poder vendedor');
+  if (Number(a.currentStrength || 0) >= 62) factors.push('força da vela');
+  if (text(a.rejectionDirection).toUpperCase() === direction && Number(a.rejectionStrength || 0) >= 50) factors.push('rejeição');
+  if (text(a.continuationDirection).toUpperCase() === direction && Number(a.continuationScore || 0) >= 60) factors.push('continuação');
+  if (text(a.momentumDirection).toUpperCase() === direction && Number(a.momentumScore || 0) >= 45) factors.push('momentum');
+  const setup = text(signal.setup).toLowerCase();
+  if (/romp|breakout|support|resist|suporte|resistência|resistencia/.test(setup)) factors.push('estrutura');
+  return { count: new Set(factors).size, factors: [...new Set(factors)] };
+}
+
+function shortReason(direction, factors = [], fallback = '') {
+  if (factors.length >= 2) {
+    const labels = factors.slice(0, 2).join(' + ');
+    return `${labels.charAt(0).toUpperCase()}${labels.slice(1)} alinhados para ${direction === 'BUY' ? 'compra' : 'venda'}.`;
+  }
+  const cleanFallback = text(fallback).replace(/^Aguardando\s+/i, '').replace(/\.$/, '');
+  return cleanFallback ? `${cleanFallback}.` : 'Confluência técnica ainda insuficiente.';
+}
+
+function cycleKey(state = {}, signal = {}) {
+  const asset = marketId(state.asset || '');
+  const timeframe = normTf(state.analysisTimeframe || state.timeframe || signal.timeframe) || 'UNCONFIRMED';
+  const target = num(signal.targetStart) ?? num(state.decisionCycle?.targetStart) ?? num(state.diagnostics?.marketClock?.closeAt);
+  return `${asset}|${timeframe}|${target == null ? 'pending' : Math.round(target / 1000) * 1000}`;
+}
+
+function baseDecision(state = {}) {
+  const pref = preferences(state);
+  const signal = state.signal || {};
+  const now = Date.now();
+  const time = exactCasaTradeTime(state);
+  const expiration = CasaTradeExpiration(state);
+  const rows = completeCandles(state);
+  const direction = signalDirection(signal);
+  const score = Number(signal.analysisScore ?? signal.score ?? 0) || 0;
+  const ui = text(signal.uiState).toUpperCase();
+  const cycle = cycleKey(state, signal);
+  const factors = confluence(signal, direction);
+  const requiredFactors = pref.mode === 'A_PLUS' ? 3 : 2;
+  const possibleScore = pref.mode === 'A_PLUS' ? 52 : 44;
+  const finalScore = pref.mode === 'A_PLUS' ? 66 : 58;
+  const technicalCandidate = ['POSSIBLE_BUY', 'POSSIBLE_SELL', 'ENTER_BUY', 'ENTER_SELL'].includes(ui);
+  const technicalFinal = ['ENTER_BUY', 'ENTER_SELL'].includes(ui);
+
+  const common = {
+    profile: pref.mode,
+    holdSeconds: pref.holdSeconds,
+    cycleKey: cycle,
+    score,
+    confluence: factors.count,
+    factors: factors.factors,
+    timeReady: time.ready,
+    expirationReady: expiration.ready,
+    actualExpiration: expiration.actual || null,
+    timeSource: time.source || null,
+    timeframe: time.timeframe || normTf(state.analysisTimeframe || state.timeframe),
+    secondsRemaining: time.secondsRemaining ?? num(state.diagnostics?.marketClock?.secondsRemaining),
+    updatedAt: now
+  };
+
+  if (!state.asset || num(state.price) == null || !focusReady(state)) {
+    return { ...common, uiState: 'ANALYZING_MARKET', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: 'Identificando o ativo e a cotação do gráfico atual.' };
+  }
+  if (rows.length < 2) {
+    return { ...common, uiState: 'BUILDING_PATTERN', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: 'Montando o padrão com as velas reais da CasaTrade.' };
+  }
+  if (!time.ready) {
+    return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: `AGUARDAR — ${time.reason}` };
+  }
+  if (!expiration.ready) {
+    return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: `AGUARDAR — ${expiration.reason}` };
+  }
+  if (!technicalCandidate || !direction || score < possibleScore || factors.count < requiredFactors) {
+    const modeText = pref.mode === 'A_PLUS' ? 'Só A+ exige 3 fatores alinhados.' : 'Padrão sem confluência suficiente.';
+    return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: `AGUARDAR — ${modeText}` };
+  }
+
+  const previous = state.professionalDecision || {};
+  const sameCandidate = previous.cycleKey === cycle && previous.direction === direction && ['POSSIBLE_BUY','POSSIBLE_SELL','ENTER_BUY','ENTER_SELL'].includes(text(previous.uiState).toUpperCase());
+  const possibleSince = sameCandidate && Number(previous.possibleSince || 0) > 0 ? Number(previous.possibleSince) : now;
+  const holdMs = pref.holdSeconds * 1000;
+  const heldFor = Math.max(0, now - possibleSince);
+  const finalQuality = technicalFinal && score >= finalScore && factors.count >= requiredFactors;
+  const reason = shortReason(direction, factors.factors, signal.reason);
+
+  if (!finalQuality || heldFor < holdMs) {
+    return {
+      ...common,
+      uiState: direction === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL',
+      direction,
+      actionable: false,
+      alert: 'discrete',
+      possibleSince,
+      holdRemainingMs: Math.max(0, holdMs - heldFor),
+      reason
+    };
+  }
+
+  return {
+    ...common,
+    uiState: direction === 'BUY' ? 'ENTER_BUY' : 'ENTER_SELL',
+    direction,
+    actionable: true,
+    alert: 'strong',
+    possibleSince,
+    holdRemainingMs: 0,
+    reason
+  };
+}
+
+function signature(value = {}) {
+  return JSON.stringify({
+    uiState: value.uiState || null,
+    direction: value.direction || null,
+    actionable: !!value.actionable,
+    profile: value.profile || null,
+    holdSeconds: value.holdSeconds || null,
+    cycleKey: value.cycleKey || null,
+    score: value.score || 0,
+    confluence: value.confluence || 0,
+    factors: value.factors || [],
+    timeReady: !!value.timeReady,
+    expirationReady: !!value.expirationReady,
+    actualExpiration: value.actualExpiration || null,
+    timeSource: value.timeSource || null,
+    timeframe: value.timeframe || null,
+    secondsRemaining: value.secondsRemaining ?? null,
+    possibleSince: value.possibleSince || null,
+    holdRemainingBucket: value.holdRemainingMs == null ? null : Math.ceil(Number(value.holdRemainingMs) / 250),
+    reason: value.reason || ''
+  });
+}
+
+let writing = false;
+async function evaluate(state = {}) {
+  if (writing) return;
+  const decision = baseDecision(state);
+  if (signature(decision) === signature(state.professionalDecision || {})) return;
+  writing = true;
+  try {
+    await updateScannerState(current => {
+      const next = baseDecision(current);
+      if (signature(next) === signature(current.professionalDecision || {})) return current;
+      return { ...current, professionalDecision: next };
+    });
+  } finally {
+    writing = false;
+  }
+}
+
+chrome.storage?.onChanged?.addListener?.((changes, area) => {
+  if (area !== 'local' || !changes.scannerState?.newValue) return;
+  evaluate(changes.scannerState.newValue).catch(() => {});
+});
+
+setInterval(() => readScannerState().then(evaluate).catch(() => {}), 500);
+readScannerState().then(evaluate).catch(() => {});

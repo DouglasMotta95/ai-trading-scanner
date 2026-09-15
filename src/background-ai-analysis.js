@@ -7,27 +7,31 @@ const inFlight = new Set();
 
 const text = value => String(value ?? '').trim();
 const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
+const effectiveDecision = state => state?.professionalDecision || state?.signal || {};
 
 function aiStage(state = {}) {
-  const ui = text(state.signal?.uiState).toUpperCase();
+  const ui = text(effectiveDecision(state)?.uiState).toUpperCase();
   if (ui === 'POSSIBLE_BUY' || ui === 'POSSIBLE_SELL') return 'possible';
-  if (ui === 'ENTER_BUY' || ui === 'ENTER_SELL' || ui === 'SKIP') return 'final';
+  if (ui === 'ENTER_BUY' || ui === 'ENTER_SELL') return 'final';
   return null;
 }
 
 function directionOf(state = {}) {
-  const ui = text(state.signal?.uiState).toUpperCase();
+  const decision = effectiveDecision(state);
+  const ui = text(decision?.uiState).toUpperCase();
   if (ui.includes('BUY')) return 'BUY';
   if (ui.includes('SELL')) return 'SELL';
-  const direction = text(state.signal?.direction).toUpperCase();
+  const direction = text(decision?.direction || state.signal?.direction).toUpperCase();
   return ['BUY', 'SELL'].includes(direction) ? direction : 'WAIT';
 }
 
 function cycleKey(state = {}) {
+  const decision = effectiveDecision(state);
+  if (text(decision.cycleKey)) return text(decision.cycleKey);
   const signal = state.signal || {};
   const target = num(signal.targetStart);
   if (target == null) return '';
-  const timeframe = text(state.analysisTimeframe || signal.timeframe || state.timeframe || 'M1').toUpperCase();
+  const timeframe = text(state.analysisTimeframe || signal.timeframe || state.timeframe).toUpperCase();
   return `${text(state.asset).toUpperCase()}|${timeframe}|${Math.round(target / 1000) * 1000}`;
 }
 
@@ -39,7 +43,9 @@ function requestKey(state = {}) {
 }
 
 function liveReady(state = {}) {
+  if (state.analystPreferences?.geminiEnabled === false) return false;
   if (state.connection !== 'online' || state.platformId !== 'casatrade' || !state.asset || num(state.price) == null) return false;
+  if (state.professionalDecision?.timeReady !== true || state.professionalDecision?.expirationReady !== true) return false;
   return aiSnapshotReady(aiSnapshot(state));
 }
 
@@ -109,7 +115,19 @@ async function publishResult(key, cycle, stage, scannerDirection, result) {
   });
 }
 
+async function publishDisabled(state = {}) {
+  if (state.aiAudit?.status === 'disabled') return;
+  await updateScannerState(current => ({
+    ...current,
+    aiAudit: { status: 'disabled', receivedAt: Date.now(), error: null }
+  }));
+}
+
 async function evaluate(state = {}) {
+  if (state.analystPreferences?.geminiEnabled === false) {
+    await publishDisabled(state);
+    return;
+  }
   const stage = aiStage(state);
   if (!stage || !liveReady(state)) return;
   if (shouldReusePreviousFinal(state, stage)) return;
@@ -128,7 +146,7 @@ async function evaluate(state = {}) {
   await publishLoading(key, cycle, stage, scannerDirection);
   try {
     const latest = await readScannerState();
-    if (cycleKey(latest) !== cycle) return;
+    if (cycleKey(latest) !== cycle || latest.analystPreferences?.geminiEnabled === false) return;
     const result = await requestAiAnalysis(latest);
     await publishResult(key, cycle, stage, scannerDirection, result);
   } finally {
