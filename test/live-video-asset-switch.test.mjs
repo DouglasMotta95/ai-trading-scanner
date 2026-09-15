@@ -4,10 +4,11 @@ import fs from 'node:fs';
 
 const read = path => fs.readFileSync(new URL('../' + path, import.meta.url), 'utf8');
 
-test('visible trader chart is the authoritative asset source', () => {
+test('visible CasaTrade chart remains the authoritative asset source on owned or legacy trader documents', () => {
   const focused = read('src/content/focused-asset-v2.js');
   const market = read('src/background-market-session.js');
-  assert.match(focused, /frameRole: 'trader-frame'/);
+  assert.match(focused, /const frameRole = traderHost\(host\) \? 'trader-frame' : 'casa-chart-frame'/);
+  assert.match(focused, /if \(!traderHost\(host\) && !casaHost\(host\)\) return/);
   assert.match(focused, /chartScoped: true/);
   assert.match(focused, /reliable: true/);
   assert.match(focused, /pointerup/);
@@ -28,12 +29,13 @@ test('asset or timeframe switch clears every operational field that could leak t
   assert.match(reset, /resetOrchestrator\(\)/);
 });
 
-test('runtime trusts only embedded trader frames under a CasaTrade top tab', () => {
+test('runtime trusts only CasaTrade-owned charts or legacy trader frames under a CasaTrade top tab', () => {
   const market = read('src/background-market-session.js');
-  assert.match(market, /sender\.frameId !== 0/);
-  assert.match(market, /traderHost\(frameHost\)/);
-  assert.match(market, /casaHost\(topHost\)/);
-  assert.match(market, /trusted:/);
+  assert.match(market, /const tabOwned = !!sender\.tab\?\.id && casaHost\(topHost\)/);
+  assert.match(market, /const embeddedTrader = tabOwned && Number\(sender\.frameId\) !== 0 && traderHost\(frameHost\)/);
+  assert.match(market, /const casaOwnedChart = tabOwned && casaHost\(frameHost\)/);
+  assert.match(market, /trusted: embeddedTrader \|\| casaOwnedChart/);
+  assert.match(market, /\['trader-frame', 'casa-chart-frame'\]\.includes\(role\)/);
 });
 
 test('overlay never draws analysis for another market, including OTC versus regular', () => {
