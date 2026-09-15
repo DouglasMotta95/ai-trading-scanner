@@ -43,7 +43,7 @@ test('current runtime paths enforce visual focus lock and clear operational stat
   const entry = read('src/background-entry.js');
   assert.match(focused, /ariaSelected === 'false'/);
   assert.match(focused, /chartScoped: true/);
-  assert.match(focused, /frameRole: 'trader-frame'/);
+  assert.match(focused, /const frameRole = traderHost\(host\) \? 'trader-frame' : 'casa-chart-frame'/);
   assert.match(market, /function resetForSession/);
   assert.match(market, /price: null/);
   assert.match(market, /candles: \[\]/);
