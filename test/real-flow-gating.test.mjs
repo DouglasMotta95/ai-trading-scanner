@@ -14,64 +14,44 @@ function section(source, start, end) {
   return source.slice(a, b);
 }
 
-test('market connection restores or validates cached license before rejecting access', () => {
-  const background = read('src/background.js');
-  const augment = read('src/background-augment.js');
-  const panel = read('src/sidepanel/app.js');
-
-  const connect = section(background, 'async function connectActiveTab()', 'function scanCasaTradeFrame');
-  assert.match(connect, /restoreCachedLicense\(\)/);
-  assert.match(connect, /syncLicense\(settings, scannerState, true\)/);
-  assert.match(connect, /NON_RESTORABLE_LICENSE_STATUSES/);
-  const restoreIndex = connect.indexOf('restoreCachedLicense()');
-  const finalGateIndex = connect.lastIndexOf('if (!licenseActive(scannerState.license))');
-  assert.ok(restoreIndex >= 0 && restoreIndex < finalGateIndex);
-  assert.ok(finalGateIndex < connect.indexOf('injectReaders(tab.id)'));
-
-  const apply = section(background, 'async function applySnapshot', 'async function directScanActiveTab');
-  assert.match(apply, /licenseRequired\(settings\) && !licenseActive\(scannerState\.license\)/);
-  assert.ok(apply.indexOf('!licenseActive(scannerState.license)') < apply.indexOf('processSnapshot(enriched, candidate)'));
-
-  assert.match(augment, /if \(settings\.runtimePaused\) return;/);
-  assert.match(augment, /updateScannerState\(scannerState => \{[\s\S]*?if \(!licenseActive\(scannerState\)\) return;/);
-  assert.match(panel, /if \(reconnectBusy \|\| !licenseStillValid\(lastState\.license\)\) return;/);
-  assert.match(panel, /ATIVAÇÃO NECESSÁRIA/);
-  assert.match(panel, /Ative a licença para iniciar a análise/);
+test('market connection restores or validates cached license before live readers are injected', () => {
+  const control = read('src/background-control.js');
+  const connect = section(control, 'async function connectActiveTab()', 'async function activate(');
+  assert.match(control, /restoreCachedLicense/);
+  assert.match(control, /validateLicense/);
+  assert.match(connect, /const license = await recoverLicense\(state\)/);
+  assert.match(connect, /if \(!activeLicense\(license\)\)/);
+  assert.match(connect, /await injectModern\(tab\.id\)/);
+  assert.ok(connect.indexOf('if (!activeLicense(license))') < connect.indexOf('await injectModern(tab.id)'));
+  assert.match(connect, /platform_not_registered/);
 });
 
-test('completed decisions persist in local storage but are scoped to the browser session', () => {
-  const background = read('src/background.js');
-  const orchestrator = read('src/core/orchestrator.js');
-
-  assert.match(background, /COMPLETED_DECISIONS_KEY = 'atsCompletedDecisions'/);
-  assert.match(background, /RUNTIME_SESSION_KEY = 'atsRuntimeSessionId'/);
-  assert.match(background, /storageSessionGet\(RUNTIME_SESSION_KEY\)/);
-  assert.match(background, /storageLocalGet\(COMPLETED_DECISIONS_KEY\)/);
-  assert.match(background, /\[COMPLETED_DECISIONS_KEY\]: \{ sessionId, rows, updatedAt: Date\.now\(\) \}/);
-  assert.match(background, /restoreCompletedDecisions\(cached\.rows\)/);
-  assert.match(background, /serializeCompletedDecisions\(\)/);
-  assert.match(background, /await ensureCompletedDecisionCache\(\)/);
-  assert.match(background, /await persistCompletedDecisionCache\(\)\.catch/);
-  assert.match(orchestrator, /export function serializeCompletedDecisions/);
-  assert.match(orchestrator, /export function restoreCompletedDecisions/);
+test('trade preparation remains confirmation-gated and manual-only', () => {
+  const control = read('src/background-control.js');
+  const handoff = read('src/content/trade-handoff.js');
+  const manual = section(control, 'async function manualIntent', 'sidePanelSetBehavior');
+  assert.match(manual, /if \(!confirmed \|\| signalDirection !== direction\) return \{ ok: false, error: 'signal_not_confirmed'/);
+  assert.match(manual, /mode: 'manual-only'/);
+  assert.match(control, /type === 'ATS_PREPARE_TRADE'/);
+  assert.doesNotMatch(handoff, /\.click\s*\(/);
+  assert.doesNotMatch(handoff, /dispatchEvent\s*\(\s*new\s+MouseEvent/);
 });
 
-test('activation only clears the key after a genuinely active response', () => {
-  const panel = read('src/sidepanel/app.js');
-  const activation = section(panel, "$('activateLicense')?.addEventListener", 'async function prepare');
-  assert.match(activation, /const activated = !!result\?\.ok && licenseStillValid\(result\?\.license\)/);
-  assert.match(activation, /if \(activated\)[\s\S]*?input\.value = ''/);
-  assert.match(activation, /licenseErrorText\(result\?\.error\)/);
-  const failureBranch = activation.slice(activation.indexOf('} else {'));
-  assert.doesNotMatch(failureBranch, /input\.value\s*=/);
+test('activation preserves a valid cached session on transient device_locked', () => {
+  const control = read('src/background-control.js');
+  const license = read('src/services/license.js');
+  assert.match(control, /response\?\.error === 'device_locked'/);
+  assert.match(control, /restoreCachedLicense\(\)/);
+  assert.match(control, /syncPending: true/);
+  assert.match(license, /device_locked/);
+  assert.match(license, /device_limit_reached/);
 });
 
-test('focus stability remains a preference while the visible chart frame is authoritative', () => {
+test('visible chart frame stays authoritative and legacy market writers are ignored', () => {
   const focus = read('src/content/focused-asset-v2.js');
-  const generic = read('src/content/generic-adapter.js');
-  const augment = read('src/background-augment.js');
-  const background = read('src/background.js');
-  const panel = read('src/sidepanel/app.js');
+  const market = read('src/background-market-session.js');
+  const control = read('src/background-control.js');
+  const entry = read('src/background-entry.js');
 
   assert.match(focus, /__ATS_FOCUSED_ASSET_META__/);
   assert.match(focus, /reliable: true/);
@@ -79,37 +59,16 @@ test('focus stability remains a preference while the visible chart frame is auth
   assert.match(focus, /frameRole: 'trader-frame'/);
   assert.match(focus, /candidateSamples >= 2 && stableFor >= 220/);
 
-  assert.match(generic, /const domChoice = bestDomAsset\(rows\)/);
-  assert.match(generic, /const anyNetwork = bestNetworkQuote\(''\)/);
-  assert.match(generic, /const focusSupported = focusFresh/);
-  assert.doesNotMatch(generic, /if \(!explicitFocus\) return;/);
+  assert.match(market, /const candidate = bestForFocus\(payload, asset\)/);
+  assert.match(market, /if \(!candidate\) return/);
+  assert.match(market, /const clock = exactClock\(state, info\)/);
+  assert.match(market, /return evaluateAtClock\(clockState, focus, record\)/);
+  assert.match(market, /session-integrity/);
 
-  assert.match(augment, /const FOCUS_STABLE_MS = 2000/);
-  assert.match(augment, /const focusStable =/);
-  assert.match(augment, /return updateScannerState\(scannerState =>/);
-  assert.match(augment, /const frameMatchesFocus =/);
-  assert.match(augment, /if \(!frameMatchesFocus\) return/);
-  assert.match(augment, /const candidate = chooseCandidate\(payload, focus\)/);
-  assert.match(augment, /if \(!candidate \|\| !sameAsset\(candidate\.asset, focus\)\) return/);
-  assert.match(augment, /const clock = authoritativeClock\(scannerState, asset, sender\)/);
-  assert.match(augment, /if \(!clock\) return base/);
-  assert.doesNotMatch(augment, /Date\.now\(\) - stableSince < FOCUS_STABLE_MS\) return/);
-
-  const apply = section(background, 'async function applySnapshot', 'async function directScanActiveTab');
-  assert.match(apply, /resolveMarketEvidence\(snapshot, scannerState/);
-  assert.match(apply, /stage: 'confirming_asset'/);
-  assert.match(apply, /stage: 'reading_price'/);
-  assert.match(apply, /connection: 'online'/);
-  assert.match(apply, /const next = await updateScannerState\(async scannerState =>/);
-  assert.match(apply, /processSnapshot\(enriched, candidate\)/);
-  assert.match(apply, /requiredCandles: 2/);
-  assert.doesNotMatch(apply, /const focusReady =/);
-
-  assert.match(panel, /reading_history/);
-  assert.match(panel, /analyzing_current/);
-  assert.match(panel, /diagnosing_next_candle/);
-  assert.match(panel, /function principalState/);
-  assert.match(panel, /POSSÍVEL COMPRA/);
-  assert.match(panel, /ENTRAR NA PRÓXIMA VELA: COMPRA/);
-  assert.doesNotMatch(panel, /DIAGNÓSTICO: AGUARDAR/);
+  assert.match(control, /single_session_market_authority/);
+  assert.match(control, /ATS_PLATFORM_SNAPSHOT/);
+  assert.match(control, /ATS_NETWORK_DIAGNOSTIC/);
+  assert.match(entry, /background-market-session\.js/);
+  assert.doesNotMatch(entry, /background-augment\.js/);
+  assert.doesNotMatch(entry, /background-integrity\.js/);
 });
