@@ -40,19 +40,18 @@ test('POSSIBLE is preparation only and does not start more than 30 seconds befor
   assert.notEqual(out.signal.uiState, 'POSSIBLE_SELL');
 });
 
-test('score-qualified bullish bias is visible as POSSIBLE before a two-hit final ENTER', () => {
+test('stable bullish bias becomes POSSIBLE after two observations and stays visible until final ENTER', () => {
   resetOrchestrator();
   const bucket = Math.floor(1_701_100_000_000 / minute) * minute;
 
-  const possibleEarly = snap(bucket, 35_000, 25);
-  assert.equal(possibleEarly.signal.uiState, 'POSSIBLE_BUY');
-  assert.equal(possibleEarly.signal.state, 'WATCH');
-  assert.ok(possibleEarly.signal.analysisScore >= 44);
+  const first = snap(bucket, 35_000, 25);
+  assert.notEqual(first.signal.uiState, 'POSSIBLE_BUY');
+  assert.notEqual(first.signal.state, 'WATCH');
 
   const possible = snap(bucket, 36_000, 24);
   assert.equal(possible.signal.uiState, 'POSSIBLE_BUY');
-  assert.ok(possible.signal.secondsRemaining <= 30);
-  assert.ok(possible.signal.secondsRemaining > 15);
+  assert.equal(possible.signal.state, 'WATCH');
+  assert.ok(possible.signal.analysisScore >= 44);
 
   const finalCandidate = snap(bucket, 45_000, 15);
   assert.notEqual(finalCandidate.signal.state, 'CONFIRM');
