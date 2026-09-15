@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AI Trading Scanner",
-  "version": "0.11.7",
+  "version": "0.11.8",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArDZEDqmjiphJQ4FBhEvxfVBwyAOVeme/dFP5Axh0OOB3KKFtubALdF4RqqnTfxUgGnW/6DhDGlc8asFHN0lRMDEkbv+RcqXIoeQb/EUwDG6QAzBSSxHZh8gCjITjU3Ba2YZ0tkM5aSamxSG7wZIqgQjz4qyc6xOlVNuMcHpz+ucQhapy1dn+0elnHwIjMISemIEEfWMBDkNxqES6XJEGA+MqQpB2+qQYQ0tLryWM7XGRBFabwfs8F6rLvtATf3Y8cgJzn6SL85i22qcy8zmhvWzlM0OC0/CfNULXuaoq1fBlihmicu/psTg/n4BBVSuCtsVb2XBKodgR7cxrFP4PawIDAQAB",
   "description": "Scanner de sinais para CasaTrade com leitura de mercado real, radar observacional, rastreio de entradas manuais e controle passivo de banca.",
   "permissions": ["storage","activeTab","scripting","sidePanel"],
@@ -36,7 +36,7 @@
         "https://casatrade.com/*","https://*.casatrade.com/*","https://casatrade.io/*","https://*.casatrade.io/*",
         "https://casatraders.online/*","https://*.casatraders.online/*","https://ivcasatraders.online/*","https://*.ivcasatraders.online/*"
       ],
-      "js": ["src/content/worker-probe.js","src/content/canvas-probe.js","src/content/network-probe.js"],
+      "js": ["src/content/standalone-instrument-probe.js","src/content/worker-probe.js","src/content/canvas-probe.js","src/content/network-probe.js"],
       "run_at": "document_start",
       "world": "MAIN",
       "all_frames": true,
@@ -58,5 +58,5 @@
       "match_origin_as_fallback": true
     }
   ],
-  "version_name": "0.11.7-focus-ui-consistency-hotfix"
+  "version_name": "0.11.8-standalone-feed-focus-recovery"
 }
