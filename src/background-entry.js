@@ -7,4 +7,5 @@ import './background-shadow-calibration.js';
 import './background-asset-radar.js';
 import './background-manual-trades.js';
 import './background-account-metrics.js';
+import './background-data-inspector.js';
 import './background-control.js';
