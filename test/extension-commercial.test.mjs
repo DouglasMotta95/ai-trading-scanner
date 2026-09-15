@@ -20,7 +20,7 @@ const REMOVED = [
 ];
 const standalone = term => new RegExp(`(?:^|[^A-ZÀ-ÖØ-Þ])${term}(?:$|[^A-ZÀ-ÖØ-Þ])`);
 
-test('manifest only injects supported CasaTrade capture scripts and trusted embedded trader frames', () => {
+test('manifest only injects supported CasaTrade-owned or legacy trader capture scripts', () => {
   const manifest = JSON.parse(read('manifest.json'));
   assert.equal(manifest.manifest_version, 3);
   assert.equal(manifest.background?.service_worker, 'src/background-entry.js');
@@ -29,6 +29,14 @@ test('manifest only injects supported CasaTrade capture scripts and trusted embe
   const serialized = JSON.stringify(manifest);
   assert.doesNotMatch(serialized, /history-adapter|chart-overlay|background-platform-sync/);
   for (const host of manifest.content_scripts.flatMap(x => x.matches || [])) assert.match(host, /casatrade\.(com|io)|(?:iv)?casatraders\.online/);
+
+  const focusedRow = manifest.content_scripts.find(row => (row.js || []).includes('src/content/focused-asset-v2.js'));
+  assert.ok(focusedRow);
+  for (const trusted of [
+    'https://casatrade.com/*','https://*.casatrade.com/*','https://casatrade.io/*','https://*.casatrade.io/*',
+    'https://casatraders.online/*','https://*.casatraders.online/*','https://ivcasatraders.online/*','https://*.ivcasatraders.online/*'
+  ]) assert.ok(focusedRow.matches.includes(trusted), `missing trusted chart host ${trusted}`);
+  assert.equal(focusedRow.matches.some(host => /example|google|fake-casatrade/.test(host)), false);
 });
 
 test('platform detection is strict and returns null for unrelated or embedded-frame-only hosts', async () => {
@@ -102,7 +110,9 @@ test('market feed is filtered to the authoritative visible chart market before i
   assert.ok(!scripts.includes('src/content/network-bridge.js'));
   assert.match(focus, /ATS_VISUAL_FOCUS_V2/);
   assert.match(focus, /chartScoped: true/);
-  assert.match(focus, /frameRole: 'trader-frame'/);
+  assert.match(focus, /const frameRole = traderHost\(host\) \? 'trader-frame' : 'casa-chart-frame'/);
+  assert.match(market, /const casaOwnedChart = tabOwned && casaHost\(frameHost\)/);
+  assert.match(market, /trusted: embeddedTrader \|\| casaOwnedChart/);
   assert.match(market, /function bestForFocus\(payload = \{\}, focus = ''\)/);
   assert.match(market, /filter\(row => sameMarket\(row\.asset, focus\)\)/);
   assert.match(market, /Number\(focus\.frameId\) !== Number\(info\.frameId\)/);
