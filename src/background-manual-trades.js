@@ -1,6 +1,6 @@
 import { readScannerState } from './services/scanner-state-atomic.js';
 import { storageLocalGet, storageLocalSet } from './services/chrome-compat.js';
-import { createManualTrade, mergeManualTrade, resolveManualTrades, manualTradeMetrics } from './core/manual-trades.js';
+import { createManualTrade, mergeManualTrade, resolveManualTrades, resolveManualTradesFromFeed, manualTradeMetrics } from './core/manual-trades.js';
 
 const KEY = 'atsManualTradeLedgerV1';
 let cached = { rows: [], metrics: manualTradeMetrics([]), updatedAt: 0 };
@@ -64,6 +64,14 @@ async function resolveAgainstState(state = {}) {
   await persist(result.rows);
 }
 
+async function resolveAgainstFeed(payload = {}) {
+  const previous = await ensureLoaded();
+  if (!(previous.rows || []).some(row => row?.status === 'PENDING')) return;
+  const result = resolveManualTradesFromFeed(previous.rows, payload, Date.now());
+  if (!result.resolved.length) return;
+  await persist(result.rows);
+}
+
 async function drain() {
   if (busy) return;
   busy = true;
@@ -93,6 +101,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === 'ATS_MANUAL_TRADE_CLICK') {
     registerClick(message, sender).then(sendResponse).catch(error => sendResponse({ ok: false, error: String(error?.message || error) }));
     return true;
+  }
+  if (message?.type === 'ATS_EMBEDDED_FEED' && senderTrusted(sender)) {
+    resolveAgainstFeed(message.payload || {}).catch(() => {});
+    return false;
   }
   if (message?.type === 'ATS_GET_MANUAL_TRADE_LEDGER') {
     ensureLoaded().then(data => sendResponse({ ok: true, rows: data.rows.slice(-100), metrics: data.metrics })).catch(error => sendResponse({ ok: false, error: String(error?.message || error) }));
