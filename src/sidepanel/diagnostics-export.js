@@ -5,6 +5,34 @@
   const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
   const clean = (value, max = 180) => String(value ?? '').normalize('NFKC').replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
   const safeList = (rows, max = 20, len = 180) => (Array.isArray(rows) ? rows : []).map(value => clean(value, len)).filter(Boolean).slice(0, max);
+  const age = value => Number(value) > 0 ? Math.max(0, Date.now() - Number(value)) : null;
+  const safeFrameHints = (rows, max = 16) => (Array.isArray(rows) ? rows : []).slice(0, max).map(row => ({
+    protocol: clean(row?.protocol, 16),
+    host: clean(row?.host, 120),
+    opaque: row?.opaque === true,
+    srcdoc: row?.srcdoc === true
+  }));
+  const safeProbeFrames = (rows, max = 20) => (Array.isArray(rows) ? rows : []).slice(0, max).map(row => ({
+    frameId: num(row?.frameId),
+    protocol: clean(row?.protocol, 16),
+    host: clean(row?.host, 120),
+    referrerHost: clean(row?.referrerHost, 120),
+    isTop: row?.isTop === true,
+    readyState: clean(row?.readyState, 24),
+    iframeHints: safeFrameHints(row?.iframeHints)
+  }));
+  const safeBootRows = (rows, max = 24) => (Array.isArray(rows) ? rows : []).slice(-max).map(row => ({
+    ageMs: age(row?.at),
+    frameId: num(row?.frameId),
+    isTop: row?.isTop === true,
+    module: clean(row?.module, 64),
+    phase: clean(row?.phase, 80),
+    protocol: clean(row?.protocol, 16),
+    host: clean(row?.host, 120),
+    referrerHost: clean(row?.referrerHost, 120),
+    readyState: clean(row?.readyState, 24),
+    frameHints: safeFrameHints(row?.frameHints)
+  }));
 
   function ensureUi() {
     if (document.getElementById(BUTTON_ID)) return;
@@ -40,6 +68,9 @@
     const signal = state.signal || {};
     const account = state.accountMetrics || {};
     const quality = state.assetQuality || {};
+    const runtimeInjection = state.diagnostics?.runtimeInjection || {};
+    const runtimeBoot = state.diagnostics?.runtimeBoot || {};
+    const probe = runtimeInjection.probe || {};
     const lastManual = manual?.metrics?.last || (Array.isArray(manual?.rows) ? manual.rows.at(-1) : null);
     return {
       generatedAt: new Date().toISOString(),
@@ -50,7 +81,7 @@
       asset: clean(state.asset || focus.asset || ''),
       timeframe: clean(state.analysisTimeframe || state.timeframe || clock.timeframe || ''),
       price: num(state.price),
-      lastSeenAgeMs: Number(state.lastSeen) > 0 ? Math.max(0, Date.now() - Number(state.lastSeen)) : null,
+      lastSeenAgeMs: age(state.lastSeen),
       focus: {
         asset: clean(focus.asset || ''), reliable: focus.reliable === true, chartScoped: focus.chartScoped === true,
         frameId: num(focus.frameId), source: clean(focus.source || '')
@@ -58,13 +89,47 @@
       clock: {
         verified: clock.verified === true, available: clock.available !== false, role: clean(clock.role || ''),
         source: clean(clock.source || ''), secondsRemaining: num(clock.secondsRemaining), timeframe: clean(clock.timeframe || ''),
-        ageMs: Number(clock.at) > 0 ? Math.max(0, Date.now() - Number(clock.at)) : null
+        ageMs: age(clock.at)
       },
       session: {
         epoch: num(session.epoch), asset: clean(session.asset || ''), timeframe: clean(session.timeframe || ''),
         dataMode: clean(session.dataMode || ''), frameId: num(session.frameId)
       },
       acquisition: { stage: clean(acquisition.stage || ''), reason: clean(acquisition.reason || '', 240) },
+      runtime: {
+        injection: {
+          ageMs: age(runtimeInjection.endedAt),
+          durationMs: num(runtimeInjection.durationMs),
+          tabId: num(runtimeInjection.tabId),
+          probe: {
+            ok: probe.ok === true,
+            mode: clean(probe.mode, 48),
+            frameCount: num(probe.frameCount),
+            firstError: clean(probe.firstError, 220),
+            error: clean(probe.error, 220),
+            frames: safeProbeFrames(probe.frames)
+          },
+          isolated: {
+            total: num(runtimeInjection.isolated?.total),
+            ok: num(runtimeInjection.isolated?.ok),
+            fallback: num(runtimeInjection.isolated?.fallback)
+          },
+          main: {
+            total: num(runtimeInjection.main?.total),
+            ok: num(runtimeInjection.main?.ok)
+          },
+          failures: (Array.isArray(runtimeInjection.failures) ? runtimeInjection.failures : []).slice(0, 20).map(row => ({
+            file: clean(row?.file, 120),
+            world: clean(row?.world, 16),
+            error: clean(row?.error, 220)
+          }))
+        },
+        boots: {
+          ageMs: age(runtimeBoot.lastBootAt),
+          count: num(runtimeBoot.count),
+          rows: safeBootRows(runtimeBoot.boots)
+        }
+      },
       signal: {
         uiState: clean(signal.uiState || signal.state || ''), direction: clean(signal.direction || ''),
         score: num(signal.analysisScore ?? signal.score), setup: clean(signal.setup || ''),
@@ -81,7 +146,7 @@
         riskPct: num(account.riskPct), sessionDelta: num(account.sessionDelta), confidence: account.confidence || null
       },
       dataInspector: {
-        ageMs: Number(inspector.at) > 0 ? Math.max(0, Date.now() - Number(inspector.at)) : null,
+        ageMs: age(inspector.at),
         transport: clean(inspector.transports?.primary || ''),
         candidateCount: num(inspector.rawCandidateCount), candleCount: num(inspector.candleCount),
         tradeEvidence: {
