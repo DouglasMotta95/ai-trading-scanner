@@ -27,20 +27,21 @@ test('chrome compat resolves callback-only storage APIs used by Android extensio
   assert.equal(backing.sample, undefined);
 });
 
-test('mobile focus tracker uses the visible trader chart and reacts immediately to touch selection', () => {
+test('mobile focus tracker uses the visible CasaTrade chart and reacts immediately to touch selection', () => {
   const focus = read('src/content/focused-asset-v2.js');
   const market = read('src/background-market-session.js');
   const manifest = JSON.parse(read('manifest.json'));
   assert.match(focus, /ariaSelected === 'true'/);
   assert.match(focus, /ariaSelected === 'false'/);
   assert.match(focus, /chartScoped: true/);
-  assert.match(focus, /frameRole: 'trader-frame'/);
+  assert.match(focus, /const frameRole = traderHost\(host\) \? 'trader-frame' : 'casa-chart-frame'/);
   assert.match(focus, /document\.addEventListener\('touchend'/);
   assert.match(focus, /invalidateElements\(\)/);
   assert.match(market, /message\?\.type === 'ATS_VISUAL_FOCUS_V2'/);
   assert.match(market, /message\.chartScoped !== true/);
   const focused = manifest.content_scripts.find(row => row.js?.includes('src/content/focused-asset-v2.js'));
   assert.equal(focused.all_frames, true);
+  assert.ok(focused.matches.some(value => value.includes('casatrade.com')));
   assert.ok(focused.matches.some(value => value.includes('casatraders.online')));
 });
 
