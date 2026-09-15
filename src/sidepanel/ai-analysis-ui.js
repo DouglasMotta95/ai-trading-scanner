@@ -8,6 +8,23 @@ const impact = $('aiAuditImpact');
 const evidence = $('aiAuditEvidence');
 const meta = $('aiAuditMeta');
 const card = $('aiAuditCard');
+const decisionCard = $('decisionCard');
+const syncStrip = $('syncStrip');
+
+// The next-candle decision is the primary action surface. Keep it at the top,
+// immediately after synchronization status, and keep Gemini directly below it.
+if (syncStrip && decisionCard) syncStrip.after(decisionCard);
+if (decisionCard && card) decisionCard.after(card);
+
+let topStatus = $('aiTopStatus');
+if (!topStatus) {
+  topStatus = document.createElement('span');
+  topStatus.id = 'aiTopStatus';
+  topStatus.className = 'badge';
+  topStatus.textContent = 'IA EM ESPERA';
+  const version = $('extensionVersion');
+  if (version?.parentElement) version.before(topStatus);
+}
 
 const ui = {
   reinforce: { title: 'REFORÇA A LEITURA', badge: 'ALINHADA', cls: 'ok' },
@@ -16,6 +33,11 @@ const ui = {
 };
 
 function setText(node, value) { if (node) node.textContent = value; }
+function setTop(text, cls = '') {
+  if (!topStatus) return;
+  topStatus.textContent = text;
+  topStatus.className = `badge ${cls}`.trim();
+}
 function pct(value) { const n = Number(value); return Number.isFinite(n) ? `${Math.max(0, Math.min(100, Math.round(n)))}/100` : '—'; }
 function impactText(value) {
   const n = Number(value);
@@ -40,6 +62,7 @@ function render(state = {}) {
   card.classList.remove('loading', 'reinforce', 'caution', 'error');
 
   if (!ai.status) {
+    setTop('IA EM ESPERA');
     setText(title, 'AGUARDANDO O SCANNER');
     setText(badge, 'EM ESPERA');
     if (badge) badge.className = 'badge';
@@ -54,6 +77,7 @@ function render(state = {}) {
 
   if (ai.status === 'loading') {
     card.classList.add('loading');
+    setTop('IA ANALISANDO', 'warn');
     setText(title, 'GEMINI ANALISANDO');
     setText(badge, 'AO VIVO');
     if (badge) badge.className = 'badge warn';
@@ -68,6 +92,7 @@ function render(state = {}) {
 
   if (ai.status === 'error') {
     card.classList.add('error');
+    setTop('IA FALLBACK', 'warn');
     setText(title, 'IA TEMPORARIAMENTE INDISPONÍVEL');
     setText(badge, 'FALLBACK');
     if (badge) badge.className = 'badge warn';
@@ -82,6 +107,7 @@ function render(state = {}) {
 
   const preset = ui[ai.verdict] || ui.insufficient;
   card.classList.add(ai.verdict === 'reinforce' ? 'reinforce' : ai.verdict === 'caution' ? 'caution' : 'loading');
+  setTop(ai.verdict === 'reinforce' ? 'IA ALINHADA' : ai.verdict === 'caution' ? 'IA CAUTELA' : 'IA NEUTRA', preset.cls);
   setText(title, preset.title);
   setText(badge, preset.badge);
   if (badge) badge.className = `badge ${preset.cls}`;
