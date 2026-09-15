@@ -18,6 +18,7 @@ test('0.11.12 wires Gemini through a server-side authenticated gateway', () => {
   assert.match(client, /\/v1\/ai\/analyze/);
   assert.doesNotMatch(client, /GEMINI_API_KEY|generativelanguage\.googleapis\.com/);
   assert.match(background, /aiAudit/);
+  assert.match(background, /if \(currentDirection === 'WAIT'\) return false/);
   assert.doesNotMatch(background, /signal\s*:/);
 });
 
@@ -30,8 +31,11 @@ test('Gemini gateway keeps the API key server-side and returns constrained struc
   assert.match(gateway, /responseSchema:\s*RESPONSE_SCHEMA/);
   assert.match(gateway, /decodeClientToken\(bearer\(req\)\)/);
   assert.match(gateway, /confidenceAdjustment/);
-  assert.match(gateway, /não executa|Nunca execute operação/i);
-  assert.doesNotMatch(gateway, /access-control-allow-origin':\s*'\*'/);
+  assert.match(gateway, /Nunca execute operação/i);
+  assert.match(gateway, /origin\.startsWith\('chrome-extension:\/\/'\)/);
+  assert.match(gateway, /origin\.startsWith\('edge-extension:\/\/'\)/);
+  assert.doesNotMatch(gateway, /access-control-allow-origin'\]\s*=\s*'\*'/);
+  assert.doesNotMatch(gateway, /allowedOrigin\s*\|\|\s*'\*'/);
 });
 
 test('side panel visibly exposes the Gemini second opinion without replacing the technical engine', () => {
