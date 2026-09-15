@@ -14,10 +14,13 @@ test('focused asset is sourced only from a trusted visible chart document', () =
   assert.doesNotMatch(focus, /type:\s*'ATS_FOCUSED_ASSET'/);
 });
 
-test('ambiguous simultaneous asset labels are rejected instead of guessing a pair', () => {
+test('ambiguous simultaneous asset labels are rejected while a recent chart selection can break the tie', () => {
   const focus = read('src/content/focused-asset-v2.js');
   assert.match(focus, /const second = winners\[1\] \|\| null/);
-  assert.match(focus, /if \(gap < \(first\.explicit \? 120 : 280\)\) return null/);
+  assert.match(focus, /const minimumGap = first\.interaction \? 70 : first\.explicit \? 120 : 280/);
+  assert.match(focus, /if \(gap < minimumGap\) return null/);
+  assert.match(focus, /if \(listContext && !chartScoped\) continue/);
+  assert.match(focus, /if \(!chartScoped\) continue/);
   assert.match(focus, /assets\.length !== 1/);
 });
 
@@ -44,11 +47,14 @@ test('asset, timeframe or frame switch hard-resets state that could leak the pre
   assert.match(market, /session-integrity/);
 });
 
-test('clock v4 accepts exact candle-close time from trusted chart documents and rejects purchase or expiry timers', () => {
+test('clock v4 rejects purchase/duration timers and accepts bounded CasaTrade expiry countdown as candle boundary', () => {
   const clock = read('src/content/market-cycle-clock-v4.js');
   assert.match(clock, /if \(!traderHost\(host\) && !casaHost\(host\)\) return/);
   assert.match(clock, /focus\.trustedChartFrame !== true/);
-  assert.match(clock, /hora de compra\|buy time\|entry time\|expira\|expiry\|expiration\|duration\|duracao/);
+  assert.match(clock, /hora de compra\|buy time\|entry time\|duration\|duracao/);
+  assert.match(clock, /const expirySemantic = \/expira\|expiry\|expiration\/\.test\(context\)/);
+  assert.match(clock, /clockMode: domClock\.expirySemantic \? 'platform-expiry-countdown'/);
+  assert.match(clock, /if \(value\.seconds < 0 \|\| value\.seconds > limit \+ 2\) continue/);
   assert.match(clock, /clockRole: 'candle-close'/);
   assert.match(clock, /clockSource: 'trader-dom-countdown'/);
   assert.match(clock, /clockSource: 'platform-cycle-derived'/);
@@ -89,15 +95,17 @@ test('exact clock is the heartbeat of bounded next-candle decisions', () => {
   assert.match(orchestrator, /ANALYST_THRESHOLDS\.confirmScore/);
 });
 
-test('only overlay v2 is wired and it renders simplified current-session guidance', () => {
+test('only overlay v2 is wired and it renders safe support/resistance plus one clock-gated trigger', () => {
   const manifest = JSON.parse(read('manifest.json'));
   const scripts = manifest.content_scripts.flatMap(row => row.js || []);
   assert.ok(scripts.includes('src/content/analysis-visual-overlay-v2.js'));
   assert.ok(!scripts.includes('src/content/analysis-visual-overlay.js'));
   const overlay = read('src/content/analysis-visual-overlay-v2.js');
   assert.match(overlay, /__ATS_ANALYSIS_VISUAL_OVERLAY__ = true/);
-  assert.match(overlay, /casatraders\.online/);
-  assert.match(overlay, /ivcasatraders\.online/);
+  assert.match(overlay, /function marketIntegrityOk\(\)/);
+  assert.match(overlay, /function clockIntegrityOk\(\)/);
+  assert.match(overlay, /if \(!clockIntegrityOk\(\)\) return null/);
+  assert.match(overlay, /function fallbackLevels\(\)/);
   for (const label of ['Resistência relevante','Suporte relevante','Entrada COMPRA','Entrada VENDA']) assert.ok(overlay.includes(label), `missing overlay label ${label}`);
   for (const legacy of ['Preço atual','Gatilho compra','Gatilho venda','Aguardando:']) assert.ok(!overlay.includes(legacy), `legacy overlay clutter remained ${legacy}`);
   assert.match(overlay, /pointerEvents: 'none'/);
