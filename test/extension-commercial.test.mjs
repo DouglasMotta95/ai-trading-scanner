@@ -119,11 +119,15 @@ test('trade handoff highlights but never executes financial action automatically
   assert.doesNotMatch(handoff, /dispatchEvent\s*\(\s*new\s+MouseEvent/);
 });
 
-test('license persistence remains cache-first', () => {
+test('license persistence remains cache-first and only definitive license errors invalidate cache', () => {
   const license = read('src/services/license.js');
+  const control = read('src/background-control.js');
+  const authoritative = license.match(/const AUTHORITATIVE_LICENSE_ERRORS = new Set\(\[([\s\S]*?)\]\);/)?.[1] || '';
   assert.match(license, /atsLastValidLicense/);
   assert.match(license, /REOPEN_CACHE_GRACE_MS/);
   assert.match(license, /AUTHORITATIVE_LICENSE_ERRORS/);
-  assert.match(license, /device_locked/);
-  assert.match(license, /device_limit_reached/);
+  assert.match(authoritative, /device_limit_reached/);
+  assert.doesNotMatch(authoritative, /device_locked/);
+  assert.match(control, /response\?\.error === 'device_locked'/);
+  assert.match(control, /restoreCachedLicense\(\)/);
 });
