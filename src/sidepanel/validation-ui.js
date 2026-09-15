@@ -40,5 +40,6 @@ chrome.storage.onChanged.addListener(changes => {
   if (changes.atsShadowCalibrationV1?.newValue?.metrics) render(changes.atsShadowCalibrationV1.newValue.metrics);
 });
 
+import('./trial-ui.js').catch(() => {});
 refresh().catch(() => {});
 setInterval(() => refresh().catch(() => {}), 5000);
