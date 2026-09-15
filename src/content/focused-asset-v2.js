@@ -6,7 +6,9 @@
   const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
   const host = String(location.hostname || '').toLowerCase().replace(/\.$/, '');
   const traderHost = value => value === 'casatraders.online' || value.endsWith('.casatraders.online') || value === 'ivcasatraders.online' || value.endsWith('.ivcasatraders.online');
-  if (!traderHost(host)) return;
+  const casaHost = value => value === 'casatrade.com' || value.endsWith('.casatrade.com') || value === 'casatrade.io' || value.endsWith('.casatrade.io');
+  if (!traderHost(host) && !casaHost(host)) return;
+  const frameRole = traderHost(host) ? 'trader-frame' : 'casa-chart-frame';
 
   const QUOTES = new Set(['USDT','USDC','USD','EUR','GBP','JPY','AUD','CAD','CHF','NZD','BRL','BTC','ETH']);
   const pairRe = /\b([A-Z0-9]{2,20})\s*[\/_-]\s*([A-Z0-9]{2,12})(?:\s*\(\s*OTC\s*\)|\s+OTC)?/gi;
@@ -28,8 +30,6 @@
   }
 
   const canonicalAsset = value => assetsIn(value)[0] || '';
-  // OTC and regular quotes are different live markets. Never collapse them when
-  // deciding which chart owns the scanner session.
   const identity = value => canonicalAsset(value);
   const sameAsset = (a, b) => !!identity(a) && identity(a) === identity(b);
   const visible = el => {
@@ -214,7 +214,7 @@
         chartScoped: true,
         chartFound: winner.chartFound === true,
         frameHost: host,
-        frameRole: 'trader-frame',
+        frameRole,
         at: now,
         source: winner.explicit ? 'chart-frame-explicit' : 'chart-frame-scoped'
       };
@@ -241,9 +241,6 @@
     }, delay);
   }
 
-  // Live charts mutate constantly. Coalesce those mutations instead of walking the
-  // full DOM for every canvas/label change. Touch/click invalidates the short cache
-  // immediately so a real user asset switch is still picked up without delay.
   const observer = new MutationObserver(() => schedulePublish(160, false));
   try { observer.observe(document.documentElement, { subtree: true, childList: true, attributes: true, characterData: true }); } catch {}
   const forceScan = delay => { invalidateElements(); schedulePublish(delay, true); };
