@@ -33,7 +33,10 @@
     const label = source.match(labelRe);
     if (!label) return null;
     const after = source.slice((label.index || 0) + label[0].length);
-    const money = after.match(/(?:R\$|US\$|\$|€|£)?\s*-?\d{1,3}(?:[.\s]\d{3})*(?:,\d{1,8})?|(?:R\$|US\$|\$|€|£)?\s*-?\d+(?:[.,]\d{1,8})?/);
+    // Capture the whole monetary token first. A pattern limited to 1–3 leading
+    // digits could turn "R$ 1000,00" into 100. parseNumber then decides whether
+    // dots/commas are thousands or decimal separators.
+    const money = after.match(/(?:R\$|US\$|\$|€|£)?\s*-?\d[\d.,\s]*/);
     if (!money) return null;
     const value = parseNumber(money[0]);
     if (value == null || Math.abs(value) > 1e9) return null;
