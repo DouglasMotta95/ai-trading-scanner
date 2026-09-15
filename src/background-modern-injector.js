@@ -1,7 +1,7 @@
 const casaHost = value => value === 'casatrade.com' || value.endsWith('.casatrade.com') || value === 'casatrade.io' || value.endsWith('.casatrade.io');
 
 async function inject(tabId) {
-  if (!tabId || !chrome.scripting?.executeScript) return;
+  if (!tabId || !chrome.scripting?.executeScript) return false;
   const isolated = [
     'src/content/device-anchor.js',
     'src/content/focused-asset-protocol.js',
@@ -24,7 +24,10 @@ async function inject(tabId) {
   for (const file of mainWorld) {
     try { await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, files: [file], world: 'MAIN' }); } catch {}
   }
+  return true;
 }
+
+globalThis.__ATS_INJECT_MODERN_PIPELINE__ = inject;
 
 function maybe(tab) {
   if (!tab?.id || !tab.url) return;
