@@ -4,6 +4,7 @@
 
   const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
   const clean = (value, max = 180) => String(value ?? '').normalize('NFKC').replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
+  const safeList = (rows, max = 20, len = 180) => (Array.isArray(rows) ? rows : []).map(value => clean(value, len)).filter(Boolean).slice(0, max);
 
   function ensureUi() {
     if (document.getElementById(BUTTON_ID)) return;
@@ -34,6 +35,8 @@
     const clock = state.diagnostics?.marketClock || {};
     const session = state.diagnostics?.marketSession || {};
     const acquisition = state.diagnostics?.acquisition || {};
+    const inspector = state.diagnostics?.dataInspector || {};
+    const tradeEvidence = inspector.tradeEvidence || {};
     const signal = state.signal || {};
     const account = state.accountMetrics || {};
     const quality = state.assetQuality || {};
@@ -76,6 +79,16 @@
       bankroll: {
         balance: num(account.balance), stake: num(account.stake), payoutPct: num(account.payoutPct), currency: clean(account.currency || '', 8),
         riskPct: num(account.riskPct), sessionDelta: num(account.sessionDelta), confidence: account.confidence || null
+      },
+      dataInspector: {
+        ageMs: Number(inspector.at) > 0 ? Math.max(0, Date.now() - Number(inspector.at)) : null,
+        transport: clean(inspector.transports?.primary || ''),
+        candidateCount: num(inspector.rawCandidateCount), candleCount: num(inspector.candleCount),
+        tradeEvidence: {
+          detected: tradeEvidence.detected === true,
+          keys: safeList(tradeEvidence.keys, 30, 64),
+          endpoints: safeList(tradeEvidence.endpoints, 12, 240)
+        }
       },
       candlesAvailable: Array.isArray(state.candles) ? state.candles.length : 0,
       lastManualTrade: lastManual ? {
