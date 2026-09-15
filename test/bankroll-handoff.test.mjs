@@ -4,10 +4,10 @@ import fs from 'node:fs';
 
 const read = path => fs.readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
-test('0.11.5 wires passive bankroll observation and safe trade handoff', () => {
+test('0.11.6 wires passive bankroll observation and safe trade handoff', () => {
   const manifest = JSON.parse(read('manifest.json'));
   const files = manifest.content_scripts.flatMap(row => row.js || []);
-  assert.equal(manifest.version, '0.11.5');
+  assert.equal(manifest.version, '0.11.6');
   assert.ok(files.includes('src/content/account-metrics-observer.js'));
   assert.ok(files.includes('src/content/trade-handoff-v2.js'));
 
@@ -15,6 +15,11 @@ test('0.11.5 wires passive bankroll observation and safe trade handoff', () => {
   assert.match(observer, /ATS_ACCOUNT_METRICS/);
   assert.match(observer, /platform-dom-labelled/);
   assert.match(observer, /\\d\[\\d\.,\\s\]\*/);
+  assert.match(observer, /topBarBalanceCandidate/);
+  assert.match(observer, /deposit\|depositar/);
+  assert.match(observer, /invest/);
+  assert.match(observer, /lucro\|profit/);
+  assert.match(observer, /shadowRoot/);
   assert.doesNotMatch(observer, /\.click\s*\(/);
 
   const handoff = read('src/content/trade-handoff-v2.js');
