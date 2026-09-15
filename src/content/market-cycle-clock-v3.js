@@ -1,14 +1,15 @@
 (() => {
-  if (globalThis.__ATS_MARKET_CLOCK_SYNC__) return;
+  if (globalThis.__ATS_MARKET_CYCLE_CLOCK_V3__) return;
+  globalThis.__ATS_MARKET_CYCLE_CLOCK_V3__ = true;
   globalThis.__ATS_MARKET_CLOCK_SYNC__ = true;
 
-  const clean = v => String(v ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
-  const fold = v => clean(v).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
+  const fold = value => clean(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
   const host = String(location.hostname || '').toLowerCase().replace(/\.$/, '');
-  const traderHost = h => h === 'casatraders.online' || h.endsWith('.casatraders.online') || h === 'ivcasatraders.online' || h.endsWith('.ivcasatraders.online');
+  const traderHost = value => value === 'casatraders.online' || value.endsWith('.casatraders.online') || value === 'ivcasatraders.online' || value.endsWith('.ivcasatraders.online');
   if (!traderHost(host)) return;
 
-  const tf = value => {
+  function tf(value) {
     const s = fold(value).replace(/\s+/g, '');
     let m = s.match(/^s(\d{1,5})$/) || s.match(/^(\d{1,5})(?:s|seg|segundo|segundos)$/);
     if (m && Number(m[1]) > 0) return `S${Number(m[1])}`;
@@ -18,24 +19,25 @@
     if (m && Number(m[1]) > 0) return `H${Number(m[1])}`;
     m = s.match(/^(\d{1,3}):(\d{2})$/);
     if (m) {
-      const sec = Number(m[1]) * 60 + Number(m[2]);
-      return sec > 0 && sec % 60 === 0 ? `M${sec / 60}` : sec > 0 ? `S${sec}` : null;
+      const seconds = Number(m[1]) * 60 + Number(m[2]);
+      return seconds > 0 && seconds % 60 === 0 ? `M${seconds / 60}` : seconds > 0 ? `S${seconds}` : null;
     }
     return null;
-  };
-  const secondsFor = value => {
-    const x = tf(value) || 'M1';
-    if (x[0] === 'S') return Number(x.slice(1));
-    if (x[0] === 'M') return Number(x.slice(1)) * 60;
-    if (x[0] === 'H') return Number(x.slice(1)) * 3600;
+  }
+
+  function secondsFor(value) {
+    const normalized = tf(value) || 'M1';
+    if (normalized[0] === 'S') return Number(normalized.slice(1));
+    if (normalized[0] === 'M') return Number(normalized.slice(1)) * 60;
+    if (normalized[0] === 'H') return Number(normalized.slice(1)) * 3600;
     return 60;
-  };
+  }
 
   function visible(el) {
     if (!el || !(el instanceof Element)) return false;
-    const r = el.getBoundingClientRect();
-    const s = getComputedStyle(el);
-    return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden' && Number(s.opacity || 1) > 0;
+    const rect = el.getBoundingClientRect();
+    const style = getComputedStyle(el);
+    return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity || 1) > 0;
   }
 
   function selectedChartTf() {
@@ -52,7 +54,7 @@
       const context = fold(`${flags} ${el.parentElement?.innerText || ''}`);
       let score = /true|active|selected|current|checked/i.test(flags) ? 180 : 0;
       if (/vela|candle|timeframe|periodo|period/.test(context)) score += 90;
-      if (/expira|expiry|duration|hora de compra/.test(context)) score -= 160;
+      if (/expira|expiry|duration|hora de compra/.test(context)) score -= 180;
       rows.push({ value, score });
     }
     rows.sort((a, b) => b.score - a.score);
@@ -67,16 +69,25 @@
     for (const el of nodes) {
       if (!visible(el)) continue;
       const own = clean(el.getAttribute?.('aria-label') || el.getAttribute?.('aria-valuetext') || el.getAttribute?.('title') || el.innerText || el.textContent || '');
-      if (!own || own.length > 90) continue;
-      const ctx = fold(`${own} ${el.parentElement?.innerText || ''}`).slice(0, 260);
-      if (/hora de compra|buy time|entry time|expira|expiry|expiration|duration|duracao/.test(ctx)) continue;
-      if (!/vela|candle|remaining|restante|countdown|timer|fechamento/.test(ctx)) continue;
-      const candidates = [];
-      for (const m of own.matchAll(/\b(\d{1,3}):(\d{2})\b/g)) candidates.push({ sec: Number(m[1]) * 60 + Number(m[2]), token: m[0] });
-      for (const m of own.matchAll(/\b(\d{1,5})\s*(?:s|seg|segundo|segundos)\b/gi)) candidates.push({ sec: Number(m[1]), token: m[0] });
-      for (const c of candidates) if (c.sec >= 0 && c.sec <= limit + 2) rows.push({ ...c, text: own });
+      if (!own || own.length > 100) continue;
+      const parentText = clean(el.parentElement?.innerText || el.parentElement?.textContent || '');
+      const context = fold(`${own} ${parentText}`).slice(0, 300);
+      if (/hora de compra|buy time|entry time|expira|expiry|expiration|duration|duracao/.test(context)) continue;
+      if (!/vela|candle|remaining|restante|countdown|timer|fechamento|close/.test(context)) continue;
+      const values = [];
+      for (const match of own.matchAll(/\b(\d{1,3}):(\d{2})\b/g)) values.push({ seconds: Number(match[1]) * 60 + Number(match[2]), token: match[0] });
+      for (const match of own.matchAll(/\b(\d{1,5})\s*(?:s|seg|segundo|segundos)\b/gi)) values.push({ seconds: Number(match[1]), token: match[0] });
+      for (const value of values) {
+        if (value.seconds < 0 || value.seconds > limit + 2) continue;
+        const rect = el.getBoundingClientRect();
+        let score = 100;
+        if (/vela|candle|fechamento|close/.test(context)) score += 120;
+        if (/remaining|restante|countdown|timer/.test(context)) score += 60;
+        if (rect.width < innerWidth * .5) score += 10;
+        rows.push({ ...value, text: own, score });
+      }
     }
-    rows.sort((a, b) => a.sec - b.sec);
+    rows.sort((a, b) => b.score - a.score || a.seconds - b.seconds);
     return rows[0] || null;
   }
 
@@ -86,12 +97,15 @@
     const now = Number.isFinite(server) && server > 1e12 && Math.abs(Date.now() - server) < 120000 ? server : Date.now();
     const durationMs = duration * 1000;
     const elapsed = ((now % durationMs) + durationMs) % durationMs;
-    let sec = Math.ceil((durationMs - elapsed) / 1000);
-    if (!Number.isFinite(sec) || sec <= 0 || sec > duration) sec = duration;
-    return { sec, token: `${sec}s`, text: `Ciclo ${cycleTf} pela duração selecionada na CasaTrade` };
+    let seconds = Math.ceil((durationMs - elapsed) / 1000);
+    if (!Number.isFinite(seconds) || seconds <= 0 || seconds > duration) seconds = duration;
+    return seconds;
   }
 
-  let busy = false, lastKey = '', lastAt = 0;
+  let busy = false;
+  let lastKey = '';
+  let lastAt = 0;
+
   async function tick() {
     if (busy) return;
     busy = true;
@@ -100,36 +114,44 @@
       const state = response?.state || null;
       if (!state?.license || !['active', 'valid'].includes(String(state.license.status || '').toLowerCase())) return;
       const focus = state.diagnostics?.focusedAsset || null;
-      if (!focus?.asset || String(focus.frameHost || '').toLowerCase() !== host || focus.embeddedTrader !== true) return;
+      if (!focus?.asset || focus.reliable !== true || focus.chartScoped !== true || focus.embeddedTrader !== true) return;
+      if (String(focus.frameHost || '').toLowerCase() !== host) return;
 
       const controls = state.platformControls?.observed || {};
-      const checkedAt = Number(state.platformControls?.checkedAt || 0);
-      const controlsFresh = checkedAt > 0 && Date.now() - checkedAt < 5000;
+      const controlsFresh = Number(state.platformControls?.checkedAt || 0) > 0 && Date.now() - Number(state.platformControls.checkedAt) < 5000;
       const expiration = clean(controls.expiration || state.targetExpiration || state.expiration || '') || null;
       const expirationTf = controlsFresh ? tf(expiration) : null;
       const controlTf = controlsFresh ? tf(controls.timeframe) : null;
       const chartTf = selectedChartTf();
       const stateTf = tf(state.analysisTimeframe || state.timeframe);
-      const platformTf = expirationTf || controlTf;
-      const cycleTf = platformTf || chartTf || stateTf || 'M1';
+      const cycleTf = expirationTf || controlTf || chartTf || stateTf || 'M1';
 
-      // A DOM timer is valid only when the visible chart explicitly agrees with the
-      // selected CasaTrade cycle. Otherwise use the selected duration itself.
-      const dom = chartTf === cycleTf ? exactDomCountdown(cycleTf) : null;
-      const clock = dom || derivedCountdown(cycleTf, state);
-      const mode = dom ? 'dom-exact' : 'platform-cycle-derived';
-      const payload = {
+      // A visual countdown is authoritative only when the chart itself agrees with
+      // the selected CasaTrade cycle. A derived value is diagnostic only: it must
+      // never be labelled verified or release a trading signal.
+      const domClock = chartTf === cycleTf ? exactDomCountdown(cycleTf) : null;
+      const derived = derivedCountdown(cycleTf, state);
+      const payload = domClock ? {
         type: 'ATS_MARKET_CLOCK_V2', asset: focus.asset, timeframe: cycleTf,
-        secondsRemaining: clock.sec, expiration, available: true, verified: true,
-        clockRole: 'candle-close', clockSource: 'trader-dom-countdown',
-        clockMode: mode, clockText: clock.text, clockToken: clock.token,
-        confidence: dom ? 99 : 86, frameHost: host, at: Date.now()
+        secondsRemaining: domClock.seconds, expiration, available: true, verified: true,
+        clockRole: 'candle-close', clockSource: 'trader-dom-countdown', clockMode: 'dom-exact',
+        clockText: domClock.text, clockToken: domClock.token, confidence: 99, frameHost: host, at: Date.now()
+      } : {
+        type: 'ATS_MARKET_CLOCK_V2', asset: focus.asset, timeframe: cycleTf,
+        secondsRemaining: derived, expiration, available: false, verified: false,
+        clockRole: 'candle-close', clockSource: 'platform-cycle-derived', clockMode: 'diagnostic-only',
+        clockText: `Estimativa ${derived}s — aguardando relógio real da CasaTrade`, clockToken: `${derived}s`,
+        confidence: 0, frameHost: host, at: Date.now()
       };
-      const key = `${payload.asset}|${cycleTf}|${payload.secondsRemaining}|${expiration || ''}|${mode}`;
-      if (key === lastKey && Date.now() - lastAt < 650) return;
-      lastKey = key; lastAt = Date.now();
+
+      const key = `${payload.asset}|${cycleTf}|${payload.secondsRemaining}|${payload.available}|${payload.clockSource}`;
+      if (key === lastKey && Date.now() - lastAt < 700) return;
+      lastKey = key;
+      lastAt = Date.now();
       await chrome.runtime.sendMessage(payload).catch(() => null);
-    } finally { busy = false; }
+    } finally {
+      busy = false;
+    }
   }
 
   setInterval(tick, 500);
