@@ -79,7 +79,7 @@ test('missing or unverified CasaTrade clock removes actionable signal immediatel
   assert.match(clockHandler, /if \(!exact \|\| secondsRemaining == null \|\| secondsRemaining < 0\)/);
   assert.match(clockHandler, /signal: null/);
   assert.match(clockHandler, /stage: 'syncing_clock'/);
-  assert.match(market, /CLOCK_FRESH_MS = 2200/);
+  assert.match(market, /CLOCK_FRESH_MS = 2600/);
 });
 
 test('exact clock is the heartbeat of bounded next-candle decisions', () => {
