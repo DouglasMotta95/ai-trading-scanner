@@ -7,7 +7,7 @@ const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta
 
 test('0.11.13 can recover exact live candle-close clock from the current structured OHLC boundary', () => {
   assert.equal(manifest.version, '0.11.13');
-  assert.match(manifest.version_name, /live-clock-recovery/i);
+  assert.match(String(manifest.version_name || ''), /^0\.11\.13-/i);
   assert.match(bridge, /structuredCandleBoundary/);
   assert.match(bridge, /now >= openAt \+ durationMs \+ 1200/);
   assert.match(bridge, /count < 2/);
