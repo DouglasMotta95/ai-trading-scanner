@@ -121,8 +121,8 @@ test('market feed is filtered to the authoritative visible chart market before i
   assert.match(market, /Number\(focus\.frameId\) !== Number\(info\.frameId\)/);
   assert.match(market, /const candidate = bestForFocus\(payload, asset\)/);
   assert.match(market, /if \(!candidate\) return/);
-  assert.match(market, /const clock = exactClock\(state, info\)/);
-  assert.match(market, /if \(clock\) processed = processSnapshot/);
+  assert.match(market, /const clock = usableClock\(state, info\)/);
+  assert.match(market, /if \(clock\) processed = processLiveSnapshot/);
 });
 
 test('trade handoff highlights but never executes financial action automatically', () => {
