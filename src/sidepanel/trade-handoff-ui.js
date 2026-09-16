@@ -81,7 +81,7 @@ async function atsPrepareTrade(direction) {
     };
     const handoff = await atsSendToFrame(state.targetTabId, focus.frameId, message);
     if (status) status.textContent = handoff?.found
-      ? `${direction === 'BUY' ? 'COMPRA' : 'VENDA'} preparada com expiração CasaTrade ${actualExpiration}. Confirme manualmente na plataforma.`
+      ? `${direction === 'BUY' ? 'COMPRA' : 'VENDA'} preparada com expiração CasaTrade ${actualExpiration}. Confirme com seu toque na plataforma CasaTrade.`
       : 'Sinal confirmado, mas o botão da CasaTrade não foi localizado com segurança. Confirme manualmente na plataforma.';
   } finally {
     button.textContent = original;
