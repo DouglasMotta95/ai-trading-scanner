@@ -45,6 +45,6 @@ test('side panel visibly exposes the Gemini second opinion without replacing the
   assert.match(html, /IA GEMINI • SEGUNDA LEITURA/);
   assert.match(html, /ai-analysis-ui\.js/);
   assert.match(html, /SEM EXECUÇÃO AUTOMÁTICA/);
-  assert.match(ui, /motor técnico continua funcionando normalmente/i);
+  assert.match(ui, /motor técnico.*continua ativo/i);
   assert.match(ui, /confidenceAdjustment/);
 });
