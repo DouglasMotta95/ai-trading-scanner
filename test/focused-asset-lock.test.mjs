@@ -59,16 +59,18 @@ test('current runtime paths enforce visual focus lock and clear operational stat
 test('panel exposes exactly one principal next-candle state', () => {
   const panel = read('src/sidepanel/app-v2.js');
   for (const state of [
-    'ANALISANDO PRÓXIMA VELA',
+    'ANALISANDO MERCADO ATUAL',
+    'MONTANDO PADRÃO DA PRÓXIMA VELA',
     'POSSÍVEL COMPRA',
     'POSSÍVEL VENDA',
-    'DECIDINDO AGORA',
-    'ENTRAR COMPRA',
-    'ENTRAR VENDA',
-    'PULAR PRÓXIMA VELA'
+    'ENTRAR: COMPRA',
+    'ENTRAR: VENDA',
+    'AGUARDAR'
   ]) assert.match(panel, new RegExp(state.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   assert.match(panel, /const model = decisionModel\(state\)/);
-  assert.match(panel, /decisionText'\)\.textContent = model\.title/);
-  assert.match(panel, /signalReason'\)\.textContent = model\.detail/);
+  assert.match(panel, /setText\('decisionText', model\.text\)/);
+  assert.match(panel, /setText\('signalReason', model\.reason\)/);
+  assert.doesNotMatch(panel, /DECIDINDO AGORA/);
+  assert.doesNotMatch(panel, /PULAR PRÓXIMA VELA/);
   assert.doesNotMatch(panel, /DIAGNÓSTICO: AGUARDAR/);
 });
