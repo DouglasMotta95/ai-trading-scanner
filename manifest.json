@@ -50,7 +50,7 @@
       ],
       "js": [
         "src/content/runtime-message-compat.js",
-        "src/content/embedded-feed-bridge.js","src/content/platform-sync.js","src/content/casatrade-ui-observer-v2.js","src/content/market-cycle-clock-v4.js",
+        "src/content/embedded-feed-bridge.js","src/content/platform-sync.js","src/content/casatrade-ui-observer-v2.js","src/content/market-cycle-clock-v4.js","src/content/market-clock-projector.js","src/content/casatrade-expiration-probe.js",
         "src/content/casatrade-data-inspector.js","src/content/analysis-visual-overlay-v2.js","src/content/manual-trade-observer.js",
         "src/content/account-metrics-observer.js","src/content/trade-handoff-v2.js"
       ],
@@ -75,5 +75,5 @@
       ]
     }
   ],
-  "version_name": "0.11.13-live-clock-recovery-gemini"
+  "version_name": "0.11.13-build5-live-pipeline"
 }
