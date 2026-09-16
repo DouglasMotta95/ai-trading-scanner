@@ -59,6 +59,6 @@
     if (key === lastKey && now - lastAt < 700) return;
     lastKey = key;
     lastAt = now;
-    chrome.runtime.sendMessage({ type: 'ATS_MANUAL_TRADE_CLICK', direction, clickedAt: now, label }).catch(() => {});
+    (globalThis.__ATS_SEND_MESSAGE__?.({ type: 'ATS_MANUAL_TRADE_CLICK', direction, clickedAt: now, label }) || Promise.resolve(null)).catch(() => {});
   }, true);
 })();
