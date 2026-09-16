@@ -35,7 +35,6 @@ function confirmAt(bucket) {
   const possible = processSnapshot(strongSnapshot(bucket, bucket + 36_000), state);
   assert.equal(possible.signal.state, 'WATCH');
   assert.equal(possible.signal.uiState, 'POSSIBLE_BUY');
-
   const firstFinal = processSnapshot(strongSnapshot(bucket, bucket + 51_000), state);
   assert.notEqual(firstFinal.signal.state, 'CONFIRM');
   const final = processSnapshot(strongSnapshot(bucket, bucket + 52_000), state);
@@ -52,10 +51,7 @@ test('persisted lastConfirmed from an older session is never revived implicitly'
     timeframe: 'M1', analysisTimeframe: 'M1', connection: 'online',
     serverTime: bucket + 5_000,
     candles: [{ time: bucket, open: 1.078, high: 1.08, low: 1.077, close: 1.079, timeframe: 'M1' }]
-  }, {
-    connection: 'online',
-    lastConfirmed: { state: 'CONFIRM', direction: 'SELL', score: 100, asset: 'EUR/USD (OTC)', timeframe: 'M1', time: bucket - minute }
-  });
+  }, { connection: 'online', lastConfirmed: { state: 'CONFIRM', direction: 'SELL', score: 100, asset: 'EUR/USD (OTC)', timeframe: 'M1', time: bucket - minute } });
   assert.equal(out.lastConfirmed, null);
 });
 
@@ -63,20 +59,13 @@ test('confirmed signal records the real target-candle opening price after rollov
   resetOrchestrator();
   const bucket = baseBucket + 10 * minute;
   const history = confirmAt(bucket);
-
   const realOpen = 1.1095;
   const laterQuote = 1.112;
   const next = processSnapshot({
     platformId: 'casatrade', asset: 'EUR/USD (OTC)', price: laterQuote,
-    timeframe: 'M1', analysisTimeframe: 'M1', connection: 'online',
-    serverTime: bucket + minute + 5_000,
-    candles: [
-      ...history,
-      { time: bucket, open: 1.078, high: 1.115, low: 1.075, close: 1.11, timeframe: 'M1' },
-      { time: bucket + minute, open: realOpen, high: 1.113, low: 1.109, close: laterQuote, timeframe: 'M1' }
-    ]
+    timeframe: 'M1', analysisTimeframe: 'M1', connection: 'online', serverTime: bucket + minute + 5_000,
+    candles: [...history, { time: bucket, open: 1.078, high: 1.115, low: 1.075, close: 1.11, timeframe: 'M1' }, { time: bucket + minute, open: realOpen, high: 1.113, low: 1.109, close: laterQuote, timeframe: 'M1' }]
   }, { connection: 'online' });
-
   assert.equal(next.lastConfirmed.state, 'CONFIRM');
   assert.equal(next.lastConfirmed.entryConfirmed, true);
   assert.equal(next.lastConfirmed.entryStatus, 'confirmed');
@@ -91,18 +80,11 @@ test('skipped target candle never uses a later candle as the entry price', () =>
   const bucket = baseBucket + 20 * minute;
   const history = confirmAt(bucket);
   const lateBucket = bucket + 2 * minute;
-
   const late = processSnapshot({
     platformId: 'casatrade', asset: 'EUR/USD (OTC)', price: 9.99,
-    timeframe: 'M1', analysisTimeframe: 'M1', connection: 'online',
-    serverTime: lateBucket + 5_000,
-    candles: [
-      ...history,
-      { time: bucket, open: 1.078, high: 1.115, low: 1.075, close: 1.11, timeframe: 'M1' },
-      { time: lateBucket, open: 9.90, high: 10.00, low: 9.80, close: 9.99, timeframe: 'M1' }
-    ]
+    timeframe: 'M1', analysisTimeframe: 'M1', connection: 'online', serverTime: lateBucket + 5_000,
+    candles: [...history, { time: bucket, open: 1.078, high: 1.115, low: 1.075, close: 1.11, timeframe: 'M1' }, { time: lateBucket, open: 9.90, high: 10.00, low: 9.80, close: 9.99, timeframe: 'M1' }]
   }, { connection: 'online' });
-
   assert.equal(late.lastConfirmed.state, 'CONFIRM');
   assert.equal(late.lastConfirmed.entryConfirmed, false);
   assert.equal(late.lastConfirmed.entryStatus, 'unconfirmed');
@@ -117,50 +99,34 @@ test('completed decisions can be serialized and restored after a worker restart'
   const bucket = baseBucket + 30 * minute;
   const history = confirmAt(bucket);
   const realOpen = 1.1095;
-
   const completed = processSnapshot({
     platformId: 'casatrade', asset: 'EUR/USD (OTC)', price: 1.112,
-    timeframe: 'M1', analysisTimeframe: 'M1', connection: 'online',
-    serverTime: bucket + minute + 5_000,
-    candles: [
-      ...history,
-      { time: bucket, open: 1.078, high: 1.115, low: 1.075, close: 1.11, timeframe: 'M1' },
-      { time: bucket + minute, open: realOpen, high: 1.113, low: 1.109, close: 1.112, timeframe: 'M1' }
-    ]
+    timeframe: 'M1', analysisTimeframe: 'M1', connection: 'online', serverTime: bucket + minute + 5_000,
+    candles: [...history, { time: bucket, open: 1.078, high: 1.115, low: 1.075, close: 1.11, timeframe: 'M1' }, { time: bucket + minute, open: realOpen, high: 1.113, low: 1.109, close: 1.112, timeframe: 'M1' }]
   }, { connection: 'online' });
   assert.equal(completed.lastConfirmed.entryPrice, realOpen);
-
   const persisted = serializeCompletedDecisions();
   assert.equal(persisted.length, 1);
   resetOrchestrator();
   restoreCompletedDecisions(persisted);
-
   const restored = processSnapshot({
     platformId: 'casatrade', asset: 'EUR/USD (OTC)', price: 1.111,
-    timeframe: 'M1', analysisTimeframe: 'M1', connection: 'online',
-    serverTime: bucket + minute + 20_000,
-    candles: [
-      ...history,
-      { time: bucket, open: 1.078, high: 1.115, low: 1.075, close: 1.11, timeframe: 'M1' },
-      { time: bucket + minute, open: realOpen, high: 1.113, low: 1.109, close: 1.111, timeframe: 'M1' }
-    ]
+    timeframe: 'M1', analysisTimeframe: 'M1', connection: 'online', serverTime: bucket + minute + 20_000,
+    candles: [...history, { time: bucket, open: 1.078, high: 1.115, low: 1.075, close: 1.11, timeframe: 'M1' }, { time: bucket + minute, open: realOpen, high: 1.113, low: 1.109, close: 1.111, timeframe: 'M1' }]
   }, { connection: 'online' });
-
   assert.equal(restored.lastConfirmed.entryPrice, realOpen);
   assert.equal(restored.lastConfirmed.entryConfirmed, true);
 });
 
-test('side panel renders only fresh real entries and does not observe its own writes forever', () => {
+test('manual operation card is the single visible execution record and obsolete duplicate entry surface is not mounted', () => {
   const html = fs.readFileSync(new URL('../src/sidepanel/index.html', import.meta.url), 'utf8');
-  const js = fs.readFileSync(new URL('../src/sidepanel/real-entry.js', import.meta.url), 'utf8');
-  assert.match(html, /Entrada real/);
-  assert.match(html, /real-entry\.js/);
-  assert.match(js, /ATS_ENTRY_FRESH_MS = 8000/);
-  assert.match(js, /state\?\.lastSeen/);
-  assert.match(js, /atsEntryObserver\?\.disconnect\(\)/);
-  assert.match(js, /target\.textContent === text/);
-  assert.match(js, /PREÇO DE ENTRADA NÃO CONFIRMADO/);
-  assert.match(js, /AGUARDANDO ABERTURA REAL/);
-  assert.match(js, /lastConfirmed\?\.entryPrice/);
-  assert.doesNotMatch(js, /targetLabel/);
+  const manual = fs.readFileSync(new URL('../src/sidepanel/manual-trade-ui.js', import.meta.url), 'utf8');
+  assert.match(html, /manual-trade-ui\.js/);
+  assert.doesNotMatch(html, /real-entry\.js|ENTRADA REAL|id="targetTime"/i);
+  assert.match(manual, /OPERAÇÃO MANUAL/);
+  assert.match(manual, /manualTradeEntry/);
+  assert.match(manual, /manualTradeExit/);
+  assert.match(manual, /manualTradeResult/);
+  assert.match(manual, /matchedSignal/);
+  assert.match(manual, /MANUAL \/ FORA DO TIMING/);
 });

@@ -21,12 +21,12 @@ test('scannerState has exactly one storage gateway across src', () => {
   for (const file of files) {
     const source = fs.readFileSync(file, 'utf8');
     if (path.normalize(file) === centralWriter) {
-      assert.match(source, /const originalGet = chrome\.storage\.local\.get\.bind\(chrome\.storage\.local\)/);
-      assert.match(source, /const originalSet = chrome\.storage\.local\.set\.bind\(chrome\.storage\.local\)/);
+      assert.match(source, /import \{ storageLocalGet, storageLocalSet \} from '\.\/chrome-compat\.js'/);
       assert.match(source, /let scannerStateWriteQueue = Promise\.resolve\(\)/);
       assert.match(source, /export async function readScannerState\(\)/);
       assert.match(source, /export function updateScannerState\(mutator\)/);
-      assert.match(source, /await originalSet\(\{ scannerState: next \}\)/);
+      assert.match(source, /storageLocalGet\('scannerState'\)/);
+      assert.match(source, /await storageLocalSet\(\{ scannerState: next \}\)/);
       continue;
     }
 

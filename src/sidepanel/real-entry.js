@@ -1,3 +1,22 @@
+function atsRuntimeMessage(message) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const done = (error, value) => {
+      if (settled) return;
+      settled = true;
+      if (error) reject(error); else resolve(value);
+    };
+    try {
+      const returned = chrome.runtime.sendMessage(message, value => {
+        let error = null;
+        try { error = chrome.runtime?.lastError?.message ? new Error(chrome.runtime.lastError.message) : null; } catch {}
+        done(error, value);
+      });
+      if (returned && typeof returned.then === 'function') returned.then(value => done(null, value), error => done(error));
+    } catch (error) { done(error); }
+  });
+}
+
 const atsEntryNum = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
 const atsEntryText = value => atsEntryNum(value) == null ? '—' : String(value);
 const ATS_ENTRY_FRESH_MS = 8000;
@@ -52,7 +71,7 @@ function renderRealEntry(state = {}) {
 }
 
 async function syncRealEntry() {
-  const reply = await chrome.runtime.sendMessage({ type: 'ATS_READ_SCANNER_STATE' }).catch(() => ({ state: {} }));
+  const reply = await atsRuntimeMessage({ type: 'ATS_READ_SCANNER_STATE' }).catch(() => ({ state: {} }));
   renderRealEntry(reply?.state || {});
 }
 
