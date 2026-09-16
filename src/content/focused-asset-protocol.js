@@ -31,15 +31,20 @@
   const identity = value => normAsset(value);
   const same = (a, b) => !!identity(a) && identity(a) === identity(b);
 
-  function freshVisual(asset) {
+  function visualBlocksProtocolRollback(asset) {
     const meta = globalThis.__ATS_FOCUSED_ASSET_META__ || null;
     const current = globalThis.__ATS_FOCUSED_ASSET_VALUE__ || meta?.asset || '';
     if (!meta || !current || !Number(meta.at)) return false;
     const source = String(meta.source || '');
     if (source === 'protocol-selected') return false;
-    const transition = source === 'user-selected-transition' || meta.interactionHint === true;
-    const maxAge = transition ? 8000 : 3500;
-    if (Date.now() - Number(meta.at) > maxAge) return false;
+
+    // A direct user asset selection is stronger evidence than a stale network/app
+    // "selected" flag. Keep it authoritative until the protocol catches up to the
+    // same market or another visual interaction replaces it.
+    const explicitTransition = source === 'user-selected-transition' || meta.interactionHint === true;
+    if (explicitTransition) return !same(current, asset);
+
+    if (Date.now() - Number(meta.at) > 5000) return false;
     return !same(current, asset);
   }
 
@@ -55,9 +60,9 @@
     const unique = [...new Map(rows.map(row => [identity(row.asset), row])).values()];
     if (unique.length !== 1) return;
     const winner = unique[0];
-    // Network/app state can lag briefly after the user switches the visible chart.
-    // A fresh visual/user focus wins during that transition and prevents stale market rollback.
-    if (freshVisual(winner.asset)) return;
+    // Network/app state can lag after the visible chart changes. It may confirm
+    // the same asset, but it must not roll an explicit user selection back.
+    if (visualBlocksProtocolRollback(winner.asset)) return;
     const now = Date.now();
     if (identity(lastAsset) === identity(winner.asset) && now - lastAt < 700) return;
     lastAsset = winner.asset; lastAt = now;
