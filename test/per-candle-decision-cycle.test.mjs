@@ -79,22 +79,22 @@ test('decision remains latched for the same target candle after entry is release
   assert.equal(later.signal.uiState, 'ENTER_BUY');
 });
 
-test('if no setup confirms by four seconds the next candle is explicitly skipped', () => {
+test('if no setup confirms by four seconds the next candle ends in AGUARDAR', () => {
   resetOrchestrator();
   const bucket = Math.floor(1_701_300_000_000 / minute) * minute;
   const out = snap(bucket, 56_000, 4, lateralRows(bucket), 1.001);
   assert.equal(out.signal.state, 'NO_TRADE');
-  assert.equal(out.signal.uiState, 'SKIP');
+  assert.equal(out.signal.uiState, 'WAIT');
   assert.equal(out.signal.provisional, false);
-  assert.match(out.signal.reason, /^PULAR PRÓXIMA VELA/);
-  assert.equal(out.decisionCycle.locked, 'SKIP');
+  assert.match(out.signal.reason, /^AGUARDAR/);
+  assert.equal(out.decisionCycle.locked, 'WAIT');
 });
 
 test('each next candle gets a new decision cycle instead of inheriting POSSIBLE indefinitely', () => {
   resetOrchestrator();
   const bucket = Math.floor(1_701_400_000_000 / minute) * minute;
-  const skipped = snap(bucket, 56_000, 4, lateralRows(bucket), 1.001);
-  const firstKey = skipped.decisionCycle.key;
+  const waited = snap(bucket, 56_000, 4, lateralRows(bucket), 1.001);
+  const firstKey = waited.decisionCycle.key;
 
   const nextBucket = bucket + minute;
   const nextRows = [
