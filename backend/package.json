@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "node src/server.js",
-    "test": "node --test ../test/*.test.mjs"
+    "test": "node --test ../test/sniper-runtime-current.test.mjs ../test/core.test.mjs ../test/dev-owner-license-mode.test.mjs ../test/demo-outcome-tracking.test.mjs",
+    "test:legacy": "node --test ../test/*.test.mjs"
   }
 }

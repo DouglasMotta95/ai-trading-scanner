@@ -102,6 +102,10 @@
     return seconds;
   }
 
+  const sendMessage = message => typeof globalThis.__ATS_SEND_MESSAGE__ === 'function'
+    ? globalThis.__ATS_SEND_MESSAGE__(message)
+    : Promise.resolve(null);
+
   let busy = false;
   let lastKey = '';
   let lastAt = 0;
@@ -110,7 +114,7 @@
     if (busy) return;
     busy = true;
     try {
-      const response = await chrome.runtime.sendMessage({ type: 'ATS_READ_SCANNER_STATE' }).catch(() => null);
+      const response = await sendMessage({ type: 'ATS_READ_SCANNER_STATE' });
       const state = response?.state || null;
       if (!state?.license || !['active', 'valid'].includes(String(state.license.status || '').toLowerCase())) return;
       const focus = state.diagnostics?.focusedAsset || null;
@@ -126,9 +130,6 @@
       const stateTf = tf(state.analysisTimeframe || state.timeframe);
       const cycleTf = expirationTf || controlTf || chartTf || stateTf || 'M1';
 
-      // A visual countdown is authoritative only when the chart itself agrees with
-      // the selected CasaTrade cycle. A derived value is diagnostic only: it must
-      // never be labelled verified or release a trading signal.
       const domClock = chartTf === cycleTf ? exactDomCountdown(cycleTf) : null;
       const derived = derivedCountdown(cycleTf, state);
       const payload = domClock ? {
@@ -148,7 +149,7 @@
       if (key === lastKey && Date.now() - lastAt < 700) return;
       lastKey = key;
       lastAt = Date.now();
-      await chrome.runtime.sendMessage(payload).catch(() => null);
+      await sendMessage(payload);
     } finally {
       busy = false;
     }

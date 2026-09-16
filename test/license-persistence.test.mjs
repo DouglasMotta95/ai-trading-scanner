@@ -29,7 +29,13 @@ async function loadLicenseModule(storage, fetchImpl) {
   globalThis.crypto ||= webcrypto;
   globalThis.chrome = {
     storage: { local: storage.api },
-    runtime: { id: 'stable-test-extension-id', getManifest: () => ({ version: '0.10.1' }) }
+    runtime: {
+      id: 'stable-test-extension-id',
+      getManifest: () => ({
+        version: '0.10.1',
+        update_url: 'https://clients2.google.com/service/update2/crx'
+      })
+    }
   };
   globalThis.fetch = fetchImpl;
   const url = new URL(`../src/services/license.js?test=${Date.now()}-${Math.random()}`, import.meta.url);

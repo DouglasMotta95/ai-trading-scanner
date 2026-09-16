@@ -10,7 +10,32 @@
   let existing = '';
   try { existing = String(localStorage.getItem(KEY) || '').trim(); } catch {}
 
-  chrome.runtime.sendMessage({ type: 'ATS_DEVICE_ANCHOR', anchor: existing || null }).then(response => {
+  const sendRuntimeMessage = message => {
+    if (typeof globalThis.__ATS_SEND_MESSAGE__ === 'function') {
+      return globalThis.__ATS_SEND_MESSAGE__(message);
+    }
+
+    return new Promise(resolve => {
+      let settled = false;
+      const finish = response => {
+        if (settled) return;
+        settled = true;
+        try { void chrome.runtime.lastError; } catch {}
+        resolve(response ?? null);
+      };
+
+      try {
+        const returned = chrome.runtime.sendMessage(message, finish);
+        if (returned && typeof returned.then === 'function') {
+          returned.then(finish).catch(() => finish(null));
+        }
+      } catch {
+        finish(null);
+      }
+    });
+  };
+
+  sendRuntimeMessage({ type: 'ATS_DEVICE_ANCHOR', anchor: existing || null }).then(response => {
     const anchor = String(response?.anchor || '').trim();
     if (!anchor || anchor.length > 160) return;
     try { localStorage.setItem(KEY, anchor); } catch {}

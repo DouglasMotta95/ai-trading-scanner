@@ -4,6 +4,7 @@
 
   const FILES = [
     'src/content/page-world-sentinel.js',
+    'src/content/canvas-countdown-probe.js',
     'src/content/standalone-instrument-probe.js',
     'src/content/worker-probe.js',
     'src/content/canvas-probe.js',

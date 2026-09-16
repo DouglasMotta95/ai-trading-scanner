@@ -81,6 +81,6 @@
     if (now - lastSent < 350) return;
     lastKey = key;
     lastSent = now;
-    chrome.runtime.sendMessage({ type: 'ATS_DATA_INSPECTOR', snapshot }).catch(() => {});
+    (globalThis.__ATS_SEND_MESSAGE__?.({ type: 'ATS_DATA_INSPECTOR', snapshot }) || Promise.resolve(null)).catch(() => {});
   });
 })();

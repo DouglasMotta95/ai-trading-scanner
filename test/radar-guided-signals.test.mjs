@@ -76,7 +76,8 @@ test('premium sidepanel exposes radar, explicit trigger, validation and animated
   assert.match(html, /premium-v2\.css/);
   assert.match(shell, /ATS_CONNECT_ACTIVE_TAB/);
   assert.match(shell, /toggle-row/);
-  assert.match(guide, /ROMPER ACIMA DE|ROMPER ABAIXO DE/);
+  assert.match(guide, /waiting\.type === 'breakout'/);
+  assert.match(guide, /NÍVEL \$\{fmt\(waiting\.level\)\}/);
   assert.match(radar, /ATS_GET_ASSET_RADAR/);
   assert.match(validation, /ATS_GET_SHADOW_CALIBRATION/);
 });

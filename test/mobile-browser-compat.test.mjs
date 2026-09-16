@@ -49,8 +49,8 @@ test('sidepanel startup uses message-based scanner reads and callback-compatible
   const app = read('src/sidepanel/app-v2.js');
   const atomic = read('src/services/scanner-state-atomic.js');
   assert.match(app, /chrome\.runtime\.sendMessage\(\{ type: 'ATS_READ_SCANNER_STATE' \}\)/);
-  assert.match(app, /requestAnimationFrame/);
-  assert.match(app, /IDENTIFICANDO ATIVO/);
+  assert.match(app, /if \(response\?\.state\) render\(response\.state\)/);
+  assert.match(app, /await loadPrefs\(\)/);
   assert.match(atomic, /storageLocalGet\('scannerState'\)/);
   assert.doesNotMatch(atomic, /await originalGet/);
 });

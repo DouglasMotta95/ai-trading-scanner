@@ -54,8 +54,24 @@
     button.addEventListener('click', copyDiagnostics);
   }
 
-  async function message(payload) {
-    try { return await chrome.runtime.sendMessage(payload); } catch { return null; }
+  function message(payload) {
+    return new Promise(resolve => {
+      let settled = false;
+      const finish = response => {
+        if (settled) return;
+        settled = true;
+        try { void chrome.runtime.lastError; } catch {}
+        resolve(response ?? null);
+      };
+      try {
+        const returned = chrome.runtime.sendMessage(payload, finish);
+        if (returned && typeof returned.then === 'function') {
+          returned.then(finish).catch(() => finish(null));
+        }
+      } catch {
+        finish(null);
+      }
+    });
   }
 
   function sanitizeState(state = {}, manual = null) {
@@ -63,6 +79,7 @@
     const clock = state.diagnostics?.marketClock || {};
     const session = state.diagnostics?.marketSession || {};
     const acquisition = state.diagnostics?.acquisition || {};
+    const access = state.diagnostics?.access || {};
     const inspector = state.diagnostics?.dataInspector || {};
     const tradeEvidence = inspector.tradeEvidence || {};
     const signal = state.signal || {};
@@ -72,16 +89,33 @@
     const runtimeBoot = state.diagnostics?.runtimeBoot || {};
     const probe = runtimeInjection.probe || {};
     const lastManual = manual?.metrics?.last || (Array.isArray(manual?.rows) ? manual.rows.at(-1) : null);
+    const licenseStatus = clean(state.license?.status || '', 32).toLowerCase();
+    const licensed = licenseStatus === 'active' || licenseStatus === 'valid';
+    const marketAgeMs = age(state.lastSeen);
+    const clockAgeMs = age(clock.at);
     return {
       generatedAt: new Date().toISOString(),
       extensionVersion: chrome.runtime.getManifest().version,
+      access: {
+        licensed,
+        licenseStatus,
+        licenseError: clean(state.license?.error || '', 80),
+        syncPending: state.license?.syncPending === true,
+        state: clean(access.state || '', 48)
+      },
       platform: clean(state.platformId || state.platformName || ''),
       connection: clean(state.connection || ''),
       scanner: clean(state.scanner || ''),
       asset: clean(state.asset || focus.asset || ''),
       timeframe: clean(state.analysisTimeframe || state.timeframe || clock.timeframe || ''),
       price: num(state.price),
-      lastSeenAgeMs: age(state.lastSeen),
+      lastSeenAgeMs: marketAgeMs,
+      freshness: {
+        marketAgeMs,
+        clockAgeMs,
+        marketFresh: marketAgeMs != null && marketAgeMs < 3000,
+        clockFresh: clockAgeMs != null && clockAgeMs < 3000
+      },
       focus: {
         asset: clean(focus.asset || ''), reliable: focus.reliable === true, chartScoped: focus.chartScoped === true,
         frameId: num(focus.frameId), source: clean(focus.source || '')
@@ -89,7 +123,7 @@
       clock: {
         verified: clock.verified === true, available: clock.available !== false, role: clean(clock.role || ''),
         source: clean(clock.source || ''), secondsRemaining: num(clock.secondsRemaining), timeframe: clean(clock.timeframe || ''),
-        ageMs: age(clock.at)
+        ageMs: clockAgeMs
       },
       session: {
         epoch: num(session.epoch), asset: clean(session.asset || ''), timeframe: clean(session.timeframe || ''),
