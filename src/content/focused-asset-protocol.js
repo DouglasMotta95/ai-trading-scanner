@@ -35,8 +35,11 @@
     const meta = globalThis.__ATS_FOCUSED_ASSET_META__ || null;
     const current = globalThis.__ATS_FOCUSED_ASSET_VALUE__ || meta?.asset || '';
     if (!meta || !current || !Number(meta.at)) return false;
-    if (String(meta.source || '') === 'protocol-selected') return false;
-    if (Date.now() - Number(meta.at) > 3500) return false;
+    const source = String(meta.source || '');
+    if (source === 'protocol-selected') return false;
+    const transition = source === 'user-selected-transition' || meta.interactionHint === true;
+    const maxAge = transition ? 8000 : 3500;
+    if (Date.now() - Number(meta.at) > maxAge) return false;
     return !same(current, asset);
   }
 
