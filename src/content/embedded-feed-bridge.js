@@ -1,31 +1,7 @@
 (() => {
-  if (globalThis.__ATS_EMBEDDED_FEED_BRIDGE__) return;
-  globalThis.__ATS_EMBEDDED_FEED_BRIDGE__ = true;
-  const send=globalThis.__ATS_SEND_MESSAGE__; if(typeof send!=='function') return;
-  const clean=v=>String(v??'').normalize('NFKC').replace(/\s+/g,' ').trim();
-  const asset=v=>{const r=clean(v).toUpperCase(),o=/(?:\(|\b|[_-])OTC(?:\)|\b)?/.test(r),m=r.match(/\b([A-Z0-9]{2,20})\s*[\/_-]\s*([A-Z0-9]{2,12})/);return m?`${m[1]}/${m[2]}${o?' (OTC)':''}`:''};
-  const tf=v=>{const r=clean(v).toUpperCase().replace(/\s+/g,'');let m=r.match(/^M(\d+)$/)||r.match(/^(\d+)M$/);if(m)return`M${Number(m[1])}`;m=r.match(/^S(\d+)$/)||r.match(/^(\d+)S$/);if(m)return`S${Number(m[1])}`;m=r.match(/^H(\d+)$/)||r.match(/^(\d+)H$/);return m?`H${Number(m[1])}`:null};
-  const tfms=v=>{const t=tf(v);return !t?null:t[0]==='S'?Number(t.slice(1))*1000:t[0]==='M'?Number(t.slice(1))*60000:Number(t.slice(1))*3600000};
-  const ts=v=>{let n=Number(v);if(!Number.isFinite(n))return null;if(n<1e12)n*=1000;return n>946684800000?n:null};
-  const valid=r=>[r?.open,r?.high,r?.low,r?.close].every(x=>Number.isFinite(Number(x)))&&ts(r?.time??r?.timestamp);
+  if(globalThis.__ATS_EMBEDDED_FEED_BRIDGE__)return;globalThis.__ATS_EMBEDDED_FEED_BRIDGE__=true;
+  const send=message=>{const fn=globalThis.__ATS_SEND_MESSAGE__;if(typeof fn==='function')return fn(message);return new Promise(resolve=>{let tries=0;const retry=()=>{const current=globalThis.__ATS_SEND_MESSAGE__;if(typeof current==='function')current(message).then(resolve).catch(()=>resolve(null));else if(++tries<40)setTimeout(retry,50);else resolve(null);};retry();});};
+  const clean=v=>String(v??'').normalize('NFKC').replace(/\s+/g,' ').trim();const asset=v=>{const r=clean(v).toUpperCase(),o=/(?:\(|\b|[_-])OTC(?:\)|\b)?/.test(r),m=r.match(/\b([A-Z0-9]{2,20})\s*[\/_-]\s*([A-Z0-9]{2,12})/);return m?`${m[1]}/${m[2]}${o?' (OTC)':''}`:''};const tf=v=>{const r=clean(v).toUpperCase().replace(/\s+/g,'');let m=r.match(/^M(\d+)$/)||r.match(/^(\d+)M$/);if(m)return`M${Number(m[1])}`;m=r.match(/^S(\d+)$/)||r.match(/^(\d+)S$/);if(m)return`S${Number(m[1])}`;m=r.match(/^H(\d+)$/)||r.match(/^(\d+)H$/);return m?`H${Number(m[1])}`:null};const tfms=v=>{const t=tf(v);return!t?null:t[0]==='S'?Number(t.slice(1))*1000:t[0]==='M'?Number(t.slice(1))*60000:Number(t.slice(1))*3600000};const ts=v=>{let n=Number(v);if(!Number.isFinite(n))return null;if(n<1e12)n*=1000;return n>946684800000?n:null};const valid=r=>[r?.open,r?.high,r?.low,r?.close].every(x=>Number.isFinite(Number(x)))&&ts(r?.time??r?.timestamp);
   let last=0,focusAsset='',lastFocusRead=0;
-  window.addEventListener('message',event=>{
-    const data=event.data;if(!data||data.source!=='ATS_NETWORK_PROBE'||data.type!=='summary')return;
-    const now=Date.now();if(now-last<60)return;last=now;
-    const payload=data.payload||{};
-    send({type:'ATS_EMBEDDED_FEED',payload}).catch(()=>{});
-    const recent=payload.recentCandles&&typeof payload.recentCandles==='object'?payload.recentCandles:{};
-    const candidates=Array.isArray(payload.candidates)?payload.candidates:[];
-    const processFocus=()=>{
-      let a=asset(focusAsset);
-      if(!a){const selected=candidates.filter(c=>c?.selected===true).sort((x,y)=>Number(y?.confidence||0)-Number(x?.confidence||0))[0];a=asset(selected?.asset);}
-      if(!a)return;
-      const key=Object.keys(recent).find(k=>asset(k)===a);const rawRows=key?recent[key]:[];const rows=(Array.isArray(rawRows)?rawRows:[]).filter(valid).sort((x,y)=>ts(x.time??x.timestamp)-ts(y.time??y.timestamp));const latest=rows.at(-1);if(!latest)return;
-      const candidate=candidates.filter(c=>asset(c?.asset)===a).sort((x,y)=>Number(y?.selected===true)-Number(x?.selected===true)||Number(y?.confidence||0)-Number(x?.confidence||0))[0]||{};
-      const timeframe=tf(candidate.timeframe||latest.timeframe);const durationMs=tfms(timeframe);const openAt=ts(latest.time??latest.timestamp);if(!timeframe||!durationMs||!openAt)return;
-      const sourceNow=ts(candidate.timestamp)||Date.now();
-      if(sourceNow>=openAt-1500&&sourceNow<=openAt+durationMs+1500) window.dispatchEvent(new CustomEvent('ATS_NUMERIC_OHLC_CLOCK',{detail:{asset:a,timeframe,openAt,durationMs,sourceNow,expiration:candidate.expiration||null}}));
-    };
-    if(now-lastFocusRead>500){lastFocusRead=now;send({type:'ATS_READ_SCANNER_STATE'}).then(r=>{focusAsset=r?.state?.diagnostics?.focusedAsset?.asset||r?.state?.asset||focusAsset;processFocus();}).catch(processFocus);}else processFocus();
-  },true);
+  window.addEventListener('message',event=>{const data=event.data;if(!data||data.source!=='ATS_NETWORK_PROBE'||data.type!=='summary')return;const now=Date.now();if(now-last<60)return;last=now;const payload=data.payload||{};send({type:'ATS_EMBEDDED_FEED',payload}).catch(()=>{});const recent=payload.recentCandles&&typeof payload.recentCandles==='object'?payload.recentCandles:{};const candidates=Array.isArray(payload.candidates)?payload.candidates:[];const processFocus=()=>{let a=asset(focusAsset);if(!a){const selected=candidates.filter(c=>c?.selected===true).sort((x,y)=>Number(y?.confidence||0)-Number(x?.confidence||0))[0];a=asset(selected?.asset);}if(!a)return;const key=Object.keys(recent).find(k=>asset(k)===a),rawRows=key?recent[key]:[],rows=(Array.isArray(rawRows)?rawRows:[]).filter(valid).sort((x,y)=>ts(x.time??x.timestamp)-ts(y.time??y.timestamp)),latest=rows.at(-1);if(!latest)return;const candidate=candidates.filter(c=>asset(c?.asset)===a).sort((x,y)=>Number(y?.selected===true)-Number(x?.selected===true)||Number(y?.confidence||0)-Number(x?.confidence||0))[0]||{},timeframe=tf(candidate.timeframe||latest.timeframe),durationMs=tfms(timeframe),openAt=ts(latest.time??latest.timestamp);if(!timeframe||!durationMs||!openAt)return;const sourceNow=ts(candidate.timestamp)||Date.now();if(sourceNow>=openAt-1500&&sourceNow<=openAt+durationMs+1500)window.dispatchEvent(new CustomEvent('ATS_NUMERIC_OHLC_CLOCK',{detail:{asset:a,timeframe,openAt,durationMs,sourceNow,expiration:candidate.expiration||null}}));};if(now-lastFocusRead>500){lastFocusRead=now;send({type:'ATS_READ_SCANNER_STATE'}).then(r=>{focusAsset=r?.state?.diagnostics?.focusedAsset?.asset||r?.state?.asset||focusAsset;processFocus();}).catch(processFocus);}else processFocus();},true);
 })();
