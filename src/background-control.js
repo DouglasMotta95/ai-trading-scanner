@@ -22,6 +22,7 @@ function platformFromUrl(url = '') {
 function clearMarket(state = {}, extra = {}) {
   return {
     ...state,
+    scanner: 'idle',
     connection: 'offline', platformId: null, platformName: null, targetTabId: null,
     asset: null, price: null, timeframe: null, analysisTimeframe: null,
     expiration: null, targetExpiration: null, serverTime: null,
@@ -32,6 +33,16 @@ function clearMarket(state = {}, extra = {}) {
     diagnostics: { ...(extra.diagnostics || {}) },
     ...extra,
     license: extra.license || state.license || DEFAULT_LICENSE
+  };
+}
+
+function licenseBlockedDiagnostics(license = {}) {
+  return {
+    access: {
+      state: 'license_required',
+      error: clean(license?.error || 'license_required'),
+      at: Date.now()
+    }
   };
 }
 
@@ -74,7 +85,7 @@ async function connectActiveTab() {
   if (!activeLicense(license)) {
     const next = await updateScannerState(current => clearMarket(current, {
       license,
-      diagnostics: { access: { state: 'license_required', at: Date.now() } }
+      diagnostics: licenseBlockedDiagnostics(license)
     }));
     return { ok: false, error: license.error || 'license_required', state: next };
   }
@@ -142,10 +153,16 @@ async function activate(key = '') {
   }
 
   const ok = activeLicense(license);
-  const next = await updateScannerState(current => ({
-    ...current,
-    license: ok ? { ...license, status: 'active' } : { ...(current.license || DEFAULT_LICENSE), error: response?.error || 'license_inactive' }
-  }));
+  const next = await updateScannerState(current => {
+    if (ok) return { ...current, license: { ...license, status: 'active' } };
+    const blockedLicense = {
+      ...(current.license || DEFAULT_LICENSE),
+      ...(license || {}),
+      status: String(license?.status || current.license?.status || 'unconfigured'),
+      error: response?.error || license?.error || 'license_inactive'
+    };
+    return clearMarket(current, { license: blockedLicense, diagnostics: licenseBlockedDiagnostics(blockedLicense) });
+  });
   if (ok) return { ...response, ok: true, error: null, license: next.license, state: next };
   return { ...response, ok: false, error: response?.error || 'license_inactive', license: next.license, state: next };
 }
@@ -153,8 +170,11 @@ async function activate(key = '') {
 async function validate() {
   const state = await readScannerState();
   const license = await recoverLicense(state, true);
-  const next = await updateScannerState(current => ({ ...current, license }));
-  return { ok: activeLicense(license), license, state: next };
+  const ok = activeLicense(license);
+  const next = await updateScannerState(current => ok
+    ? { ...current, license }
+    : clearMarket(current, { license, diagnostics: licenseBlockedDiagnostics(license) }));
+  return { ok, license, state: next };
 }
 
 async function readSessionHistory() {
@@ -192,6 +212,7 @@ async function manualIntent(direction = '') {
   direction = String(direction || '').toUpperCase();
   if (!['BUY', 'SELL'].includes(direction)) return { ok: false, error: 'invalid_direction' };
   const state = await readScannerState();
+  if (!activeLicense(state.license)) return { ok: false, error: 'license_required', state };
   const signalDirection = String(state.signal?.direction || '').toUpperCase();
   const confirmed = state.signal?.state === 'CONFIRM' || ['ENTER_BUY', 'ENTER_SELL'].includes(String(state.signal?.uiState || ''));
   if (!confirmed || signalDirection !== direction) return { ok: false, error: 'signal_not_confirmed', state };
@@ -212,6 +233,23 @@ async function manualIntent(direction = '') {
   };
   const next = await updateScannerState(current => ({ ...current, tradeIntent: intent }));
   return { ok: true, intent, state: next };
+}
+
+async function setScanner(enabled = false) {
+  const state = await readScannerState();
+  if (enabled && !activeLicense(state.license)) {
+    const next = await updateScannerState(current => clearMarket(current, {
+      license: current.license || DEFAULT_LICENSE,
+      diagnostics: licenseBlockedDiagnostics(current.license || DEFAULT_LICENSE)
+    }));
+    return { ok: false, error: 'license_required', state: next };
+  }
+  const next = await updateScannerState(current => ({
+    ...current,
+    scanner: enabled ? 'scanning' : 'idle',
+    ...(enabled ? {} : { signal: null, professionalDecision: null, tradeIntent: null })
+  }));
+  return { ok: true, state: next };
 }
 
 sidePanelSetBehavior({ openPanelOnActionClick: true }).catch(() => {});
@@ -246,7 +284,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (type === 'ATS_CLEAR_LICENSE') {
-    clearLicense().then(() => updateScannerState(current => clearMarket(current, { license: DEFAULT_LICENSE, diagnostics: {} })))
+    clearLicense().then(() => updateScannerState(current => clearMarket(current, { license: DEFAULT_LICENSE, diagnostics: licenseBlockedDiagnostics(DEFAULT_LICENSE) })))
       .then(state => sendResponse({ ok: true, state }))
       .catch(error => sendResponse({ ok: false, error: String(error?.message || error) }));
     return true;
@@ -279,14 +317,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (type === 'ATS_SET_SCANNER') {
-    updateScannerState(current => ({ ...current, scanner: message.enabled ? 'scanning' : 'idle', ...(message.enabled ? {} : { signal: null, professionalDecision: null, tradeIntent: null }) }))
-      .then(state => sendResponse({ ok: true, state }))
-      .catch(error => sendResponse({ ok: false, error: String(error?.message || error) }));
+    setScanner(message.enabled === true).then(sendResponse).catch(error => sendResponse({ ok: false, error: String(error?.message || error) }));
     return true;
   }
 
   if (type === 'ATS_RESET_STATE') {
-    readScannerState().then(state => updateScannerState(() => clearMarket({}, { license: state.license || DEFAULT_LICENSE, diagnostics: {} })))
+    readScannerState().then(state => updateScannerState(() => clearMarket({}, { license: state.license || DEFAULT_LICENSE, diagnostics: activeLicense(state.license) ? {} : licenseBlockedDiagnostics(state.license || DEFAULT_LICENSE) })))
       .then(state => sendResponse({ ok: true, state }))
       .catch(error => sendResponse({ ok: false, error: String(error?.message || error) }));
     return true;
@@ -303,5 +339,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 (async () => {
   const state = await readScannerState().catch(() => ({}));
   const license = await recoverLicense(state).catch(() => state.license || DEFAULT_LICENSE);
-  if (activeLicense(license)) await updateScannerState(current => ({ ...current, license }));
+  await updateScannerState(current => activeLicense(license)
+    ? { ...current, license }
+    : clearMarket(current, { license, diagnostics: licenseBlockedDiagnostics(license) }));
 })().catch(() => {});
