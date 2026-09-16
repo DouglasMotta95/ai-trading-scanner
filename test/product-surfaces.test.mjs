@@ -13,7 +13,7 @@ test('sidepanel exposes one dominant analyst decision and real CasaTrade time su
   const html = read('src/sidepanel/index.html');
   const app = read('src/sidepanel/app-v2.js');
 
-  for (const heading of ['Live Analyst','DECISÃO DA PRÓXIMA VELA','VELA ATUAL','ACESSO']) assert.match(html, new RegExp(heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'));
+  for (const heading of ['Live Decision','DECISÃO DA PRÓXIMA VELA','VELA ATUAL','ACESSO']) assert.match(html, new RegExp(heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'));
   for (const id of [
     'activateLicense','assetQualityCard','asset','price','secondsRemaining','timeframe','expiration','heroCountdown','heroTimeStatus','timeSyncStatus',
     'currentOpen','currentHigh','currentLow','currentClose','recentCandles','recentCandleCount',
