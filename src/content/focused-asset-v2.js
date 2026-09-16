@@ -126,8 +126,10 @@
     return rect.right >= chart.left - padX && rect.left <= chart.right + padX && rect.bottom >= top && rect.top <= bottom;
   }
 
+  const INTERACTION_TRANSITION_MS = 8000;
   let recentInteraction = { asset: '', at: 0 };
-  const interactionFresh = asset => sameAsset(recentInteraction.asset, asset) && Date.now() - Number(recentInteraction.at || 0) < 2600;
+  const interactionFresh = asset => sameAsset(recentInteraction.asset, asset) && Date.now() - Number(recentInteraction.at || 0) < INTERACTION_TRANSITION_MS;
+  const interactionTransitionFresh = () => !!recentInteraction.asset && Date.now() - Number(recentInteraction.at || 0) < INTERACTION_TRANSITION_MS;
 
   function elementAssetText(el) {
     return clean([
@@ -163,7 +165,7 @@
       const context = contextOf(el);
       const chartScoped = nearChart(rect, chart) || /chart|tradingview|instrument|symbol|asset|header/.test(context);
       const listContext = /watchlist|asset-list|instrument-list|listbox|search|history|portfolio|ranking|modal|drawer|dropdown|menu/.test(context);
-      // A selected row in the asset list is not market authority. The visible chart/header is.
+      // A selected row in the asset list is not stable chart authority by itself.
       if (listContext && !chartScoped) continue;
       if (!chartScoped) continue;
       const interaction = interactionFresh(asset);
@@ -214,6 +216,39 @@
   let queuedForce = false;
   let scanning = false;
 
+  function sendFocus(common) {
+    globalThis.__ATS_FOCUSED_ASSET_VALUE__ = common.asset;
+    globalThis.__ATS_FOCUSED_ASSET_META__ = common;
+    try { chrome.runtime.sendMessage({ type: 'ATS_VISUAL_FOCUS_V2', ...common }, () => void chrome.runtime?.lastError); } catch {}
+  }
+
+  function publishInteractionTransition(asset, at = Date.now()) {
+    if (!asset) return;
+    candidate = asset;
+    candidateSince = at;
+    candidateSamples = 1;
+    lastPublished = asset;
+    lastPublishedAt = at;
+    const common = {
+      asset,
+      score: 2200,
+      samples: 1,
+      stableFor: 0,
+      reliable: true,
+      visual: true,
+      explicit: true,
+      interactionHint: true,
+      interactionAt: at,
+      chartScoped: true,
+      chartFound: !!chartRect(),
+      frameHost: host,
+      frameRole,
+      at,
+      source: 'user-selected-transition'
+    };
+    sendFocus(common);
+  }
+
   function publish(force = false) {
     if (scanning) {
       queuedForce ||= force;
@@ -222,6 +257,7 @@
     scanning = true;
     try {
       const winner = scanWinner();
+      if (interactionTransitionFresh() && winner?.asset && !sameAsset(winner.asset, recentInteraction.asset)) return;
       if (!winner?.asset) return;
       const now = Date.now();
       if (sameAsset(candidate, winner.asset)) candidateSamples += 1;
@@ -250,9 +286,7 @@
         at: now,
         source: winner.interaction ? 'chart-frame-user-confirmed' : winner.explicit ? 'chart-frame-explicit' : 'chart-frame-scoped'
       };
-      globalThis.__ATS_FOCUSED_ASSET_VALUE__ = winner.asset;
-      globalThis.__ATS_FOCUSED_ASSET_META__ = common;
-      try { chrome.runtime.sendMessage({ type: 'ATS_VISUAL_FOCUS_V2', ...common }, () => void chrome.runtime?.lastError); } catch {}
+      sendFocus(common);
     } finally {
       scanning = false;
       if (queuedForce) {
@@ -277,7 +311,11 @@
   try { observer.observe(document.documentElement, { subtree: true, childList: true, attributes: true, characterData: true }); } catch {}
   const noteInteraction = event => {
     const asset = touchedAsset(event);
-    if (asset) recentInteraction = { asset, at: Date.now() };
+    const now = Date.now();
+    if (asset && (!sameAsset(recentInteraction.asset, asset) || now - Number(recentInteraction.at || 0) > 250)) {
+      recentInteraction = { asset, at: now };
+      publishInteractionTransition(asset, now);
+    }
     invalidateElements();
     schedulePublish(70, true);
   };
