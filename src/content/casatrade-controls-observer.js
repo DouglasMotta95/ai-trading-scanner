@@ -1,0 +1,36 @@
+(() => {
+  if (globalThis.__ATS_CONTROLS_OBSERVER__) return;
+  globalThis.__ATS_CONTROLS_OBSERVER__ = true;
+  const send = globalThis.__ATS_SEND_MESSAGE__;
+  if (typeof send !== 'function') return;
+  const clean = v => String(v ?? '').normalize('NFKC').replace(/\s+/g,' ').trim();
+  const visible = el => { if (!(el instanceof Element)) return false; const r=el.getBoundingClientRect(),s=getComputedStyle(el); return r.width>8&&r.height>8&&s.display!=='none'&&s.visibility!=='hidden'&&Number(s.opacity||1)>0; };
+  const attrs = el => clean([el.textContent,el.getAttribute?.('aria-label'),el.getAttribute?.('aria-valuetext'),el.getAttribute?.('title'),el.getAttribute?.('name'),el.getAttribute?.('placeholder'),el.getAttribute?.('data-testid')].filter(Boolean).join(' '));
+  const nodes = () => [...document.querySelectorAll('button,input,select,[role="button"],[role="spinbutton"],[role="combobox"],[aria-label],[aria-valuetext],label,span,div')].filter(visible).slice(0,1200);
+  const parseTf = s => { let m=clean(s).match(/(?:^|\b)(\d{1,3})\s*(?:m|min|minuto|minutos)(?:\b|$)/i); if(m) return `M${Number(m[1])}`; m=clean(s).match(/(?:^|\b)(\d{1,3})\s*(?:h|hora|horas)(?:\b|$)/i); if(m) return `H${Number(m[1])}`; return null; };
+  const parseExp = s => { let m=clean(s).match(/(?:^|\b)(\d{1,5})\s*(?:s|seg|segundo|segundos)(?:\b|$)/i); if(m) return `${Number(m[1])}s`; m=clean(s).match(/(?:^|\b)(\d{1,4})\s*(?:m|min|minuto|minutos)(?:\b|$)/i); if(m) return `${Number(m[1])*60}s`; m=clean(s).match(/\b(\d{1,2}):(\d{2})\b/); if(m) return `${Number(m[1])*60+Number(m[2])}s`; return null; };
+  const money = s => { const m=clean(s).replace(/\./g,'').replace(',','.').match(/(?:R\$|\$|€)?\s*(\d+(?:\.\d+)?)/); return m ? Number(m[1]) : null; };
+  let timer=null,last='',lastSentAt=0;
+  function readNear(tokens, parser) {
+    let best=null;
+    for (const el of nodes()) {
+      const t=attrs(el), lower=t.toLowerCase();
+      const hit=tokens.find(k=>lower.includes(k)); if(!hit) continue;
+      const value=parser(t) ?? parser(attrs(el.parentElement));
+      if(value!=null) { const score=20 + (el.matches('input,select,[role="combobox"],[role="spinbutton"]')?12:0) + (lower.startsWith(hit)?4:0); if(!best||score>best.score) best={value,score}; }
+    }
+    return best;
+  }
+  function scan() {
+    const timeframe=readNear(['timeframe','período','periodo','gráfico','grafico','vela','candle'],parseTf);
+    const expiration=readNear(['expira','expiry','expiration','duração','duracao','tempo'],parseExp);
+    const amount=readNear(['valor','amount','stake','invest'],money);
+    const payload={ timeframe:timeframe?.value||null, expiration:expiration?.value||null, amount:amount?.value||null, source:'casatrade-semantic-controls', confidence:{ timeframe:timeframe?.score||0, expiration:expiration?.score||0, amount:amount?.score||0 } };
+    const sig=JSON.stringify(payload); const now=Date.now(); if(sig!==last || now-lastSentAt>3000){ last=sig; lastSentAt=now; send({type:'ATS_PLATFORM_CONTROLS_OBSERVED',snapshot:payload}).catch(()=>{}); }
+  }
+  function schedule(delay=120){ if(timer) clearTimeout(timer); timer=setTimeout(()=>{timer=null;scan();},delay); }
+  new MutationObserver(()=>schedule()).observe(document.documentElement,{subtree:true,childList:true,attributes:true,characterData:true});
+  for(const event of ['click','input','change','pointerup']) document.addEventListener(event,()=>schedule(80),true);
+  scan(); setTimeout(scan,500); setTimeout(scan,1500);
+  setTimeout(function heartbeat(){ scan(); setTimeout(heartbeat,2500); },2500);
+})();
