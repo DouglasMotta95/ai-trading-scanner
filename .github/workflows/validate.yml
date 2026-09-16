@@ -28,7 +28,18 @@ jobs:
       - name: Syntax check customer portal
         run: find apps/customer-portal -name '*.js' -print0 | xargs -0 -n1 node --check
       - name: Core unit tests
-        run: cd backend && npm test
+        run: |
+          set -o pipefail
+          cd backend
+          npm test 2>&1 | tee ../core-test.log
+      - name: Upload core unit test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-unit-test-log
+          path: core-test.log
+          if-no-files-found: error
+          retention-days: 7
       - name: Prepare extension package
         if: always()
         run: |
