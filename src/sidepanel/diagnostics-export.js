@@ -54,8 +54,24 @@
     button.addEventListener('click', copyDiagnostics);
   }
 
-  async function message(payload) {
-    try { return await chrome.runtime.sendMessage(payload); } catch { return null; }
+  function message(payload) {
+    return new Promise(resolve => {
+      let settled = false;
+      const finish = response => {
+        if (settled) return;
+        settled = true;
+        try { void chrome.runtime.lastError; } catch {}
+        resolve(response ?? null);
+      };
+      try {
+        const returned = chrome.runtime.sendMessage(payload, finish);
+        if (returned && typeof returned.then === 'function') {
+          returned.then(finish).catch(() => finish(null));
+        }
+      } catch {
+        finish(null);
+      }
+    });
   }
 
   function sanitizeState(state = {}, manual = null) {
