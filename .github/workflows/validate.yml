@@ -30,12 +30,14 @@ jobs:
       - name: Core unit tests
         run: cd backend && npm test
       - name: Prepare extension package
+        if: always()
         run: |
           rm -rf dist/ai-trading-scanner-extension
           mkdir -p dist/ai-trading-scanner-extension
           cp manifest.json dist/ai-trading-scanner-extension/manifest.json
           cp -R src dist/ai-trading-scanner-extension/src
-      - name: Upload validated extension package
+      - name: Upload extension test package
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ai-trading-scanner-extension-demo
