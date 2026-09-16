@@ -13,7 +13,7 @@
 <body>
   <main class="shell">
     <header class="topbar">
-      <div class="brand-lockup"><span class="brand-orb" aria-hidden="true"><i></i></span><div><span class="eyebrow">AI TRADING SCANNER</span><h1>Live Analyst</h1></div></div>
+      <div class="brand-lockup"><span class="brand-orb" aria-hidden="true"><i></i></span><div><span class="eyebrow">AI TRADING SCANNER</span><h1>Live Decision</h1></div></div>
       <div class="top-status"><button id="connectScanner" class="connect-btn" type="button"><span class="connect-dot"></span><b id="connectScannerText">CONECTAR</b></button><span id="connectionBadge" class="badge warn">SINCRONIZANDO</span><span id="extensionVersion" class="version">v—</span></div>
     </header>
 
@@ -26,6 +26,8 @@
       <div><span>TEMPO</span><b id="heroTimeStatus">SYNC</b></div>
     </section>
 
+    <section id="assetQualityCard" class="card asset-quality-card waiting"><div class="section-head"><div><span class="eyebrow">CONTEXTO DO ATIVO</span><h2 id="assetQualityTitle">AVALIANDO MERCADO</h2></div><span id="assetQualityBadge" class="badge warn">SINCRONIZANDO</span></div><p id="assetQualityReason" class="asset-quality-reason">Lendo as velas reais deste ativo.</p><div class="asset-quality-grid"><div><span>QUALIDADE</span><b id="assetQualityScore">—</b></div><div><span>CONTEXTO</span><b id="assetQualityContext">—</b></div><div><span>VIÉS</span><b id="assetQualityBias">—</b></div></div></section>
+
     <section id="decisionCard" class="card decision-card">
       <div class="section-head"><div><span class="eyebrow">DECISÃO DA PRÓXIMA VELA</span><h2 id="signalTitle">ANALISANDO MERCADO ATUAL</h2></div><span id="signalBadge" class="badge warn">AGUARDAR</span></div>
       <div id="decisionBanner" class="decision-banner waiting" aria-live="assertive"><span class="decision-icon" aria-hidden="true"></span><strong id="decisionText">ANALISANDO MERCADO ATUAL</strong><span id="decisionSubtext">Uma decisão por vez. A entrada só libera com o tempo real confirmado.</span></div>
@@ -37,12 +39,10 @@
       <p id="tradeActionStatus" class="manual-note">Botões bloqueados até ENTRAR + tempo CasaTrade sincronizado.</p>
     </section>
 
-    <section id="assetQualityCard" class="card asset-quality-card waiting"><div class="section-head"><div><span class="eyebrow">CONTEXTO DO ATIVO</span><h2 id="assetQualityTitle">AVALIANDO MERCADO</h2></div><span id="assetQualityBadge" class="badge warn">SINCRONIZANDO</span></div><p id="assetQualityReason" class="asset-quality-reason">Lendo as velas reais deste ativo.</p><div class="asset-quality-grid"><div><span>QUALIDADE</span><b id="assetQualityScore">—</b></div><div><span>CONTEXTO</span><b id="assetQualityContext">—</b></div><div><span>VIÉS</span><b id="assetQualityBias">—</b></div></div></section>
-
-    <section class="card live-card"><div class="section-head"><div><span class="eyebrow">VELA ATUAL • DADOS REAIS</span><h2>Preço e OHLC</h2></div><span class="quote-pill">COTAÇÃO <b id="price">—</b></span></div><div class="candle-ohlc"><div><span>ABERTURA</span><b id="currentOpen">—</b></div><div><span>MÁXIMA</span><b id="currentHigh">—</b></div><div><span>MÍNIMA</span><b id="currentLow">—</b></div><div><span>ATUAL</span><b id="currentClose">—</b></div></div><p id="ohlcQuality" class="ohlc-quality">Aguardando OHLC da vela atual.</p><div class="recent-head"><span>ÚLTIMAS 10 VELAS REAIS</span><b id="recentCandleCount">0/10</b></div><div id="recentCandles" class="recent-candles" aria-label="Últimas 10 velas"></div></section>
+    <section class="card live-card"><div class="section-head"><div><span class="eyebrow">GRÁFICO ATUAL • VELA ATUAL • DADOS REAIS</span><h2>Preço e OHLC</h2></div><span class="quote-pill">COTAÇÃO <b id="price">—</b></span></div><div class="candle-ohlc"><div><span>ABERTURA</span><b id="currentOpen">—</b></div><div><span>MÁXIMA</span><b id="currentHigh">—</b></div><div><span>MÍNIMA</span><b id="currentLow">—</b></div><div><span>ATUAL</span><b id="currentClose">—</b></div></div><p id="ohlcQuality" class="ohlc-quality">Aguardando OHLC da vela atual.</p><div class="recent-head"><span>ÚLTIMAS 10 VELAS REAIS</span><b id="recentCandleCount">0/10</b></div><div id="recentCandles" class="recent-candles" aria-label="Últimas 10 velas"></div></section>
 
     <section id="aiAuditCard" class="card ai-audit-card">
-      <div class="section-head"><div><span class="eyebrow">GEMINI • SEGUNDA LEITURA</span><h2 id="aiAuditTitle">AGUARDANDO O SCANNER</h2></div><span id="aiAuditBadge" class="badge">EM ESPERA</span></div>
+      <div class="section-head"><div><span class="eyebrow">IA GEMINI • SEGUNDA LEITURA</span><h2 id="aiAuditTitle">AGUARDANDO O SCANNER</h2></div><span id="aiAuditBadge" class="badge">EM ESPERA</span></div>
       <p id="aiAuditSummary" class="ai-audit-summary">A Gemini só entra depois de um possível sinal técnico com tempo sincronizado.</p>
       <div class="ai-audit-grid"><div><span>DIREÇÃO IA</span><b id="aiAuditDirection">—</b></div><div><span>ALINHAMENTO</span><b id="aiAuditAlignment">—</b></div><div><span>LEITURA</span><b id="aiAuditImpact">—</b></div></div>
       <ul id="aiAuditEvidence" class="ai-audit-evidence" hidden></ul>
