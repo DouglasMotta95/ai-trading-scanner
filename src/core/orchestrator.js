@@ -7,7 +7,7 @@ import {
 import { ANALYST_THRESHOLDS } from './analysis.js';
 
 // Price action/indicators remain in the legacy analyst. This wrapper owns exactly
-// one bounded decision for each target candle: ENTER BUY, ENTER SELL or SKIP.
+// one bounded decision for each target candle: ENTER BUY, ENTER SELL or WAIT.
 const CONFIRM_HITS = 2;
 const DECISION_HIT_GAP_MS = 2500;
 const cycles = new Map();
@@ -146,9 +146,9 @@ function enterSignal(signal, cycle, direction, score, reason = null) {
   };
 }
 
-function skipSignal(signal, reason) {
+function waitSignal(signal, reason) {
   return {
-    ...signal, state: 'NO_TRADE', direction: null, diagnosis: 'WAIT', uiState: 'SKIP',
+    ...signal, state: 'NO_TRADE', direction: null, diagnosis: 'WAIT', uiState: 'WAIT',
     provisional: false, phase: 'FINAL', reason, hint: reason
   };
 }
@@ -236,7 +236,7 @@ function latestWrapperCompleted(snapshot = {}) {
   const asset = clean(snapshot.asset || '');
   const timeframe = clean(snapshot.analysisTimeframe || snapshot.timeframe || 'M1').toUpperCase();
   return [...wrapperCompletedDecisions.values()].filter(row => sameAsset(row?.asset, asset) && clean(row?.timeframe).toUpperCase() === timeframe)
-    .sort((a, b) => Number(b?.targetStart || 0) - Number(a?.targetStart || 0))[0] || null;
+    .sort((a, b) => Number(b?.targetStart || 0) - Number(a?.targetStart || a?.time || 0))[0] || null;
 }
 function newerDecision(a, b) {
   if (!a) return b || null;
@@ -287,8 +287,8 @@ export function processSnapshot(snapshot = {}, state = {}) {
   if (cycle.locked === 'ENTER') {
     return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: enterSignal(signal, cycle, cycle.direction, Math.max(score, Number(cycle.score || 0)), cycle.reason), decisionCycle: { ...cycle } };
   }
-  if (cycle.locked === 'SKIP') {
-    return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: skipSignal(signal, cycle.reason || 'PULAR PRÓXIMA VELA — padrão não confirmou a tempo.'), decisionCycle: { ...cycle } };
+  if (cycle.locked === 'WAIT') {
+    return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: waitSignal(signal, cycle.reason || 'AGUARDAR — padrão não confirmou a tempo.'), decisionCycle: { ...cycle } };
   }
 
   if (secondsRemaining > windows.pre) {
@@ -328,14 +328,14 @@ export function processSnapshot(snapshot = {}, state = {}) {
 
   if (secondsRemaining <= windows.skip) {
     const blocker = clean(signal.waitingFor?.text || signal.reason || 'qualidade insuficiente para a próxima vela');
-    cycle.locked = 'SKIP';
+    cycle.locked = 'WAIT';
     cycle.direction = null;
     cycle.score = score;
-    cycle.reason = `PULAR PRÓXIMA VELA — ${blocker}`;
+    cycle.reason = `AGUARDAR — ${blocker}`;
     cycle.decidedAt = at;
     cycles.set(key, cycle);
-    const trace = appendTrace(state, { key, targetStart: cycle.targetStart, decision: 'SKIP', direction: null, score, setup: cycle.setup, reason: cycle.reason, decidedAt: at });
-    return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: skipSignal(signal, cycle.reason), decisionCycle: { ...cycle }, decisionTrace: trace };
+    const trace = appendTrace(state, { key, targetStart: cycle.targetStart, decision: 'WAIT', direction: null, score, setup: cycle.setup, reason: cycle.reason, decidedAt: at });
+    return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: waitSignal(signal, cycle.reason), decisionCycle: { ...cycle }, decisionTrace: trace };
   }
 
   cycles.set(key, cycle);
