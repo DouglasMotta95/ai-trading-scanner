@@ -63,7 +63,8 @@ test('manifest remains MV3 side-panel extension and loads current Sniper capture
   assert.equal(manifest.manifest_version, 3);
   assert.equal(manifest.side_panel?.default_path, 'src/sidepanel/index.html');
   const scripts = (manifest.content_scripts || []).flatMap(row => row.js || []);
-  assert.ok(scripts.includes('src/content/asset-observer.js'));
-  assert.ok(scripts.includes('src/content/casatrade-platform-clock.js'));
+  assert.ok(scripts.includes('src/content/casatrade-asset-observer.js'));
+  assert.ok(scripts.includes('src/content/casatrade-live-clock.js'));
+  assert.ok(scripts.includes('src/content/embedded-feed-bridge.js'));
   assert.ok(scripts.includes('src/content/network-probe.js'));
 });
