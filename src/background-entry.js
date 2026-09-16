@@ -1,4 +1,5 @@
 import './services/scanner-state-atomic.js';
+import './background-dev-owner.js';
 import './background-build-guard.js';
 import './background-device-anchor.js';
 import './background-runtime-telemetry.js';
