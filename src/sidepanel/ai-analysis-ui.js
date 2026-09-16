@@ -8,6 +8,13 @@ const impact = $('aiAuditImpact');
 const evidence = $('aiAuditEvidence');
 const meta = $('aiAuditMeta');
 const card = $('aiAuditCard');
+const decisionCard = $('decisionCard');
+const syncStrip = $('syncStrip');
+
+// The next-candle decision is the primary action surface. Keep it at the top,
+// immediately after synchronization status, and keep Gemini directly below it.
+if (syncStrip && decisionCard) syncStrip.after(decisionCard);
+if (decisionCard && card) decisionCard.after(card);
 
 let topStatus = $('aiTopStatus');
 if (!topStatus) {
