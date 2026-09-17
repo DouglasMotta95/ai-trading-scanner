@@ -1,2 +1,0 @@
-export const STRATEGIES=[{id:'trend-pullback',name:'Trend + Pullback',version:'1.0',enabled:true},{id:'breakout-retest',name:'Breakout + Retest',version:'1.0',enabled:true},{id:'reversal',name:'Reversal',version:'1.0',enabled:false},{id:'momentum',name:'Momentum',version:'1.0',enabled:true}];
-export function rankOpportunities(items=[]){return [...items].filter(x=>x&&Number.isFinite(x.score)).sort((a,b)=>b.score-a.score).map((x,i)=>({...x,rank:i+1,grade:x.score>=85?'A+':x.score>=75?'A':x.score>=65?'B':'C'}))}
