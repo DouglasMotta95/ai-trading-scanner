@@ -1,0 +1,51 @@
+name: Apply live entry readiness fix v2
+
+on:
+  push:
+    branches:
+      - fix/connect-casatrade-any-open-tab
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Apply patch
+        run: python scripts/apply-live-entry-fix.py
+      - name: Syntax checks
+        run: |
+          find src -name '*.js' -print0 | xargs -0 -n1 node --check
+          find backend -name '*.js' -print0 | xargs -0 -n1 node --check
+          find apps -name '*.js' -print0 | xargs -0 -n1 node --check
+      - name: Full tests
+        run: cd backend && npm test
+      - name: Build extension ZIP
+        run: |
+          rm -rf build-extension
+          mkdir build-extension
+          cp manifest.json build-extension/manifest.json
+          cp -R src build-extension/src
+          cd build-extension
+          zip -qr ../AI-Trading-Scanner-0.10.3.zip manifest.json src
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AI-Trading-Scanner-0.10.3
+          path: AI-Trading-Scanner-0.10.3.zip
+          if-no-files-found: error
+      - name: Commit patch and cleanup helper files
+        run: |
+          rm .github/workflows/apply-live-entry-fix-v2.yml
+          rm scripts/apply-live-entry-fix.py
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add src/core/orchestrator.js test/market-regime-gate.test.mjs manifest.json .github/workflows/apply-live-entry-fix-v2.yml scripts/apply-live-entry-fix.py
+          git commit -m 'fix: allow strong local setup while preserving extreme-volatility gate'
+          git push origin HEAD:fix/connect-casatrade-any-open-tab
