@@ -4,7 +4,8 @@ const DEFAULT_PREFS = Object.freeze({
   overlayEnabled: false,
   possibleSoundEnabled: false,
   confirmSoundEnabled: false,
-  alertLevel: 'off',
+  alertLevel: 'discrete',
+  notificationsEnabled: true,
   analystMode: 'NORMAL',
   geminiEnabled: true,
   holdSeconds: 3
@@ -314,7 +315,7 @@ function render(state = {}) {
   renderOhlc(state);
   renderCandles(state);
   renderLicense(state);
-  maybeSound(state, model);
+  // Live signal audio is emitted by the background alert worker so it also works with the sidepanel closed.
 }
 
 function tone(frequency, delay, duration, gain = .12) {
@@ -358,7 +359,8 @@ function syncSettingsUi() {
   if ($('overlayToggle')) $('overlayToggle').checked = !!prefs.overlayEnabled;
   if ($('geminiToggle')) $('geminiToggle').checked = prefs.geminiEnabled !== false;
   if ($('analystMode')) $('analystMode').value = prefs.analystMode === 'A_PLUS' ? 'A_PLUS' : 'NORMAL';
-  if ($('alertLevel')) $('alertLevel').value = ['off','discrete','strong'].includes(prefs.alertLevel) ? prefs.alertLevel : 'off';
+  if ($('notificationToggle')) $('notificationToggle').checked = prefs.notificationsEnabled !== false;
+  if ($('alertLevel')) $('alertLevel').value = ['off','discrete','strong'].includes(prefs.alertLevel) ? prefs.alertLevel : DEFAULT_PREFS.alertLevel;
   if ($('holdSeconds')) $('holdSeconds').value = String(Math.max(3, Math.min(5, Number(prefs.holdSeconds) || 3)));
   if ($('possibleSoundToggle')) $('possibleSoundToggle').checked = prefs.alertLevel === 'discrete' || prefs.alertLevel === 'strong';
   if ($('confirmSoundToggle')) $('confirmSoundToggle').checked = prefs.alertLevel === 'strong';
@@ -392,11 +394,12 @@ async function setPref(key, value) {
 async function loadPrefs() {
   const stored = await chrome.storage.local.get(PREF_KEY).catch(() => ({}));
   const raw = stored?.[PREF_KEY] || {};
-  const migratedAlert = raw.alertLevel || (raw.confirmSoundEnabled ? 'strong' : raw.possibleSoundEnabled ? 'discrete' : 'off');
+  const migratedAlert = raw.alertLevel || (raw.confirmSoundEnabled ? 'strong' : raw.possibleSoundEnabled ? 'discrete' : DEFAULT_PREFS.alertLevel);
   prefs = {
     ...DEFAULT_PREFS,
     ...raw,
-    alertLevel: ['off','discrete','strong'].includes(migratedAlert) ? migratedAlert : 'off',
+    notificationsEnabled: raw.notificationsEnabled !== false,
+    alertLevel: ['off','discrete','strong'].includes(migratedAlert) ? migratedAlert : DEFAULT_PREFS.alertLevel,
     analystMode: String(raw.analystMode || 'NORMAL').toUpperCase() === 'A_PLUS' ? 'A_PLUS' : 'NORMAL',
     geminiEnabled: raw.geminiEnabled !== false,
     holdSeconds: Math.max(3, Math.min(5, Number(raw.holdSeconds) || 3))
@@ -407,6 +410,7 @@ async function loadPrefs() {
 
 $('overlayToggle')?.addEventListener('change', event => setPref('overlayEnabled', !!event.currentTarget.checked));
 $('geminiToggle')?.addEventListener('change', event => setPref('geminiEnabled', !!event.currentTarget.checked));
+$('notificationToggle')?.addEventListener('change', event => setPref('notificationsEnabled', !!event.currentTarget.checked));
 $('analystMode')?.addEventListener('change', event => setPref('analystMode', event.currentTarget.value === 'A_PLUS' ? 'A_PLUS' : 'NORMAL'));
 $('alertLevel')?.addEventListener('change', event => setPref('alertLevel', event.currentTarget.value));
 $('holdSeconds')?.addEventListener('change', event => setPref('holdSeconds', Math.max(3, Math.min(5, Number(event.currentTarget.value) || 3))));

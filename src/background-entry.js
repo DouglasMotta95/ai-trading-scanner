@@ -9,6 +9,7 @@ import './background-modern-injector.js';
 import './background-platform-controls.js';
 import './background-decision-policy.js';
 import './background-fast-decision.js';
+import './background-system-alerts.js';
 import './background-shadow-calibration.js';
 import './background-asset-radar.js';
 import './background-manual-trades.js';
