@@ -1,3 +1,11 @@
 import './services/scanner-state-atomic.js';
-import './background-augment.js';
-import './background.js';
+import './background-dev-owner.js';
+import './background-build-guard.js';
+import './background-runtime-telemetry.js';
+import './background-opaque-frame-proxy.js';
+import './background-sniper-engine.js';
+import './background-sniper-injector.js';
+import './background-platform-controls.js';
+import './background-ai-analysis.js';
+import './background-sniper-results.js';
+import './background-control.js';

@@ -1,4 +1,5 @@
 import { installationId } from '../services/telemetry.js';
+import { storageLocalGet, storageLocalSet, storageLocalRemove, runtimeSendMessage, permissionsContains, permissionsRequest, tabsCreate } from '../services/chrome-compat.js';
 
 (() => {
   if (globalThis.__ATS_ACCOUNT_LOGIN__) return;
@@ -17,15 +18,17 @@ import { installationId } from '../services/telemetry.js';
   async function permission(url) {
     try {
       const origin = new URL(url).origin + '/*';
-      if (await chrome.permissions.contains({ origins: [origin] })) return true;
-      return chrome.permissions.request({ origins: [origin] });
+      const contained = await permissionsContains({ origins: [origin] });
+      if (contained === undefined || contained === true) return true;
+      const requested = await permissionsRequest({ origins: [origin] });
+      return requested !== false;
     } catch {
       return false;
     }
   }
 
   async function clearAccountSession() {
-    await chrome.storage.local.remove([ACCOUNT_TOKEN_KEY, ACCOUNT_EXP_KEY]);
+    await storageLocalRemove([ACCOUNT_TOKEN_KEY, ACCOUNT_EXP_KEY]);
     const box = $('#accountAccessBox');
     box?.classList.remove('account-connected');
     const status = $('#accountConnectStatus');
@@ -48,8 +51,8 @@ import { installationId } from '../services/telemetry.js';
         validatedAt: Date.now()
       };
     }
-    await chrome.storage.local.set(values);
-    await chrome.runtime.sendMessage({ type: 'ATS_VALIDATE_LICENSE' }).catch(() => {});
+    await storageLocalSet(values);
+    await runtimeSendMessage({ type: 'ATS_VALIDATE_LICENSE' }).catch(() => {});
     return r;
   }
 
@@ -75,7 +78,7 @@ import { installationId } from '../services/telemetry.js';
   }
 
   async function refresh() {
-    const x = await chrome.storage.local.get([ACCOUNT_TOKEN_KEY, ACCOUNT_EXP_KEY]);
+    const x = await storageLocalGet([ACCOUNT_TOKEN_KEY, ACCOUNT_EXP_KEY]);
     const token = String(x[ACCOUNT_TOKEN_KEY] || '');
     if (!token) return false;
     if (Number(x[ACCOUNT_EXP_KEY] || 0) <= Date.now()) {
@@ -181,7 +184,7 @@ import { installationId } from '../services/telemetry.js';
       if (open) $('#licenseKey')?.focus();
     };
 
-    $('#openCustomerPortal').onclick = () => chrome.tabs.create({ url: `${base()}/` });
+    $('#openCustomerPortal').onclick = () => tabsCreate({ url: `${base()}/` });
 
     $('#accountConnectBtn').onclick = async () => {
       const code = codeInput?.value || '';
