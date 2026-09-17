@@ -7,25 +7,28 @@ const PUBLIC_API = 'https://ats-control-center-v07-production.up.railway.app';
 // Telemetry follows the same fixed commercial backend used by licensing.
 const apiBase = () => PUBLIC_API;
 
-const randomInstallationId = () => `ats-install-${crypto.randomUUID()}`;
-const legacyRuntimeInstallationId = () => {
+// manifest.json contains a fixed extension key, therefore chrome.runtime.id is stable for
+// unpacked updates/reinstalls of this build on the same extension identity. Use that stable
+// identity instead of a random UUID so reinstalling the package does not look like a new device.
+const stableRuntimeInstallationId = () => {
   const runtimeId = String(chrome.runtime?.id || '').trim();
   return runtimeId ? `ats-${runtimeId}` : '';
 };
+const randomInstallationId = () => `ats-install-${crypto.randomUUID()}`;
 let installationIdPromise = null;
 
 export async function installationId() {
   if (installationIdPromise) return installationIdPromise;
   installationIdPromise = (async () => {
+    const stableId = stableRuntimeInstallationId();
     const x = await chrome.storage.local.get(INSTALL_KEY);
     const existing = String(x[INSTALL_KEY] || '').trim();
-    const legacyId = legacyRuntimeInstallationId();
-    if (existing && existing !== legacyId) return existing;
 
-    const id = randomInstallationId();
-    await chrome.storage.local.set({ [INSTALL_KEY]: id });
-    const persisted = await chrome.storage.local.get(INSTALL_KEY);
-    return String(persisted[INSTALL_KEY] || id).trim() || id;
+    // Prefer the deterministic runtime identity whenever available. This also migrates old
+    // random installation ids once, preventing a license reset on future reinstalls.
+    const id = stableId || existing || randomInstallationId();
+    if (existing !== id) await chrome.storage.local.set({ [INSTALL_KEY]: id });
+    return id;
   })();
   try {
     return await installationIdPromise;
