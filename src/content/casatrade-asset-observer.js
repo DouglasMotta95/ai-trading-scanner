@@ -2,7 +2,9 @@
   if (globalThis.__ATS_ASSET_OBSERVER__) return;
   globalThis.__ATS_ASSET_OBSERVER__ = true;
 
-  const send = message => {
+  const protocol = String(location.protocol || '').toLowerCase();
+  const opaqueChild = window !== window.top && (!location.hostname || ['about:','blob:','data:'].includes(protocol));
+  const directSend = message => {
     const fn = globalThis.__ATS_SEND_MESSAGE__;
     if (typeof fn === 'function') return fn(message);
     return new Promise(resolve => {
@@ -16,6 +18,9 @@
       retry();
     });
   };
+  const send = message => opaqueChild
+    ? directSend({ type: 'ATS_OPAQUE_FRAME_PROXY', payload: message })
+    : directSend(message);
 
   const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
   const canonical = value => {
