@@ -18,40 +18,19 @@ test('production rejects the checked-in SESSION_SECRET placeholder explicitly', 
   assert.match(server, /SESSION_SECRET_PLACEHOLDERS/);
   assert.match(server, new RegExp(PLACEHOLDER));
   assert.match(server, /SESSION_SECRET_PLACEHOLDERS\.has\(SESSION_SECRET\)/);
-
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ats-secret-test-'));
-  const result = spawnSync(process.execPath, ['backend/src/server.js'], {
-    cwd: root,
-    encoding: 'utf8',
-    timeout: 5000,
-    env: {
-      ...process.env,
-      NODE_ENV: 'production',
-      SESSION_SECRET: PLACEHOLDER,
-      ATS_DATA_DIR: dataDir,
-      PORT: '0'
-    }
-  });
+  const result = spawnSync(process.execPath, ['backend/src/server.js'], { cwd: root, encoding: 'utf8', timeout: 5000, env: { ...process.env, NODE_ENV: 'production', SESSION_SECRET: PLACEHOLDER, ATS_DATA_DIR: dataDir, PORT: '0' } });
   assert.notEqual(result.status, 0);
   assert.match(`${result.stdout}\n${result.stderr}`, /SESSION_SECRET must be a unique non-example secret/);
 });
 
 function storageMock(initial = {}) {
   const values = { ...initial };
-  return {
-    values,
-    api: {
-      async get(keys) {
-        if (Array.isArray(keys)) return Object.fromEntries(keys.map(key => [key, values[key]]));
-        if (typeof keys === 'string') return { [keys]: values[keys] };
-        return { ...values };
-      },
-      async set(patch) { Object.assign(values, patch); },
-      async remove(keys) {
-        for (const key of (Array.isArray(keys) ? keys : [keys])) delete values[key];
-      }
-    }
-  };
+  return { values, api: {
+    async get(keys) { if (Array.isArray(keys)) return Object.fromEntries(keys.map(key => [key, values[key]])); if (typeof keys === 'string') return { [keys]: values[keys] }; return { ...values }; },
+    async set(patch) { Object.assign(values, patch); },
+    async remove(keys) { for (const key of (Array.isArray(keys) ? keys : [keys])) delete values[key]; }
+  }};
 }
 
 async function withInstallationGlobals({ initial = {}, uuid }, run) {
@@ -60,56 +39,35 @@ async function withInstallationGlobals({ initial = {}, uuid }, run) {
   const cryptoDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
   const mock = storageMock(initial);
   let uuidCalls = 0;
-  globalThis.chrome = {
-    runtime: {
-      id: 'shared-extension-runtime-id',
-      getManifest: () => ({ version: 'test' })
-    },
-    storage: { local: mock.api }
-  };
-  Object.defineProperty(globalThis, 'crypto', {
-    configurable: true,
-    value: { randomUUID: () => { uuidCalls += 1; return uuid; } }
-  });
+  globalThis.chrome = { runtime: { id: 'shared-extension-runtime-id', getManifest: () => ({ version: 'test' }) }, storage: { local: mock.api } };
+  Object.defineProperty(globalThis, 'crypto', { configurable: true, value: { randomUUID: () => { uuidCalls += 1; return uuid; } } });
   try {
     const url = pathToFileURL(path.join(root, 'src/services/telemetry.js')).href;
     const telemetry = await import(`${url}?test=${Date.now()}-${Math.random()}`);
     return await run({ telemetry, values: mock.values, uuidCalls: () => uuidCalls });
   } finally {
-    if (hadChrome) globalThis.chrome = previousChrome;
-    else delete globalThis.chrome;
-    if (cryptoDescriptor) Object.defineProperty(globalThis, 'crypto', cryptoDescriptor);
-    else delete globalThis.crypto;
+    if (hadChrome) globalThis.chrome = previousChrome; else delete globalThis.chrome;
+    if (cryptoDescriptor) Object.defineProperty(globalThis, 'crypto', cryptoDescriptor); else delete globalThis.crypto;
   }
 }
 
-test('telemetry installationId generates one UUID and reuses it across concurrent calls', async () => {
-  await withInstallationGlobals({
-    uuid: '11111111-1111-4111-8111-111111111111'
-  }, async ({ telemetry, values, uuidCalls }) => {
-    const ids = await Promise.all([
-      telemetry.installationId(),
-      telemetry.installationId(),
-      telemetry.installationId()
-    ]);
-    const expected = 'ats-install-11111111-1111-4111-8111-111111111111';
+test('telemetry installationId uses the fixed extension identity and reuses it across concurrent calls', async () => {
+  await withInstallationGlobals({ uuid: '11111111-1111-4111-8111-111111111111' }, async ({ telemetry, values, uuidCalls }) => {
+    const ids = await Promise.all([telemetry.installationId(), telemetry.installationId(), telemetry.installationId()]);
+    const expected = 'ats-shared-extension-runtime-id';
     assert.deepEqual(ids, [expected, expected, expected]);
     assert.equal(values.atsInstallationId, expected);
-    assert.equal(uuidCalls(), 1);
-    assert.notEqual(expected, 'ats-shared-extension-runtime-id');
+    assert.equal(uuidCalls(), 0);
   });
 });
 
-test('telemetry installationId migrates the legacy chrome.runtime.id based value', async () => {
-  await withInstallationGlobals({
-    initial: { atsInstallationId: 'ats-shared-extension-runtime-id' },
-    uuid: '22222222-2222-4222-8222-222222222222'
-  }, async ({ telemetry, values, uuidCalls }) => {
+test('telemetry installationId migrates an old random id to the stable extension identity', async () => {
+  await withInstallationGlobals({ initial: { atsInstallationId: 'ats-install-22222222-2222-4222-8222-222222222222' }, uuid: '33333333-3333-4333-8333-333333333333' }, async ({ telemetry, values, uuidCalls }) => {
     const id = await telemetry.installationId();
-    const expected = 'ats-install-22222222-2222-4222-8222-222222222222';
+    const expected = 'ats-shared-extension-runtime-id';
     assert.equal(id, expected);
     assert.equal(values.atsInstallationId, expected);
-    assert.equal(uuidCalls(), 1);
+    assert.equal(uuidCalls(), 0);
   });
 });
 
