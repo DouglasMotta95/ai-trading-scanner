@@ -1,5 +1,6 @@
 import { CandleBuilder, TIMEFRAMES } from './candles.js';
 import { analyzeCandles, ANALYST_THRESHOLDS } from './analysis.js';
+import { marketRegime } from './market-regime.js';
 
 const builders = new Map();
 const finalDecisions = new Map();
@@ -192,7 +193,7 @@ function baseSignal({
   state = 'WAIT', direction = null, provisional = true, reason, timeframe = 'M1', expiration = null,
   candleCount = 0, secondsRemaining = null, progress = null, currentCandle = null, score = 0,
   analysisDirection = null, analysisScore = null, phase = 'ANALYZING', targetStart = null,
-  uiState = 'ANALYZING_MARKET', analytics = {}, waitingFor = null, stability = null
+  uiState = 'ANALYZING_MARKET', analytics = {}, waitingFor = null, stability = null, regime = null
 } = {}) {
   const diagnosis = ['WATCH', 'CONFIRM'].includes(state) && ['BUY', 'SELL'].includes(direction)
     ? direction
@@ -218,6 +219,7 @@ function baseSignal({
     analysisScore: analysisScore == null ? score : analysisScore,
     analytics,
     waitingFor,
+    regime,
     stability,
     targetStart,
     targetLabel: targetStart ? new Date(targetStart).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : null
@@ -296,6 +298,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
   const combined = current ? [...closed.slice(-9), current] : closed.slice(-10);
   const indicatorHistory = current ? [...closed, current] : closed;
   const liveResult = analyzeCandles(combined, indicatorHistory);
+  const regime = marketRegime(closed);
   const candleCount = closed.length;
 
   const clockRemaining = num(snapshot.secondsRemaining);
@@ -323,6 +326,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
     analysisScore: score,
     analytics: liveResult.analytics || {},
     waitingFor: liveResult.waitingFor || null,
+    regime,
     stability: stabilitySnapshot(tracker),
     targetStart
   };
@@ -390,7 +394,13 @@ export function processSnapshot(snapshot = {}, state = {}) {
   }
 
   if (secondsRemaining <= 10) {
-    const canConfirm = observeConfirmation(tracker, liveResult, direction, score, sampleAt);
+    const rangeBlocked = regime?.type === 'range';
+    if (rangeBlocked) {
+      tracker.confirmDirection = null;
+      tracker.confirmHits = 0;
+      tracker.lastConfirmAt = null;
+    }
+    const canConfirm = !rangeBlocked && observeConfirmation(tracker, liveResult, direction, score, sampleAt);
     if (canConfirm) {
       const latestDecision = {
         bucket: currentBucket,
@@ -418,17 +428,38 @@ export function processSnapshot(snapshot = {}, state = {}) {
       };
     }
 
+    const noTradeReason = rangeBlocked
+      ? 'AGUARDANDO — mercado sem tendência definida.'
+      : (liveResult.waitingFor?.text || 'Sem confirmação estável suficiente para liberar a próxima vela.');
     finalDecisions.set(key, {
       bucket: currentBucket,
       state: 'NO_TRADE',
       direction: null,
       provisional: false,
-      reason: liveResult.waitingFor?.text || 'Sem confirmação estável suficiente para liberar a próxima vela.',
+      reason: noTradeReason,
       score,
       targetStart,
       asset: snapshot.asset,
       timeframe: analysisTimeframe
     });
+
+    if (rangeBlocked) {
+      return {
+        candles: closed,
+        currentCandle: current,
+        lastConfirmed,
+        signal: baseSignal({
+          ...common,
+          state: 'NO_TRADE',
+          direction: null,
+          provisional: false,
+          phase: 'FINAL',
+          uiState: 'WAIT',
+          reason: noTradeReason,
+          stability: stabilitySnapshot(tracker)
+        })
+      };
+    }
 
     if (possibleDirection) {
       return {
