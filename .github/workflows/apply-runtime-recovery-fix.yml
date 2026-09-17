@@ -1,0 +1,168 @@
+name: Apply runtime acquisition and license recovery fix
+
+on:
+  push:
+    branches: [fix/connect-casatrade-any-open-tab]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Apply runtime recovery fixes
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json, re
+
+          # 1) Manifest: focused asset tracker must also run in inherited-origin subframes.
+          p = Path('manifest.json')
+          manifest = json.loads(p.read_text())
+          manifest['version'] = '0.10.4'
+          focused = None
+          for cs in manifest.get('content_scripts', []):
+              if cs.get('js') == ['src/content/focused-asset.js']:
+                  focused = cs
+                  break
+          if focused is None:
+              raise SystemExit('focused-asset content script not found')
+          focused['all_frames'] = True
+          focused['match_origin_as_fallback'] = True
+          p.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + '\n')
+
+          # 2) Background direct scan: scan every frame of the already-validated CasaTrade tab,
+          # including opaque about:/srcdoc frames; inject focused asset tracker in all frames.
+          p = Path('src/background.js')
+          text = p.read_text()
+          old = "{ file: 'src/content/focused-asset.js', world: 'ISOLATED', allFrames: false }"
+          new = "{ file: 'src/content/focused-asset.js', world: 'ISOLATED', allFrames: true }"
+          if old not in text:
+              raise SystemExit('focused-asset inject anchor not found')
+          text = text.replace(old, new, 1)
+
+          old = """function scanCasaTradeFrame() {\n  const host = String(location.hostname || '').toLowerCase().replace(/\\.$/, '');\n  if (!(host === 'casatrade.com' || host.endsWith('.casatrade.com') || host === 'casatrade.io' || host.endsWith('.casatrade.io'))) return null;\n"""
+          new = """function scanCasaTradeFrame() {\n  // The top-level target tab is validated before this function is injected.\n  // Do not reject opaque child frames (about:blank/srcdoc): Quetta/CasaTrade can render market UI there.\n"""
+          if old not in text:
+              raise SystemExit('scanCasaTradeFrame host guard anchor not found')
+          text = text.replace(old, new, 1)
+
+          old = """function feedQuality(state = {}) {\n  if (state.connection !== 'online' || state.price == null) return 0;\n  const reported = Number(state.diagnostics?.network?.feedQuality);\n  if (Number.isFinite(reported) && reported > 0) return Math.max(0, Math.min(100, reported));\n  if (state.capabilities?.structuredQuotes) return 100;\n  return state.asset && state.price != null ? 65 : 0;\n}\n"""
+          new = """function feedQuality(state = {}) {\n  if (state.connection !== 'online' || state.price == null) return 0;\n  const reported = Number(state.diagnostics?.network?.feedQuality);\n  if (Number.isFinite(reported) && reported > 0) return Math.max(0, Math.min(100, reported));\n  if (state.capabilities?.structuredQuotes) return 100;\n  if (state.asset && state.price != null && state.diagnostics?.directScan?.assetPriceCorroborated === true) return 85;\n  return state.asset && state.price != null ? 65 : 0;\n}\n"""
+          if old not in text:
+              raise SystemExit('feedQuality anchor not found')
+          text = text.replace(old, new, 1)
+
+          anchor = """    const assetSource = bestFocused ? 'focused-dom' : focus ? 'focused-screen' : best?.asset ? 'dom-fallback' : null;\n    const priceSource = best?.priceSource || (best?.buy != null || best?.sell != null ? 'buttons' : observedPrice != null ? 'chart' : null);\n    const snapshot = {\n"""
+          replacement = """    const assetSource = bestFocused ? 'focused-dom' : focus ? 'focused-screen' : best?.asset ? 'dom-fallback' : null;\n    const priceSource = best?.priceSource || (best?.buy != null || best?.sell != null ? 'buttons' : observedPrice != null ? 'chart' : null);\n    const directAssetPriceCorroborated = !!observedAsset && observedPrice != null && (\n      (!!focus && !!bestFocused && focusMeta?.reliable === true)\n      || (!focus && !!best?.asset && Number(best?.score || 0) >= 55)\n    );\n    const snapshot = {\n"""
+          if anchor not in text:
+              raise SystemExit('direct corroboration insertion anchor not found')
+          text = text.replace(anchor, replacement, 1)
+
+          anchor = """          usedFocusFallback: !!focus && !bestFocused,\n          at: Date.now()\n"""
+          replacement = """          usedFocusFallback: !!focus && !bestFocused,\n          assetPriceCorroborated: directAssetPriceCorroborated,\n          at: Date.now()\n"""
+          if anchor not in text:
+              raise SystemExit('direct scan diagnostics anchor not found')
+          text = text.replace(anchor, replacement, 1)
+          p.write_text(text)
+
+          # 3) Focus messages from inherited-origin subframes are valid when their top tab is CasaTrade.
+          p = Path('src/background-augment.js')
+          text = p.read_text()
+          old = """async function setFocusedAsset(message = {}, sender = {}) {\n  const focused = normAsset(message.asset);\n  if (!focused || !sender?.tab?.id || sender.frameId !== 0) return;\n\n  let senderHost = '';\n  try { senderHost = new URL(sender.url || sender.tab.url || '').hostname; } catch {}\n  if (!isCasaTradeHost(senderHost)) return;\n"""
+          new = """async function setFocusedAsset(message = {}, sender = {}) {\n  const focused = normAsset(message.asset);\n  if (!focused || !sender?.tab?.id) return;\n\n  let senderHost = '';\n  let topHost = '';\n  try { senderHost = new URL(sender.url || '').hostname; } catch {}\n  try { topHost = new URL(sender.tab.url || '').hostname; } catch {}\n  if (!isCasaTradeHost(topHost) && !isCasaTradeHost(senderHost)) return;\n"""
+          if old not in text:
+              raise SystemExit('setFocusedAsset subframe anchor not found')
+          text = text.replace(old, new, 1)
+          p.write_text(text)
+
+          # 4) Network bridge must not deadlock on missing visual focus. A strong/selected/repeated
+          # network candidate may bootstrap the asset; once visual focus exists it remains authoritative.
+          p = Path('src/content/network-bridge.js')
+          text = p.read_text()
+          pattern = re.compile(r"  function bestCandidate\(payload = \{\}, preferredAsset = ''\) \{.*?\n  \}\n\n  function historyFor", re.S)
+          replacement = """  function bestCandidate(payload = {}, preferredAsset = '') {\n    const wanted = assetBase(preferredAsset);\n    let rows = (Array.isArray(payload.candidates) ? payload.candidates : []).map(c => {\n      const asset = canonicalAsset(c?.asset);\n      const price = num(c?.price) ?? (num(c?.bid) != null && num(c?.ask) != null ? (num(c.bid) + num(c.ask)) / 2 : null);\n      return { ...c, asset, price };\n    }).filter(c => c.asset && c.price != null && c.price > 0 && (!wanted || sameAsset(c.asset, preferredAsset)));\n\n    rows.sort((a, b) =>\n      Number(b?.selected === true) - Number(a?.selected === true)\n      || Number(b?.confidence || 0) - Number(a?.confidence || 0)\n      || Number(b?.seenCount || 0) - Number(a?.seenCount || 0)\n      || Number(b?.observedAt || 0) - Number(a?.observedAt || 0)\n    );\n    if (wanted) return rows[0] || null;\n    return rows.find(c => c.selected === true || Number(c.confidence || 0) >= 82 || Number(c.seenCount || 0) >= 2) || null;\n  }\n\n  function historyFor"""
+          text, n = pattern.subn(replacement, text, count=1)
+          if n != 1:
+              raise SystemExit('bestCandidate replacement failed')
+
+          pattern = re.compile(r"  function sendSnapshot\(\{ asset, price, timeframe = 'M1'.*?\n  \}\n\n  function publishToExtension", re.S)
+          replacement = """  function sendSnapshot({ asset, price, timeframe = 'M1', expiration = null, secondsRemaining = null, candles = [], source = 'market', feedQuality = 0, structured = false }) {\n    const focus = focusedAsset();\n    const cleanAsset = canonicalAsset(asset);\n    if (!cleanAsset || price == null) return;\n    if (focus && !sameAsset(cleanAsset, focus)) return;\n    const resolvedAsset = focus || cleanAsset;\n    chrome.runtime.sendMessage({\n      type: 'ATS_PLATFORM_SNAPSHOT',\n      payload: {\n        platformId: 'casatrade',\n        platformName: 'CasaTrade',\n        connection: 'online',\n        asset: resolvedAsset,\n        price: Number(price),\n        timeframe,\n        analysisTimeframe: timeframe,\n        expiration,\n        secondsRemaining: Number.isFinite(Number(secondsRemaining)) ? Number(secondsRemaining) : null,\n        instrumentType: 'unknown',\n        marketType: /\\(OTC\\)/i.test(resolvedAsset) ? 'otc' : 'regular',\n        serverTime: null,\n        candles: Array.isArray(candles) ? candles.slice(-120) : [],\n        ticks: [{ price: Number(price), at: Date.now() }],\n        capabilities: {\n          structuredQuotes: !!structured,\n          candles: Array.isArray(candles) && candles.length >= 3,\n          expiration: !!expiration,\n          multiAsset: false\n        },\n        diagnostics: {\n          capture: source,\n          feedQuality: Number(feedQuality || 0),\n          relayed: true,\n          filteredTo: resolvedAsset,\n          focusFallback: !focus\n        }\n      }\n    }).catch(() => {});\n  }\n\n  function publishToExtension"""
+          text, n = pattern.subn(replacement, text, count=1)
+          if n != 1:
+              raise SystemExit('sendSnapshot replacement failed')
+
+          old = """  function publishToExtension(payload = {}) {\n    chrome.runtime.sendMessage({ type: 'ATS_NETWORK_DIAGNOSTIC', payload }).catch(() => {});\n\n    const focus = focusedAsset();\n    if (!focus) return;\n    const candidate = bestCandidate(payload, focus);\n    if (!candidate || !sameAsset(candidate.asset, focus)) return;\n\n    const price = Number(candidate.price);\n    const networkHistory = historyFor(payload, focus);\n    const timeframe = selectedTimeframeFromDom() || candidate.timeframe || networkHistory.at(-1)?.timeframe || 'M1';\n    const expiration = selectedExpirationFromDom() || candidate.expiration || null;\n    const secondsRemaining = countdownFromDom(timeframe);\n    const localHistory = updateLocalCandle(focus, price, timeframe);\n    const candles = networkHistory.length >= 2 ? networkHistory : localHistory;\n\n    sendSnapshot({\n      asset: focus,\n      price,\n      timeframe,\n      expiration,\n      secondsRemaining,\n      candles,\n      source: `top-frame-relay:${candidate.transport || payload.primaryTransport || 'market'}`,\n      feedQuality: payload.feedQuality,\n      structured: candidate.transport !== 'rendered'\n    });\n  }\n"""
+          new = """  function publishToExtension(payload = {}) {\n    chrome.runtime.sendMessage({ type: 'ATS_NETWORK_DIAGNOSTIC', payload }).catch(() => {});\n\n    const focus = focusedAsset();\n    const candidate = bestCandidate(payload, focus);\n    if (!candidate) return;\n    if (focus && !sameAsset(candidate.asset, focus)) return;\n    const resolvedAsset = focus || candidate.asset;\n\n    const price = Number(candidate.price);\n    const networkHistory = historyFor(payload, resolvedAsset);\n    const timeframe = selectedTimeframeFromDom() || candidate.timeframe || networkHistory.at(-1)?.timeframe || 'M1';\n    const expiration = selectedExpirationFromDom() || candidate.expiration || null;\n    const secondsRemaining = countdownFromDom(timeframe);\n    const localHistory = updateLocalCandle(resolvedAsset, price, timeframe);\n    const candles = networkHistory.length >= 2 ? networkHistory : localHistory;\n\n    sendSnapshot({\n      asset: resolvedAsset,\n      price,\n      timeframe,\n      expiration,\n      secondsRemaining,\n      candles,\n      source: `top-frame-relay:${candidate.transport || payload.primaryTransport || 'market'}`,\n      feedQuality: payload.feedQuality,\n      structured: candidate.transport !== 'rendered'\n    });\n  }\n"""
+          if old not in text:
+              raise SystemExit('publishToExtension anchor not found')
+          text = text.replace(old, new, 1)
+          p.write_text(text)
+
+          # 5) License installation id: keep current local id when present; if storage was lost,
+          # derive a stable hashed device/profile signature so the same device does not look new every install.
+          p = Path('src/services/telemetry.js')
+          text = p.read_text()
+          pattern = re.compile(r"const randomInstallationId = \(\) =>.*?\nexport async function clientToken\(\) \{", re.S)
+          replacement = """const randomInstallationId = () => `ats-install-${crypto.randomUUID()}`;\nlet installationIdPromise = null;\n\nasync function stableDeviceFingerprintId() {\n  try {\n    const info = await chrome.runtime.getPlatformInfo();\n    const basis = [\n      info?.os || '', info?.arch || '', info?.nacl_arch || '',\n      navigator?.userAgent || '', navigator?.language || '',\n      String(navigator?.hardwareConcurrency || ''), String(navigator?.deviceMemory || ''),\n      Intl.DateTimeFormat().resolvedOptions().timeZone || ''\n    ].join('|');\n    if (!basis.replace(/\\|/g, '')) return '';\n    const bytes = new TextEncoder().encode(basis);\n    const digest = await crypto.subtle.digest('SHA-256', bytes);\n    const hex = [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('');\n    return `ats-device-${hex.slice(0, 32)}`;\n  } catch {\n    return '';\n  }\n}\n\nexport async function installationId() {\n  if (installationIdPromise) return installationIdPromise;\n  installationIdPromise = (async () => {\n    const x = await chrome.storage.local.get(INSTALL_KEY);\n    const existing = String(x[INSTALL_KEY] || '').trim();\n    if (existing) return existing;\n\n    const stable = await stableDeviceFingerprintId();\n    const id = stable || randomInstallationId();\n    await chrome.storage.local.set({ [INSTALL_KEY]: id });\n    const persisted = await chrome.storage.local.get(INSTALL_KEY);\n    return String(persisted[INSTALL_KEY] || id).trim() || id;\n  })();\n  try {\n    return await installationIdPromise;\n  } finally {\n    installationIdPromise = null;\n  }\n}\n\nexport async function clientToken() {"""
+          text, n = pattern.subn(replacement, text, count=1)
+          if n != 1:
+              raise SystemExit('telemetry installationId replacement failed')
+          p.write_text(text)
+
+          # 6) Account refresh/login must never blank an already-saved license key merely because
+          # a response omitted licenseKey.
+          p = Path('src/sidepanel/account-login.js')
+          text = p.read_text()
+          old = """  async function saveSession(r) {\n    const values = {\n      [LICENSE_KEY]: String(r.licenseKey || ''),\n      [CLIENT_TOKEN_KEY]: String(r.clientToken || ''),\n      [CLIENT_EXP_KEY]: Number(r.clientTokenExpiresAt) || 0,\n      [ACCOUNT_TOKEN_KEY]: String(r.accountToken || ''),\n      [ACCOUNT_EXP_KEY]: Number(r.accountTokenExpiresAt) || 0\n    };\n"""
+          new = """  async function saveSession(r) {\n    const previous = await chrome.storage.local.get(LICENSE_KEY);\n    const resolvedLicenseKey = String(r.licenseKey || r.license?.key || previous[LICENSE_KEY] || '').trim();\n    const values = {\n      ...(resolvedLicenseKey ? { [LICENSE_KEY]: resolvedLicenseKey } : {}),\n      [CLIENT_TOKEN_KEY]: String(r.clientToken || ''),\n      [CLIENT_EXP_KEY]: Number(r.clientTokenExpiresAt) || 0,\n      [ACCOUNT_TOKEN_KEY]: String(r.accountToken || ''),\n      [ACCOUNT_EXP_KEY]: Number(r.accountTokenExpiresAt) || 0\n    };\n"""
+          if old not in text:
+              raise SystemExit('account saveSession anchor not found')
+          text = text.replace(old, new, 1)
+          text = text.replace("licenseKey: String(r.licenseKey || r.license?.key || ''),", "licenseKey: resolvedLicenseKey,", 1)
+          p.write_text(text)
+
+          # Regression coverage for the exact failures seen in the video/runtime.
+          Path('test/runtime-recovery-regression.test.mjs').write_text(r'''import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport fs from 'node:fs';\n\nconst manifest = JSON.parse(fs.readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));\nconst background = fs.readFileSync(new URL('../src/background.js', import.meta.url), 'utf8');\nconst augment = fs.readFileSync(new URL('../src/background-augment.js', import.meta.url), 'utf8');\nconst bridge = fs.readFileSync(new URL('../src/content/network-bridge.js', import.meta.url), 'utf8');\nconst telemetry = fs.readFileSync(new URL('../src/services/telemetry.js', import.meta.url), 'utf8');\nconst account = fs.readFileSync(new URL('../src/sidepanel/account-login.js', import.meta.url), 'utf8');\n\ntest('focused asset tracker runs in inherited-origin subframes', () => {\n  const row = manifest.content_scripts.find(x => x.js?.length === 1 && x.js[0] === 'src/content/focused-asset.js');\n  assert.equal(row?.all_frames, true);\n  assert.equal(row?.match_origin_as_fallback, true);\n  assert.match(background, /focused-asset\\.js'.*allFrames: true/);\n});\n\ntest('direct scan does not reject opaque child frames', () => {\n  const body = background.slice(background.indexOf('function scanCasaTradeFrame()'), background.indexOf('async function directScanActiveTab'));\n  assert.doesNotMatch(body, /host === 'casatrade\\.com'.*return null/s);\n  assert.match(body, /opaque child frames/);\n});\n\ntest('focused asset messages from CasaTrade child frames are accepted', () => {\n  assert.doesNotMatch(augment, /sender\\.frameId !== 0/);\n  assert.match(augment, /topHost/);\n  assert.match(augment, /isCasaTradeHost\\(topHost\\)/);\n});\n\ntest('strong network candidate can bootstrap asset before visual focus', () => {\n  assert.doesNotMatch(bridge, /if \(!wanted\) return null/);\n  assert.match(bridge, /confidence \\|\\| 0\\) >= 82/);\n  assert.match(bridge, /const resolvedAsset = focus \\|\\| candidate\\.asset/);\n  assert.match(bridge, /focusFallback: !focus/);\n});\n\ntest('corroborated DOM acquisition can satisfy Phase C while weak DOM remains below floor', () => {\n  assert.match(background, /assetPriceCorroborated === true\\) return 85/);\n  assert.match(background, /return state\\.asset && state\\.price != null \\? 65 : 0/);\n  assert.match(background, /confirmationFeedQuality < 80/);\n});\n\ntest('license identity survives storage loss deterministically and account refresh preserves key', () => {\n  assert.match(telemetry, /stableDeviceFingerprintId/);\n  assert.match(telemetry, /SHA-256/);\n  assert.match(telemetry, /ats-device-/);\n  assert.match(account, /previous\\[LICENSE_KEY\\]/);\n  assert.match(account, /resolvedLicenseKey/);\n  assert.doesNotMatch(account, /\\[LICENSE_KEY\\]: String\\(r\\.licenseKey \\|\\| ''\\)/);\n});\n''')
+          PY
+
+      - name: Syntax checks
+        run: |
+          find src -name '*.js' -print0 | xargs -0 -n1 node --check
+          find backend -name '*.js' -print0 | xargs -0 -n1 node --check
+          find apps -name '*.js' -print0 | xargs -0 -n1 node --check
+
+      - name: Full tests
+        run: cd backend && npm test
+
+      - name: Build installable extension ZIP
+        run: |
+          rm -rf build-extension
+          mkdir build-extension
+          cp manifest.json build-extension/manifest.json
+          cp -R src build-extension/src
+          cd build-extension
+          zip -qr ../AI-Trading-Scanner-0.10.4-RUNTIME-RECOVERY.zip manifest.json src
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AI-Trading-Scanner-0.10.4-RUNTIME-RECOVERY
+          path: AI-Trading-Scanner-0.10.4-RUNTIME-RECOVERY.zip
+          if-no-files-found: error
+
+      - name: Commit fixes and remove helper workflow
+        run: |
+          rm .github/workflows/apply-runtime-recovery-fix.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add manifest.json src/background.js src/background-augment.js src/content/network-bridge.js src/services/telemetry.js src/sidepanel/account-login.js test/runtime-recovery-regression.test.mjs .github/workflows/apply-runtime-recovery-fix.yml
+          git commit -m 'fix: recover CasaTrade acquisition and preserve license identity'
+          git push origin HEAD:fix/connect-casatrade-any-open-tab
