@@ -1,0 +1,51 @@
+name: Rebase PR30 after regime gate
+on:
+  push:
+    branches: [feat/visual-guidance-audio-alerts]
+permissions:
+  contents: write
+jobs:
+  rebase:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/visual-guidance-audio-alerts
+          fetch-depth: 0
+      - name: Merge current main and preserve both approved changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git fetch origin main
+          set +e
+          git merge --no-commit --no-ff origin/main
+          rc=$?
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            git checkout --theirs src/core/orchestrator.js
+          fi
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('src/core/orchestrator.js'); s=p.read_text()
+          reps=[
+          ("if (!direction) return 'Sem direção firme para a próxima vela neste momento.';", "if (!direction) return result?.waitingFor?.text || 'Sem direção firme para a próxima vela neste momento.';"),
+          ("uiState = 'ANALYZING_MARKET', analytics = {}, stability = null, regime = null", "uiState = 'ANALYZING_MARKET', analytics = {}, waitingFor = null, stability = null, regime = null"),
+          ("    analytics,\n    regime,", "    analytics,\n    waitingFor,\n    regime,"),
+          ("    analytics: liveResult.analytics || {},\n    regime,", "    analytics: liveResult.analytics || {},\n    waitingFor: liveResult.waitingFor || null,\n    regime,"),
+          ("      : 'Sem confirmação estável suficiente para liberar a próxima vela.';", "      : (liveResult.waitingFor?.text || 'Sem confirmação estável suficiente para liberar a próxima vela.');"),
+          ("reason: 'Sem padrão estável forte o suficiente para a próxima vela.',", "reason: liveResult.waitingFor?.text || 'Sem padrão estável forte o suficiente para a próxima vela.',"),
+          ("reason: 'Padrão ainda sem qualidade suficiente para sinalizar a próxima vela.',", "reason: liveResult.waitingFor?.text || 'Padrão ainda sem qualidade suficiente para sinalizar a próxima vela.',"),
+          ("reason: buildingPattern\n        ? `Montando padrão da próxima vela: ${analyticsSummary(liveResult, direction)}.`\n        : 'Analisando poder de compra/venda, rejeição, força e momentum do mercado atual.',", "reason: liveResult.waitingFor?.text || (buildingPattern\n        ? `Montando padrão da próxima vela: ${analyticsSummary(liveResult, direction)}.`\n        : 'Analisando poder de compra/venda, rejeição, força e momentum do mercado atual.'),")]
+          for old,new in reps:
+            if old not in s: raise SystemExit('expected PR30 rebase pattern missing: '+old[:80])
+            s=s.replace(old,new,1)
+          p.write_text(s)
+          PY
+          git add -A
+          git rm -f .github/workflows/rebase-pr30-after-regime.yml
+          git add -A
+          git commit -m 'Merge main after PR31 and preserve PR30 guidance'
+          git push origin HEAD:feat/visual-guidance-audio-alerts
