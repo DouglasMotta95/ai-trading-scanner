@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "AI Trading Scanner",
-  "version": "0.11.15",
+  "version": "0.11.16",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArDZEDqmjiphJQ4FBhEvxfVBwyAOVeme/dFP5Axh0OOB3KKFtubALdF4RqqnTfxUgGnW/6DhDGlc8asFHN0lRMDEkbv+RcqXIoeQb/EUwDG6QAzBSSxHZh8gCjITjU3Ba2YZ0tkM5aSamxSG7wZIqgQjz4qyc6xOlVNuMcHpz+ucQhapy1dn+0elnHwIjMISemIEEfWMBDkNxqES6XJEGA+MqQpB2+qQYQ0tLryWM7XGRBFabwfs8F6rLvtATf3Y8cgJzn6SL85i22qcy8zmhvWzlM0OC0/CfNULXuaoq1fBlihmicu/psTg/n4BBVSuCtsVb2XBKodgR7cxrFP4PawIDAQAB",
-  "description": "Scanner Sniper M1 para CasaTrade: OHLC numérico, possível aos 30s, decisão aos 10s, confirmação manual e resultado da vela-alvo.",
+  "description": "Scanner Sniper M1 para CasaTrade: foco no gráfico visível, OHLC numérico, possível aos 30s, decisão aos 10s, confirmação manual e resultado da vela-alvo.",
   "permissions": ["storage","activeTab","scripting","sidePanel"],
   "host_permissions": [
     "https://casatrade.com/*","https://*.casatrade.com/*","https://casatrade.io/*","https://*.casatrade.io/*",
@@ -35,5 +35,5 @@
     "resources":["src/content/page-world-sentinel.js","src/content/standalone-instrument-probe.js","src/content/worker-probe.js","src/content/network-probe.js"],
     "matches":["https://casatrade.com/*","https://*.casatrade.com/*","https://casatrade.io/*","https://*.casatrade.io/*","https://casatraders.online/*","https://*.casatraders.online/*","https://ivcasatraders.online/*","https://*.ivcasatraders.online/*"]
   }],
-  "version_name":"0.11.15-casatrade-authoritative-sniper"
+  "version_name":"0.11.16-visible-focus-live-countdown"
 }
