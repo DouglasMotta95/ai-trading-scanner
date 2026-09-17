@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>AI Trading Scanner</title>
+  <style>html,body{margin:0;min-height:100%;background:#06101a;color:#eaf4ff;color-scheme:dark}</style>
   <link rel="stylesheet" href="styles.css">
   <link rel="stylesheet" href="asset-quality.css">
   <link rel="stylesheet" href="premium-v2.css">
@@ -21,9 +22,9 @@
 
     <section class="market-hero professional-hero">
       <div><span>ATIVO</span><b id="asset">—</b></div>
-      <div><span>TIMEFRAME</span><b id="timeframe">—</b></div>
-      <div><span>COUNTDOWN</span><b id="heroCountdown">—</b></div>
-      <div><span>TEMPO</span><b id="heroTimeStatus">SYNC</b></div>
+      <div><span>TIMEFRAME DO GRÁFICO</span><b id="timeframe">—</b></div>
+      <div><span>EXPIRAÇÃO REAL</span><b id="heroExpiration">—</b></div>
+      <div><span>COUNTDOWN DA VELA</span><b id="heroCountdown">—</b></div>
     </section>
 
     <section id="assetQualityCard" class="card asset-quality-card waiting"><div class="section-head"><div><span class="eyebrow">CONTEXTO DO ATIVO</span><h2 id="assetQualityTitle">AVALIANDO MERCADO</h2></div><span id="assetQualityBadge" class="badge warn">SINCRONIZANDO</span></div><p id="assetQualityReason" class="asset-quality-reason">Lendo as velas reais deste ativo.</p><div class="asset-quality-grid"><div><span>QUALIDADE</span><b id="assetQualityScore">—</b></div><div><span>CONTEXTO</span><b id="assetQualityContext">—</b></div><div><span>VIÉS</span><b id="assetQualityBias">—</b></div></div></section>
@@ -66,6 +67,6 @@
 
     <section id="licenseCard" class="card license-card"><div class="section-head"><div><span class="eyebrow">ACESSO</span><h2 id="licenseTitle">Verificando licença…</h2></div><span id="licenseHealth" class="badge">—</span></div><p id="licenseText" class="muted">Aguardando status do acesso.</p><div id="activationBox" class="activation-box" hidden><input id="licenseKey" autocomplete="off" placeholder="Cole sua chave ATS"><button id="activateLicense" class="primary">ATIVAR</button></div></section>
   </main>
-  <script src="chrome-compat.js"></script><script src="app-v2.js"></script><script src="ui-shell-v2.js"></script><script type="module" src="asset-quality-ui.js"></script><script type="module" src="signal-guidance-ui.js"></script><script type="module" src="ai-analysis-ui.js"></script><script src="radar-ui.js"></script><script src="validation-ui.js"></script><script src="manual-trade-ui.js"></script><script src="bankroll-ui.js"></script><script src="trade-handoff-ui.js"></script><script src="expiration-guard-ui.js"></script><script src="diagnostics-export.js"></script><script src="diagnostics-live-extra.js"></script><script type="module" src="account-login.js"></script>
+  <script src="state-restore.js"></script><script src="chrome-compat.js"></script><script src="app-v2.js"></script><script src="ui-shell-v2.js"></script><script type="module" src="asset-quality-ui.js"></script><script type="module" src="signal-guidance-ui.js"></script><script type="module" src="ai-analysis-ui.js"></script><script src="radar-ui.js"></script><script src="validation-ui.js"></script><script src="manual-trade-ui.js"></script><script src="bankroll-ui.js"></script><script src="trade-handoff-ui.js"></script><script src="expiration-guard-ui.js"></script><script src="diagnostics-export.js"></script><script src="diagnostics-live-extra.js"></script><script type="module" src="account-login.js"></script>
 </body>
 </html>
