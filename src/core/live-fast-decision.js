@@ -4,8 +4,8 @@ const num = value => value == null || value === '' ? null : Number.isFinite(Numb
 export const FAST_DECISION = Object.freeze({
   possibleScore: 44,
   confirmScore: 58,
-  enterWindowSeconds: 20,
-  skipWindowSeconds: 4,
+  preSignalWindowSeconds: 30,
+  finalWindowSeconds: 10,
   confirmHits: 2,
   maxHitGapMs: 5000
 });
@@ -85,11 +85,11 @@ function enter(signal, direction, score, seconds, q) {
   };
 }
 
-function skip(signal, score, reason = '') {
-  const text = `PULAR ESTA VELA — ${reason || `setup não confirmou (score ${Math.round(score)}/100)`}.`;
+function waitFinal(signal, score, reason = '') {
+  const text = `AGUARDAR — ${reason || `setup não confirmou (score ${Math.round(score)}/100)`}.`;
   return {
     ...signal,
-    state: 'NO_TRADE', direction: null, diagnosis: 'WAIT', uiState: 'SKIP',
+    state: 'NO_TRADE', direction: null, diagnosis: 'WAIT', uiState: 'WAIT',
     provisional: false, phase: 'FINAL', score, analysisScore: score,
     reason: text, hint: text, fastDecision: true
   };
@@ -106,18 +106,24 @@ export function fastLiveDecision(signal = {}, context = {}) {
   const key = cycleKey(context, signal);
   const at = Number(context.serverTime || Date.now());
 
-  if (seconds <= FAST_DECISION.skipWindowSeconds) {
+  if (seconds <= 0) {
     trackers.delete(key);
-    return skip(signal, score, direction ? `faltou confirmação para ${direction === 'BUY' ? 'COMPRA' : 'VENDA'}` : 'sem direção confiável');
+    return waitFinal(signal, score, 'fechamento da vela em andamento');
+  }
+
+  if (seconds > FAST_DECISION.preSignalWindowSeconds) {
+    trackers.delete(key);
+    const text = `ANALISANDO VELA M1 • ${seconds}s — pré-sinal abre por volta de 30s.`;
+    return { ...signal, state: 'WAIT', direction: null, diagnosis: 'WAIT', uiState: 'BUILDING_PATTERN', provisional: true, phase: 'BUILDING', reason: text, hint: text, fastDecision: true };
   }
 
   if (!direction || score < FAST_DECISION.possibleScore) {
     trackers.delete(key);
     const text = `AGUARDAR • ${seconds}s — leitura ainda fraca (${Math.round(score)}/${FAST_DECISION.possibleScore}).`;
-    return { ...signal, state: 'WAIT', direction: null, diagnosis: 'WAIT', uiState: 'WAIT', provisional: true, phase: 'LIVE', reason: text, hint: text, fastDecision: true };
+    return { ...signal, state: 'WAIT', direction: null, diagnosis: 'WAIT', uiState: 'WAIT', provisional: true, phase: seconds <= FAST_DECISION.finalWindowSeconds ? 'FINAL' : 'LIVE', reason: text, hint: text, fastDecision: true };
   }
 
-  if (seconds > FAST_DECISION.enterWindowSeconds) {
+  if (seconds > FAST_DECISION.finalWindowSeconds) {
     observe(key, direction, false, at);
     return possible(signal, direction, score, seconds, q);
   }
@@ -126,7 +132,9 @@ export function fastLiveDecision(signal = {}, context = {}) {
   const hits = observe(key, direction, strong, at);
   if (strong && hits >= FAST_DECISION.confirmHits) return enter(signal, direction, score, seconds, q);
 
-  return possible(signal, direction, score, seconds, q);
+  return waitFinal(signal, score, direction
+    ? `decisão final sem confirmação suficiente para ${direction === 'BUY' ? 'COMPRA' : 'VENDA'}`
+    : 'sem direção confiável');
 }
 
 export function resetFastLiveDecision() {
