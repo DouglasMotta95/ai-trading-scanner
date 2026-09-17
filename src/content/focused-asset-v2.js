@@ -129,7 +129,6 @@
   const INTERACTION_TRANSITION_MS = 8000;
   let recentInteraction = { asset: '', at: 0 };
   const interactionFresh = asset => sameAsset(recentInteraction.asset, asset) && Date.now() - Number(recentInteraction.at || 0) < INTERACTION_TRANSITION_MS;
-  const interactionTransitionFresh = () => !!recentInteraction.asset && Date.now() - Number(recentInteraction.at || 0) < INTERACTION_TRANSITION_MS;
 
   function elementAssetText(el) {
     return clean([
@@ -165,7 +164,6 @@
       const context = contextOf(el);
       const chartScoped = nearChart(rect, chart) || /chart|tradingview|instrument|symbol|asset|header/.test(context);
       const listContext = /watchlist|asset-list|instrument-list|listbox|search|history|portfolio|ranking|modal|drawer|dropdown|menu/.test(context);
-      // A selected row in the asset list is not stable chart authority by itself.
       if (listContext && !chartScoped) continue;
       if (!chartScoped) continue;
       const interaction = interactionFresh(asset);
@@ -222,31 +220,9 @@
     try { chrome.runtime.sendMessage({ type: 'ATS_VISUAL_FOCUS_V2', ...common }, () => void chrome.runtime?.lastError); } catch {}
   }
 
-  function publishInteractionTransition(asset, at = Date.now()) {
+  function noteInteractionHint(asset, at = Date.now()) {
     if (!asset) return;
-    candidate = asset;
-    candidateSince = at;
-    candidateSamples = 1;
-    lastPublished = asset;
-    lastPublishedAt = at;
-    const common = {
-      asset,
-      score: 2200,
-      samples: 1,
-      stableFor: 0,
-      reliable: true,
-      visual: true,
-      explicit: true,
-      interactionHint: true,
-      interactionAt: at,
-      chartScoped: true,
-      chartFound: !!chartRect(),
-      frameHost: host,
-      frameRole,
-      at,
-      source: 'user-selected-transition'
-    };
-    sendFocus(common);
+    recentInteraction = { asset, at };
   }
 
   function publish(force = false) {
@@ -257,7 +233,6 @@
     scanning = true;
     try {
       const winner = scanWinner();
-      if (interactionTransitionFresh() && winner?.asset && !sameAsset(winner.asset, recentInteraction.asset)) return;
       if (!winner?.asset) return;
       const now = Date.now();
       if (sameAsset(candidate, winner.asset)) candidateSamples += 1;
@@ -313,8 +288,7 @@
     const asset = touchedAsset(event);
     const now = Date.now();
     if (asset && (!sameAsset(recentInteraction.asset, asset) || now - Number(recentInteraction.at || 0) > 250)) {
-      recentInteraction = { asset, at: now };
-      publishInteractionTransition(asset, now);
+      noteInteractionHint(asset, now);
     }
     invalidateElements();
     schedulePublish(70, true);
@@ -322,6 +296,6 @@
   document.addEventListener('pointerup', noteInteraction, true);
   document.addEventListener('touchend', noteInteraction, true);
   document.addEventListener('click', noteInteraction, true);
-  setInterval(() => schedulePublish(0, false), 800);
+  setInterval(() => schedulePublish(0, false), 600);
   setTimeout(() => { invalidateElements(); publish(true); }, 250);
 })();
