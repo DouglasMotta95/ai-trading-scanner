@@ -2,7 +2,9 @@
   if (globalThis.__ATS_EMBEDDED_FEED_BRIDGE__) return;
   globalThis.__ATS_EMBEDDED_FEED_BRIDGE__ = true;
 
-  const send = message => {
+  const protocol = String(location.protocol || '').toLowerCase();
+  const opaqueChild = window !== window.top && (!location.hostname || ['about:','blob:','data:'].includes(protocol));
+  const directSend = message => {
     const fn = globalThis.__ATS_SEND_MESSAGE__;
     if (typeof fn === 'function') return fn(message);
     return new Promise(resolve => {
@@ -16,6 +18,9 @@
       retry();
     });
   };
+  const marketSend = message => opaqueChild
+    ? directSend({ type: 'ATS_OPAQUE_FRAME_PROXY', payload: message })
+    : directSend(message);
 
   const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
   const asset = value => {
@@ -74,7 +79,7 @@
     const now = Date.now();
     if (!force && now - lastFocusRead < 250) return Promise.resolve(focusAsset);
     lastFocusRead = now;
-    return send({ type: 'ATS_READ_SCANNER_STATE' }).then(response => rememberFocus(response?.state || {})).catch(() => focusAsset);
+    return directSend({ type: 'ATS_READ_SCANNER_STATE' }).then(response => rememberFocus(response?.state || {})).catch(() => focusAsset);
   }
 
   function uniqueSelected(payload = {}) {
@@ -124,7 +129,7 @@
       : selected.hits >= 5 && selected.stableMs >= 700;
     if (!enough || (!noFocus && !staleFocus) || (!noFocus && selected.asset === focusAsset)) return focusAsset;
 
-    await send({
+    await marketSend({
       type: 'ATS_VISUAL_FOCUS_V2',
       asset: selected.asset,
       reliable: true,
@@ -166,7 +171,7 @@
     lastSignature = signature;
     lastSignatureAt = now;
 
-    send({ type: 'ATS_EMBEDDED_FEED', payload }).catch(() => {});
+    marketSend({ type: 'ATS_EMBEDDED_FEED', payload }).catch(() => {});
 
     if (!latest) return;
     const tf = timeframe(candidate.timeframe || latest.timeframe);
