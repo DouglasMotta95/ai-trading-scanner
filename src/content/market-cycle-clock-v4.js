@@ -121,9 +121,6 @@
     return cx >= chart.left - padX && cx <= chart.right + padX && cy >= chart.top - padY && cy <= chart.bottom + padY;
   }
 
-  // A countdown is only a candle-close candidate when it is chart-scoped or
-  // explicitly candle/close semantic. A pure expiry timer must never become the
-  // candle clock just because it also counts down.
   function exactDomCountdown(cycleTf) {
     const limit = secondsFor(cycleTf);
     if (!limit) return null;
@@ -178,22 +175,11 @@
     return Date.now() - domVerifiedAt < 2600 ? candidate : null;
   }
 
-  function derivedCountdown(cycleTf) {
-    const duration = secondsFor(cycleTf);
-    if (!duration) return null;
-    const now = Date.now();
-    const durationMs = duration * 1000;
-    const elapsed = ((now % durationMs) + durationMs) % durationMs;
-    let seconds = Math.ceil((durationMs - elapsed) / 1000);
-    if (!Number.isFinite(seconds) || seconds <= 0 || seconds > duration) seconds = duration;
-    return seconds;
-  }
-
   function freshExactClock(state = {}, focus = null, cycleTf = null) {
     const clock = state?.diagnostics?.marketClock || null;
     if (!clock || !focus?.asset) return null;
     if (clock.verified !== true || clock.available === false || clock.role !== 'candle-close') return null;
-    if (!['trader-dom-countdown', 'network-server-cycle'].includes(String(clock.source || ''))) return null;
+    if (!['trader-dom-countdown', 'network-server-cycle', 'structured-candle-boundary'].includes(String(clock.source || ''))) return null;
     if (!sameMarket(clock.asset, focus.asset)) return null;
     if (tf(clock.timeframe) && cycleTf && tf(clock.timeframe) !== tf(cycleTf)) return null;
     if (Number(clock.frameId) !== Number(focus.frameId)) return null;
@@ -301,18 +287,14 @@
 
       const controlsFresh = Number(state.platformControls?.checkedAt || 0) > 0 && Date.now() - Number(state.platformControls.checkedAt) < 5000;
       const cycleTf = liveCycleTf(state, controlsFresh);
-      if (!cycleTf) return; // never invent M1 when CasaTrade has not exposed a cycle yet
+      if (!cycleTf) return;
       const expiration = controlsFresh ? clean(state.platformControls?.observed?.expiration || '') || null : null;
       const domClock = verifiedDomCountdown(cycleTf);
 
-      // Never let the diagnostic/fallback writer clobber an exact clock that was
-      // just published by the network bridge or the visible CasaTrade countdown.
       if (!domClock && freshExactClock(state, focus, cycleTf)) return;
       if (!domClock && Date.now() - canvasVerifiedAt < 2300) return;
 
       const boundary = !domClock ? currentStateBoundary(state, focus, cycleTf) : null;
-      const diagnostic = derivedCountdown(cycleTf);
-      if (diagnostic == null) return;
       const payload = domClock ? {
         type: 'ATS_MARKET_CLOCK_V2', asset: focus.asset, timeframe: cycleTf,
         secondsRemaining: domClock.seconds, expiration, available: true, verified: true, operational: true,
@@ -322,15 +304,15 @@
       } : boundary ? {
         type: 'ATS_MARKET_CLOCK_V2', asset: focus.asset, timeframe: cycleTf,
         secondsRemaining: boundary.seconds, expiration, available: true, verified: true, operational: true,
-        clockRole: 'candle-close', clockSource: 'network-server-cycle', clockMode: 'state-current-candle-boundary',
-        clockText: 'Fechamento confirmado pela vela atual recebida da CasaTrade', clockToken: `${boundary.seconds}s`,
-        confidence: 92, frameHost: host, at: Date.now()
+        clockRole: 'candle-close', clockSource: 'structured-candle-boundary', clockMode: 'structured-casatrade-candle-boundary',
+        clockText: 'Fechamento ancorado na vela estruturada da CasaTrade', clockToken: `${boundary.seconds}s`,
+        confidence: 96, frameHost: host, at: Date.now()
       } : {
         type: 'ATS_MARKET_CLOCK_V2', asset: focus.asset, timeframe: cycleTf,
-        secondsRemaining: diagnostic, expiration, available: true, verified: false, operational: true,
-        clockRole: 'candle-close', clockSource: 'platform-cycle-derived', clockMode: 'bounded-local-fallback',
-        clockText: `Estimativa temporária ${diagnostic}s — aguardando o countdown real da CasaTrade`, clockToken: `~${diagnostic}s`,
-        confidence: 55, frameHost: host, at: Date.now()
+        secondsRemaining: null, expiration, available: false, verified: false, operational: false,
+        clockRole: 'candle-close', clockSource: 'casatrade-clock-pending', clockMode: 'waiting-authoritative-clock',
+        clockText: 'Aguardando countdown real da CasaTrade', clockToken: '',
+        confidence: 0, frameHost: host, at: Date.now()
       };
       const key = `${payload.asset}|${cycleTf}|${payload.secondsRemaining}|${payload.available}|${payload.verified}|${payload.clockMode}`;
       if (key === lastKey && Date.now() - lastAt < 700) return;
