@@ -25,3 +25,18 @@ jobs:
         run: find apps/customer-portal -name '*.js' -print0 | xargs -0 -n1 node --check
       - name: Core unit tests
         run: cd backend && npm test
+      - name: Prepare extension package
+        if: success()
+        run: |
+          rm -rf dist/ai-trading-scanner-extension
+          mkdir -p dist/ai-trading-scanner-extension
+          cp manifest.json dist/ai-trading-scanner-extension/manifest.json
+          cp -R src dist/ai-trading-scanner-extension/src
+      - name: Upload extension package
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-trading-scanner-0.11.15
+          path: dist/ai-trading-scanner-extension/
+          if-no-files-found: error
+          retention-days: 30
