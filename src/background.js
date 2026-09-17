@@ -616,6 +616,16 @@ async function applySnapshot(snapshot, _scannerState = {}, settings = {}, platfo
       }
     });
     candidate = merge(candidate, processSnapshot(enriched, candidate));
+    const confirmationFeedQuality = feedQuality(candidate);
+    if (candidate.signal?.state === 'CONFIRM' && confirmationFeedQuality < 80) {
+      const reason = `Confirmação bloqueada: qualidade do feed ${Math.round(confirmationFeedQuality)}% abaixo do piso de 80%.`;
+      candidate = merge(candidate, {
+        signal: { ...candidate.signal, state: 'NO_TRADE', direction: null, diagnosis: 'WAIT', uiState: 'WAIT', provisional: true, hint: reason, reason },
+        diagnostics: { ...(candidate.diagnostics || {}), confirmationFeedGate: { allowed: false, quality: confirmationFeedQuality, minimum: 80, at: Date.now() } }
+      });
+    } else {
+      candidate = merge(candidate, { diagnostics: { ...(candidate.diagnostics || {}), confirmationFeedGate: { allowed: true, quality: confirmationFeedQuality, minimum: 80, at: Date.now() } } });
+    }
     const processedCount = Math.max(0, Number(candidate.signal?.candleCount ?? candidate.candles?.length ?? 0));
     const stage = acquisitionStage(candidate.signal, processedCount);
     candidate = merge(candidate, {
