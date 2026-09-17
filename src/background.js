@@ -1,6 +1,7 @@
 import { processSnapshot, resetOrchestrator, serializeCompletedDecisions, restoreCompletedDecisions } from './core/orchestrator.js';
 import { resolveMarketEvidence, marketHistoryFor, acquisitionStage } from './core/market-evidence.js';
 import { detectPlatform } from './platforms/registry.js';
+import { findCasaTradeTab } from './services/casatrade-tab-selection.js';
 import { activateLicense, validateLicense, consumeSignal, clearLicense, licenseRequired, restoreCachedLicense } from './services/license.js';
 import { heartbeat, track } from './services/telemetry.js';
 import { readScannerState, updateScannerState, replaceScannerState } from './services/scanner-state-atomic.js';
@@ -187,9 +188,7 @@ async function appendSessionHistory(record) {
 }
 
 async function activeCasaTradeTab() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id || !tab.url) return { tab: null, platform: null };
-  return { tab, platform: platformFromUrl(tab.url) };
+  return findCasaTradeTab();
 }
 
 async function ensureSupportedActiveTab() {
