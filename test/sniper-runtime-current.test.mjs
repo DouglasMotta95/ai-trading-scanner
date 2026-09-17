@@ -6,6 +6,8 @@ const read = p => fs.readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
 const entry = read('src/background-entry.js');
 const engine = read('src/background-sniper-engine.js');
 const injector = read('src/background-sniper-injector.js');
+const bridge = read('src/content/embedded-feed-bridge.js');
+const liveClock = read('src/content/casatrade-live-clock.js');
 const bootstrap = read('src/content/sniper-page-bootstrap.js');
 const panel = read('src/sidepanel/app-v2.js');
 const html = read('src/sidepanel/index.html');
@@ -13,15 +15,17 @@ const manifest = JSON.parse(read('manifest.json'));
 const cycle = read('src/core/sniper-cycle.js');
 const results = read('src/background-sniper-results.js');
 const license = read('src/services/license.js');
+const ai = read('src/background-ai-analysis.js');
 
-test('runtime loads one Sniper market/decision authority and excludes competing engines', () => {
+test('runtime loads the Sniper authority plus Gemini second reading without competing decision engines', () => {
   assert.match(entry, /background-sniper-engine\.js/);
-  for (const old of ['background-market-session.js','background-fast-decision.js','background-decision-policy.js','background-radar.js','background-ai-analysis.js','background-shadow-calibration.js']) {
+  assert.match(entry, /background-ai-analysis\.js/);
+  for (const old of ['background-market-session.js','background-fast-decision.js','background-decision-policy.js','background-radar.js','background-shadow-calibration.js']) {
     assert.doesNotMatch(entry, new RegExp(old.replaceAll('.', '\\.')));
   }
 });
 
-test('Sniper authority binds focus, numeric OHLC and exact clock to the same visible market', () => {
+test('Sniper authority binds focus, numeric OHLC and CasaTrade clock to the same visible market', () => {
   assert.match(engine, /ATS_VISUAL_FOCUS_V2/);
   assert.match(engine, /ATS_EMBEDDED_FEED/);
   assert.match(engine, /ATS_MARKET_CLOCK_V2/);
@@ -29,7 +33,17 @@ test('Sniper authority binds focus, numeric OHLC and exact clock to the same vis
   assert.match(engine, /Number\(focus\.frameId\) !== info\.frameId/);
   assert.match(engine, /normalizeCandles/);
   assert.match(engine, /message\.clockRole !== 'candle-close'/);
-  assert.match(engine, /EXACT_CLOCK_SOURCES/);
+  assert.match(engine, /new Set\(\['casatrade-platform-clock'\]\)/);
+});
+
+test('CasaTrade source timestamp is authoritative and wall clock is not substituted into the trading clock', () => {
+  assert.match(liveClock, /epochAtAnchor:sourceNow/);
+  assert.doesNotMatch(liveClock, /trustedSource/);
+  assert.doesNotMatch(liveClock, /sourceNow\|\|Date\.now/);
+  assert.match(bridge, /sourceNow=ts\(candidate\.timestamp\)/);
+  assert.doesNotMatch(bridge, /ts\(candidate\.timestamp\)\|\|Date\.now/);
+  assert.match(engine, /serverTime: sourceNow/);
+  assert.match(engine, /authoritativeNow\(clock\)/);
 });
 
 test('asset switch clears the prior market session before accepting the new visible asset', () => {
@@ -53,23 +67,33 @@ test('Sniper cycle implements prepare at 30 seconds and final decision at 10 sec
   assert.doesNotMatch(html, /ENTRAR \/ PULAR/);
 });
 
-test('confirmation is blocked on extreme volatility or feed quality below 80 percent', () => {
+test('final confirmation requires real feed quality, CasaTrade expiration and deduplicated observations', () => {
   assert.match(engine, /MIN_FEED_QUALITY = 0\.8/);
+  assert.match(engine, /normalizeFeedQuality\(payload\.feedQuality\)/);
+  assert.doesNotMatch(engine, /normalizeFeedQuality\(candidate\.confidence\)/);
+  assert.match(engine, /MIN_HIT_INTERVAL_MS = 700/);
+  assert.match(engine, /blockedBy: 'expiration'/);
+  assert.match(engine, /expirationReady: expiration\.ready/);
+  assert.match(bridge, /lastSignature/);
+});
+
+test('confirmation is blocked on extreme volatility or feed quality below 80 percent', () => {
   assert.match(engine, /signal\.regime\?\.extremeVolatility === true/);
   assert.match(engine, /feedQuality < MIN_FEED_QUALITY/);
   assert.match(engine, /confirmationFeedGate/);
   assert.match(engine, /minimum: 80/);
 });
 
-test('Android and Quetta injection has callback compatibility, script-tag fallback and a watchdog', () => {
+test('Android and Quetta injection has callback compatibility, script-tag fallback and staged watchdog', () => {
   assert.match(injector, /chrome\.scripting\.executeScript/);
   assert.match(injector, /returned\?\.then/);
   assert.match(injector, /script-tag-fallback/);
-  assert.match(injector, /injection_timeout/);
+  assert.match(injector, /asset_timeout/);
+  assert.match(injector, /ohlc_timeout/);
+  assert.match(injector, /clock_timeout/);
   assert.match(injector, /scheduleWatchdog/);
   assert.match(bootstrap, /page-world-confirmed/);
   assert.match(bootstrap, /ATS_PAGE_WORLD_SENTINEL/);
-  assert.match(bootstrap, /load-error:/);
 });
 
 test('trade result runtime is present and resolves the locked target candle as WIN LOSS or DRAW', () => {
@@ -78,6 +102,17 @@ test('trade result runtime is present and resolves the locked target candle as W
   assert.match(results, /LOSS/);
   assert.match(results, /DRAW/);
   assert.match(results, /targetEnd/);
+});
+
+test('sidepanel order is asset quality then decision then Gemini and trade result', () => {
+  const quality = html.indexOf('id="assetQualityCard"');
+  const decision = html.indexOf('id="decision"');
+  const gemini = html.indexOf('id="aiAuditCard"');
+  const result = html.indexOf('ÚLTIMA OPERAÇÃO');
+  assert.ok(quality >= 0 && decision > quality && gemini > decision && result > gemini);
+  assert.match(html, /asset-quality-ui\.js/);
+  assert.match(html, /ai-analysis-ui\.js/);
+  assert.match(ai, /clock\.source !== 'casatrade-platform-clock'/);
 });
 
 test('unpacked owner development mode remains separate from customer licensing', () => {
@@ -89,6 +124,7 @@ test('unpacked owner development mode remains separate from customer licensing',
 test('manifest remains MV3 side-panel extension and loads current Sniper capture scripts', () => {
   assert.equal(manifest.manifest_version, 3);
   assert.equal(manifest.side_panel?.default_path, 'src/sidepanel/index.html');
+  assert.equal(manifest.action?.default_popup, undefined);
   const scripts = (manifest.content_scripts || []).flatMap(row => row.js || []);
   assert.ok(scripts.includes('src/content/casatrade-asset-observer.js'));
   assert.ok(scripts.includes('src/content/casatrade-live-clock.js'));
