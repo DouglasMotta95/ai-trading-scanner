@@ -1,12 +1,15 @@
 const finite = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
 
+export const EXTREME_VOLATILITY_MULTIPLIER = 2.5;
+export const VOLATILITY_LOOKBACK = 20;
+
 export function marketRegime(candles = []) {
   const recent = (Array.isArray(candles) ? candles : [])
     .map(candle => ({ high: finite(candle?.high), low: finite(candle?.low), close: finite(candle?.close) }))
     .filter(candle => candle.high != null && candle.low != null && candle.close != null)
-    .slice(-20);
+    .slice(-VOLATILITY_LOOKBACK);
 
-  if (recent.length < 20) return { type: 'unknown', volatility: 0, directional: 0, efficiency: 0, consistency: 0 };
+  if (recent.length < VOLATILITY_LOOKBACK) return { type: 'unknown', volatility: 0, directional: 0, efficiency: 0, consistency: 0, extremeVolatility: false, volatilityRatio: 0, extremeVolatilityMultiplier: EXTREME_VOLATILITY_MULTIPLIER };
 
   const ranges = recent.map(candle => Math.abs(candle.high - candle.low));
   const volatility = ranges.reduce((sum, value) => sum + value, 0) / Math.max(1, ranges.length);
@@ -21,16 +24,25 @@ export function marketRegime(candles = []) {
   const consistency = deltas.length ? Math.max(upSteps, downSteps) / deltas.length : 0;
   const directional = volatility > 0 ? move / (volatility * recent.length) : 0;
 
+  const priorRanges = ranges.slice(0, -1);
+  const averagePriorRange = priorRanges.reduce((sum, value) => sum + value, 0) / Math.max(1, priorRanges.length);
+  const currentRange = ranges.at(-1) || 0;
+  const volatilityRatio = averagePriorRange > 0 ? currentRange / averagePriorRange : 0;
+  const extremeVolatility = volatilityRatio >= EXTREME_VOLATILITY_MULTIPLIER;
+
   const directionalTrend = directional >= .28 && consistency >= .63;
   const efficientTrend = efficiency >= .48 && consistency >= .58;
-  const trending = move > 0 && (directionalTrend || efficientTrend);
+  const trending = !extremeVolatility && move > 0 && (directionalTrend || efficientTrend);
 
   return {
     type: trending ? (net > 0 ? 'uptrend' : 'downtrend') : 'range',
     volatility,
     directional,
     efficiency,
-    consistency
+    consistency,
+    extremeVolatility,
+    volatilityRatio,
+    extremeVolatilityMultiplier: EXTREME_VOLATILITY_MULTIPLIER
   };
 }
 
@@ -41,5 +53,6 @@ export function qualityGate({ connected, stale, regime, newsBlocked = false, dat
   if (newsBlocked) reasons.push('Evento de alto impacto');
   if (dataQuality < .8) reasons.push('Qualidade de dados insuficiente');
   if (regime?.type === 'unknown') reasons.push('Regime não identificado');
+  if (regime?.extremeVolatility) reasons.push('Volatilidade extrema');
   return { allowed: reasons.length === 0, reasons };
 }
