@@ -59,9 +59,9 @@
   }
 
   try {
-    chrome.storage.local.get('scannerState', data => {
+    chrome.runtime.sendMessage({ type: 'ATS_READ_SCANNER_STATE' }, response => {
       try { void chrome.runtime.lastError; } catch {}
-      renderCached(data?.scannerState || {});
+      renderCached(response?.state || {});
     });
     chrome.storage.onChanged.addListener((changes, area) => {
       if (area === 'local' && changes.scannerState?.newValue) renderCached(changes.scannerState.newValue);
