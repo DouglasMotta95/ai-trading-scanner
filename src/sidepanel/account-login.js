@@ -33,8 +33,10 @@ import { installationId } from '../services/telemetry.js';
   }
 
   async function saveSession(r) {
+    const previous = await chrome.storage.local.get(LICENSE_KEY);
+    const resolvedLicenseKey = String(r.licenseKey || r.license?.key || previous[LICENSE_KEY] || '').trim();
     const values = {
-      [LICENSE_KEY]: String(r.licenseKey || ''),
+      ...(resolvedLicenseKey ? { [LICENSE_KEY]: resolvedLicenseKey } : {}),
       [CLIENT_TOKEN_KEY]: String(r.clientToken || ''),
       [CLIENT_EXP_KEY]: Number(r.clientTokenExpiresAt) || 0,
       [ACCOUNT_TOKEN_KEY]: String(r.accountToken || ''),
@@ -43,7 +45,7 @@ import { installationId } from '../services/telemetry.js';
     if (r.license?.status === 'active') {
       values[LAST_VALID_LICENSE_KEY] = {
         license: { ...r.license, error: null, syncPending: false },
-        licenseKey: String(r.licenseKey || r.license?.key || ''),
+        licenseKey: resolvedLicenseKey,
         clientTokenExpiresAt: Number(r.clientTokenExpiresAt) || 0,
         validatedAt: Date.now()
       };

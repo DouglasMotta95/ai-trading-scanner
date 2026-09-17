@@ -153,20 +153,19 @@
 
   function bestCandidate(payload = {}, preferredAsset = '') {
     const wanted = assetBase(preferredAsset);
-    if (!wanted) return null;
     let rows = (Array.isArray(payload.candidates) ? payload.candidates : []).map(c => {
       const asset = canonicalAsset(c?.asset);
       const price = num(c?.price) ?? (num(c?.bid) != null && num(c?.ask) != null ? (num(c.bid) + num(c.ask)) / 2 : null);
       return { ...c, asset, price };
-    }).filter(c => c.asset && c.price != null && c.price > 0 && sameAsset(c.asset, preferredAsset));
-
+    }).filter(c => c.asset && c.price != null && c.price > 0 && (!wanted || sameAsset(c.asset, preferredAsset)));
     rows.sort((a, b) =>
       Number(b?.selected === true) - Number(a?.selected === true)
       || Number(b?.confidence || 0) - Number(a?.confidence || 0)
       || Number(b?.seenCount || 0) - Number(a?.seenCount || 0)
       || Number(b?.observedAt || 0) - Number(a?.observedAt || 0)
     );
-    return rows[0] || null;
+    if (wanted) return rows[0] || null;
+    return rows.find(c => c.selected === true || Number(c.confidence || 0) >= 82 || Number(c.seenCount || 0) >= 2) || null;
   }
 
   function historyFor(payload = {}, asset = '') {
@@ -201,66 +200,42 @@
   function sendSnapshot({ asset, price, timeframe = 'M1', expiration = null, secondsRemaining = null, candles = [], source = 'market', feedQuality = 0, structured = false }) {
     const focus = focusedAsset();
     const cleanAsset = canonicalAsset(asset);
-    if (!focus || !cleanAsset || !sameAsset(cleanAsset, focus) || price == null) return;
+    if (!cleanAsset || price == null) return;
+    if (focus && !sameAsset(cleanAsset, focus)) return;
+    const resolvedAsset = focus || cleanAsset;
     chrome.runtime.sendMessage({
       type: 'ATS_PLATFORM_SNAPSHOT',
       payload: {
-        platformId: 'casatrade',
-        platformName: 'CasaTrade',
-        connection: 'online',
-        asset: focus,
-        price: Number(price),
-        timeframe,
-        analysisTimeframe: timeframe,
-        expiration,
+        platformId: 'casatrade', platformName: 'CasaTrade', connection: 'online',
+        asset: resolvedAsset, price: Number(price), timeframe, analysisTimeframe: timeframe, expiration,
         secondsRemaining: Number.isFinite(Number(secondsRemaining)) ? Number(secondsRemaining) : null,
-        instrumentType: 'unknown',
-        marketType: /\(OTC\)/i.test(focus) ? 'otc' : 'regular',
-        serverTime: null,
-        candles: Array.isArray(candles) ? candles.slice(-120) : [],
+        instrumentType: 'unknown', marketType: /\(OTC\)/i.test(resolvedAsset) ? 'otc' : 'regular',
+        serverTime: null, candles: Array.isArray(candles) ? candles.slice(-120) : [],
         ticks: [{ price: Number(price), at: Date.now() }],
-        capabilities: {
-          structuredQuotes: !!structured,
-          candles: Array.isArray(candles) && candles.length >= 3,
-          expiration: !!expiration,
-          multiAsset: false
-        },
-        diagnostics: {
-          capture: source,
-          feedQuality: Number(feedQuality || 0),
-          relayed: true,
-          filteredTo: focus
-        }
+        capabilities: { structuredQuotes: !!structured, candles: Array.isArray(candles) && candles.length >= 3, expiration: !!expiration, multiAsset: false },
+        diagnostics: { capture: source, feedQuality: Number(feedQuality || 0), relayed: true, filteredTo: resolvedAsset, focusFallback: !focus }
       }
     }).catch(() => {});
   }
 
   function publishToExtension(payload = {}) {
     chrome.runtime.sendMessage({ type: 'ATS_NETWORK_DIAGNOSTIC', payload }).catch(() => {});
-
     const focus = focusedAsset();
-    if (!focus) return;
     const candidate = bestCandidate(payload, focus);
-    if (!candidate || !sameAsset(candidate.asset, focus)) return;
-
+    if (!candidate) return;
+    if (focus && !sameAsset(candidate.asset, focus)) return;
+    const resolvedAsset = focus || candidate.asset;
     const price = Number(candidate.price);
-    const networkHistory = historyFor(payload, focus);
+    const networkHistory = historyFor(payload, resolvedAsset);
     const timeframe = selectedTimeframeFromDom() || candidate.timeframe || networkHistory.at(-1)?.timeframe || 'M1';
     const expiration = selectedExpirationFromDom() || candidate.expiration || null;
     const secondsRemaining = countdownFromDom(timeframe);
-    const localHistory = updateLocalCandle(focus, price, timeframe);
+    const localHistory = updateLocalCandle(resolvedAsset, price, timeframe);
     const candles = networkHistory.length >= 2 ? networkHistory : localHistory;
-
     sendSnapshot({
-      asset: focus,
-      price,
-      timeframe,
-      expiration,
-      secondsRemaining,
-      candles,
+      asset: resolvedAsset, price, timeframe, expiration, secondsRemaining, candles,
       source: `top-frame-relay:${candidate.transport || payload.primaryTransport || 'market'}`,
-      feedQuality: payload.feedQuality,
-      structured: candidate.transport !== 'rendered'
+      feedQuality: payload.feedQuality, structured: candidate.transport !== 'rendered'
     });
   }
 

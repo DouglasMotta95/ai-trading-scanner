@@ -64,7 +64,7 @@ test('market regime classifies the fixture as range', () => {
   assert.equal(regime.type, 'range');
 });
 
-test('range regime blocks ENTER even after confirmation score and stability are otherwise sufficient', () => {
+test('normal range does not block a strong local next-candle confirmation', () => {
   resetOrchestrator();
   const bucket = Math.floor(1_800_110_000_000 / minute) * minute;
   const candles = rangeWithStrongCurrent(bucket);
@@ -72,16 +72,15 @@ test('range regime blocks ENTER even after confirmation score and stability are 
   processSnapshot(snapshot(bucket, 35_000, candles), { connection: 'online' });
   processSnapshot(snapshot(bucket, 36_000, candles), { connection: 'online' });
   const firstFinal = processSnapshot(snapshot(bucket, 51_000, candles), { connection: 'online' });
-  const blocked = processSnapshot(snapshot(bucket, 52_000, candles), { connection: 'online' });
+  const confirmed = processSnapshot(snapshot(bucket, 52_000, candles), { connection: 'online' });
 
-  assert.equal(blocked.signal.regime?.type, 'range');
-  assert.ok(Number(blocked.signal.analysisScore) >= 58, `expected score >= 58, got ${blocked.signal.analysisScore}`);
-  assert.notEqual(firstFinal.signal.uiState, 'ENTER_BUY');
-  assert.notEqual(firstFinal.signal.uiState, 'ENTER_SELL');
-  assert.equal(blocked.signal.state, 'NO_TRADE');
-  assert.equal(blocked.signal.uiState, 'WAIT');
-  assert.equal(blocked.signal.direction, null);
-  assert.equal(blocked.signal.reason, 'AGUARDANDO — mercado sem tendência definida.');
+  assert.equal(confirmed.signal.regime?.type, 'range');
+  assert.equal(confirmed.signal.regime?.extremeVolatility, false);
+  assert.ok(Number(confirmed.signal.analysisScore) >= 58, `expected score >= 58, got ${confirmed.signal.analysisScore}`);
+  assert.notEqual(firstFinal.signal.state, 'CONFIRM');
+  assert.equal(confirmed.signal.state, 'CONFIRM');
+  assert.equal(confirmed.signal.uiState, 'ENTER_BUY');
+  assert.equal(confirmed.signal.direction, 'BUY');
 });
 
 test('regime gate is additive and does not change approved thresholds', async () => {

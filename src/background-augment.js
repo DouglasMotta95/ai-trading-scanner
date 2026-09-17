@@ -171,11 +171,13 @@ async function keepRealFeedContext(payload = {}, sender = {}) {
 
 async function setFocusedAsset(message = {}, sender = {}) {
   const focused = normAsset(message.asset);
-  if (!focused || !sender?.tab?.id || sender.frameId !== 0) return;
+  if (!focused || !sender?.tab?.id) return;
 
   let senderHost = '';
-  try { senderHost = new URL(sender.url || sender.tab.url || '').hostname; } catch {}
-  if (!isCasaTradeHost(senderHost)) return;
+  let topHost = '';
+  try { senderHost = new URL(sender.url || '').hostname; } catch {}
+  try { topHost = new URL(sender.tab.url || '').hostname; } catch {}
+  if (!isCasaTradeHost(topHost) && !isCasaTradeHost(senderHost)) return;
 
   const tabId = sender.tab.id;
   const previousFocus = focusedAssets.get(tabId) || null;

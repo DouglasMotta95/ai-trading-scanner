@@ -1,6 +1,7 @@
 import { processSnapshot, resetOrchestrator, serializeCompletedDecisions, restoreCompletedDecisions } from './core/orchestrator.js';
 import { resolveMarketEvidence, marketHistoryFor, acquisitionStage } from './core/market-evidence.js';
 import { detectPlatform } from './platforms/registry.js';
+import { findCasaTradeTab } from './services/casatrade-tab-selection.js';
 import { activateLicense, validateLicense, consumeSignal, clearLicense, licenseRequired, restoreCachedLicense } from './services/license.js';
 import { heartbeat, track } from './services/telemetry.js';
 import { readScannerState, updateScannerState, replaceScannerState } from './services/scanner-state-atomic.js';
@@ -150,6 +151,7 @@ function feedQuality(state = {}) {
   const reported = Number(state.diagnostics?.network?.feedQuality);
   if (Number.isFinite(reported) && reported > 0) return Math.max(0, Math.min(100, reported));
   if (state.capabilities?.structuredQuotes) return 100;
+  if (state.asset && state.price != null && state.diagnostics?.directScan?.assetPriceCorroborated === true) return 85;
   return state.asset && state.price != null ? 65 : 0;
 }
 
@@ -187,9 +189,7 @@ async function appendSessionHistory(record) {
 }
 
 async function activeCasaTradeTab() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id || !tab.url) return { tab: null, platform: null };
-  return { tab, platform: platformFromUrl(tab.url) };
+  return findCasaTradeTab();
 }
 
 async function ensureSupportedActiveTab() {
@@ -204,7 +204,7 @@ async function ensureSupportedActiveTab() {
 
 async function injectReaders(tabId) {
   const scripts = [
-    { file: 'src/content/focused-asset.js', world: 'ISOLATED', allFrames: false },
+    { file: 'src/content/focused-asset.js', world: 'ISOLATED', allFrames: true },
     { file: 'src/content/worker-probe.js', world: 'MAIN', allFrames: true },
     { file: 'src/content/canvas-probe.js', world: 'MAIN', allFrames: true },
     { file: 'src/content/network-probe.js', world: 'MAIN', allFrames: true },
@@ -284,8 +284,8 @@ async function connectActiveTab() {
 }
 
 function scanCasaTradeFrame() {
-  const host = String(location.hostname || '').toLowerCase().replace(/\.$/, '');
-  if (!(host === 'casatrade.com' || host.endsWith('.casatrade.com') || host === 'casatrade.io' || host.endsWith('.casatrade.io'))) return null;
+  // The target top-level tab is validated as CasaTrade before injection.
+  // Child frames may be about:blank/srcdoc and still contain the live Quetta market UI.
 
   const cleanText = v => String(v ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
   const fold = v => cleanText(v).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
@@ -769,6 +769,10 @@ async function directScanActiveTab(force = false) {
 
     const assetSource = bestFocused ? 'focused-dom' : focus ? 'focused-screen' : best?.asset ? 'dom-fallback' : null;
     const priceSource = best?.priceSource || (best?.buy != null || best?.sell != null ? 'buttons' : observedPrice != null ? 'chart' : null);
+    const directAssetPriceCorroborated = !!observedAsset && observedPrice != null && (
+      (!!focus && !!bestFocused && focusMeta?.reliable === true)
+      || (!focus && !!best?.asset && Number(best?.score || 0) >= 55)
+    );
     const snapshot = {
       platformId: platform.id,
       platformName: platform.name,
@@ -798,6 +802,7 @@ async function directScanActiveTab(force = false) {
           framesSeen: rows.length,
           filteredTo: observedAsset || focus || null,
           usedFocusFallback: !!focus && !bestFocused,
+          assetPriceCorroborated: directAssetPriceCorroborated,
           at: Date.now()
         }
       },
