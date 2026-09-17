@@ -15,23 +15,27 @@ const ALLOWED_TYPES = new Set([
 ]);
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message?.type !== 'ATS_OPAQUE_FRAME_PROXY') return false;
+  const wrapped = message?.type === 'ATS_OPAQUE_FRAME_PROXY';
+  const payload = wrapped
+    ? (message.payload && typeof message.payload === 'object' ? message.payload : null)
+    : (message && typeof message === 'object' && ALLOWED_TYPES.has(message.type) ? message : null);
+  if (!payload || !ALLOWED_TYPES.has(payload.type)) return false;
+
   const tabId = sender.tab?.id;
   const frameId = Number(sender.frameId);
   let topHost = '';
   try { topHost = new URL(sender.tab?.url || '').hostname; } catch {}
   const senderUrl = String(sender.url || '');
   const senderOpaque = opaqueUrl(senderUrl) || !senderUrl || String(sender.origin || '') === 'null';
-  const payload = message.payload && typeof message.payload === 'object' ? message.payload : null;
 
-  if (!tabId || !Number.isInteger(frameId) || !casaHost(topHost) || !senderOpaque || !payload || !ALLOWED_TYPES.has(payload.type)) {
-    sendResponse({ ok: false, ignored: true });
+  if (!tabId || !Number.isInteger(frameId) || !casaHost(topHost) || !senderOpaque) {
+    if (wrapped) sendResponse({ ok: false, ignored: true });
     return false;
   }
 
   chrome.tabs.sendMessage(tabId, { type: 'ATS_OPAQUE_FRAME_FORWARD', payload }, { frameId: 0 }, response => {
     try { void chrome.runtime.lastError; } catch {}
-    sendResponse(response || { ok: true });
+    sendResponse(response || { ok: true, proxied: true });
   });
   return true;
 });
