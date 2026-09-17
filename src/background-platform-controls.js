@@ -90,8 +90,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type === 'ATS_SET_EXECUTION_PREFERENCES') {
-    // Backwards-compatible preference channel. It is deliberately NOT a live-time
-    // authority: CasaTrade's observed expiration always remains authoritative.
     const preferredExpiration = normExp(message.expiration || '');
     updateScannerState(state => ({
       ...state,
@@ -124,23 +122,30 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       delete diagnostics.marketClock;
       delete diagnostics.marketSession;
     }
+    const effectiveTf = reliableTf || oldTf || null;
+    const m1Ready = effectiveTf === 'M1';
+    const expirationValid = actualExpiration === '60s';
     diagnostics.expirationGuard = {
       preferred,
+      required: '60s',
       actual: actualExpiration,
-      ready: !!actualExpiration,
+      ready: !!actualExpiration && m1Ready && expirationValid,
+      validForM1: m1Ready && expirationValid,
       matchesPreference: !preferred || !actualExpiration || preferred === actualExpiration,
-      reason: !actualExpiration
-        ? 'Expiração real da CasaTrade ainda não confirmada.'
-        : preferred && preferred !== actualExpiration
-          ? `CasaTrade em ${actualExpiration}; preferência salva ${preferred}. O tempo ao vivo da CasaTrade prevalece.`
-          : 'Expiração ao vivo confirmada pela CasaTrade.',
+      reason: !m1Ready
+        ? 'Ajuste o timeframe da CasaTrade para M1.'
+        : !actualExpiration
+          ? 'Expiração real da CasaTrade ainda não confirmada.'
+          : !expirationValid
+            ? 'Ajuste a expiração da CasaTrade para 1 minuto'
+            : 'Expiração ao vivo de 1 minuto confirmada pela CasaTrade.',
       at: Date.now()
     };
     diagnostics.platformTime = {
-      timeframe: reliableTf || oldTf || null,
+      timeframe: effectiveTf,
       expiration: actualExpiration,
       source: observed.source,
-      ready: !!(reliableTf || oldTf) && !!actualExpiration,
+      ready: m1Ready && expirationValid,
       at: Date.now()
     };
 
@@ -164,7 +169,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         checkedAt: Date.now(),
         frameId: Number(sender.frameId || 0),
         source: observed.source,
-        aligned: !!(reliableTf || oldTf) && !!actualExpiration,
+        aligned: (reliableTf || oldTf) === 'M1' && actualExpiration === '60s',
         liveAuthority: true
       },
       diagnostics
