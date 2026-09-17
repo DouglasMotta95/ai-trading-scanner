@@ -44,21 +44,102 @@
     return n > 946684800000 ? n : null;
   };
   const validCandle = row => [row?.open,row?.high,row?.low,row?.close].every(value => Number.isFinite(Number(value))) && timestamp(row?.time ?? row?.timestamp);
+  const feedQuality = payload => {
+    const raw = Number(payload?.feedQuality);
+    if (!Number.isFinite(raw)) return 0;
+    return Math.max(0, Math.min(1, raw > 1 ? raw / 100 : raw));
+  };
 
   let focusAsset = '';
+  let focusAt = 0;
+  let focusSource = '';
   let lastFocusRead = 0;
   let lastSignature = '';
   let lastSignatureAt = 0;
   let lastSummaryAt = 0;
+  let networkAsset = '';
+  let networkHits = 0;
+  let networkFirstAt = 0;
+  let networkLastAt = 0;
+
+  function rememberFocus(state = {}) {
+    const focus = state?.diagnostics?.focusedAsset || {};
+    focusAsset = asset(focus.asset || '');
+    focusAt = Number(focus.at || 0);
+    focusSource = String(focus.source || '');
+    return focusAsset;
+  }
 
   function refreshFocus(force = false) {
     const now = Date.now();
     if (!force && now - lastFocusRead < 250) return Promise.resolve(focusAsset);
     lastFocusRead = now;
-    return send({ type: 'ATS_READ_SCANNER_STATE' }).then(response => {
-      focusAsset = asset(response?.state?.diagnostics?.focusedAsset?.asset || '');
-      return focusAsset;
-    }).catch(() => focusAsset);
+    return send({ type: 'ATS_READ_SCANNER_STATE' }).then(response => rememberFocus(response?.state || {})).catch(() => focusAsset);
+  }
+
+  function uniqueSelected(payload = {}) {
+    const candidates = Array.isArray(payload.candidates) ? payload.candidates : [];
+    const selected = candidates.filter(row => row?.selected === true && asset(row?.asset));
+    const unique = [...new Set(selected.map(row => asset(row.asset)))];
+    if (unique.length !== 1) return null;
+    const wanted = unique[0];
+    const row = selected
+      .filter(item => asset(item.asset) === wanted)
+      .sort((a,b) => Number(b?.confidence || 0) - Number(a?.confidence || 0)
+        || Number(b?.observedAt || 0) - Number(a?.observedAt || 0))[0] || null;
+    if (!row || Number(row.confidence || 0) < 90 || feedQuality(payload) < .8) return null;
+    const recent = payload.recentCandles && typeof payload.recentCandles === 'object' ? payload.recentCandles : {};
+    const hasHistory = Object.keys(recent).some(name => asset(name) === wanted && Array.isArray(recent[name]) && recent[name].some(validCandle));
+    return hasHistory ? { asset: wanted, row } : null;
+  }
+
+  function observeNetworkSelection(payload = {}) {
+    const selected = uniqueSelected(payload);
+    const now = Date.now();
+    if (!selected) {
+      networkAsset = '';
+      networkHits = 0;
+      networkFirstAt = 0;
+      networkLastAt = 0;
+      return null;
+    }
+    if (selected.asset === networkAsset && now - networkLastAt < 1200) networkHits += 1;
+    else {
+      networkAsset = selected.asset;
+      networkHits = 1;
+      networkFirstAt = now;
+    }
+    networkLastAt = now;
+    return { ...selected, hits: networkHits, stableMs: now - networkFirstAt };
+  }
+
+  async function recoverFocusFromNetwork(payload = {}) {
+    const selected = observeNetworkSelection(payload);
+    if (!selected) return focusAsset;
+    const now = Date.now();
+    const noFocus = !focusAsset;
+    const staleFocus = !!focusAsset && now - Number(focusAt || 0) > 2600;
+    const enough = noFocus
+      ? selected.hits >= 3 && selected.stableMs >= 220
+      : selected.hits >= 5 && selected.stableMs >= 700;
+    if (!enough || (!noFocus && !staleFocus) || (!noFocus && selected.asset === focusAsset)) return focusAsset;
+
+    await send({
+      type: 'ATS_VISUAL_FOCUS_V2',
+      asset: selected.asset,
+      reliable: true,
+      chartScoped: true,
+      visual: false,
+      explicit: false,
+      score: noFocus ? 92 : 90,
+      samples: selected.hits,
+      frameRole: location.hostname.includes('casatraders') ? 'trader-frame' : 'casa-chart-frame',
+      source: noFocus ? 'network-bootstrap-selected' : 'network-stable-fallback'
+    }).catch(() => {});
+    focusAsset = selected.asset;
+    focusAt = now;
+    focusSource = noFocus ? 'network-bootstrap-selected' : 'network-stable-fallback';
+    return focusAsset;
   }
 
   function process(payload, visibleAsset) {
@@ -113,12 +194,16 @@
     if (now - lastSummaryAt < 60) return;
     lastSummaryAt = now;
     const payload = data.payload || {};
-    refreshFocus().then(current => process(payload, current)).catch(() => {});
+    refreshFocus().then(async current => {
+      const recovered = current || await recoverFocusFromNetwork(payload);
+      if (current) await recoverFocusFromNetwork(payload);
+      process(payload, recovered || focusAsset);
+    }).catch(() => {});
   }, true);
 
   chrome?.storage?.onChanged?.addListener?.((changes, area) => {
     if (area !== 'local' || !changes.scannerState?.newValue) return;
-    focusAsset = asset(changes.scannerState.newValue?.diagnostics?.focusedAsset?.asset || '');
+    rememberFocus(changes.scannerState.newValue || {});
   });
 
   refreshFocus(true).catch(() => {});
