@@ -9,7 +9,7 @@ const DEFAULT_LICENSE = Object.freeze({
 });
 const SESSION_HISTORY_KEY = 'atsSessionSignalHistory';
 const SHADOW_KEY = 'atsShadowCalibrationV1';
-const EXACT_CLOCK_SOURCES = new Set(['trader-dom-countdown', 'network-server-cycle']);
+const EXACT_CLOCK_SOURCES = new Set(['casatrade-platform-clock', 'trader-dom-countdown', 'network-server-cycle']);
 
 const activeLicense = license => ['active', 'valid'].includes(String(license?.status || '').toLowerCase());
 const clean = value => String(value ?? '').trim();
@@ -138,8 +138,12 @@ async function connectActiveTab() {
     };
   });
 
-  await injectModern(tab.id);
-  return { ok: true, platform: { id: platform.id, name: platform.name }, tabId: tab.id, state: await readScannerState() || next };
+  const injected = await injectModern(tab.id);
+  const finalState = await readScannerState().catch(() => next) || next;
+  if (!injected && finalState.connection !== 'online') {
+    return { ok: false, error: 'reader_injection_failed', platform: { id: platform.id, name: platform.name }, tabId: tab.id, state: finalState };
+  }
+  return { ok: true, platform: { id: platform.id, name: platform.name }, tabId: tab.id, state: finalState };
 }
 
 async function activate(key = '') {
@@ -195,10 +199,12 @@ async function readSessionHistory() {
 function exactTradeReady(state = {}) {
   const clock = state.diagnostics?.marketClock || {};
   const focus = state.diagnostics?.focusedAsset || {};
-  const professional = state.professionalDecision || {};
+  const signal = state.signal || {};
   const actualExpiration = clean(state.platformControls?.observed?.expiration || '');
   const controlsFresh = Number(state.platformControls?.checkedAt || 0) > 0 && Date.now() - Number(state.platformControls.checkedAt) < 7000;
-  if (professional.timeReady !== true || professional.expirationReady !== true || professional.actionable !== true) return false;
+  const direction = String(signal.direction || '').toUpperCase();
+  const expectedUi = direction === 'BUY' ? 'ENTER_BUY' : direction === 'SELL' ? 'ENTER_SELL' : '';
+  if (signal.state !== 'CONFIRM' || !expectedUi || signal.uiState !== expectedUi) return false;
   if (clock.verified !== true || clock.available === false || clock.role !== 'candle-close' || !EXACT_CLOCK_SOURCES.has(clean(clock.source))) return false;
   if (Date.now() - Number(clock.at || 0) >= 3000) return false;
   if (!sameAsset(clock.asset, state.asset) || !sameAsset(focus.asset, state.asset)) return false;
@@ -216,12 +222,6 @@ async function manualIntent(direction = '') {
   const signalDirection = String(state.signal?.direction || '').toUpperCase();
   const confirmed = state.signal?.state === 'CONFIRM' || ['ENTER_BUY', 'ENTER_SELL'].includes(String(state.signal?.uiState || ''));
   if (!confirmed || signalDirection !== direction) return { ok: false, error: 'signal_not_confirmed', state };
-
-  const professional = state.professionalDecision || {};
-  const expectedUi = direction === 'BUY' ? 'ENTER_BUY' : 'ENTER_SELL';
-  if (professional.uiState !== expectedUi || professional.direction !== direction || professional.actionable !== true) {
-    return { ok: false, error: 'professional_signal_not_confirmed', state };
-  }
   if (!exactTradeReady(state)) return { ok: false, error: 'time_not_synchronized', state };
 
   const actualExpiration = clean(state.platformControls?.observed?.expiration || state.targetExpiration || state.expiration || '') || null;
@@ -322,7 +322,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (type === 'ATS_RESET_STATE') {
-    readScannerState().then(state => updateScannerState(() => clearMarket({}, { license: state.license || DEFAULT_LICENSE, diagnostics: activeLicense(state.license) ? {} : licenseBlockedDiagnostics(state.license || DEFAULT_LICENSE) })))
+    readScannerState().then(state => updateScannerState(() => clearMarket({}, {
+      license: state.license || DEFAULT_LICENSE,
+      diagnostics: activeLicense(state.license) ? {} : licenseBlockedDiagnostics(state.license || DEFAULT_LICENSE)
+    })))
       .then(state => sendResponse({ ok: true, state }))
       .catch(error => sendResponse({ ok: false, error: String(error?.message || error) }));
     return true;
