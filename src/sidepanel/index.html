@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>AI Trading Scanner</title>
   <link rel="stylesheet" href="sniper.css">
+  <link rel="stylesheet" href="asset-quality.css">
+  <link rel="stylesheet" href="ai-analysis.css">
 </head>
 <body>
   <main class="app">
@@ -20,11 +22,33 @@
       <div><small>FECHA EM</small><b id="countdown">—</b></div>
     </section>
 
+    <section id="assetQualityCard" class="card asset-quality-card waiting">
+      <div class="head"><div><small>QUALIDADE DO ATIVO</small><h3 id="assetQualityTitle">AGUARDANDO ATIVO AO VIVO</h3></div><span id="assetQualityBadge" class="pill wait">SINCRONIZANDO</span></div>
+      <div class="trade-grid">
+        <div><small>SCORE</small><b id="assetQualityScore">—</b></div>
+        <div><small>CONTEXTO</small><b id="assetQualityContext">—</b></div>
+        <div><small>VIÉS</small><b id="assetQualityBias">—</b></div>
+      </div>
+      <p id="assetQualityReason">Aguardando dados reais do gráfico atual.</p>
+    </section>
+
     <section id="decision" class="decision wait" aria-live="assertive">
       <small id="phase">LENDO ÚLTIMAS VELAS</small>
       <h2 id="signal">ANALISANDO</h2>
       <p id="reason">Aguardando OHLC e relógio real da CasaTrade.</p>
       <div class="score"><span>FORÇA</span><b id="score">—</b></div>
+    </section>
+
+    <section id="aiAuditCard" class="card">
+      <div class="head"><div><small>SEGUNDA LEITURA</small><h3 id="aiAuditTitle">AGUARDANDO O SCANNER</h3></div><span id="aiAuditBadge" class="pill neutral">EM ESPERA</span></div>
+      <p id="aiAuditSummary">A Gemini só entra depois de um possível sinal técnico com dados CasaTrade sincronizados.</p>
+      <div class="trade-grid">
+        <div><small>DIREÇÃO IA</small><b id="aiAuditDirection">—</b></div>
+        <div><small>ALINHAMENTO</small><b id="aiAuditAlignment">—</b></div>
+        <div><small>IMPACTO</small><b id="aiAuditImpact">—</b></div>
+      </div>
+      <ul id="aiAuditEvidence" hidden></ul>
+      <small id="aiAuditMeta">Motor técnico principal ativo • IA em espera</small>
     </section>
 
     <section class="flow">
@@ -57,5 +81,7 @@
   </main>
   <script src="chrome-compat.js"></script>
   <script src="app-v2.js"></script>
+  <script type="module" src="asset-quality-ui.js"></script>
+  <script src="ai-analysis-ui.js"></script>
 </body>
 </html>
