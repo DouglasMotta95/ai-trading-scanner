@@ -22,13 +22,17 @@ export function aiSnapshot(state = {}) {
   const effectiveDirection = ['BUY', 'SELL'].includes(String(professional.direction || signal.direction || '').toUpperCase())
     ? String(professional.direction || signal.direction).toUpperCase()
     : null;
+  const authoritativeClock = clock.verified === true
+    && clock.available !== false
+    && clock.role === 'candle-close'
+    && clock.source === 'casatrade-platform-clock';
   return {
     asset: text(state.asset, 64),
     marketType: text(state.instrumentType && state.instrumentType !== 'unknown' ? state.instrumentType : state.marketType, 40),
     timeframe: text(professional.timeframe || state.analysisTimeframe || signal.timeframe || state.timeframe, 24),
     expiration: text(professional.actualExpiration || state.platformControls?.observed?.expiration || state.targetExpiration || signal.targetExpiration || state.expiration, 24),
     price: num(state.price),
-    secondsRemaining: num(professional.secondsRemaining ?? signal.secondsRemaining ?? state.secondsRemaining),
+    secondsRemaining: num(professional.secondsRemaining ?? signal.secondsRemaining ?? clock.secondsRemaining),
     targetStart: num(signal.targetStart),
     currentCandle: current,
     candles: rows,
@@ -69,7 +73,7 @@ export function aiSnapshot(state = {}) {
       } : {}
     },
     clock: {
-      verified: clock.verified === true && professional.timeReady === true,
+      verified: authoritativeClock,
       role: text(clock.role, 32),
       source: text(clock.source, 48)
     }
