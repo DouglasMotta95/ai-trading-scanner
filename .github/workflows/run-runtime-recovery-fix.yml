@@ -19,7 +19,9 @@ jobs:
         with:
           node-version: 20
       - name: Apply patch
-        run: python scripts/apply-runtime-recovery-fix.py
+        run: |
+          python scripts/apply-runtime-recovery-fix.py
+          python scripts/post-runtime-recovery-fix.py
       - name: Syntax checks
         run: |
           find src -name '*.js' -print0 | xargs -0 -n1 node --check
@@ -45,6 +47,7 @@ jobs:
       - name: Commit validated patch
         run: |
           rm scripts/apply-runtime-recovery-fix.py
+          rm scripts/post-runtime-recovery-fix.py
           rm .github/workflows/run-runtime-recovery-fix.yml
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
