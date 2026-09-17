@@ -27,7 +27,7 @@
   function elements() {
     const out = [];
     for (const root of roots()) {
-      try { out.push(...root.querySelectorAll('button,input,select,[role="combobox"],[aria-selected="true"],[data-state="active"],span,div')); } catch {}
+      try { out.push(...root.querySelectorAll('button,input,select,[role="button"],[role="combobox"],[aria-selected="true"],[data-state="active"],span,div')); } catch {}
       if (out.length > 7000) break;
     }
     return out.slice(0, 7000);
@@ -43,7 +43,13 @@
     return fold(parts.filter(Boolean).join(' '));
   }
   function expirationValue(raw = '') {
-    const s = fold(raw).replace(/\s+/g, '');
+    const spaced = fold(raw);
+    const labeled = spaced.match(/(?:expiracao|expiry|expiration|duracao|duration|tempo da operacao|tempo de operacao)\s*[:\-]?\s*(\d{1,4})\s*(s|seg|segundo|segundos|m|min|minuto|minutos)\b/);
+    if (labeled) {
+      const amount = Number(labeled[1]);
+      return /^(m|min|minuto|minutos)$/.test(labeled[2]) ? `${amount * 60}s` : `${amount}s`;
+    }
+    const s = spaced.replace(/\s+/g, '');
     let m = s.match(/^(\d{1,4})(?:s|seg|segundo|segundos)$/); if (m) return `${Number(m[1])}s`;
     m = s.match(/^(\d{1,3})(?:m|min|minuto|minutos)$/); if (m) return `${Number(m[1]) * 60}s`;
     m = s.match(/^(\d{1,3}):([0-5]\d)$/); if (m) return `${Number(m[1]) * 60 + Number(m[2])}s`;
@@ -60,12 +66,17 @@
     for (const el of elements()) {
       if (!visible(el)) continue;
       const own = text(el);
-      if (!own || own.length > 40) continue;
+      if (!own || own.length > 90) continue;
       const ctx = context(el);
-      const controlLike = el.matches?.('button,input,select,[role="combobox"],[aria-selected="true"],[data-state="active"]');
+      const controlLike = el.matches?.('button,input,select,[role="button"],[role="combobox"],[aria-selected="true"],[data-state="active"]');
       if (!exp && /expira|expiry|expiration|duracao|duration|tempo da operacao|tempo de operacao/.test(ctx)) {
-        const value = expirationValue(own);
-        if (value && (controlLike || !own.includes(':'))) exp = { value, score: controlLike ? 96 : 78 };
+        // CasaTrade often renders the label and value in sibling nodes
+        // ("Expiração" + "5 seg"). Read the labelled container too, but only
+        // inside expiration semantics so candle countdowns cannot be mistaken.
+        const value = expirationValue(own) || expirationValue(ctx);
+        if (value && (controlLike || own.length <= 64 || /expira|expiry|expiration|duracao|duration/.test(ctx))) {
+          exp = { value, score: controlLike ? 99 : /expira|expiry|expiration|duracao|duration/.test(fold(own)) ? 94 : 90 };
+        }
       }
       if (!tf && /timeframe|periodo|period|vela|candle/.test(ctx)) {
         const value = timeframeValue(own);
@@ -85,16 +96,22 @@
   }
 
   let last = '';
-  async function publish() {
+  let lastSentAt = 0;
+  async function publish(force = false) {
     const snapshot = scan();
     if (!snapshot) return;
     const key = JSON.stringify([snapshot.expiration, snapshot.timeframe]);
-    if (key === last) return;
+    const now = Date.now();
+    // The background intentionally clears platform controls on an asset/session
+    // reset. Re-publish unchanged CasaTrade controls as a heartbeat so a stable
+    // "5 seg" value is restored after switching the active market.
+    if (!force && key === last && now - lastSentAt < 900) return;
     last = key;
+    lastSentAt = now;
     await sendMessage({ type: 'ATS_PLATFORM_CONTROLS_OBSERVED', snapshot });
   }
-  new MutationObserver(() => publish().catch(() => {})).observe(document.documentElement, { subtree: true, childList: true, characterData: true, attributes: true });
-  document.addEventListener('click', () => setTimeout(() => publish().catch(() => {}), 80), true);
-  setInterval(() => publish().catch(() => {}), 1200);
-  publish().catch(() => {});
+  new MutationObserver(() => publish(false).catch(() => {})).observe(document.documentElement, { subtree: true, childList: true, characterData: true, attributes: true });
+  document.addEventListener('click', () => setTimeout(() => publish(true).catch(() => {}), 80), true);
+  setInterval(() => publish(true).catch(() => {}), 1200);
+  publish(true).catch(() => {});
 })();
