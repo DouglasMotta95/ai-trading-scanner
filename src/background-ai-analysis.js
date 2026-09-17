@@ -45,7 +45,13 @@ function requestKey(state = {}) {
 function liveReady(state = {}) {
   if (state.analystPreferences?.geminiEnabled === false) return false;
   if (state.connection !== 'online' || state.platformId !== 'casatrade' || !state.asset || num(state.price) == null) return false;
-  if (state.professionalDecision?.timeReady !== true || state.professionalDecision?.expirationReady !== true) return false;
+  const clock = state.diagnostics?.marketClock || {};
+  const controls = state.platformControls || {};
+  const expiration = text(controls.observed?.expiration);
+  const controlsFresh = Number(controls.checkedAt || 0) > 0 && Date.now() - Number(controls.checkedAt) < 7000;
+  const clockFresh = Number(clock.at || 0) > 0 && Date.now() - Number(clock.at) < 3500;
+  if (clock.verified !== true || clock.available === false || clock.role !== 'candle-close' || clock.source !== 'casatrade-platform-clock' || !clockFresh) return false;
+  if (!expiration || !controlsFresh) return false;
   return aiSnapshotReady(aiSnapshot(state));
 }
 
