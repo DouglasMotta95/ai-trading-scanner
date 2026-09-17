@@ -392,13 +392,13 @@ export function processSnapshot(snapshot = {}, state = {}) {
   }
 
   if (secondsRemaining <= 10) {
-    const rangeBlocked = regime?.type === 'range';
-    if (rangeBlocked) {
+    const extremeVolatilityBlocked = regime?.extremeVolatility === true;
+    if (extremeVolatilityBlocked) {
       tracker.confirmDirection = null;
       tracker.confirmHits = 0;
       tracker.lastConfirmAt = null;
     }
-    const canConfirm = !rangeBlocked && observeConfirmation(tracker, liveResult, direction, score, sampleAt);
+    const canConfirm = !extremeVolatilityBlocked && observeConfirmation(tracker, liveResult, direction, score, sampleAt);
     if (canConfirm) {
       const latestDecision = {
         bucket: currentBucket,
@@ -426,8 +426,8 @@ export function processSnapshot(snapshot = {}, state = {}) {
       };
     }
 
-    const noTradeReason = rangeBlocked
-      ? 'AGUARDANDO — mercado sem tendência definida.'
+    const noTradeReason = extremeVolatilityBlocked
+      ? 'AGUARDANDO — volatilidade extrema; confirmação bloqueada.'
       : 'Sem confirmação estável suficiente para liberar a próxima vela.';
     finalDecisions.set(key, {
       bucket: currentBucket,
@@ -441,7 +441,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
       timeframe: analysisTimeframe
     });
 
-    if (rangeBlocked) {
+    if (extremeVolatilityBlocked) {
       return {
         candles: closed,
         currentCandle: current,
