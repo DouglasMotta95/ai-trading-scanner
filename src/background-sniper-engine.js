@@ -5,11 +5,13 @@ import { normalizeAsset, sameAsset, normalizeTimeframe, normalizeTimestamp, norm
 import { resetMarketSession } from './core/market-session-state.js';
 import { sniperWindows } from './core/sniper-cycle.js';
 
-const EXACT_CLOCK_SOURCES = new Set(['casatrade-platform-clock', 'network-server-cycle', 'trader-dom-countdown']);
+const EXACT_CLOCK_SOURCES = new Set(['casatrade-platform-clock']);
 const cycles = new Map();
 const CONFIRM_HITS = 2;
 const HIT_GAP_MS = 6500;
+const MIN_HIT_INTERVAL_MS = 700;
 const MIN_FEED_QUALITY = 0.8;
+const CONTROLS_FRESH_MS = 7000;
 
 const casaHost = value => value === 'casatrade.com' || value.endsWith('.casatrade.com') || value === 'casatrade.io' || value.endsWith('.casatrade.io');
 const traderHost = value => value === 'casatraders.online' || value.endsWith('.casatraders.online') || value === 'ivcasatraders.online' || value.endsWith('.ivcasatraders.online');
@@ -63,14 +65,33 @@ function directionOf(signal = {}) {
 
 function normalizeFeedQuality(value) {
   const raw = num(value);
-  if (raw == null) return 1;
+  if (raw == null) return 0;
   return Math.max(0, Math.min(1, raw > 1 ? raw / 100 : raw));
 }
 
-function finalQuality(signal = {}, direction = null, feedQuality = 1) {
+function authoritativeNow(clock = {}) {
+  const closeAt = normalizeTimestamp(clock.closeAt);
+  const ms = num(clock.millisecondsRemaining);
+  const seconds = num(clock.secondsRemaining);
+  if (closeAt == null) return null;
+  if (ms != null) return closeAt - Math.max(0, ms);
+  if (seconds != null) return closeAt - Math.max(0, seconds * 1000);
+  return null;
+}
+
+function expirationStatus(state = {}) {
+  const controls = state.platformControls || {};
+  const actual = clean(controls.observed?.expiration || '');
+  const checkedAt = Number(controls.checkedAt || 0);
+  const fresh = checkedAt > 0 && Date.now() - checkedAt < CONTROLS_FRESH_MS;
+  return { ready: !!actual && fresh, actual: actual || null, fresh };
+}
+
+function finalQuality(signal = {}, direction = null, feedQuality = 0, expiration = { ready: false }) {
   if (!direction) return { ok: false, setup: null, blockedBy: 'direction' };
   if (signal.regime?.extremeVolatility === true) return { ok: false, setup: null, blockedBy: 'extreme_volatility' };
   if (feedQuality < MIN_FEED_QUALITY) return { ok: false, setup: null, blockedBy: 'feed_quality' };
+  if (!expiration.ready) return { ok: false, setup: null, blockedBy: 'expiration' };
 
   const score = Number(signal.analysisScore ?? signal.score ?? 0);
   if (score < ANALYST_THRESHOLDS.confirmScore) return { ok: false, setup: null, blockedBy: 'score' };
@@ -98,8 +119,8 @@ function finalQuality(signal = {}, direction = null, feedQuality = 1) {
 function cycleFor(state, clock) {
   const asset = normalizeAsset(state.asset);
   const timeframe = normalizeTimeframe(clock.timeframe || state.analysisTimeframe || state.timeframe) || 'M1';
-  const closeAt = normalizeTimestamp(clock.closeAt)
-    ?? Math.round((Date.now() + Number(clock.secondsRemaining || 0) * 1000) / 1000) * 1000;
+  const closeAt = normalizeTimestamp(clock.closeAt);
+  if (!asset || closeAt == null) return null;
   const key = `${asset}|${timeframe}|${closeAt}`;
   let cycle = cycles.get(key);
   if (!cycle) {
@@ -122,15 +143,20 @@ function cycleFor(state, clock) {
 }
 
 function observe(cycle, direction, quality, at) {
-  if (!quality.ok || !direction) {
-    cycle.candidateDirection = null;
-    cycle.confirmHits = 0;
-    cycle.lastHitAt = null;
+  if (!cycle || !quality.ok || !direction || !Number.isFinite(at)) {
+    if (cycle) {
+      cycle.candidateDirection = null;
+      cycle.confirmHits = 0;
+      cycle.lastHitAt = null;
+    }
     return;
   }
+  const gap = cycle.lastHitAt == null ? null : at - Number(cycle.lastHitAt);
+  if (cycle.candidateDirection === direction && gap != null && gap >= 0 && gap < MIN_HIT_INTERVAL_MS) return;
   const same = cycle.candidateDirection === direction
-    && cycle.lastHitAt != null
-    && at - Number(cycle.lastHitAt) <= HIT_GAP_MS;
+    && gap != null
+    && gap >= MIN_HIT_INTERVAL_MS
+    && gap <= HIT_GAP_MS;
   cycle.candidateDirection = direction;
   cycle.confirmHits = same ? Number(cycle.confirmHits || 0) + 1 : 1;
   cycle.lastHitAt = at;
@@ -143,7 +169,7 @@ function publicSignal(base = {}, cycle, seconds) {
   const timeframe = normalizeTimeframe(base.timeframe) || 'M1';
   const window = sniperWindows(timeframe);
 
-  if (cycle.locked === 'ENTER') {
+  if (cycle?.locked === 'ENTER') {
     return {
       ...base,
       state: 'CONFIRM',
@@ -161,7 +187,7 @@ function publicSignal(base = {}, cycle, seconds) {
     };
   }
 
-  if (cycle.locked === 'NO_ENTRY') {
+  if (cycle?.locked === 'NO_ENTRY') {
     return {
       ...base,
       state: 'NO_TRADE',
@@ -183,7 +209,7 @@ function publicSignal(base = {}, cycle, seconds) {
       direction: null,
       provisional: true,
       phase: 'OBSERVE',
-      targetStart: cycle.targetStart,
+      targetStart: cycle?.targetStart || null,
       reason: 'ANALISANDO — lendo as últimas velas e a vela atual.'
     };
   }
@@ -197,7 +223,7 @@ function publicSignal(base = {}, cycle, seconds) {
         direction,
         provisional: true,
         phase: 'PREPARE',
-        targetStart: cycle.targetStart,
+        targetStart: cycle?.targetStart || null,
         reason: `POSSÍVEL ${direction === 'BUY' ? 'COMPRA' : 'VENDA'} NA PRÓXIMA VELA • ${Math.ceil(seconds)}s`
       };
     }
@@ -208,7 +234,7 @@ function publicSignal(base = {}, cycle, seconds) {
       direction: null,
       provisional: true,
       phase: 'PREPARE',
-      targetStart: cycle.targetStart,
+      targetStart: cycle?.targetStart || null,
       reason: `ANALISANDO • ${Math.ceil(seconds)}s para decisão final.`
     };
   }
@@ -220,16 +246,19 @@ function publicSignal(base = {}, cycle, seconds) {
     direction: null,
     provisional: false,
     phase: 'FINAL',
-    targetStart: cycle.targetStart,
+    targetStart: cycle?.targetStart || null,
     reason: 'SEM ENTRADA NESTA VELA — decisão final sem confirmação suficiente.'
   };
 }
 
 function analyzeState(state, clock) {
   if (!state.asset || num(state.price) == null || !Array.isArray(state.candles) || state.candles.length < 2) return state;
+  const sourceNow = authoritativeNow(clock);
+  if (sourceNow == null) return state;
 
   const timeframe = normalizeTimeframe(clock.timeframe || state.analysisTimeframe || state.timeframe) || 'M1';
   const seconds = Math.max(0, Number(clock.secondsRemaining || 0));
+  const expiration = expirationStatus(state);
   const snapshot = {
     platformId: 'casatrade',
     platformName: 'CasaTrade',
@@ -238,25 +267,25 @@ function analyzeState(state, clock) {
     price: Number(state.price),
     timeframe,
     analysisTimeframe: timeframe,
-    expiration: state.targetExpiration || state.expiration || null,
+    expiration: expiration.actual,
     secondsRemaining: seconds,
-    serverTime: Date.now(),
+    serverTime: sourceNow,
     candles: state.candles,
     capabilities: { structuredQuotes: true, candles: true },
-    diagnostics: { capture: 'numeric-ohlc-sniper', clockQuality: 'exact' }
+    diagnostics: { capture: 'numeric-ohlc-sniper', clockQuality: 'casatrade-authoritative' }
   };
 
   const analyzed = analyzeSnapshot(snapshot, state) || {};
   const base = analyzed.signal || {};
   const cycle = cycleFor(state, clock);
-  const at = Date.now();
+  if (!cycle) return state;
   const direction = directionOf(base);
   const feedQuality = normalizeFeedQuality(state.diagnostics?.marketSession?.feedQuality);
-  const quality = finalQuality(base, direction, feedQuality);
+  const quality = finalQuality(base, direction, feedQuality, expiration);
   const window = sniperWindows(timeframe);
 
   if (!cycle.locked && seconds <= window.prepareAt && seconds > window.executeAt) {
-    observe(cycle, direction, quality, at);
+    observe(cycle, direction, quality, sourceNow);
   }
 
   if (!cycle.locked && seconds <= window.executeAt) {
@@ -271,16 +300,18 @@ function analyzeState(state, clock) {
       cycle.score = Number(base.analysisScore ?? base.score ?? 0);
       cycle.setup = quality.setup || base.setup || null;
       cycle.reason = `ENTRAR NA PRÓXIMA VELA: ${direction === 'BUY' ? 'COMPRA' : 'VENDA'} — decisão travada aos ${Math.ceil(seconds)}s.`;
-      cycle.decidedAt = at;
+      cycle.decidedAt = sourceNow;
     } else {
       cycle.locked = 'NO_ENTRY';
       const blockedReason = quality.blockedBy === 'feed_quality'
         ? 'qualidade do feed abaixo de 80%'
         : quality.blockedBy === 'extreme_volatility'
           ? 'volatilidade extrema detectada'
-          : clean(base.waitingFor?.text || base.reason || 'padrão não confirmou');
+          : quality.blockedBy === 'expiration'
+            ? 'expiração real da CasaTrade ainda não confirmada'
+            : clean(base.waitingFor?.text || base.reason || 'padrão não confirmou');
       cycle.reason = `SEM ENTRADA NESTA VELA — ${blockedReason}`;
-      cycle.decidedAt = at;
+      cycle.decidedAt = sourceNow;
     }
     cycles.set(cycle.key, cycle);
   }
@@ -293,10 +324,13 @@ function analyzeState(state, clock) {
     price: state.price,
     timeframe,
     analysisTimeframe: timeframe,
+    expiration: expiration.actual || state.expiration || null,
+    targetExpiration: expiration.actual || state.targetExpiration || null,
     candles: state.candles,
     marketHistory: state.marketHistory || {},
     connection: 'online',
     lastSeen: state.lastSeen,
+    serverTime: sourceNow,
     signal,
     decisionCycle: { ...cycle },
     lastConfirmed: cycle.locked === 'ENTER'
@@ -319,12 +353,14 @@ function analyzeState(state, clock) {
       confirmationFeedGate: {
         quality: Math.round(feedQuality * 100),
         minimum: 80,
-        allowed: feedQuality >= MIN_FEED_QUALITY,
+        allowed: feedQuality >= MIN_FEED_QUALITY && expiration.ready,
+        expirationReady: expiration.ready,
+        actualExpiration: expiration.actual,
         extremeVolatility: base.regime?.extremeVolatility === true
       },
       acquisition: {
         stage: 'sniper_live',
-        reason: `OHLC numérico + clock exato • fase ${signal.phase || 'ANALYSIS'}`,
+        reason: `OHLC numérico + clock CasaTrade • fase ${signal.phase || 'ANALYSIS'}`,
         at: Date.now()
       }
     }
@@ -378,6 +414,11 @@ async function onFocus(message, sender) {
           embeddedTrader: traderHost(info.frameHost),
           casaTradeFrame: casaHost(info.frameHost),
           source: message.source || 'asset-observer'
+        },
+        acquisition: {
+          stage: 'waiting_for_ohlc',
+          reason: `Ativo ${asset} confirmado. Aguardando OHLC numérico da CasaTrade.`,
+          at: Date.now()
         }
       }
     };
@@ -406,7 +447,8 @@ async function onFeed(payload, sender) {
       || state.analysisTimeframe
       || state.timeframe
       || 'M1';
-    const feedQuality = normalizeFeedQuality(candidate.confidence);
+    const feedQuality = normalizeFeedQuality(payload.feedQuality);
+    const sourceTime = normalizeTimestamp(candidate.timestamp);
 
     const next = {
       ...state,
@@ -416,7 +458,7 @@ async function onFeed(payload, sender) {
       analysisTimeframe: timeframe,
       candles,
       marketHistory: { [asset]: candles },
-      serverTime: Date.now(),
+      serverTime: sourceTime ?? state.serverTime ?? null,
       lastSeen: Date.now(),
       connection: 'online',
       targetTabId: info.tabId,
@@ -433,21 +475,22 @@ async function onFeed(payload, sender) {
           frameHost: info.frameHost,
           dataMode: 'live',
           lastLiveAt: Date.now(),
+          sourceTime,
           historyCount: candles.length,
           feedQuality
         },
         acquisition: {
-          stage: state.diagnostics?.marketClock?.verified ? 'sniper_live' : 'syncing_clock',
+          stage: state.diagnostics?.marketClock?.verified ? 'sniper_live' : 'waiting_for_clock',
           reason: state.diagnostics?.marketClock?.verified
             ? 'OHLC numérico pronto. Analisando próxima vela.'
-            : 'OHLC numérico pronto. Sincronizando relógio exato.',
+            : 'OHLC numérico pronto. Aguardando relógio autoritativo da CasaTrade.',
           at: Date.now()
         }
       }
     };
 
     const clock = state.diagnostics?.marketClock;
-    return clock?.verified === true ? analyzeState(next, clock) : { ...next, signal: null };
+    return clock?.verified === true && EXACT_CLOCK_SOURCES.has(String(clock.source || '')) ? analyzeState(next, clock) : { ...next, signal: null };
   });
 }
 
@@ -463,7 +506,8 @@ async function onClock(message, sender) {
   const timeframe = normalizeTimeframe(message.timeframe);
   const seconds = num(message.secondsRemaining);
   const closeAt = normalizeTimestamp(message.closeAt);
-  if (!asset || !timeframe || seconds == null || seconds < 0) return null;
+  const sourceNow = normalizeTimestamp(message.sourceNow);
+  if (!asset || !timeframe || seconds == null || seconds < 0 || closeAt == null || sourceNow == null) return null;
 
   return updateScannerState(state => {
     if (!accessActive(state)) return;
@@ -479,6 +523,7 @@ async function onClock(message, sender) {
       secondsRemaining: seconds,
       millisecondsRemaining: num(message.millisecondsRemaining),
       closeAt,
+      sourceNow,
       available: true,
       verified: true,
       operational: true,
@@ -496,8 +541,7 @@ async function onClock(message, sender) {
       ...state,
       timeframe,
       analysisTimeframe: timeframe,
-      expiration: message.expiration || state.expiration || null,
-      targetExpiration: message.expiration || state.targetExpiration || null,
+      serverTime: sourceNow,
       diagnostics: {
         ...(state.diagnostics || {}),
         marketClock: clock,
