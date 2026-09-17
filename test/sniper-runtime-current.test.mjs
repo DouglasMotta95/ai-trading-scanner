@@ -9,6 +9,8 @@ const engine = read('src/background-sniper-engine.js');
 const injector = read('src/background-sniper-injector.js');
 const bridge = read('src/content/embedded-feed-bridge.js');
 const assetObserver = read('src/content/casatrade-asset-observer.js');
+const controlsObserver = read('src/content/casatrade-controls-observer.js');
+const opaqueProxy = read('src/background-opaque-frame-proxy.js');
 const liveClock = read('src/content/casatrade-live-clock.js');
 const bootstrap = read('src/content/sniper-page-bootstrap.js');
 const panel = read('src/sidepanel/app-v2.js');
@@ -27,7 +29,7 @@ test('runtime loads the Sniper authority plus Gemini second reading without comp
   }
 });
 
-test('Sniper authority binds focus, numeric OHLC and CasaTrade clock to the same visible market', () => {
+test('Sniper authority binds focus, numeric OHLC and CasaTrade clock to the same market', () => {
   assert.match(engine, /ATS_VISUAL_FOCUS_V2/);
   assert.match(engine, /ATS_EMBEDDED_FEED/);
   assert.match(engine, /ATS_MARKET_CLOCK_V2/);
@@ -38,15 +40,27 @@ test('Sniper authority binds focus, numeric OHLC and CasaTrade clock to the same
   assert.match(engine, /new Set\(\['casatrade-platform-clock'\]\)/);
 });
 
-test('visible chart owns asset focus and network candidates cannot switch the scanner asset', () => {
-  assert.match(assetObserver, /visibleChartCandidate/);
-  assert.match(assetObserver, /selectedTabCandidate/);
-  assert.match(assetObserver, /visible-chart-label/);
-  assert.doesNotMatch(assetObserver, /'\.active','\.selected'/);
-  assert.doesNotMatch(bridge, /ATS_VISUAL_FOCUS_V2/);
-  assert.doesNotMatch(bridge, /network-selected/);
-  assert.match(bridge, /focusedAsset\?\.asset/);
+test('visible chart is primary focus and stable selected network data is only a recovery path', () => {
+  assert.match(assetObserver, /shadowRoot/);
+  assert.match(assetObserver, /nearChartHeader/);
+  assert.match(assetObserver, /visible-selected/);
+  assert.match(assetObserver, /user-selection/);
+  assert.match(bridge, /uniqueSelected/);
+  assert.match(bridge, /network-bootstrap-selected/);
+  assert.match(bridge, /network-stable-fallback/);
+  assert.match(bridge, /selected\.hits >= 5/);
+  assert.match(bridge, /feedQuality\(payload\) < \.8/);
   assert.match(bridge, /filter\(row => asset\(row\?\.asset\) === wanted\)/);
+});
+
+test('opaque Android chart frames relay focus feed clock and controls through CasaTrade top frame', () => {
+  assert.match(opaqueProxy, /ATS_VISUAL_FOCUS_V2/);
+  assert.match(opaqueProxy, /ATS_EMBEDDED_FEED/);
+  assert.match(opaqueProxy, /ATS_MARKET_CLOCK_V2/);
+  assert.match(opaqueProxy, /ATS_PLATFORM_CONTROLS_OBSERVED/);
+  assert.match(opaqueProxy, /ATS_OPAQUE_FRAME_FORWARD/);
+  assert.match(assetObserver, /ATS_OPAQUE_FRAME_PROXY/);
+  assert.match(controlsObserver, /ATS_OPAQUE_FRAME_PROXY/);
 });
 
 test('CasaTrade visible countdown plus OHLC boundary is the live candle clock', () => {
@@ -62,7 +76,7 @@ test('CasaTrade visible countdown plus OHLC boundary is the live candle clock', 
   assert.match(engine, /authoritativeNow\(clock\)/);
 });
 
-test('asset switch clears the prior market session before accepting the new visible asset', () => {
+test('asset switch clears the prior market session before accepting the new market', () => {
   assert.match(engine, /cycles\.clear\(\)/);
   assert.match(engine, /resetLegacyAnalyzer\(\)/);
   assert.match(engine, /resetMarketSession/);
