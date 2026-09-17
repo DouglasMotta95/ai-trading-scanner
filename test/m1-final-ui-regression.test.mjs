@@ -35,7 +35,7 @@ test('sidepanel has dark first paint and separates timeframe, expiration and can
 
 test('sidepanel restores cached scannerState before the live refresh catches up', () => {
   const source = read('src/sidepanel/state-restore.js');
-  assert.match(source, /chrome\.storage\.local\.get\('scannerState'/);
+  assert.match(source, /chrome\.runtime\.sendMessage\(\{\s*type:\s*'ATS_READ_SCANNER_STATE'\s*\}/);
   assert.match(source, /setText\('heroExpiration'/);
   assert.match(source, /setText\('heroCountdown'/);
   assert.match(source, /setText\('asset'/);
