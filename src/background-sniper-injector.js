@@ -74,17 +74,42 @@ function pageWorldConfirmed(state = {}, startedAt = 0) {
     && Number(row?.at || 0) >= startedAt - 1000);
 }
 
+function focusFresh(state = {}) {
+  const focus = state.diagnostics?.focusedAsset || {};
+  return !!focus.asset && focus.reliable === true && Number(focus.at || 0) > 0 && Date.now() - Number(focus.at) < 7000;
+}
+
 function liveDataFresh(state = {}) {
   return state.connection === 'online'
     && Number(state.lastSeen || 0) > 0
-    && Date.now() - Number(state.lastSeen) < 7000;
+    && Date.now() - Number(state.lastSeen) < 7000
+    && Number(state.diagnostics?.marketSession?.historyCount || 0) >= 2;
+}
+
+function clockFresh(state = {}) {
+  const clock = state.diagnostics?.marketClock || {};
+  return clock.verified === true
+    && clock.available !== false
+    && clock.source === 'casatrade-platform-clock'
+    && Number(clock.at || 0) > 0
+    && Date.now() - Number(clock.at) < 4500;
+}
+
+function acquisitionFailure(state = {}, pageReady = false) {
+  if (!pageReady) return { stage: 'page_world_timeout', reason: 'O page-world da CasaTrade não confirmou inicialização.' };
+  if (!focusFresh(state)) return { stage: 'asset_timeout', reason: 'Leitores iniciaram, mas o ativo visível da CasaTrade não foi confirmado.' };
+  if (!liveDataFresh(state)) return { stage: 'ohlc_timeout', reason: 'Ativo confirmado, mas OHLC/cotação não chegaram com qualidade suficiente.' };
+  if (!clockFresh(state)) return { stage: 'clock_timeout', reason: 'OHLC recebido, mas o relógio autoritativo da CasaTrade não foi confirmado.' };
+  return null;
 }
 
 function scheduleWatchdog(tabId, startedAt, attempt) {
   setTimeout(async () => {
     const state = await readScannerState().catch(() => null);
     if (!state || Number(state.targetTabId) !== Number(tabId)) return;
-    if (liveDataFresh(state) || pageWorldConfirmed(state, startedAt)) return;
+    const pageReady = pageWorldConfirmed(state, startedAt);
+    const failure = acquisitionFailure(state, pageReady);
+    if (!failure) return;
 
     if (attempt < 1) {
       await inject(tabId, attempt + 1).catch(() => false);
@@ -92,21 +117,19 @@ function scheduleWatchdog(tabId, startedAt, attempt) {
     }
 
     await updateScannerState(current => {
-      if (Number(current.targetTabId) !== Number(tabId) || liveDataFresh(current)) return current;
+      if (Number(current.targetTabId) !== Number(tabId)) return current;
+      const latestFailure = acquisitionFailure(current, pageWorldConfirmed(current, startedAt));
+      if (!latestFailure) return current;
       return {
         ...current,
         connection: 'offline',
         diagnostics: {
           ...(current.diagnostics || {}),
-          acquisition: {
-            stage: 'injection_timeout',
-            reason: 'Os leitores da CasaTrade não iniciaram. Use RECONECTAR após recarregar a plataforma.',
-            at: Date.now()
-          }
+          acquisition: { ...latestFailure, at: Date.now(), retryable: true }
         }
       };
     }).catch(() => {});
-  }, 4500);
+  }, 5000);
 }
 
 async function inject(tabId, attempt = 0) {
@@ -148,10 +171,10 @@ async function inject(tabId, attempt = 0) {
       },
       acquisition: ok
         ? {
-            stage: 'waiting_for_market',
+            stage: 'waiting_for_asset',
             reason: pageWorldPath === 'executeScript-main'
-              ? 'Leitores injetados. Aguardando ativo, OHLC e relógio da CasaTrade.'
-              : 'Fallback de compatibilidade ativado. Aguardando confirmação do page-world.',
+              ? 'Leitores injetados. Confirmando o ativo visível da CasaTrade.'
+              : 'Fallback de compatibilidade ativado. Confirmando page-world e ativo.',
             at: Date.now()
           }
         : {
