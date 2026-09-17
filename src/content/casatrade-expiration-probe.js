@@ -44,7 +44,7 @@
   }
   function expirationValue(raw = '') {
     const spaced = fold(raw);
-    const labeled = spaced.match(/(?:expiracao|expiry|expiration|duracao|duration|tempo da operacao|tempo de operacao)\s*[:\-]?\s*(\d{1,4})\s*(s|seg|segundo|segundos|m|min|minuto|minutos)\b/);
+    const labeled = spaced.match(/(?:expiracao|expiry|expiration|duracao|duration|tempo da operacao|tempo de operacao)[^0-9]{0,36}(\d{1,4})\s*(s|seg|segundo|segundos|m|min|minuto|minutos)\b/);
     if (labeled) {
       const amount = Number(labeled[1]);
       return /^(m|min|minuto|minutos)$/.test(labeled[2]) ? `${amount * 60}s` : `${amount}s`;
@@ -83,6 +83,11 @@
         if (value && (controlLike || /selected|active|current|true/.test(ctx))) tf = { value, score: controlLike ? 94 : 75 };
       }
       if (exp && tf) break;
+    }
+    if (!exp) {
+      const body = clean(document.body?.innerText || document.body?.textContent || '');
+      const value = expirationValue(body.slice(0, 30000));
+      if (value) exp = { value, score: 88 };
     }
     if (!exp && !tf) return null;
     return {

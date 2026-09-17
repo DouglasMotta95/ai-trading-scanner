@@ -177,7 +177,9 @@ function resetForSession(state = {}, { asset, timeframe = null, info, reason, so
     lastConfirmed: null,
     tradeIntent: null,
     lastSeen: null,
-    platformControls: timeframe ? state.platformControls : null,
+    // Timeframe/expiration controls belong to the CasaTrade ticket, not to one asset.
+    // Preserve the last real observation while the market session switches assets.
+    platformControls: state.platformControls || null,
     diagnostics: {
       ...(state.diagnostics || {}),
       marketClock: null,
@@ -294,16 +296,57 @@ async function applyFocus(message = {}, sender = {}) {
   return updateScannerState(state => {
     if (!licenseActive(state)) return;
     if (state.targetTabId && state.targetTabId !== info.tabId) return;
+
+    const now = Date.now();
     const old = state.diagnostics?.focusedAsset || null;
-    const changed = !sameMarket(old?.asset, asset) || Number(old?.frameId) !== Number(info.frameId) || clean(old?.frameHost).toLowerCase() !== info.frameHost;
+    const incomingEmbeddedTrader = traderHost(info.frameHost);
+    const incomingCasaFrame = casaHost(info.frameHost);
+    const assetChanged = !!old?.asset && !sameMarket(old.asset, asset);
+    const frameChanged = !!old && (Number(old.frameId) !== Number(info.frameId) || clean(old.frameHost).toLowerCase() !== info.frameHost);
+    const interactionAt = Number(message.interactionAt || message.at || 0);
+    const userSelected = message.interactionHint === true && interactionAt > 0 && now - interactionAt < 3500;
+    const oldFresh = Number(old?.at || 0) > 0 && now - Number(old.at) < 2600;
+    const oldEmbeddedTrader = old?.embeddedTrader === true;
+
+    // Hidden/inactive CasaTrade market frames can stay alive and keep publishing
+    // their old symbol. They must never roll the visible user-selected chart back.
+    if (assetChanged && frameChanged && oldFresh && !userSelected) {
+      return {
+        ...state,
+        diagnostics: {
+          ...(state.diagnostics || {}),
+          focusRejected: {
+            asset, frameId: info.frameId, frameHost: info.frameHost,
+            reason: 'cross-frame-stale-asset', at: now
+          }
+        }
+      };
+    }
+
+    // The same asset is often visible in the CasaTrade shell and the embedded
+    // trader frame at the same time. Once the embedded trader owns the live clock,
+    // shell heartbeats must not keep resetting the market session.
+    if (!assetChanged && frameChanged && oldEmbeddedTrader && incomingCasaFrame && !userSelected) {
+      return state;
+    }
+
+    // Prefer the embedded trader as the long-lived authority for the same asset.
+    // This is a one-way handoff (shell -> trader), avoiding frame ping-pong.
+    const traderHandoff = !assetChanged && frameChanged && !oldEmbeddedTrader && incomingEmbeddedTrader;
+    const changed = assetChanged || traderHandoff || (!old && frameChanged);
     let next = state;
     if (changed || (state.asset && !sameMarket(state.asset, asset))) {
       next = resetForSession(state, {
         asset, info, source: clean(message.source || 'visible-chart'),
-        reason: `Ativo ${asset} confirmado no gráfico. Sincronizando a sessão ao vivo.`
+        reason: assetChanged
+          ? `Ativo ${asset} confirmado no gráfico. Sincronizando a sessão ao vivo.`
+          : `Gráfico ${asset} vinculado ao frame de mercado ativo.`
       });
     }
-    const embeddedTrader = traderHost(info.frameHost);
+
+    const previousStableSince = sameMarket(old?.asset, asset)
+      ? Number(old?.stableSince || old?.at || now)
+      : now;
     return {
       ...next,
       targetTabId: info.tabId,
@@ -311,11 +354,13 @@ async function applyFocus(message = {}, sender = {}) {
       diagnostics: {
         ...(next.diagnostics || {}),
         focusedAsset: {
-          asset, at: Date.now(), stableSince: changed ? Date.now() : Number(old?.stableSince || old?.at || Date.now()),
+          asset, at: now, stableSince: changed ? now : previousStableSince,
           score: Number(message.score || 0), samples: Number(message.samples || 0), reliable: true,
           visual: message.visual !== false, explicit: message.explicit === true, chartScoped: true,
-          trustedChartFrame: true, embeddedTrader, casaTradeFrame: casaHost(info.frameHost),
-          frameRole: embeddedTrader ? 'trader-frame' : 'casa-chart-frame', frameId: info.frameId, frameHost: info.frameHost,
+          interactionHint: userSelected,
+          interactionAt: userSelected ? interactionAt : null,
+          trustedChartFrame: true, embeddedTrader: incomingEmbeddedTrader, casaTradeFrame: incomingCasaFrame,
+          frameRole: incomingEmbeddedTrader ? 'trader-frame' : 'casa-chart-frame', frameId: info.frameId, frameHost: info.frameHost,
           source: clean(message.source || 'visible-chart')
         }
       }

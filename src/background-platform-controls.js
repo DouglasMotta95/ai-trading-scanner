@@ -8,6 +8,7 @@ const traderHost = value => value === 'casatraders.online' || value.endsWith('.c
 function trusted(sender = {}) {
   let frameHost = '', topHost = '';
   try { frameHost = new URL(sender.url || '').hostname.toLowerCase(); } catch {}
+  if (!frameHost) { try { frameHost = new URL(sender.origin || '').hostname.toLowerCase(); } catch {} }
   try { topHost = new URL(sender.tab?.url || '').hostname.toLowerCase(); } catch {}
   return !!sender.tab?.id && casaHost(topHost) && (casaHost(frameHost) || traderHost(frameHost));
 }

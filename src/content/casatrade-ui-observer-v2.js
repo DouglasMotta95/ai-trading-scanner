@@ -125,7 +125,8 @@
       if (!visible(el)) continue;
       const ctx = neighborhood(el, 2);
       if (!/expira|expiry|expiration/.test(fold(ctx))) continue;
-      const m = ctx.match(/(\d{1,4})\s*(s|seg|segundo|segundos|m|min|minuto|minutos)\b/i);
+      const m = ctx.match(/(?:expira(?:cao|ção)?|expiry|expiration)[^0-9]{0,36}(\d{1,4})\s*(s|seg|segundo|segundos|m|min|minuto|minutos)\b/i)
+        || ctx.match(/(\d{1,4})\s*(s|seg|segundo|segundos|m|min|minuto|minutos)\b/i);
       if (!m) continue;
       const n = Number(m[1]);
       if (!(n > 0)) continue;
