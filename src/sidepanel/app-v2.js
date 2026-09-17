@@ -14,7 +14,8 @@ const exactClock = s => {
   const c = s?.diagnostics?.marketClock || {};
   return c.verified === true
     && c.available !== false
-    && ['casatrade-platform-clock', 'network-server-cycle', 'trader-dom-countdown'].includes(String(c.source || ''))
+    && c.role === 'candle-close'
+    && c.source === 'casatrade-platform-clock'
     && Date.now() - Number(c.at || 0) < 3500;
 };
 
@@ -23,20 +24,20 @@ function signalModel(state = {}) {
   const ui = String(sig.uiState || '').toUpperCase();
   const score = Number(sig.analysisScore ?? sig.score ?? 0) || 0;
   if (!activeAccess(state)) return { tone: 'wait', phase: 'ACESSO', title: 'AGUARDANDO ACESSO', reason: 'A extensão ainda não está liberada.', score };
-  if (!state.asset || num(state.price) == null) return { tone: 'wait', phase: 'CAPTURA', title: 'LENDO GRÁFICO', reason: 'Identificando o ativo e a cotação atual.', score };
-  if ((state.candles || []).length < 3) return { tone: 'wait', phase: 'OHLC', title: 'COLETANDO VELAS', reason: 'Montando histórico OHLC numérico.', score };
-  if (!exactClock(state)) return { tone: 'wait', phase: 'RELÓGIO', title: 'SINCRONIZANDO VELA', reason: 'Ancorando o fechamento real da vela M1.', score };
+  if (!state.asset || num(state.price) == null) return { tone: 'wait', phase: 'CAPTURA', title: 'LENDO GRÁFICO', reason: state.diagnostics?.acquisition?.reason || 'Identificando o ativo e a cotação atual.', score };
+  if ((state.candles || []).length < 3) return { tone: 'wait', phase: 'OHLC', title: 'COLETANDO VELAS', reason: state.diagnostics?.acquisition?.reason || 'Montando histórico OHLC numérico.', score };
+  if (!exactClock(state)) return { tone: 'wait', phase: 'RELÓGIO', title: 'SINCRONIZANDO VELA', reason: state.diagnostics?.acquisition?.reason || 'Ancorando o fechamento real da vela M1.', score };
   if (ui === 'ENTER_BUY') return { tone: 'buy', phase: 'DECISÃO FINAL', title: 'COMPRAR NA PRÓXIMA VELA', reason: clean(sig.reason), score };
   if (ui === 'ENTER_SELL') return { tone: 'sell', phase: 'DECISÃO FINAL', title: 'VENDER NA PRÓXIMA VELA', reason: clean(sig.reason), score };
   if (ui === 'POSSIBLE_BUY') return { tone: 'possible', phase: 'PREPARAÇÃO', title: 'POSSÍVEL COMPRA', reason: clean(sig.reason), score };
   if (ui === 'POSSIBLE_SELL') return { tone: 'possible', phase: 'PREPARAÇÃO', title: 'POSSÍVEL VENDA', reason: clean(sig.reason), score };
   if (ui === 'NO_ENTRY') return { tone: 'skip', phase: 'DECISÃO FINAL', title: 'SEM ENTRADA NESTA VELA', reason: clean(sig.reason), score };
-  return { tone: 'wait', phase: 'ANÁLISE', title: 'ANALISANDO PADRÃO', reason: clean(sig.reason || 'Lendo as últimas velas e a vela atual.'), score };
+  return { tone: 'wait', phase: 'ANÁLISE', title: 'ANALISANDO PADRÃO', reason: clean(sig.reason || state.diagnostics?.acquisition?.reason || 'Lendo as últimas velas e a vela atual.'), score };
 }
 
 function connectionModel(state = {}) {
   const stage = String(state.diagnostics?.acquisition?.stage || '');
-  if (['injection_failed', 'injection_timeout'].includes(stage)) return { text: 'ERRO DE CAPTURA', tone: 'bad' };
+  if (['injection_failed', 'page_world_timeout', 'asset_timeout', 'ohlc_timeout', 'clock_timeout'].includes(stage)) return { text: 'ERRO DE CAPTURA', tone: 'bad' };
   if (exactClock(state) && state.connection === 'online') return { text: 'AO VIVO', tone: 'ok' };
   return { text: 'SINCRONIZANDO', tone: 'wait' };
 }
@@ -124,6 +125,7 @@ $('copyDiagnostic')?.addEventListener('click', async () => {
       verified: c.verified === true,
       secondsRemaining: c.secondsRemaining ?? null,
       closeAt: c.closeAt ?? null,
+      sourceNow: c.sourceNow ?? null,
       ageMs: c.at ? Date.now() - Number(c.at) : null
     },
     platformControls: s.platformControls?.observed || {},
@@ -134,6 +136,7 @@ $('copyDiagnostic')?.addEventListener('click', async () => {
       score: s.signal?.analysisScore ?? s.signal?.score ?? null,
       reason: s.signal?.reason || ''
     },
+    aiAudit: s.aiAudit || null,
     session: s.diagnostics?.marketSession || null
   };
   await navigator.clipboard.writeText(`AI Trading Scanner — diagnóstico Sniper\n${JSON.stringify(out, null, 2)}`).catch(() => {});
