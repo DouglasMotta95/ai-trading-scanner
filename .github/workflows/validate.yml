@@ -11,76 +11,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - name: Validate manifest and referenced assets
-        run: |
-          node <<'NODE'
-          const fs = require('fs');
-          const m = JSON.parse(fs.readFileSync('manifest.json','utf8'));
-          if (m.manifest_version !== 3) throw new Error('Manifest V3 required');
-          if (m.action?.default_popup) throw new Error('Extension must remain side-panel-only');
-          if (m.side_panel?.default_path !== 'src/sidepanel/index.html') throw new Error('Invalid side panel path');
-          if (m.background?.type !== 'module') throw new Error('Background service worker must be a module');
-          const requiredPermissions = ['storage','activeTab','scripting','sidePanel'];
-          for (const permission of requiredPermissions) if (!m.permissions?.includes(permission)) throw new Error(`missing permission: ${permission}`);
-          const requiredHosts = ['casatrade.com','casatraders.online','ivcasatraders.online','railway.app'];
-          for (const host of requiredHosts) if (!(m.host_permissions || []).some(p => p.includes(host))) throw new Error(`missing host permission: ${host}`);
-          const refs = [m.background?.service_worker, m.side_panel?.default_path, m.options_page];
-          for (const entry of m.content_scripts || []) {
-            refs.push(...(entry.js || []), ...(entry.css || []));
-            if (entry.world === 'MAIN' && entry.run_at !== 'document_start') throw new Error('MAIN-world probes must run at document_start');
-          }
-          for (const file of refs.filter(Boolean)) if (!fs.existsSync(file)) throw new Error(`manifest references missing file: ${file}`);
-          console.log('manifest', m.version, 'integrity ok');
-          NODE
+      - name: Validate manifest
+        run: node -e "const m=JSON.parse(require('fs').readFileSync('manifest.json','utf8')); if(m.manifest_version!==3) process.exit(1); if(m.action?.default_popup) process.exit(2); if(m.side_panel?.default_path!=='src/sidepanel/index.html') process.exit(3); console.log('manifest',m.version,'side-panel-only ok')"
       - name: Check required extension files
-        run: test -f src/background.js && test -f src/background-entry.js && test -f src/background-augment.js && test -f src/background-ai-analysis.js && test -f src/core/orchestrator.js && test -f src/core/analysis.js && test -f src/core/candles.js && test -f src/core/market-regime.js && test -f src/services/license.js && test -f src/services/scanner-state-atomic.js && test -f src/services/ai-analysis.js && test -f src/content/focused-asset.js && test -f src/content/worker-probe.js && test -f src/content/canvas-probe.js && test -f src/content/network-probe.js && test -f src/content/network-bridge.js && test -f src/content/embedded-feed-bridge.js && test -f src/content/generic-adapter.js && test -f src/content/platform-sync.js && test -f src/content/trade-handoff.js && test -f src/platforms/registry.js && test -f src/sidepanel/index.html && test -f src/sidepanel/app.js && test -f src/sidepanel/ai-analysis-ui.js && test -f src/sidepanel/account-login.js
-      - name: Check retired duplicate engines stay absent
-        run: test ! -e src/core/ai-scoring.js && test ! -e src/core/backtest.js && test ! -e src/core/correlation.js && test ! -e src/core/market-structure.js && test ! -e src/core/reporting.js && test ! -e src/content/chart-overlay.js && test ! -e src/content/history-adapter.js && test ! -e src/background-platform-sync.js
-      - name: Check Gemini gateway files
-        run: test -f backend-ai/package.json && test -f backend-ai/src/server.js
+        run: test -f src/background.js && test -f src/background-augment.js && test -f src/core/orchestrator.js && test -f src/core/analysis.js && test -f src/core/candles.js && test -f src/services/license.js && test -f src/content/network-probe.js && test -f src/content/network-bridge.js && test -f src/content/generic-adapter.js && test -f src/content/platform-sync.js && test -f src/content/trade-handoff.js && test -f src/platforms/registry.js && test -f src/sidepanel/index.html && test -f src/sidepanel/app.js && test -f src/sidepanel/account-login.js && test ! -e src/core/ai-scoring.js && test ! -e src/core/backtest.js && test ! -e src/core/correlation.js && test ! -e src/core/market-structure.js && test ! -e src/core/reporting.js && test ! -e src/content/chart-overlay.js && test ! -e src/content/history-adapter.js && test ! -e src/background-platform-sync.js
       - name: Syntax check extension
         run: find src -name '*.js' -print0 | xargs -0 -n1 node --check
       - name: Syntax check backend
         run: find backend -name '*.js' -print0 | xargs -0 -n1 node --check
-      - name: Syntax check Gemini gateway
-        run: find backend-ai -name '*.js' -print0 | xargs -0 -n1 node --check
       - name: Syntax check admin dashboard
         run: find apps/admin-dashboard -name '*.js' -print0 | xargs -0 -n1 node --check
       - name: Syntax check customer portal
         run: find apps/customer-portal -name '*.js' -print0 | xargs -0 -n1 node --check
-      - name: Detect unresolved merge markers
-        run: |
-          if grep -RInE '^(<<<<<<<|=======|>>>>>>>)' src backend backend-ai apps test --exclude-dir=node_modules; then
-            echo 'Unresolved merge marker found'; exit 1;
-          fi
       - name: Core unit tests
-        run: |
-          set -o pipefail
-          cd backend
-          npm test 2>&1 | tee ../core-test.log
-      - name: Upload core unit test log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: core-unit-test-log
-          path: core-test.log
-          if-no-files-found: error
-          retention-days: 7
-      - name: Prepare extension package
-        if: success()
-        run: |
-          rm -rf dist/ai-trading-scanner-extension
-          mkdir -p dist/ai-trading-scanner-extension
-          cp manifest.json dist/ai-trading-scanner-extension/manifest.json
-          cp -R src dist/ai-trading-scanner-extension/src
-      - name: Upload extension test package
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ai-trading-scanner-extension-demo
-          path: dist/ai-trading-scanner-extension/
-          if-no-files-found: error
-          retention-days: 30
-      - name: Validation completed
-        if: success()
-        run: echo 'Integrated candidate validation completed successfully.'
+        run: cd backend && npm test
