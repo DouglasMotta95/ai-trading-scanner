@@ -7,25 +7,22 @@ const PUBLIC_API = 'https://ats-control-center-v07-production.up.railway.app';
 // Telemetry follows the same fixed commercial backend used by licensing.
 const apiBase = () => PUBLIC_API;
 
-const randomInstallationId = () => `ats-install-${crypto.randomUUID()}`;
-const legacyRuntimeInstallationId = () => {
+const stableRuntimeInstallationId = () => {
   const runtimeId = String(chrome.runtime?.id || '').trim();
   return runtimeId ? `ats-${runtimeId}` : '';
 };
+const randomInstallationId = () => `ats-install-${crypto.randomUUID()}`;
 let installationIdPromise = null;
 
 export async function installationId() {
   if (installationIdPromise) return installationIdPromise;
   installationIdPromise = (async () => {
+    const stableId = stableRuntimeInstallationId();
     const x = await chrome.storage.local.get(INSTALL_KEY);
     const existing = String(x[INSTALL_KEY] || '').trim();
-    const legacyId = legacyRuntimeInstallationId();
-    if (existing && existing !== legacyId) return existing;
-
-    const id = randomInstallationId();
-    await chrome.storage.local.set({ [INSTALL_KEY]: id });
-    const persisted = await chrome.storage.local.get(INSTALL_KEY);
-    return String(persisted[INSTALL_KEY] || id).trim() || id;
+    const id = stableId || existing || randomInstallationId();
+    if (existing !== id) await chrome.storage.local.set({ [INSTALL_KEY]: id });
+    return id;
   })();
   try {
     return await installationIdPromise;
@@ -92,10 +89,7 @@ async function post(path, payload, _settings = {}) {
     const result = { ok: r.ok, status: r.status, ...data };
     if (heartbeatRequest) {
       if (r.ok && data?.ok !== false) {
-        await updateTelemetryStatus({
-          lastSyncSuccess: Number(data.acceptedAt) || Date.now(),
-          lastSyncError: null
-        });
+        await updateTelemetryStatus({ lastSyncSuccess: Number(data.acceptedAt) || Date.now(), lastSyncError: null });
       } else {
         await updateTelemetryStatus({ lastSyncError: data?.error || `http_${r.status}` });
       }
