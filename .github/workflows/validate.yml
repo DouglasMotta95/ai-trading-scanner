@@ -12,9 +12,28 @@ jobs:
         with:
           node-version: 20
       - name: Validate manifest
-        run: node -e "const m=JSON.parse(require('fs').readFileSync('manifest.json','utf8')); if(m.manifest_version!==3) process.exit(1); if(m.action?.default_popup) process.exit(2); if(m.side_panel?.default_path!=='src/sidepanel/index.html') process.exit(3); console.log('manifest',m.version,'side-panel-only ok')"
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const m = JSON.parse(fs.readFileSync('manifest.json','utf8'));
+          if (m.manifest_version !== 3) process.exit(1);
+          if (m.action?.default_popup) process.exit(2);
+          if (m.side_panel?.default_path !== 'src/sidepanel/index.html') process.exit(3);
+          const requiredPermissions = ['storage','activeTab','scripting','sidePanel'];
+          for (const permission of requiredPermissions) {
+            if (!m.permissions?.includes(permission)) throw new Error(`missing permission: ${permission}`);
+          }
+          const scripts = m.content_scripts?.flatMap(entry => entry.js || []) || [];
+          for (const file of scripts) {
+            if (!fs.existsSync(file)) throw new Error(`manifest references missing content script: ${file}`);
+          }
+          for (const file of [m.background?.service_worker, m.side_panel?.default_path, m.options_page].filter(Boolean)) {
+            if (!fs.existsSync(file)) throw new Error(`manifest references missing file: ${file}`);
+          }
+          console.log('manifest',m.version,'references and side-panel-only mode ok');
+          NODE
       - name: Check required extension files
-        run: test -f src/background.js && test -f src/background-augment.js && test -f src/core/orchestrator.js && test -f src/core/analysis.js && test -f src/core/candles.js && test -f src/services/license.js && test -f src/content/network-probe.js && test -f src/content/network-bridge.js && test -f src/content/generic-adapter.js && test -f src/content/platform-sync.js && test -f src/content/trade-handoff.js && test -f src/platforms/registry.js && test -f src/sidepanel/index.html && test -f src/sidepanel/app.js && test -f src/sidepanel/account-login.js && test ! -e src/core/ai-scoring.js && test ! -e src/core/backtest.js && test ! -e src/core/correlation.js && test ! -e src/core/market-structure.js && test ! -e src/core/reporting.js && test ! -e src/content/chart-overlay.js && test ! -e src/content/history-adapter.js && test ! -e src/background-platform-sync.js
+        run: test -f src/background.js && test -f src/background-entry.js && test -f src/background-augment.js && test -f src/core/orchestrator.js && test -f src/core/analysis.js && test -f src/core/candles.js && test -f src/services/license.js && test -f src/content/focused-asset.js && test -f src/content/worker-probe.js && test -f src/content/canvas-probe.js && test -f src/content/network-probe.js && test -f src/content/network-bridge.js && test -f src/content/embedded-feed-bridge.js && test -f src/content/generic-adapter.js && test -f src/content/platform-sync.js && test -f src/content/trade-handoff.js && test -f src/platforms/registry.js && test -f src/sidepanel/index.html && test -f src/sidepanel/app.js && test -f src/sidepanel/account-login.js && test ! -e src/core/ai-scoring.js && test ! -e src/core/backtest.js && test ! -e src/core/correlation.js && test ! -e src/core/market-structure.js && test ! -e src/core/reporting.js && test ! -e src/content/chart-overlay.js && test ! -e src/content/history-adapter.js && test ! -e src/background-platform-sync.js
       - name: Syntax check extension
         run: find src -name '*.js' -print0 | xargs -0 -n1 node --check
       - name: Syntax check backend
