@@ -1,0 +1,122 @@
+name: Apply live entry readiness fix
+
+on:
+  push:
+    branches: [fix/connect-casatrade-any-open-tab]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Keep strong local setups eligible inside normal range
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          p = Path('src/core/orchestrator.js')
+          text = p.read_text()
+          old = "const rangeBlocked = regime?.type === 'range';"
+          new = "const extremeVolatilityBlocked = regime?.extremeVolatility === true;"
+          if old not in text:
+              raise SystemExit('range gate anchor not found')
+          text = text.replace(old, new, 1)
+          text = text.replace('if (rangeBlocked) {', 'if (extremeVolatilityBlocked) {')
+          text = text.replace('const canConfirm = !rangeBlocked && observeConfirmation', 'const canConfirm = !extremeVolatilityBlocked && observeConfirmation')
+          text = text.replace("const noTradeReason = rangeBlocked\n      ? 'AGUARDANDO — mercado sem tendência definida.'", "const noTradeReason = extremeVolatilityBlocked\n      ? 'AGUARDANDO — volatilidade extrema; confirmação bloqueada.'")
+          text = text.replace('if (rangeBlocked) {', 'if (extremeVolatilityBlocked) {')
+          if 'rangeBlocked' in text:
+              raise SystemExit('stale rangeBlocked reference remains')
+          p.write_text(text)
+
+          t = Path('test/market-regime-gate.test.mjs')
+          src = t.read_text()
+          old_test = '''test('range regime blocks ENTER even after confirmation score and stability are otherwise sufficient', () => {
+  resetOrchestrator();
+  const bucket = Math.floor(1_800_110_000_000 / minute) * minute;
+  const candles = rangeWithStrongCurrent(bucket);
+
+  processSnapshot(snapshot(bucket, 35_000, candles), { connection: 'online' });
+  processSnapshot(snapshot(bucket, 36_000, candles), { connection: 'online' });
+  const firstFinal = processSnapshot(snapshot(bucket, 51_000, candles), { connection: 'online' });
+  const blocked = processSnapshot(snapshot(bucket, 52_000, candles), { connection: 'online' });
+
+  assert.equal(blocked.signal.regime?.type, 'range');
+  assert.ok(Number(blocked.signal.analysisScore) >= 58, `expected score >= 58, got ${blocked.signal.analysisScore}`);
+  assert.notEqual(firstFinal.signal.uiState, 'ENTER_BUY');
+  assert.notEqual(firstFinal.signal.uiState, 'ENTER_SELL');
+  assert.equal(blocked.signal.state, 'NO_TRADE');
+  assert.equal(blocked.signal.uiState, 'WAIT');
+  assert.equal(blocked.signal.direction, null);
+  assert.equal(blocked.signal.reason, 'AGUARDANDO — mercado sem tendência definida.');
+});'''
+          new_test = '''test('normal range does not block a strong local next-candle confirmation', () => {
+  resetOrchestrator();
+  const bucket = Math.floor(1_800_110_000_000 / minute) * minute;
+  const candles = rangeWithStrongCurrent(bucket);
+
+  processSnapshot(snapshot(bucket, 35_000, candles), { connection: 'online' });
+  processSnapshot(snapshot(bucket, 36_000, candles), { connection: 'online' });
+  const firstFinal = processSnapshot(snapshot(bucket, 51_000, candles), { connection: 'online' });
+  const confirmed = processSnapshot(snapshot(bucket, 52_000, candles), { connection: 'online' });
+
+  assert.equal(confirmed.signal.regime?.type, 'range');
+  assert.equal(confirmed.signal.regime?.extremeVolatility, false);
+  assert.ok(Number(confirmed.signal.analysisScore) >= 58, `expected score >= 58, got ${confirmed.signal.analysisScore}`);
+  assert.notEqual(firstFinal.signal.state, 'CONFIRM');
+  assert.equal(confirmed.signal.state, 'CONFIRM');
+  assert.equal(confirmed.signal.uiState, 'ENTER_BUY');
+  assert.equal(confirmed.signal.direction, 'BUY');
+});'''
+          if old_test not in src:
+              raise SystemExit('market-regime regression test anchor not found')
+          t.write_text(src.replace(old_test, new_test, 1))
+
+          m = Path('manifest.json')
+          manifest = m.read_text()
+          if '"version": "0.10.2"' not in manifest:
+              raise SystemExit('manifest version anchor not found')
+          m.write_text(manifest.replace('"version": "0.10.2"', '"version": "0.10.3"', 1))
+          PY
+
+      - name: Syntax checks
+        run: |
+          find src -name '*.js' -print0 | xargs -0 -n1 node --check
+          find backend -name '*.js' -print0 | xargs -0 -n1 node --check
+          find apps -name '*.js' -print0 | xargs -0 -n1 node --check
+
+      - name: Full tests
+        run: cd backend && npm test
+
+      - name: Build installable extension ZIP
+        run: |
+          rm -rf build-extension
+          mkdir build-extension
+          cp manifest.json build-extension/manifest.json
+          cp -R src build-extension/src
+          cd build-extension
+          zip -qr ../AI-Trading-Scanner-0.10.3.zip manifest.json src
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AI-Trading-Scanner-0.10.3
+          path: AI-Trading-Scanner-0.10.3.zip
+          if-no-files-found: error
+
+      - name: Commit fixes and remove helper workflow
+        run: |
+          rm .github/workflows/apply-live-entry-fix.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add src/core/orchestrator.js test/market-regime-gate.test.mjs manifest.json .github/workflows/apply-live-entry-fix.yml
+          git commit -m 'fix: allow strong local setup while preserving extreme-volatility gate'
+          git push origin HEAD:fix/connect-casatrade-any-open-tab
