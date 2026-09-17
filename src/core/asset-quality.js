@@ -78,11 +78,22 @@ export function assessAssetQuality(state = {}) {
   const regime = String(signal.regime?.type || '').toLowerCase();
   const streak = trailingStreak(rows);
   const waitingType = String(signal.waitingFor?.type || '');
+  const technicalScore = Number(signal.analysisScore ?? signal.score ?? 0) || 0;
 
   const compressed = tiny >= Math.ceil(rows.length * .6);
-  const lateral = regime === 'range'
-    || (efficiency < .24 && agreement <= .6)
-    || (averageBody < .22 && agreement < .7);
+  const cleanTrend = !!signalBias && agreement >= .65 && efficiency >= .34;
+  const continuationAligned = !!signalBias && continuationDirection === signalBias && continuationScore >= 60;
+  const momentumAligned = !!signalBias && momentumDirection === signalBias && momentumScore >= 45;
+  const activeSetup = ['POSSIBLE_BUY','POSSIBLE_SELL','DECIDING','ENTER_BUY','ENTER_SELL'].includes(String(signal.uiState || ''));
+  const rejectionContext = waitingType === 'rejection' || analytics.rejectionDirection === signalBias;
+  const breakoutContext = waitingType === 'breakout' || ['breakout','rompimento'].some(term => String(signal.setup || '').toLowerCase().includes(term));
+  const localOpportunity = !!signalBias
+    && technicalScore >= 44
+    && (cleanTrend || continuationAligned || momentumAligned || breakoutContext || rejectionContext || powerGap >= 12);
+
+  const lateral = (regime === 'range' && !localOpportunity)
+    || (efficiency < .24 && agreement <= .6 && !localOpportunity)
+    || (averageBody < .22 && agreement < .7 && !localOpportunity);
   const stretched = streak.count >= 4;
   const weakeningStretch = stretched && (
     lossOfStrength >= 55
@@ -90,12 +101,6 @@ export function assessAssetQuality(state = {}) {
     || doji
     || (momentumDirection && streak.direction !== momentumDirection)
   );
-  const cleanTrend = !!signalBias && agreement >= .65 && efficiency >= .34;
-  const continuationAligned = !!signalBias && continuationDirection === signalBias && continuationScore >= 60;
-  const momentumAligned = !!signalBias && momentumDirection === signalBias && momentumScore >= 45;
-  const activeSetup = ['POSSIBLE_BUY','POSSIBLE_SELL','DECIDING','ENTER_BUY','ENTER_SELL'].includes(String(signal.uiState || ''));
-  const rejectionContext = waitingType === 'rejection' || analytics.rejectionDirection === signalBias;
-  const breakoutContext = waitingType === 'breakout' || ['breakout','rompimento'].some(term => String(signal.setup || '').toLowerCase().includes(term));
 
   let score = 20
     + agreement * 28
@@ -108,11 +113,12 @@ export function assessAssetQuality(state = {}) {
   if (continuationAligned) score += 5;
   if (momentumAligned) score += 4;
   if (activeSetup) score += 5;
+  if (localOpportunity) score += 5;
   if (breakoutContext || rejectionContext) score += 3;
   if (!signalBias) score -= 12;
   if (lateral) score -= 22;
-  if (compressed) score -= 14;
-  if (doji) score -= 8;
+  if (compressed && !localOpportunity) score -= 14;
+  if (doji && !rejectionContext) score -= 8;
   if (weakeningStretch) score -= 10;
   score = clamp(score);
 
@@ -121,7 +127,8 @@ export function assessAssetQuality(state = {}) {
   const setupContext = breakoutContext ? 'ROMPIMENTO EM FORMAÇÃO'
     : rejectionContext ? 'REJEIÇÃO EM FORMAÇÃO'
       : continuationAligned ? `CONTINUAÇÃO DE ${directionText}`
-        : cleanTrend ? `TENDÊNCIA DE ${directionText}` : `MOVIMENTO DE ${directionText}`;
+        : momentumAligned ? `MOMENTUM DE ${directionText}`
+          : cleanTrend ? `TENDÊNCIA DE ${directionText}` : `MOVIMENTO DE ${directionText}`;
 
   if (weakeningStretch) {
     return {
@@ -131,16 +138,24 @@ export function assessAssetQuality(state = {}) {
     };
   }
 
+  if (localOpportunity && technicalScore >= 58) {
+    return {
+      status: 'GOOD', tone: 'good', label: 'ATIVO COM OPORTUNIDADE', action: 'AGUARDAR CONFIRMAÇÃO',
+      score: Math.max(score, 60), asset, context: setupContext, bias: biasText, tradable: true,
+      reason: 'As velas recentes mostram vantagem técnica local. O scanner continua analisando a vela atual e só libera COMPRA/VENDA quando o gatilho da próxima vela confirmar.'
+    };
+  }
+
   if (lateral || compressed) {
     const context = compressed ? 'MERCADO COMPRIMIDO' : 'MERCADO LATERAL';
-    const hasLocalSetup = activeSetup && Number(signal.analysisScore ?? signal.score ?? 0) >= 44;
+    const hasLocalSetup = localOpportunity || (activeSetup && technicalScore >= 44);
     return {
       status: hasLocalSetup ? 'WATCH' : 'POOR', tone: hasLocalSetup ? 'warn' : 'bad',
       label: hasLocalSetup ? 'ATIVO EM OBSERVAÇÃO' : 'ATIVO RUIM PARA OPERAR',
       action: hasLocalSetup ? 'AGUARDAR GATILHO' : 'PROCURE OUTRO ATIVO',
-      score, asset, context, bias: biasText, tradable: false,
+      score, asset, context: hasLocalSetup ? setupContext : context, bias: biasText, tradable: false,
       reason: hasLocalSetup
-        ? 'O ativo está lateral/comprimido, mas existe um setup local em formação. Só opere se o gatilho da próxima vela confirmar.'
+        ? 'Existe uma oportunidade local nas velas recentes, mas o contexto ainda pede confirmação da vela atual antes da entrada.'
         : 'Pouca direção e pouca vantagem no movimento atual. Vale trocar de ativo e comparar outro gráfico.'
     };
   }
@@ -154,10 +169,10 @@ export function assessAssetQuality(state = {}) {
     };
   }
 
-  if (score >= 48) {
+  if (score >= 48 || localOpportunity) {
     return {
       status: 'WATCH', tone: 'warn', label: 'ATIVO EM OBSERVAÇÃO', action: 'AGUARDAR GATILHO',
-      score, asset, context: signalBias ? setupContext : 'MOVIMENTO MISTO',
+      score: Math.max(score, localOpportunity ? 48 : score), asset, context: signalBias ? setupContext : 'MOVIMENTO MISTO',
       bias: biasText, tradable: false,
       reason: 'Existe movimento, mas a vantagem ainda não está limpa. Aguarde o gatilho de POSSÍVEL COMPRA/VENDA ou a confirmação final da próxima vela.'
     };
