@@ -24,7 +24,7 @@
         "https://casatraders.online/*", "https://*.casatraders.online/*",
         "https://ivcasatraders.online/*", "https://*.ivcasatraders.online/*"
       ],
-      "js": ["src/content/focused-asset.js"],
+      "js": ["src/content/focused-asset.js", "src/content/frame-feed-relay.js"],
       "run_at": "document_start",
       "all_frames": true,
       "match_origin_as_fallback": true
