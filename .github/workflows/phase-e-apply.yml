@@ -1,0 +1,39 @@
+name: Phase E apply
+on:
+  push:
+    branches: [phase-e/payment-idempotency-state-machine]
+permissions:
+  contents: write
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: phase-e/payment-idempotency-state-machine
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Apply Phase E
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('backend/src/server.js')
+          s=p.read_text()
+          old="const result = await processPayment(paymentId); setPaymentEvent(eventKey, 'completed', { paymentId, result }); return json(req, res, 200, { ok: true, status: result?.status || null });"
+          new="const result = await processPayment(paymentId); if (result?.status === 'approved') setPaymentEvent(eventKey, 'completed', { paymentId, result }); else setPaymentEvent(eventKey, 'received', { paymentId, result, retrySafe: true }); return json(req, res, 200, { ok: true, status: result?.status || null });"
+          if old not in s: raise SystemExit('webhook target not found')
+          p.write_text(s.replace(old,new,1))
+          Path('test/payment-idempotency-state.test.mjs').write_text("""import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport fs from 'node:fs';\nconst source=fs.readFileSync(new URL('../backend/src/server.js',import.meta.url),'utf8');\ntest('Phase E serializes payment and order processing',()=>{ assert.match(source,/withLock\\(paymentLocks, id/); assert.match(source,/withLock\\(orderLocks, order\\.id/); });\ntest('Phase E completes webhook event only after approved payment',()=>{ assert.match(source,/result\\?\\.status === 'approved'/); assert.match(source,/setPaymentEvent\\(eventKey, 'completed'/); assert.match(source,/setPaymentEvent\\(eventKey, 'received'.*retrySafe: true/); });\ntest('Phase E retains received processing completed failed states',()=>{ for(const state of ['received','processing','completed','failed']) assert.match(source,new RegExp(`setPaymentEvent\\\\(eventKey, '${state}'`)); });\n""")
+          Path('.github/workflows/phase-e-apply.yml').unlink()
+          PY
+      - run: npm test
+      - run: find src backend apps -name '*.js' -print0 | xargs -0 -n1 node --check
+      - name: Commit
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m "Phase E: harden payment idempotency state machine"
+          git push origin HEAD:phase-e/payment-idempotency-state-machine
