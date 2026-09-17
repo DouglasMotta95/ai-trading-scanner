@@ -3,7 +3,7 @@ import { readScannerState, updateScannerState } from './services/scanner-state-a
 // Product policy layer. The technical engine can keep collecting evidence with an
 // estimated clock, but the user-facing decision is never promoted while CasaTrade
 // time is not authoritative. This also owns Normal/A+ confluence and the stable hold.
-const EXACT_CLOCK_SOURCES = new Set(['trader-dom-countdown', 'network-server-cycle']);
+const EXACT_CLOCK_SOURCES = new Set(['trader-dom-countdown', 'network-server-cycle', 'structured-candle-boundary']);
 const CLOCK_FRESH_MS = 3000;
 const FOCUS_FRESH_MS = 5500;
 const DEFAULT_PREFS = Object.freeze({ mode: 'NORMAL', geminiEnabled: true, holdSeconds: 3, preferredExpiration: null });
@@ -80,17 +80,21 @@ export function exactCasaTradeTime(state = {}) {
   const stateTf = normTf(state.analysisTimeframe || state.timeframe);
   const controlTf = normTf(state.platformControls?.observed?.timeframe);
   if (!liveTf) return { ready: false, reason: 'Timeframe real ainda não foi confirmado.' };
+  if (liveTf !== 'M1') return { ready: false, reason: 'Ajuste o timeframe da CasaTrade para M1.' };
   if (stateTf && liveTf !== stateTf) return { ready: false, reason: 'Timeframe interno divergiu do gráfico.' };
   if (controlTf && liveTf !== controlTf) return { ready: false, reason: 'Timeframe visível divergiu do clock da vela.' };
   return { ready: true, timeframe: liveTf, secondsRemaining: Number(clock.secondsRemaining), source: clock.source };
 }
 
-export function CasaTradeExpiration(state = {}) {
+export function CasaTradeExpiration(state = {}, timeframe = null) {
   const controls = state.platformControls || {};
   const observed = normExp(controls.observed?.expiration);
   const fresh = Number(controls.checkedAt || 0) > 0 && Date.now() - Number(controls.checkedAt) < 7000;
   if (!observed || !fresh) return { ready: false, actual: observed, reason: 'Expiração real da CasaTrade ainda não foi confirmada.' };
-  return { ready: true, actual: observed, reason: 'Expiração lida diretamente da CasaTrade.' };
+  if (normTf(timeframe || state.analysisTimeframe || state.timeframe) === 'M1' && observed !== '60s') {
+    return { ready: false, actual: observed, required: '60s', reason: 'Ajuste a expiração da CasaTrade para 1 minuto' };
+  }
+  return { ready: true, actual: observed, required: '60s', reason: 'Expiração de 1 minuto lida diretamente da CasaTrade.' };
 }
 
 function completeCandles(state = {}) {
@@ -143,7 +147,7 @@ function baseDecision(state = {}) {
   const signal = state.signal || {};
   const now = Date.now();
   const time = exactCasaTradeTime(state);
-  const expiration = CasaTradeExpiration(state);
+  const expiration = CasaTradeExpiration(state, time.timeframe || state.analysisTimeframe || state.timeframe);
   const rows = completeCandles(state);
   const direction = signalDirection(signal);
   const score = Number(signal.analysisScore ?? signal.score ?? 0) || 0;
@@ -184,6 +188,15 @@ function baseDecision(state = {}) {
   if (!expiration.ready) {
     return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: `AGUARDAR — ${expiration.reason}` };
   }
+
+  const seconds = Number(time.secondsRemaining);
+  if (!Number.isFinite(seconds) || seconds > 30) {
+    return { ...common, uiState: 'BUILDING_PATTERN', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: 'Analisando a vela M1 atual. O pré-sinal abre por volta de 30s restantes.' };
+  }
+  if (seconds <= 0) {
+    return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: 'AGUARDAR — fechamento da vela em andamento.' };
+  }
+
   if (!technicalCandidate || !direction || score < possibleScore || factors.count < requiredFactors) {
     const modeText = pref.mode === 'A_PLUS' ? 'Só A+ exige 3 fatores alinhados.' : 'Padrão sem confluência suficiente.';
     return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: `AGUARDAR — ${modeText}` };
@@ -197,7 +210,7 @@ function baseDecision(state = {}) {
   const finalQuality = technicalFinal && score >= finalScore && factors.count >= requiredFactors;
   const reason = shortReason(direction, factors.factors, signal.reason);
 
-  if (!finalQuality || heldFor < holdMs) {
+  if (seconds > 10) {
     return {
       ...common,
       uiState: direction === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL',
@@ -207,6 +220,18 @@ function baseDecision(state = {}) {
       possibleSince,
       holdRemainingMs: Math.max(0, holdMs - heldFor),
       reason
+    };
+  }
+  if (!finalQuality || heldFor < holdMs) {
+    return {
+      ...common,
+      uiState: 'WAIT',
+      direction: null,
+      actionable: false,
+      alert: 'silent',
+      possibleSince,
+      holdRemainingMs: Math.max(0, holdMs - heldFor),
+      reason: `AGUARDAR — decisão final sem confirmação suficiente. ${reason}`
     };
   }
 
