@@ -1,12 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { assessAssetQuality } from '../src/core/asset-quality.js';
 
 const read = p => fs.readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
 const entry = read('src/background-entry.js');
 const engine = read('src/background-sniper-engine.js');
 const injector = read('src/background-sniper-injector.js');
 const bridge = read('src/content/embedded-feed-bridge.js');
+const assetObserver = read('src/content/casatrade-asset-observer.js');
 const liveClock = read('src/content/casatrade-live-clock.js');
 const bootstrap = read('src/content/sniper-page-bootstrap.js');
 const panel = read('src/sidepanel/app-v2.js');
@@ -36,12 +38,26 @@ test('Sniper authority binds focus, numeric OHLC and CasaTrade clock to the same
   assert.match(engine, /new Set\(\['casatrade-platform-clock'\]\)/);
 });
 
-test('CasaTrade source timestamp is authoritative and wall clock is not substituted into the trading clock', () => {
-  assert.match(liveClock, /epochAtAnchor:sourceNow/);
-  assert.doesNotMatch(liveClock, /trustedSource/);
-  assert.doesNotMatch(liveClock, /sourceNow\|\|Date\.now/);
-  assert.match(bridge, /sourceNow=ts\(candidate\.timestamp\)/);
-  assert.doesNotMatch(bridge, /ts\(candidate\.timestamp\)\|\|Date\.now/);
+test('visible chart owns asset focus and network candidates cannot switch the scanner asset', () => {
+  assert.match(assetObserver, /visibleChartCandidate/);
+  assert.match(assetObserver, /selectedTabCandidate/);
+  assert.match(assetObserver, /visible-chart-label/);
+  assert.doesNotMatch(assetObserver, /'\.active','\.selected'/);
+  assert.doesNotMatch(bridge, /ATS_VISUAL_FOCUS_V2/);
+  assert.doesNotMatch(bridge, /network-selected/);
+  assert.match(bridge, /focusedAsset\?\.asset/);
+  assert.match(bridge, /filter\(row => asset\(row\?\.asset\) === wanted\)/);
+});
+
+test('CasaTrade visible countdown plus OHLC boundary is the live candle clock', () => {
+  assert.match(liveClock, /bestDomCountdown/);
+  assert.match(liveClock, /dom-countdown/);
+  assert.match(liveClock, /sourceNow = closeAt - candidate\.seconds \* 1000/);
+  assert.match(liveClock, /clockSource: 'casatrade-platform-clock'/);
+  assert.match(liveClock, /ATS_PLATFORM_CONTROLS_OBSERVED/);
+  assert.doesNotMatch(liveClock, /sourceNow\s*\|\|\s*Date\.now/);
+  assert.doesNotMatch(liveClock, /epochAtAnchor:\s*Date\.now/);
+  assert.match(bridge, /const sourceNow = timestamp\(candidate\.timestamp \?\? candidate\.time \?\? candidate\.serverTime\)/);
   assert.match(engine, /serverTime: sourceNow/);
   assert.match(engine, /authoritativeNow\(clock\)/);
 });
@@ -75,6 +91,36 @@ test('final confirmation requires real feed quality, CasaTrade expiration and de
   assert.match(engine, /blockedBy: 'expiration'/);
   assert.match(engine, /expirationReady: expiration\.ready/);
   assert.match(bridge, /lastSignature/);
+});
+
+test('strong recent local opportunity is not labeled as a poor asset just because the broad regime is range', () => {
+  const candles = [
+    { open: 1.000, high: 1.012, low: .998, close: 1.010 },
+    { open: 1.010, high: 1.022, low: 1.008, close: 1.020 },
+    { open: 1.020, high: 1.034, low: 1.018, close: 1.032 },
+    { open: 1.032, high: 1.044, low: 1.030, close: 1.042 },
+    { open: 1.042, high: 1.056, low: 1.040, close: 1.054 }
+  ];
+  const quality = assessAssetQuality({
+    asset: 'EUR/USD (OTC)',
+    candles,
+    signal: {
+      analysisDirection: 'BUY',
+      analysisScore: 62,
+      uiState: 'BUILDING_PATTERN',
+      regime: { type: 'range' },
+      analytics: {
+        buyPower: 68, sellPower: 32,
+        currentStrength: 70,
+        momentumDirection: 'BUY', momentumScore: 65,
+        continuationDirection: 'BUY', continuationScore: 68,
+        trendDirection: 'BUY'
+      }
+    }
+  });
+  assert.notEqual(quality.status, 'POOR');
+  assert.notEqual(quality.label, 'ATIVO RUIM PARA OPERAR');
+  assert.equal(quality.bias, 'COMPRADOR');
 });
 
 test('confirmation is blocked on extreme volatility or feed quality below 80 percent', () => {
