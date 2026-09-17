@@ -166,13 +166,16 @@
     const asset = canonicalAsset(candidate.asset);
     const price = num(candidate.price);
     if (!asset || price == null || price <= 0) return;
-    const previous = state.candidates.get(asset) || {};
+    const previous = state.candidates.get(asset) || null;
     const selected = candidate.selected === true;
+    const confidence = Math.max(Number(candidate.confidence || 0), selected ? 99 : 82);
+    const previousConfidence = Number(previous?.confidence || 0);
+    if (previous && confidence < previousConfidence) return;
     state.candidates.set(asset, {
-      ...previous, ...candidate, asset, price, transport, selected,
+      ...(previous || {}), ...candidate, asset, price, transport, selected,
       observedAt: Date.now(),
-      seenCount: Math.min(1000000, Number(previous.seenCount || 0) + 1),
-      confidence: Math.max(Number(previous.confidence || 0), Number(candidate.confidence || 0), selected ? 99 : 82)
+      seenCount: Math.min(1000000, Number(previous?.seenCount || 0) + 1),
+      confidence
     });
   }
 
@@ -240,7 +243,8 @@
       const learnedAsset = rememberMapping(value);
       const activeId = num(pick(value, ACTIVE_ID_KEYS));
       const idAsset = resolveActiveId(activeId);
-      const ownAsset = learnedAsset || idAsset || node.asset || assetFromText(node.key);
+      const keyAsset = assetFromText(node.key);
+      const ownAsset = learnedAsset || idAsset || keyAsset || node.asset;
       const ownTf = normalizeTf(pick(value, TF_KEYS)) || node.timeframe;
       const selected = Number.isInteger(activeId)
         && activeId === state.selectedActiveId
@@ -252,7 +256,10 @@
       let price = num(pick(value, PRICE_KEYS));
       if (price == null && close != null) price = close;
       if (price == null && bid != null && ask != null) price = (bid + ask) / 2;
-      if (ownAsset && price != null && price > 0) {
+      const independentQuote = Boolean(learnedAsset || idAsset || keyAsset)
+        || node.depth === 0
+        || (bid != null && ask != null);
+      if (ownAsset && independentQuote && price != null && price > 0) {
         rememberCandidate({
           asset: ownAsset, price, bid, ask, timeframe: ownTf,
           timestamp: normalizeTime(pick(value, TIME_KEYS)), selected,
