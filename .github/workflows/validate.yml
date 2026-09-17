@@ -81,3 +81,6 @@ jobs:
           path: dist/ai-trading-scanner-extension/
           if-no-files-found: error
           retention-days: 30
+      - name: Validation completed
+        if: success()
+        run: echo 'Integrated candidate validation completed successfully.'
