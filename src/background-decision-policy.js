@@ -43,10 +43,10 @@ const normExp = value => {
 function preferences(state = {}) {
   const raw = state.analystPreferences || {};
   return {
-    mode: text(raw.mode).toUpperCase() === 'A_PLUS' ? 'A_PLUS' : 'NORMAL',
+    mode: 'NORMAL',
     geminiEnabled: raw.geminiEnabled !== false,
-    holdSeconds: clamp(raw.holdSeconds ?? DEFAULT_PREFS.holdSeconds, 3, 5),
-    preferredExpiration: normExp(raw.preferredExpiration || state.executionPreferences?.expiration || '')
+    holdSeconds: 3,
+    preferredExpiration: null
   };
 }
 
@@ -154,14 +154,13 @@ function baseDecision(state = {}) {
   const ui = text(signal.uiState).toUpperCase();
   const cycle = cycleKey(state, signal);
   const factors = confluence(signal, direction);
-  const requiredFactors = pref.mode === 'A_PLUS' ? 3 : 2;
   // NORMAL already passed the technical engine's own quality gates. Requiring
   // another independent confluence count here was suppressing valid POSSIBLE/
   // ENTER decisions and leaving the product stuck on AGUARDAR. Only A+ applies
   // this extra presentation-policy filter.
-  const additionalConfluenceReady = pref.mode !== 'A_PLUS' || factors.count >= requiredFactors;
-  const possibleScore = pref.mode === 'A_PLUS' ? 52 : 44;
-  const finalScore = pref.mode === 'A_PLUS' ? 66 : 58;
+  const additionalConfluenceReady = true;
+  const possibleScore = 44;
+  const finalScore = 58;
   const technicalCandidate = ['POSSIBLE_BUY', 'POSSIBLE_SELL', 'ENTER_BUY', 'ENTER_SELL'].includes(ui);
   const technicalFinal = ['ENTER_BUY', 'ENTER_SELL'].includes(ui);
 
@@ -203,8 +202,7 @@ function baseDecision(state = {}) {
   }
 
   if (!technicalCandidate || !direction || score < possibleScore || !additionalConfluenceReady) {
-    const modeText = pref.mode === 'A_PLUS' ? 'Só A+ exige 3 fatores alinhados.' : 'Motor técnico ainda não liberou um candidato.';
-    return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: `AGUARDAR — ${modeText}` };
+    return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: 'AGUARDAR — motor técnico ainda não liberou um candidato.' };
   }
 
   const previous = state.professionalDecision || {};
