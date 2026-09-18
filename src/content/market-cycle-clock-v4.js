@@ -216,12 +216,15 @@
     const exactTf = tf(freshExactClock(state, state.diagnostics?.focusedAsset || null, null)?.timeframe);
     const platformDiag = state.diagnostics?.platformTime || {};
     const platformTf = Number(platformDiag.at || 0) > 0 && Date.now() - Number(platformDiag.at) < 7000 ? tf(platformDiag.timeframe) : null;
-    // The structured market feed can already have confirmed M1 before the
-    // compact UI control reader catches up. It is safe to use that timeframe
-    // only as the duration bound for a DOM countdown candidate; the countdown
-    // itself still must prove real progression before becoming exact authority.
-    const stateTf = tf(state.analysisTimeframe || state.timeframe);
-    return controlTf || chartTf || exactTf || platformTf || stateTf || null;
+    return controlTf || chartTf || exactTf || platformTf || null;
+  }
+
+  function structuredFeedTf(state = {}, focus = null) {
+    const session = state.diagnostics?.marketSession || {};
+    if (session.dataReady !== true || !focus?.asset) return null;
+    if (!sameMarket(session.confirmedAsset || session.asset, focus.asset)) return null;
+    if (!sameMarket(state.asset, focus.asset)) return null;
+    return tf(state.analysisTimeframe || state.timeframe);
   }
 
   let stateBoundaryProbe = null;
@@ -272,7 +275,7 @@
       if (lastCanvasAsset && lastCanvasAsset !== focus.asset) { lastCanvas = null; canvasVerifiedAt = 0; }
       lastCanvasAsset = focus.asset;
       const controlsFresh = Number(state.platformControls?.checkedAt || 0) > 0 && Date.now() - Number(state.platformControls.checkedAt) < 5000;
-      const cycleTf = liveCycleTf(state, controlsFresh);
+      const cycleTf = liveCycleTf(state, controlsFresh) || structuredFeedTf(state, focus);
       const duration = secondsFor(cycleTf);
       if (!cycleTf || !duration || seconds > duration + 2) return;
       const previous = lastCanvas;
@@ -312,7 +315,7 @@
       if (String(focus.frameHost || '').toLowerCase() !== host) return;
 
       const controlsFresh = Number(state.platformControls?.checkedAt || 0) > 0 && Date.now() - Number(state.platformControls.checkedAt) < 5000;
-      const cycleTf = liveCycleTf(state, controlsFresh);
+      const cycleTf = liveCycleTf(state, controlsFresh) || structuredFeedTf(state, focus);
       if (!cycleTf) return;
       const expiration = controlsFresh ? clean(state.platformControls?.observed?.expiration || '') || null : null;
       const domClock = verifiedDomCountdown(cycleTf);
