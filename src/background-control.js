@@ -10,10 +10,80 @@ const DEFAULT_LICENSE = Object.freeze({
 const SESSION_HISTORY_KEY = 'atsSessionSignalHistory';
 const SHADOW_KEY = 'atsShadowCalibrationV1';
 const EXACT_CLOCK_SOURCES = new Set(['trader-dom-countdown', 'network-server-cycle']);
+const CONNECT_TIMEOUT_MS = 7000;
 
-const activeLicense = license => ['active', 'valid'].includes(String(license?.status || '').toLowerCase());
 const clean = value => String(value ?? '').trim();
-const sameAsset = (a, b) => clean(a).toUpperCase().replace(/\s*\(\s*OTC\s*\)\s*$/i, '') === clean(b).toUpperCase().replace(/\s*\(\s*OTC\s*\)\s*$/i, '') && !!clean(a) && !!clean(b);
+const activeLicense = license => {
+  const status = clean(license?.status).toLowerCase();
+  return ['active', 'valid'].includes(status)
+    || license?.devMode === true
+    || clean(license?.plan).toUpperCase() === 'OWNER_DEV';
+};
+const marketId = value => {
+  const raw = clean(value).toUpperCase();
+  if (!raw) return '';
+  const otc = /(?:\(|\b|[_-])OTC(?:\)|\b)?/i.test(raw);
+  const pair = raw.match(/\b([A-Z0-9]{2,20})\s*[\/_-]\s*([A-Z0-9]{2,12})/i);
+  if (pair) return `${pair[1]}/${pair[2]}${otc ? ' (OTC)' : ''}`;
+  return raw.replace(/\s+/g, ' ');
+};
+const sameAsset = (a, b) => !!marketId(a) && marketId(a) === marketId(b);
+
+function handshakeReady(state = {}) {
+  const focus = state.diagnostics?.focusedAsset || {};
+  const clock = state.diagnostics?.marketClock || {};
+  const expiration = clean(state.platformControls?.observed?.expiration || '');
+  const rows = Array.isArray(state.candles) ? state.candles : [];
+  return state.connection === 'online'
+    && !!state.asset
+    && Number.isFinite(Number(state.price))
+    && focus.reliable === true
+    && focus.chartScoped === true
+    && focus.trustedChartFrame === true
+    && sameAsset(focus.asset, state.asset)
+    && clock.available !== false
+    && clock.role === 'candle-close'
+    && EXACT_CLOCK_SOURCES.has(clean(clock.source))
+    && Number.isFinite(Number(clock.secondsRemaining))
+    && Number(clock.at || 0) > 0
+    && Date.now() - Number(clock.at) < 3200
+    && !!expiration
+    && rows.length >= 2;
+}
+
+function scheduleConnectionTimeout(tabId, connectedAt) {
+  setTimeout(() => {
+    readScannerState().then(current => {
+      const sameTarget = Number(current.targetTabId) === Number(tabId)
+        && Number(current.diagnostics?.target?.connectedAt || 0) === Number(connectedAt);
+      if (!sameTarget || handshakeReady(current)) return null;
+      return updateScannerState(state => {
+        const stillSame = Number(state.targetTabId) === Number(tabId)
+          && Number(state.diagnostics?.target?.connectedAt || 0) === Number(connectedAt);
+        if (!stillSame || handshakeReady(state)) return state;
+        return {
+          ...state,
+          scanner: 'idle',
+          connection: 'offline',
+          diagnostics: {
+            ...(state.diagnostics || {}),
+            connectionError: {
+              code: 'handshake_timeout',
+              message: 'Falha ao conectar — tentar novamente.',
+              at: Date.now()
+            },
+            acquisition: {
+              ...(state.diagnostics?.acquisition || {}),
+              stage: 'connect_timeout',
+              reason: 'Falha ao conectar — tentar novamente.',
+              at: Date.now()
+            }
+          }
+        };
+      });
+    }).catch(() => {});
+  }, CONNECT_TIMEOUT_MS);
+}
 
 function platformFromUrl(url = '') {
   try { return detectPlatform(new URL(url).hostname); } catch { return null; }
@@ -155,6 +225,8 @@ async function connectActiveTab() {
     }));
     return { ok: false, error: 'runtime_injection_failed', platform: { id: platform.id, name: platform.name }, tabId: tab.id, state: failed };
   }
+  const connectedAt = Number(next.diagnostics?.target?.connectedAt || Date.now());
+  scheduleConnectionTimeout(tab.id, connectedAt);
   return { ok: true, platform: { id: platform.id, name: platform.name }, tabId: tab.id, state: await readScannerState() || next };
 }
 
