@@ -250,8 +250,9 @@ function acquisitionGaps(state = {}) {
     && Number(clock.at || 0) > 0
     && Date.now() - Number(clock.at) < CLOCK_FRESH_MS;
   if (!clockFresh) gaps.push('countdown');
-  const controlsFresh = Number(controls.checkedAt || 0) > 0 && Date.now() - Number(controls.checkedAt) < 7000;
-  if (!controlsFresh || !clean(controls.observed?.expiration)) gaps.push('expiração');
+  const expirationAt = Number(controls.expirationCheckedAt || controls.observed?.observedAt?.expiration || 0);
+  const expirationFresh = expirationAt > 0 && Date.now() - expirationAt < 7000;
+  if (!expirationFresh || !clean(controls.observed?.expiration)) gaps.push('expiração');
   return gaps;
 }
 
