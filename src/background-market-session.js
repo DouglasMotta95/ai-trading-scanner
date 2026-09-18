@@ -53,7 +53,7 @@ function senderMeta(sender = {}) {
   let frameHost = '', topHost = '';
   try { frameHost = new URL(sender.url || '').hostname.toLowerCase(); } catch {}
   try { topHost = new URL(sender.tab?.url || '').hostname.toLowerCase(); } catch {}
-  const tabOwned = !!sender.tab?.id && casaHost(topHost);
+  const tabOwned = !!sender.tab?.id && (casaHost(topHost) || traderHost(topHost));
   const embeddedTrader = tabOwned && Number(sender.frameId) !== 0 && traderHost(frameHost);
   const casaOwnedChart = tabOwned && casaHost(frameHost);
   return {
