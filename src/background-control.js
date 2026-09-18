@@ -281,8 +281,9 @@ function exactTradeReady(state = {}) {
   const clock = state.diagnostics?.marketClock || {};
   const focus = state.diagnostics?.focusedAsset || {};
   const professional = state.professionalDecision || {};
-  const actualExpiration = clean(state.platformControls?.observed?.expiration || '');
-  const controlsFresh = Number(state.platformControls?.checkedAt || 0) > 0 && Date.now() - Number(state.platformControls.checkedAt) < 7000;
+  const expirationAt = Number(state.platformControls?.expirationCheckedAt || state.platformControls?.observed?.observedAt?.expiration || 0);
+  const controlsFresh = expirationAt > 0 && Date.now() - expirationAt < 7000;
+  const actualExpiration = controlsFresh ? clean(state.platformControls?.observed?.expiration || '') : '';
   if (professional.timeReady !== true || professional.expirationReady !== true || professional.actionable !== true) return false;
   if (clock.verified !== true || clock.available === false || clock.role !== 'candle-close' || !EXACT_CLOCK_SOURCES.has(clean(clock.source))) return false;
   if (Date.now() - Number(clock.at || 0) >= 3000) return false;
