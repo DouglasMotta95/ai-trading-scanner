@@ -307,7 +307,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
     cycle.locked = 'ENTER';
     cycle.direction = signal.direction;
     cycle.score = Math.max(score, Number(signal.score || 0));
-    cycle.setup = signal.setup || 'analista';
+    cycle.setup = signal.setup || null;
     cycle.reason = signal.reason;
     cycle.decidedAt = at;
     cycles.set(key, cycle);
