@@ -11,9 +11,9 @@ function base(overrides = {}) {
   };
 }
 
-test('shows POSSIBLE immediately instead of hiding in BUILDING_PATTERN', () => {
+test('shows POSSIBLE inside the 30 second preparation window', () => {
   resetFastLiveDecision();
-  const r = fastLiveDecision(base(), { asset: 'AUD/CAD (OTC)', timeframe: 'M1', serverTime: 100000 });
+  const r = fastLiveDecision(base({ secondsRemaining: 24 }), { asset: 'AUD/CAD (OTC)', timeframe: 'M1', serverTime: 100000 });
   assert.equal(r.uiState, 'POSSIBLE_SELL');
   assert.equal(r.direction, 'SELL');
 });
