@@ -148,7 +148,15 @@ async function runCentralAnalysis(force = false) {
       const inputSignature = rawInputSignature(current, snapshot);
       if (!force && inputSignature === lastInputSignature) return current;
 
-      const marketKey = `${snapshot.asset}|${snapshot.analysisTimeframe}`;
+      const session = current.diagnostics?.marketSession || {};
+      const focus = current.diagnostics?.focusedAsset || {};
+      const marketKey = [
+        snapshot.asset,
+        snapshot.analysisTimeframe,
+        Number(session.epoch || 0),
+        Number(focus.frameId ?? -1),
+        clean(focus.frameHost).toLowerCase()
+      ].join('|');
       if (lastMarketKey && lastMarketKey !== marketKey) resetOrchestrator();
       lastMarketKey = marketKey;
 
