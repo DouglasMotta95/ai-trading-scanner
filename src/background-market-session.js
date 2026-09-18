@@ -22,9 +22,16 @@ function normAsset(value = '') {
   const raw = clean(value).toUpperCase();
   if (!raw || raw.length > 100) return '';
   const otc = /(?:\(|\b|[_-])OTC(?:\)|\b)?/i.test(raw);
-  const direct = raw.match(/\b([A-Z0-9]{2,20})\s*[\/_-]\s*([A-Z0-9]{2,12})/i);
-  if (!direct) return '';
-  return `${direct[1]}/${direct[2]}${otc ? ' (OTC)' : ''}`;
+  const stripped = raw.replace(/\(\s*OTC\s*\)|\bOTC\b/g, ' ').trim();
+  const direct = stripped.match(/\b([A-Z0-9]{2,20})\s*[\/_-]\s*([A-Z0-9]{2,12})/i);
+  if (direct) return `${direct[1]}/${direct[2]}${otc ? ' (OTC)' : ''}`;
+  const compact = stripped.replace(/[^A-Z0-9]/g, '');
+  for (const quote of ['USDT','USD','EUR','GBP','JPY','CAD','AUD','CHF','NZD','BTC','ETH']) {
+    if (!compact.endsWith(quote) || compact.length <= quote.length + 1) continue;
+    const base = compact.slice(0, -quote.length);
+    if (/^[A-Z0-9]{2,12}$/.test(base)) return `${base}/${quote}${otc ? ' (OTC)' : ''}`;
+  }
+  return '';
 }
 const marketId = value => normAsset(value);
 const sameMarket = (a, b) => !!marketId(a) && marketId(a) === marketId(b);
