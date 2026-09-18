@@ -115,20 +115,21 @@ test('generic network duration requires trade expiration semantics and rejects g
   const behaviorSource = network.slice(start, end);
 
   const run = parentKey => {
-    const context = {
+    const sandbox = {
       GENERIC_DURATION_KEY: /^duration$/i,
       CONTROL_EXP_KEY: /^__explicit_only__$/i,
       stats: { controlExpiration: null },
       now: () => 10000,
-      result: null
+      result: null,
+      parentKey
     };
     vm.runInNewContext(
       behaviorSource
         + "\nrecordControlExpiration('duration', 60, { parentKey, objectKeys: [parentKey, 'duration'] });"
         + "\nresult = stats.controlExpiration;",
-      { ...context, parentKey }
+      sandbox
     );
-    return context.result;
+    return sandbox.result;
   };
 
   assert.equal(run('order'), null);
