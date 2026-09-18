@@ -10,7 +10,13 @@ function trusted(sender = {}) {
   try { frameHost = new URL(sender.url || '').hostname.toLowerCase(); } catch {}
   if (!frameHost) { try { frameHost = new URL(sender.origin || '').hostname.toLowerCase(); } catch {} }
   try { topHost = new URL(sender.tab?.url || '').hostname.toLowerCase(); } catch {}
-  return !!sender.tab?.id && casaHost(topHost) && (casaHost(frameHost) || traderHost(frameHost));
+  const tabOwned = !!sender.tab?.id && casaHost(topHost);
+  const knownFrame = casaHost(frameHost) || traderHost(frameHost);
+  const opaqueChild = tabOwned && Number(sender.frameId) > 0 && (!frameHost || frameHost === 'null');
+  // match_origin_as_fallback can inject our own content script into an opaque
+  // CasaTrade child frame. That trusted extension sender is allowed to report
+  // only platform controls; ordinary web pages still cannot call this handler.
+  return tabOwned && (knownFrame || opaqueChild);
 }
 
 function normExp(value = '') {

@@ -40,6 +40,14 @@ function normTf(value) {
   return null;
 }
 
+function normExp(value) {
+  const s = clean(value).toLowerCase().replace(/\s+/g, '');
+  let m = s.match(/^(\d{1,5})(?:s|seg|segundo|segundos)$/); if (m) return `${Number(m[1])}s`;
+  m = s.match(/^(\d{1,4})(?:m|min|minuto|minutos)$/); if (m) return `${Number(m[1]) * 60}s`;
+  m = s.match(/^(\d{1,3}):(\d{2})$/); if (m) return `${Number(m[1]) * 60 + Number(m[2])}s`;
+  return null;
+}
+
 function timeframeSeconds(value) {
   const timeframe = normTf(value);
   if (!timeframe) return null;
@@ -422,13 +430,35 @@ async function applyClock(message = {}, sender = {}) {
     }
 
     const record = clockRecord(message, info, asset, timeframe, secondsRemaining);
+    const observedExpiration = normExp(message.expiration || '');
+    const platformControls = observedExpiration ? {
+      ...(next.platformControls || {}),
+      observed: {
+        ...(next.platformControls?.observed || {}),
+        expiration: observedExpiration,
+        timeframe: timeframe || next.platformControls?.observed?.timeframe || null,
+        source: clean(message.expirationSource || 'casatrade-clock-frame'),
+        confidence: {
+          ...(next.platformControls?.observed?.confidence || {}),
+          expiration: Math.max(96, Number(next.platformControls?.observed?.confidence?.expiration || 0)),
+          timeframe: Math.max(94, Number(next.platformControls?.observed?.confidence?.timeframe || 0))
+        }
+      },
+      checkedAt: Date.now(),
+      frameId: info.frameId,
+      source: clean(message.expirationSource || 'casatrade-clock-frame'),
+      aligned: (timeframe || next.analysisTimeframe || next.timeframe) === 'M1' && observedExpiration === '60s',
+      liveAuthority: true
+    } : next.platformControls || null;
+
     let clockState = {
       ...next,
       connection: next.price != null ? 'online' : 'connecting',
       timeframe: timeframe || next.timeframe,
       analysisTimeframe: timeframe || next.analysisTimeframe,
       expiration: message.expiration || next.expiration || null,
-      targetExpiration: message.expiration || next.targetExpiration || null,
+      targetExpiration: observedExpiration || message.expiration || next.targetExpiration || null,
+      platformControls,
       diagnostics: {
         ...(next.diagnostics || {}),
         marketClock: record,

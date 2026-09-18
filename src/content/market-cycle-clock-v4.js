@@ -93,6 +93,34 @@
     return rows[0]?.rect || null;
   }
 
+  function orderExpirationFromDom() {
+    const rows = [];
+    for (const el of nodes(6000)) {
+      if (!visible(el)) continue;
+      const own = clean(el.getAttribute?.('aria-label') || el.getAttribute?.('aria-valuetext') || el.getAttribute?.('title') || el.innerText || el.textContent || '');
+      if (!own || own.length > 180) continue;
+      let context = own;
+      let parent = el.parentElement;
+      for (let depth = 0; parent && depth < 2; depth += 1, parent = parent.parentElement) {
+        context += ' ' + clean(parent.innerText || parent.textContent || '').slice(0, 220);
+      }
+      const folded = fold(context);
+      if (!/expira|expiry|expiration/.test(folded)) continue;
+      const match = folded.match(/(?:expiracao|expiry|expiration)[^0-9]{0,48}(\d{1,4})\s*(s|seg|segundo|segundos|m|min|minuto|minutos)\b/);
+      if (!match) continue;
+      const amount = Number(match[1]);
+      if (!(amount > 0)) continue;
+      const unit = match[2];
+      const value = /^(m|min|minuto|minutos)$/.test(unit) ? `${amount * 60}s` : `${amount}s`;
+      let score = 120;
+      if (own.length <= 64) score += 30;
+      if (el.matches?.('button,input,select,[role="button"],[role="combobox"]')) score += 35;
+      rows.push({ value, score });
+    }
+    rows.sort((a, b) => b.score - a.score);
+    return rows[0]?.value || null;
+  }
+
   function selectedChartTf() {
     const rows = [];
     for (const el of nodes(5000)) {
@@ -256,13 +284,15 @@
       const rolled = !!previous && previous.cycleTf === cycleTf && localDelta > 150 && localDelta < 4500 && previous.seconds <= 2 && seconds >= duration - 2 && seconds <= duration + 1;
       lastCanvas = { seconds, at: observedAt, cycleTf };
       if (!progressed && !rolled) return;
-      const expiration = controlsFresh ? clean(state.platformControls?.observed?.expiration || '') || null : null;
+      const expiration = orderExpirationFromDom()
+        || (controlsFresh ? clean(state.platformControls?.observed?.expiration || '') || null : null);
       canvasVerifiedAt = Date.now();
       await sendMessage({
         type: 'ATS_MARKET_CLOCK_V2', asset: focus.asset, timeframe: cycleTf,
         secondsRemaining: seconds, expiration, available: true, verified: true, operational: true,
         clockRole: 'candle-close', clockSource: 'trader-dom-countdown', clockMode: 'canvas-visible-countdown',
         clockText: clean(payload.text || `${seconds}s`), clockToken: clean(payload.text || `${seconds}s`), confidence: 99,
+        expirationSource: expiration ? 'casatrade-clock-frame' : null,
         frameHost: host, at: Date.now()
       });
     } finally { canvasBusy = false; }
@@ -288,7 +318,8 @@
       const controlsFresh = Number(state.platformControls?.checkedAt || 0) > 0 && Date.now() - Number(state.platformControls.checkedAt) < 5000;
       const cycleTf = liveCycleTf(state, controlsFresh);
       if (!cycleTf) return;
-      const expiration = controlsFresh ? clean(state.platformControls?.observed?.expiration || '') || null : null;
+      const expiration = orderExpirationFromDom()
+        || (controlsFresh ? clean(state.platformControls?.observed?.expiration || '') || null : null);
       const domClock = verifiedDomCountdown(cycleTf);
 
       if (!domClock && freshExactClock(state, focus, cycleTf)) return;
@@ -300,13 +331,13 @@
         secondsRemaining: domClock.seconds, expiration, available: true, verified: true, operational: true,
         clockRole: 'candle-close', clockSource: 'trader-dom-countdown',
         clockMode: domClock.chartScoped ? 'chart-geometry-exact' : 'dom-exact',
-        clockText: domClock.text, clockToken: domClock.token, confidence: 99, frameHost: host, at: Date.now()
+        clockText: domClock.text, clockToken: domClock.token, confidence: 99, expirationSource: expiration ? 'casatrade-clock-frame' : null, frameHost: host, at: Date.now()
       } : boundary ? {
         type: 'ATS_MARKET_CLOCK_V2', asset: focus.asset, timeframe: cycleTf,
         secondsRemaining: boundary.seconds, expiration, available: true, verified: true, operational: true,
         clockRole: 'candle-close', clockSource: 'structured-candle-boundary', clockMode: 'structured-casatrade-candle-boundary',
         clockText: 'Fechamento ancorado na vela estruturada da CasaTrade', clockToken: `${boundary.seconds}s`,
-        confidence: 96, frameHost: host, at: Date.now()
+        confidence: 96, expirationSource: expiration ? 'casatrade-clock-frame' : null, frameHost: host, at: Date.now()
       } : {
         type: 'ATS_MARKET_CLOCK_V2', asset: focus.asset, timeframe: cycleTf,
         secondsRemaining: null, expiration, available: false, verified: false, operational: false,
