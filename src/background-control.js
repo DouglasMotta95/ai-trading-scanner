@@ -31,7 +31,8 @@ const sameAsset = (a, b) => !!marketId(a) && marketId(a) === marketId(b);
 
 function handshakeReady(state = {}) {
   const focus = state.diagnostics?.focusedAsset || {};
-  const clock = state.diagnostics?.marketClock || {};
+  const session = state.diagnostics?.marketSession || {};
+  const rows = Array.isArray(state.candles) ? state.candles : [];
   return state.connection === 'online'
     && !!state.asset
     && Number.isFinite(Number(state.price))
@@ -39,12 +40,11 @@ function handshakeReady(state = {}) {
     && focus.chartScoped === true
     && focus.trustedChartFrame === true
     && sameAsset(focus.asset, state.asset)
-    && clock.available !== false
-    && clock.role === 'candle-close'
-    && EXACT_CLOCK_SOURCES.has(clean(clock.source))
-    && Number.isFinite(Number(clock.secondsRemaining))
-    && Number(clock.at || 0) > 0
-    && Date.now() - Number(clock.at) < 3200;
+    && session.dataReady === true
+    && sameAsset(session.confirmedAsset || session.asset, state.asset)
+    && rows.length >= 2
+    && Number(state.lastSeen || 0) > 0
+    && Date.now() - Number(state.lastSeen) < 7000;
 }
 
 function scheduleConnectionTimeout(tabId, connectedAt) {
