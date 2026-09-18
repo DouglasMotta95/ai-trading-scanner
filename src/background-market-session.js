@@ -465,6 +465,22 @@ async function applyFeed(payload = {}, sender = {}) {
   });
 }
 
+function observedCurrentCandle(state = {}, price, clock = null) {
+  const timeframe = normTf(clock?.timeframe || state.analysisTimeframe || state.timeframe);
+  const duration = timeframeSeconds(timeframe);
+  if (!timeframe || !duration || num(price) == null) return state.currentCandle || null;
+  const remaining = num(clock?.secondsRemaining);
+  const closeAt = num(clock?.closeAt) ?? (remaining != null ? Date.now() + remaining * 1000 : null);
+  if (closeAt == null) return state.currentCandle || null;
+  const cycleKey = `${normAsset(state.asset)}|${timeframe}|${Math.round(closeAt / 1000)}`;
+  const previous = state.currentCandle;
+  const same = previous?.source === 'live-price-observed' && previous?.cycleKey === cycleKey;
+  const open = same ? num(previous.open) : Number(price);
+  const high = same ? Math.max(num(previous.high) ?? Number(price), Number(price)) : Number(price);
+  const low = same ? Math.min(num(previous.low) ?? Number(price), Number(price)) : Number(price);
+  return { cycleKey, timeframe, open, high, low, close: Number(price), source: 'live-price-observed', partial: true, openReliable: true, rangeReliable: true, at: Date.now() };
+}
+
 async function applyChartPrice(message = {}, sender = {}) {
   const info = senderMeta(sender);
   if (!info.trusted) return null;
@@ -478,7 +494,9 @@ async function applyChartPrice(message = {}, sender = {}) {
     const clock = usableClock(state, info);
     let next = {
       ...state,
-      asset: normAsset(focus.asset), price, lastSeen: Date.now(), connection: 'online',
+      asset: normAsset(focus.asset), price,
+      currentCandle: observedCurrentCandle({ ...state, asset: normAsset(focus.asset) }, price, clock),
+      lastSeen: Date.now(), connection: 'online',
       diagnostics: {
         ...(state.diagnostics || {}),
         marketSession: { ...(state.diagnostics?.marketSession || {}), dataMode: 'live', lastLiveAt: Date.now() },
