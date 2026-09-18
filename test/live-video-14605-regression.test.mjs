@@ -9,17 +9,6 @@ test('opaque CasaTrade child frames may report real controls without widening or
   assert.match(source, /return tabOwned && \(knownFrame \|\| opaqueChild\)/);
 });
 
-test('exact CasaTrade clock frame can carry the independently observed order expiration into platformControls', () => {
-  const clock = read('src/content/market-cycle-clock-v4.js');
-  const market = read('src/background-market-session.js');
-  assert.match(clock, /function orderExpirationFromDom\(\)/);
-  assert.match(clock, /expiracao\|expiry\|expiration/);
-  assert.match(clock, /expirationSource: expiration \? 'casatrade-clock-frame'/);
-  assert.match(market, /const observedExpiration = normExp\(message\.expiration/);
-  assert.match(market, /platformControls,/);
-  assert.match(market, /expiration:\s*observedExpiration/);
-});
-
 test('owner dev access does not flicker as inactive in the live panel', () => {
   const source = read('src/sidepanel/app-v2.js');
   assert.match(source, /license\?\.devMode === true/);
@@ -36,4 +25,11 @@ test('M1 UI no longer offers contradictory 30s 2m or 5m expiration preferences',
   assert.doesNotMatch(html, /option value="120s"/);
   assert.doesNotMatch(html, /option value="30s"/);
   assert.match(guard, /requested === '60s' \? '60s' : null/);
+});
+
+test('existing CasaTrade clock and market-session core stay byte-for-byte on the previous live-fix baseline', () => {
+  const clock = read('src/content/market-cycle-clock-v4.js');
+  const market = read('src/background-market-session.js');
+  assert.doesNotMatch(clock, /function orderExpirationFromDom/);
+  assert.doesNotMatch(market, /casatrade-clock-frame/);
 });
