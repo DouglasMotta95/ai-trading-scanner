@@ -17,6 +17,6 @@ test('live market-session keeps the previously working feed/clock path intact', 
 
 test('package version is bumped so Android extension hosts cannot reuse the previous cached build', () => {
   const manifest = JSON.parse(read('manifest.json'));
-  assert.equal(manifest.version, '0.11.14');
-  assert.equal(manifest.version_name, '0.11.14-live-pipeline-restore');
+  assert.equal(manifest.version, '0.11.15');
+  assert.equal(manifest.version_name, '0.11.15-signal-policy-unblock');
 });
