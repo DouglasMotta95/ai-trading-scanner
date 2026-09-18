@@ -120,7 +120,6 @@ chrome.storage.onChanged.addListener(changes => {
   if (changes[PREF_KEY]) syncToggleClasses(changes[PREF_KEY].newValue || {});
 });
 
-import(chrome.runtime.getURL('src/sidepanel/manual-trade-ui.js')).catch(() => {});
 import(chrome.runtime.getURL('src/sidepanel/trial-ui.js')).catch(() => {});
 
 (async () => {
