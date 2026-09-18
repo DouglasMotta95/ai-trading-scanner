@@ -138,7 +138,23 @@ async function connectActiveTab() {
     };
   });
 
-  await injectModern(tab.id);
+  const injected = await injectModern(tab.id);
+  if (!injected) {
+    const failed = await updateScannerState(current => ({
+      ...current,
+      connection: current.connection === 'online' ? 'online' : 'connecting',
+      diagnostics: {
+        ...(current.diagnostics || {}),
+        acquisition: {
+          ...(current.diagnostics?.acquisition || {}),
+          stage: 'runtime_injection_failed',
+          reason: 'A CasaTrade foi reconhecida, mas os leitores ao vivo não conseguiram ser injetados. Recarregue a aba da CasaTrade e conecte novamente.',
+          at: Date.now()
+        }
+      }
+    }));
+    return { ok: false, error: 'runtime_injection_failed', platform: { id: platform.id, name: platform.name }, tabId: tab.id, state: failed };
+  }
   return { ok: true, platform: { id: platform.id, name: platform.name }, tabId: tab.id, state: await readScannerState() || next };
 }
 
