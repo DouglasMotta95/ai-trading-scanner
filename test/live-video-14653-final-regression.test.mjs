@@ -9,6 +9,7 @@ test('sidepanel never paints a cached asset as the current CasaTrade market', ()
   const app = read('src/sidepanel/app-v2.js');
 
   assert.match(restore, /const freshFocus = state =>/);
+  assert.match(restore, /OTC/);
   assert.match(restore, /setText\('asset', currentMarket \? state\.asset : '—'\)/);
   assert.match(app, /const freshMarket = focusReady\(state\) && sameMarket/);
   assert.match(app, /const visibleAsset = freshMarket/);
