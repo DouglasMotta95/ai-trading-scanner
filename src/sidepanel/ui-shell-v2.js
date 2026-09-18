@@ -27,8 +27,6 @@ function activeLicense(state = {}) {
 
 function baseHandshake(state = {}) {
   const focus = state.diagnostics?.focusedAsset || null;
-  const session = state.diagnostics?.marketSession || {};
-  const rows = Array.isArray(state.candles) ? state.candles : [];
   return activeLicense(state)
     && state.connection === 'online'
     && !!state.asset
@@ -37,9 +35,6 @@ function baseHandshake(state = {}) {
     && focus?.chartScoped === true
     && focus?.trustedChartFrame === true
     && sameMarket(focus?.asset, state.asset)
-    && session.dataReady === true
-    && sameMarket(session.confirmedAsset || session.asset, state.asset)
-    && rows.length >= 2
     && Number(state.lastSeen || 0) > 0
     && Date.now() - Number(state.lastSeen) < 7000;
 }
@@ -157,13 +152,7 @@ function renderShell(state = {}) {
     button.classList.toggle('live', platformLinked);
     button.disabled = !activeLicense(state) || connecting || switching;
     if (!button.classList.contains('loading')) {
-      $('connectScannerText').textContent = platformLinked
-        ? 'CONECTADO'
-        : failure
-          ? 'TENTAR NOVAMENTE'
-          : connecting
-            ? 'CONECTANDO…'
-            : 'CONECTAR';
+      $('connectScannerText').textContent = connected ? 'CONECTADO' : 'DESCONECTADO';
     }
   }
 
