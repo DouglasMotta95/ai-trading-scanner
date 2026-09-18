@@ -1,4 +1,5 @@
 import { updateScannerState } from './services/scanner-state-atomic.js';
+import { validateMarketBundle } from './core/market-session-guard.js';
 
 const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
 const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
@@ -163,13 +164,30 @@ function nextEpoch(previous = {}) {
 }
 
 function resetForSession(state = {}, { asset, timeframe = null, info, reason, source }) {
-
   const previous = state.diagnostics?.marketSession || {};
   const epoch = nextEpoch(previous);
+  const now = Date.now();
+  const fromAsset = normAsset(state.asset || previous.confirmedAsset || previous.asset || state.diagnostics?.focusedAsset?.asset || '');
+  const toAsset = normAsset(asset);
+  const switched = !!fromAsset && !!toAsset && !sameMarket(fromAsset, toAsset);
+  const switchLog = [
+    ...(Array.isArray(state.diagnostics?.assetSwitchLog) ? state.diagnostics.assetSwitchLog : []),
+    ...(switched ? [{
+      at: now,
+      from: fromAsset,
+      to: toAsset,
+      epoch,
+      cleanupOk: true,
+      source: source || 'visible-chart'
+    }] : [])
+  ].slice(-12);
+
   return {
     ...state,
     connection: 'connecting',
-    asset,
+    // Do not publish the new asset as live until price + real candle history for
+    // that exact instrument have passed the identity/scale guard below.
+    asset: null,
     price: null,
     timeframe,
     analysisTimeframe: timeframe,
@@ -180,24 +198,34 @@ function resetForSession(state = {}, { asset, timeframe = null, info, reason, so
     currentCandle: null,
     marketHistory: {},
     signal: null,
+    professionalDecision: null,
+    aiAudit: null,
     lastConfirmed: null,
     tradeIntent: null,
     lastSeen: null,
-    // Timeframe/expiration controls belong to the CasaTrade ticket, not to one asset.
-    // Preserve the last real observation while the market session switches assets.
     platformControls: state.platformControls || null,
     diagnostics: {
       ...(state.diagnostics || {}),
       marketClock: null,
+      assetSwitchLog: switchLog,
       marketSession: {
-        epoch, asset, timeframe, frameId: info?.frameId ?? null, frameHost: info?.frameHost || null,
-        source: source || 'visible-chart', startedAt: Date.now(), dataMode: 'syncing'
+        epoch,
+        asset: toAsset,
+        pendingAsset: toAsset,
+        confirmedAsset: null,
+        dataReady: false,
+        transitioning: true,
+        timeframe,
+        frameId: info?.frameId ?? null,
+        frameHost: info?.frameHost || null,
+        source: source || 'visible-chart',
+        startedAt: now,
+        dataMode: 'syncing'
       },
-      acquisition: { stage: 'syncing_session', reason, at: Date.now() }
+      acquisition: { stage: 'syncing_session', reason, at: now }
     }
   };
 }
-
 function clockRecord(message = {}, info = {}, asset = '', timeframe = null, secondsRemaining = null) {
   const verified = message.verified === true;
   const at = Date.now();
@@ -253,7 +281,7 @@ async function applyFocus(message = {}, sender = {}) {
 
     // Hidden/inactive CasaTrade market frames can stay alive and keep publishing
     // their old symbol. They must never roll the visible user-selected chart back.
-    if (assetChanged && frameChanged && oldFresh && !userSelected) {
+    if (assetChanged && frameChanged && oldFresh && !userSelected && !incomingExplicit && !incomingStable) {
       return {
         ...state,
         diagnostics: {
@@ -407,16 +435,37 @@ async function applyFeed(payload = {}, sender = {}) {
 
     const incomingHistory = historyFor(payload, asset);
     const previousHistory = stateHistory(state, asset);
-    const mergedHistory = mergeRows(previousHistory, incomingHistory);
-    const marketHistory = { ...(state.marketHistory || {}), [asset]: mergedHistory };
+    const acceptedHistory = mergeRows(previousHistory, incomingHistory);
+    const bundle = validateMarketBundle({
+      focusAsset: asset,
+      candidateAsset: candidate.asset,
+      price: candidate.price,
+      candles: acceptedHistory,
+      requireCandles: true
+    });
+    if (!bundle.ok) {
+      return {
+        ...state,
+        diagnostics: {
+          ...(state.diagnostics || {}),
+          rejectedMarketData: {
+            asset,
+            candidateAsset: candidate.asset || null,
+            reason: bundle.reason,
+            at: Date.now()
+          }
+        }
+      };
+    }
+    const acceptedHistory = sanitizeRows(bundle.candles);
+    const marketHistory = { [asset]: acceptedHistory };
     const clock = usableClock(state, info);
     const timeframe = normTf(clock?.timeframe || state.analysisTimeframe || candidate.timeframe) || null;
-    const price = Number(candidate.price);
-    const sourceTimestamp = normalizeTime(candidate.timestamp);
+    const price = Number(bundle.price);
     // candidate.timestamp is often the candle OPEN timestamp and can remain static
     // for the full minute. Runtime observation time must advance for stability logic.
     const serverTime = Date.now();
-    const historicalJump = incomingHistory.length > 1 && mergedHistory.length - previousHistory.length > 1;
+    const historicalJump = incomingHistory.length > 1 && acceptedHistory.length - previousHistory.length > 1;
     const next = {
       ...state,
       asset,
@@ -424,14 +473,14 @@ async function applyFeed(payload = {}, sender = {}) {
       timeframe,
       analysisTimeframe: timeframe,
       serverTime,
-      candles: mergedHistory,
+      candles: acceptedHistory,
       marketHistory,
       lastSeen: Date.now(),
       connection: 'online',
       capabilities: {
         ...(state.capabilities || {}),
         structuredQuotes: true,
-        candles: mergedHistory.length >= 2
+        candles: acceptedHistory.length >= 2
       }
     };
     return {
@@ -439,16 +488,17 @@ async function applyFeed(payload = {}, sender = {}) {
       targetTabId: info.tabId,
       platformId: 'casatrade', platformName: 'CasaTrade', scanner: 'scanning',
       asset, price, timeframe: timeframe || next.timeframe, analysisTimeframe: timeframe || next.analysisTimeframe,
-      serverTime, marketHistory, candles: mergedHistory, lastSeen: Date.now(), connection: 'online',
+      serverTime, marketHistory, candles: acceptedHistory, lastSeen: Date.now(), connection: 'online',
       diagnostics: {
         ...(state.diagnostics || {}), ...(next.diagnostics || {}),
         focusedAsset: focus,
         marketClock: state.diagnostics?.marketClock || null,
         marketSession: {
-          ...(state.diagnostics?.marketSession || {}), asset, timeframe,
+          ...(state.diagnostics?.marketSession || {}), asset, pendingAsset: null, confirmedAsset: asset,
+          dataReady: true, transitioning: false, timeframe,
           frameId: info.frameId, frameHost: info.frameHost,
           dataMode: historicalJump ? 'backfill' : 'live',
-          lastLiveAt: Date.now(), historyCount: mergedHistory.length
+          lastLiveAt: Date.now(), historyCount: acceptedHistory.length
         },
         acquisition: {
           stage: clock ? 'diagnosing_next_candle' : 'syncing_clock',
@@ -458,7 +508,7 @@ async function applyFeed(payload = {}, sender = {}) {
               : `Sessão ao vivo ${asset} • ${timeframe || '—'} usando clock temporário estimado até a CasaTrade expor o fechamento exato.`
             : 'Preço e histórico prontos. Sincronizando o relógio da vela.',
           clockQuality: clock?.verified === true ? 'exact' : clock ? 'fallback' : 'missing',
-          priceSource: candidate.transport || payload.primaryTransport || 'market', candleCount: mergedHistory.length, requiredCandles: 2,
+          priceSource: candidate.transport || payload.primaryTransport || 'market', candleCount: acceptedHistory.length, requiredCandles: 2,
           feedQuality: Number(payload.feedQuality || 0), at: Date.now()
         },
         inspector: state.diagnostics?.inspector || null
@@ -493,12 +543,24 @@ async function applyChartPrice(message = {}, sender = {}) {
     if (!licenseActive(state)) return;
     const focus = state.diagnostics?.focusedAsset || null;
     if (!focus?.asset || Number(focus.frameId) !== Number(info.frameId) || clean(focus.frameHost).toLowerCase() !== info.frameHost) return;
-    if (message.asset && !sameMarket(message.asset, focus.asset)) return;
+    // Untagged quotes are unsafe during an asset switch: an old frame event can
+    // otherwise repopulate the new session with the previous instrument's price.
+    if (!message.asset || !sameMarket(message.asset, focus.asset)) return;
+    const session = state.diagnostics?.marketSession || {};
+    if (session.dataReady !== true || !sameMarket(session.confirmedAsset, focus.asset) || !sameMarket(state.asset, focus.asset)) return;
+    const bundle = validateMarketBundle({
+      focusAsset: focus.asset,
+      candidateAsset: message.asset,
+      price,
+      candles: state.candles || [],
+      requireCandles: true
+    });
+    if (!bundle.ok) return;
     const clock = usableClock(state, info);
     let next = {
       ...state,
-      asset: normAsset(focus.asset), price,
-      currentCandle: observedCurrentCandle({ ...state, asset: normAsset(focus.asset) }, price, clock),
+      asset: normAsset(focus.asset), price: Number(bundle.price),
+      currentCandle: observedCurrentCandle({ ...state, asset: normAsset(focus.asset) }, Number(bundle.price), clock),
       lastSeen: Date.now(), connection: 'online',
       diagnostics: {
         ...(state.diagnostics || {}),
