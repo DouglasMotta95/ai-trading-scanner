@@ -100,6 +100,21 @@ test('Gemini is final-only and never starts on POSSIBLE', () => {
   assert.doesNotMatch(ai, /if \(ui === 'POSSIBLE_BUY'/);
 });
 
+test('runtime has one technical signal writer and reconnect clears stale handshake errors', () => {
+  const entry = read('src/background-entry.js');
+  const control = read('src/background-control.js');
+  assert.match(entry, /import '.\/background\.js';/);
+  assert.doesNotMatch(entry, /background-fast-decision\.js/);
+  assert.match(control, /delete diagnostics\.connectionError/);
+});
+
+test('observed OHLC stays anchored to one CasaTrade candle close', () => {
+  const session = read('src/background-market-session.js');
+  assert.match(session, /const closeAt = secondsRemaining == null \? null/);
+  assert.match(session, /closeAt, available: true/);
+  assert.match(session, /Math\.round\(closeAt \/ 5000\) \* 5000/);
+});
+
 test('three consecutive M1 candles get distinct decision cycles and do not inherit a stale lock', () => {
   resetOrchestrator();
   const base = Math.floor(1_706_000_000_000 / minute) * minute;
