@@ -244,7 +244,7 @@ function acquisitionGaps(state = {}) {
   const rows = historyFor(state, state.asset || '');
   if (!state.asset || focus.reliable !== true || !sameMarket(focus.asset, state.asset)) gaps.push('ativo');
   if (num(state.price) == null) gaps.push('preço');
-  if (rows.length < 2) gaps.push('histórico');
+  if (rows.length < 10) gaps.push('histórico 10 velas');
   const clockFresh = clock.available !== false
     && Number.isFinite(Number(clock.secondsRemaining))
     && Number(clock.at || 0) > 0
