@@ -29,10 +29,8 @@ const marketId = value => {
 };
 const sameAsset = (a, b) => !!marketId(a) && marketId(a) === marketId(b);
 
-function handshakeReady(state = {}) {
+function marketDataConnected(state = {}) {
   const focus = state.diagnostics?.focusedAsset || {};
-  const session = state.diagnostics?.marketSession || {};
-  const rows = Array.isArray(state.candles) ? state.candles : [];
   return state.connection === 'online'
     && !!state.asset
     && Number.isFinite(Number(state.price))
@@ -40,11 +38,18 @@ function handshakeReady(state = {}) {
     && focus.chartScoped === true
     && focus.trustedChartFrame === true
     && sameAsset(focus.asset, state.asset)
-    && session.dataReady === true
-    && sameAsset(session.confirmedAsset || session.asset, state.asset)
-    && rows.length >= 2
     && Number(state.lastSeen || 0) > 0
     && Date.now() - Number(state.lastSeen) < 7000;
+}
+
+function handshakeReady(state = {}) {
+  const clock = state.diagnostics?.marketClock || {};
+  return marketDataConnected(state)
+    && clock.available !== false
+    && clock.role === 'candle-close'
+    && Number.isFinite(Number(clock.secondsRemaining))
+    && Number(clock.at || 0) > 0
+    && Date.now() - Number(clock.at) < 5000;
 }
 
 function scheduleConnectionTimeout(tabId, connectedAt) {
@@ -57,6 +62,24 @@ function scheduleConnectionTimeout(tabId, connectedAt) {
         const stillSame = Number(state.targetTabId) === Number(tabId)
           && Number(state.diagnostics?.target?.connectedAt || 0) === Number(connectedAt);
         if (!stillSame || handshakeReady(state)) return state;
+        if (marketDataConnected(state)) {
+          const diagnostics = { ...(state.diagnostics || {}) };
+          delete diagnostics.connectionError;
+          return {
+            ...state,
+            scanner: 'scanning',
+            connection: 'online',
+            diagnostics: {
+              ...diagnostics,
+              acquisition: {
+                ...(state.diagnostics?.acquisition || {}),
+                stage: 'syncing_clock',
+                reason: 'CasaTrade conectada. Sincronizando o countdown real da vela.',
+                at: Date.now()
+              }
+            }
+          };
+        }
         return {
           ...state,
           scanner: 'idle',
