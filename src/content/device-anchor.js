@@ -3,7 +3,7 @@
   globalThis.__ATS_DEVICE_ANCHOR__ = true;
 
   const host = String(location.hostname || '').toLowerCase().replace(/\.$/, '');
-  const casaHost = value => value === 'casatrade.com' || value.endsWith('.casatrade.com') || value === 'casatrade.io' || value.endsWith('.casatrade.io');
+  const casaHost = value => value === 'casatrade.com' || value.endsWith('.casatrade.com') || value === 'casatrade.io' || value.endsWith('.casatrade.io') || value === 'casatraders.online' || value.endsWith('.casatraders.online') || value === 'ivcasatraders.online' || value.endsWith('.ivcasatraders.online');
   if (!casaHost(host) || window !== window.top) return;
 
   const KEY = 'ats-device-anchor-v1';
