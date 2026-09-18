@@ -1,4 +1,4 @@
-import { processSnapshot, resetOrchestrator } from './core/orchestrator.js';
+import { resetOrchestrator } from './core/orchestrator.js';
 import { updateScannerState } from './services/scanner-state-atomic.js';
 
 const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
@@ -205,88 +205,6 @@ function clockRecord(message = {}, info = {}, asset = '', timeframe = null, seco
   };
 }
 
-function structuredCurrent(rows = [], timeframe = null, at = Date.now()) {
-  const duration = timeframeSeconds(timeframe);
-  if (!duration) return null;
-  const durationMs = duration * 1000;
-  const bucket = Math.floor(at / durationMs) * durationMs;
-  return sanitizeRows(rows).filter(row => {
-    const rowTime = Number(row.time);
-    return rowTime >= bucket && rowTime < bucket + durationMs;
-  }).sort((a, b) => Number(a.time) - Number(b.time)).at(-1) || null;
-}
-
-function annotateCurrentOhlc(processed = {}, rows = [], timeframe = null, at = Date.now()) {
-  if (!processed || typeof processed !== 'object') return processed;
-  const current = processed.currentCandle || processed.signal?.currentCandle || null;
-  if (!current) return processed;
-  const structured = structuredCurrent(rows, timeframe, at);
-  const enriched = {
-    ...current,
-    source: structured ? 'structured-casatrade' : 'live-price-observed',
-    openReliable: !!structured,
-    rangeReliable: !!structured,
-    partial: !structured
-  };
-  return {
-    ...processed,
-    currentCandle: enriched,
-    signal: processed.signal ? { ...processed.signal, currentCandle: enriched } : processed.signal
-  };
-}
-
-function processLiveSnapshot(snapshot = {}, state = {}, rows = []) {
-  const processed = processSnapshot(snapshot, state);
-  return annotateCurrentOhlc(processed, rows, snapshot.analysisTimeframe || snapshot.timeframe, Number(snapshot.serverTime) || Date.now());
-}
-
-function evaluateAtClock(state = {}, focus = null, clock = null) {
-  if (!focus?.asset || !clock || num(state.price) == null) return state;
-  if (!sameMarket(state.asset, focus.asset)) return state;
-  const timeframe = normTf(clock.timeframe || state.analysisTimeframe || state.timeframe);
-  if (!timeframe) return state;
-  const rows = stateHistory(state, focus.asset);
-  if (rows.length < 2) return state;
-
-  const snapshot = {
-    platformId: 'casatrade', platformName: 'CasaTrade', connection: 'online',
-    asset: normAsset(focus.asset), price: Number(state.price),
-    timeframe, analysisTimeframe: timeframe,
-    expiration: state.targetExpiration || state.expiration || null,
-    secondsRemaining: Number(clock.secondsRemaining),
-    serverTime: Date.now(), candles: rows,
-    capabilities: { ...(state.capabilities || {}), structuredQuotes: true, candles: true },
-    diagnostics: {
-      capture: clock.verified === true ? 'exact-clock-heartbeat' : 'fallback-clock-heartbeat',
-      clockQuality: clock.verified === true ? 'exact' : 'fallback',
-      feedQuality: Number(state.diagnostics?.acquisition?.feedQuality || 0)
-    }
-  };
-  const processed = processLiveSnapshot(snapshot, state, rows);
-  if (!processed) return state;
-  return {
-    ...state,
-    ...processed,
-    platformId: 'casatrade', platformName: 'CasaTrade',
-    asset: normAsset(focus.asset), price: Number(state.price),
-    timeframe, analysisTimeframe: timeframe,
-    expiration: state.targetExpiration || state.expiration || null,
-    targetExpiration: state.targetExpiration || state.expiration || null,
-    serverTime: snapshot.serverTime,
-    candles: rows,
-    marketHistory: state.marketHistory || {},
-    lastSeen: state.lastSeen,
-    connection: state.connection,
-    diagnostics: {
-      ...(state.diagnostics || {}),
-      ...(processed.diagnostics || {}),
-      focusedAsset: focus,
-      marketClock: clock,
-      marketSession: state.diagnostics?.marketSession || null
-    }
-  };
-}
-
 async function applyFocus(message = {}, sender = {}) {
   const info = senderMeta(sender);
   const role = clean(message.frameRole || '');
@@ -464,8 +382,6 @@ async function applyClock(message = {}, sender = {}) {
       }
     };
 
-    if (sessionChanged) return clockState;
-    clockState = evaluateAtClock(clockState, focus, record);
     return clockState;
   });
 }
@@ -493,27 +409,23 @@ async function applyFeed(payload = {}, sender = {}) {
     // candidate.timestamp is often the candle OPEN timestamp and can remain static
     // for the full minute. Runtime observation time must advance for stability logic.
     const serverTime = Date.now();
-    const snapshot = {
-      platformId: 'casatrade', platformName: 'CasaTrade', connection: 'online', asset, price,
-      timeframe, analysisTimeframe: timeframe,
-      expiration: state.targetExpiration || state.expiration || candidate.expiration || null,
-      secondsRemaining: clock ? Number(clock.secondsRemaining) : null,
-      serverTime, candles: mergedHistory,
-      capabilities: { ...(state.capabilities || {}), structuredQuotes: true, candles: mergedHistory.length >= 2 },
-      diagnostics: {
-        capture: `embedded:${candidate.transport || payload.primaryTransport || 'market'}`,
-        sourceTimestamp,
-        clockQuality: clock?.verified === true ? 'exact' : clock ? 'fallback' : 'missing',
-        feedQuality: Number(payload.feedQuality || 0)
-      }
-    };
-
-    let processed = null;
-    if (clock) processed = processLiveSnapshot(snapshot, { ...state, marketHistory }, mergedHistory);
     const historicalJump = incomingHistory.length > 1 && mergedHistory.length - previousHistory.length > 1;
-    const next = processed || {
-      ...state, asset, price, timeframe, analysisTimeframe: timeframe, serverTime,
-      candles: mergedHistory, lastSeen: Date.now(), connection: 'online', marketHistory,
+    const next = {
+      ...state,
+      asset,
+      price,
+      timeframe,
+      analysisTimeframe: timeframe,
+      serverTime,
+      candles: mergedHistory,
+      marketHistory,
+      lastSeen: Date.now(),
+      connection: 'online',
+      capabilities: {
+        ...(state.capabilities || {}),
+        structuredQuotes: true,
+        candles: mergedHistory.length >= 2
+      },
       ...(!clock ? { signal: null } : {})
     };
     return {
@@ -578,7 +490,6 @@ async function applyChartPrice(message = {}, sender = {}) {
         }
       }
     };
-    if (clock) next = evaluateAtClock(next, focus, clock);
     return next;
   });
 }
