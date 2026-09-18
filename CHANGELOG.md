@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.11.25 — Expiration authority hotfix
+
+### Problema real corrigido
+- A build 0.11.24 ainda podia abrir o painel e acusar falha de expiração mesmo com a CasaTrade já em 1 minuto.
+- O erro vinha de três pontos combinados: dependência excessiva de texto DOM, cache antigo com confiança alta bloqueando leitura nova e timeout herdado de uma sessão antiga ao reabrir o painel.
+
+### Correções
+- Expiração passa a ser lida por múltiplas fontes independentes:
+  - DOM/atributos do controle visível;
+  - formatos adicionais como `00:01:00`, `1m00s`, `data-value="60"` e `aria-valuenow="60"`;
+  - feed/rede da CasaTrade quando uma chave semântica de expiração/duração de operação é encontrada.
+- A rede publica uma autoridade separada de expiração em `ATS_PLATFORM_CONTROLS_OBSERVED` com fonte `casatrade-network-control`.
+- Uma leitura nova e fresca pode substituir cache antigo de maior score.
+- O timeout de expiração começa na abertura atual do painel, evitando erro instantâneo por sessão velha.
+- Ao abrir o painel, os leitores são reinjetados silenciosamente na `targetTabId` CasaTrade registrada, sem reconectar ou limpar a aba ativa.
+- O gate manual usa freshness específica da expiração, não o timestamp genérico de outros controles.
+
+### Teste específico
+- `test/expiration-panel-open-regression.test.mjs` cobre:
+  - atributos de controles customizados;
+  - fallback de rede;
+  - substituição de cache stale;
+  - janela nova de leitura ao abrir o painel;
+  - reinjeção na aba CasaTrade registrada;
+  - freshness específica no gate final.
+
 ## 0.11.24 — Live asset switch + expiration v2
 
 ### 1. Troca de ativo atômica
