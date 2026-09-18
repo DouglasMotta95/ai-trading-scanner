@@ -155,6 +155,11 @@ function baseDecision(state = {}) {
   const cycle = cycleKey(state, signal);
   const factors = confluence(signal, direction);
   const requiredFactors = pref.mode === 'A_PLUS' ? 3 : 2;
+  // NORMAL already passed the technical engine's own quality gates. Requiring
+  // another independent confluence count here was suppressing valid POSSIBLE/
+  // ENTER decisions and leaving the product stuck on AGUARDAR. Only A+ applies
+  // this extra presentation-policy filter.
+  const additionalConfluenceReady = pref.mode !== 'A_PLUS' || factors.count >= requiredFactors;
   const possibleScore = pref.mode === 'A_PLUS' ? 52 : 44;
   const finalScore = pref.mode === 'A_PLUS' ? 66 : 58;
   const technicalCandidate = ['POSSIBLE_BUY', 'POSSIBLE_SELL', 'ENTER_BUY', 'ENTER_SELL'].includes(ui);
@@ -197,8 +202,8 @@ function baseDecision(state = {}) {
     return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: 'AGUARDAR — fechamento da vela em andamento.' };
   }
 
-  if (!technicalCandidate || !direction || score < possibleScore || factors.count < requiredFactors) {
-    const modeText = pref.mode === 'A_PLUS' ? 'Só A+ exige 3 fatores alinhados.' : 'Padrão sem confluência suficiente.';
+  if (!technicalCandidate || !direction || score < possibleScore || !additionalConfluenceReady) {
+    const modeText = pref.mode === 'A_PLUS' ? 'Só A+ exige 3 fatores alinhados.' : 'Motor técnico ainda não liberou um candidato.';
     return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: `AGUARDAR — ${modeText}` };
   }
 
@@ -207,7 +212,7 @@ function baseDecision(state = {}) {
   const possibleSince = sameCandidate && Number(previous.possibleSince || 0) > 0 ? Number(previous.possibleSince) : now;
   const holdMs = pref.holdSeconds * 1000;
   const heldFor = Math.max(0, now - possibleSince);
-  const finalQuality = technicalFinal && score >= finalScore && factors.count >= requiredFactors;
+  const finalQuality = technicalFinal && score >= finalScore && additionalConfluenceReady;
   const reason = shortReason(direction, factors.factors, signal.reason);
 
   if (seconds > 10) {
