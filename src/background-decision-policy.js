@@ -3,7 +3,7 @@ import { readScannerState, updateScannerState } from './services/scanner-state-a
 // Product policy layer. The technical engine can keep collecting evidence with an
 // estimated clock, but the user-facing decision is never promoted while CasaTrade
 // time is not authoritative. This also owns Normal/A+ confluence and the stable hold.
-const EXACT_CLOCK_SOURCES = new Set(['trader-dom-countdown', 'network-server-cycle', 'structured-candle-boundary']);
+const EXACT_CLOCK_SOURCES = new Set(['trader-dom-countdown', 'network-server-cycle']);
 const CLOCK_FRESH_MS = 3000;
 const FOCUS_FRESH_MS = 5500;
 const DEFAULT_PREFS = Object.freeze({ mode: 'NORMAL', geminiEnabled: true, holdSeconds: 3, preferredExpiration: null });
