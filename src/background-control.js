@@ -32,8 +32,6 @@ const sameAsset = (a, b) => !!marketId(a) && marketId(a) === marketId(b);
 function handshakeReady(state = {}) {
   const focus = state.diagnostics?.focusedAsset || {};
   const clock = state.diagnostics?.marketClock || {};
-  const expiration = clean(state.platformControls?.observed?.expiration || '');
-  const rows = Array.isArray(state.candles) ? state.candles : [];
   return state.connection === 'online'
     && !!state.asset
     && Number.isFinite(Number(state.price))
@@ -46,9 +44,7 @@ function handshakeReady(state = {}) {
     && EXACT_CLOCK_SOURCES.has(clean(clock.source))
     && Number.isFinite(Number(clock.secondsRemaining))
     && Number(clock.at || 0) > 0
-    && Date.now() - Number(clock.at) < 3200
-    && !!expiration
-    && rows.length >= 10;
+    && Date.now() - Number(clock.at) < 3200;
 }
 
 function scheduleConnectionTimeout(tabId, connectedAt) {
