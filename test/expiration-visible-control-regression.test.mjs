@@ -18,3 +18,13 @@ test('expiration probe can pair a visible Expiração label with a nearby 1 min 
   assert.match(source, /sameControlBand/);
   assert.match(source, /horizontal <= 360/);
 });
+
+test('expiration probe also accepts a real duration immediately before the Expiração label', () => {
+  const source = read('src/content/casatrade-expiration-probe.js');
+  assert.match(source, /function expirationAroundLabel\(raw = ''\)/);
+  assert.match(source, /Math\.max\(0, index - 72\)/);
+  assert.match(source, /matches\.at\(-1\)/);
+  assert.match(source, /const reversed = expirationValue\(token\)/);
+  assert.match(source, /r\.right < lr\.left/);
+  assert.doesNotMatch(source, /expiration:\s*['"]60s['"]/);
+});
