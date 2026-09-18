@@ -41,27 +41,40 @@ function isLive(state = {}) {
 }
 
 function renderShell(state = {}) {
-  const live = isLive(state);
+  const tradeReady = isLive(state);
   const hasMarket = activeLicense(state) && state.connection === 'online' && !!state.asset && state.price != null;
+  const expiration = String(state.platformControls?.observed?.expiration || '').trim();
+  const expirationWrong = !!expiration && expiration !== '60s';
   const strip = $('syncStrip');
-  if (strip) strip.className = `sync-strip ${live ? 'live' : 'syncing'}`;
-  if ($('syncTitle')) $('syncTitle').textContent = live
+  if (strip) strip.className = `sync-strip ${hasMarket ? 'live' : 'syncing'}`;
+
+  if ($('syncTitle')) $('syncTitle').textContent = tradeReady
     ? 'TEMPO CASATRADE SINCRONIZADO'
-    : hasMarket ? 'AGUARDAR — CONFIRMANDO TEMPO CASATRADE' : activeLicense(state) ? 'PREPARANDO LEITURA AO VIVO' : 'AGUARDANDO ATIVAÇÃO';
+    : hasMarket && expirationWrong
+      ? 'CONECTADO — AJUSTE A EXPIRAÇÃO'
+      : hasMarket
+        ? 'CONECTADO — CONFIRMANDO TEMPO'
+        : activeLicense(state) ? 'PREPARANDO LEITURA AO VIVO' : 'AGUARDANDO ATIVAÇÃO';
+
   if ($('syncText')) {
     const acquisition = state.diagnostics?.acquisition || {};
     const clock = state.diagnostics?.marketClock || {};
-    $('syncText').textContent = live
+    $('syncText').textContent = tradeReady
       ? `${state.asset || 'Ativo'} • ${state.analysisTimeframe || state.timeframe || '—'} • countdown e expiração confirmados pela CasaTrade.`
-      : hasMarket && clock?.operational === true && clock?.verified !== true
-        ? 'Preço e velas continuam sendo lidos, mas a entrada fica bloqueada até o countdown exato da CasaTrade.'
-        : acquisition.reason || (activeLicense(state) ? 'Identificando ativo, preço, histórico e relógio da vela.' : 'Ative sua licença para iniciar o scanner.');
+      : hasMarket && expirationWrong
+        ? `${state.asset || 'Ativo'} conectado ao vivo • expiração ${expiration}. Altere a CasaTrade para 1 min para liberar a entrada.`
+        : hasMarket && clock?.operational === true && clock?.verified !== true
+          ? 'Preço e velas estão ao vivo. A entrada fica bloqueada somente até o countdown exato ser confirmado.'
+          : hasMarket
+            ? 'Ativo, preço e velas conectados. Confirmando countdown e expiração para a entrada.'
+            : acquisition.reason || (activeLicense(state) ? 'Identificando ativo, preço, histórico e relógio da vela.' : 'Ative sua licença para iniciar o scanner.');
   }
+
   const button = $('connectScanner');
   if (button) {
-    button.classList.toggle('live', live);
-    if (!button.classList.contains('loading')) $('connectScannerText').textContent = live ? 'CONECTADO' : hasMarket ? 'SINCRONIZANDO' : 'CONECTAR';
-    button.disabled = !activeLicense(state) && !live;
+    button.classList.toggle('live', hasMarket);
+    if (!button.classList.contains('loading')) $('connectScannerText').textContent = hasMarket ? 'CONECTADO' : 'CONECTAR';
+    button.disabled = !activeLicense(state) && !hasMarket;
   }
 }
 
