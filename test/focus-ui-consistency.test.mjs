@@ -9,7 +9,7 @@ test('current build loads standalone instrument focus and feed fallbacks for nor
   const injector = read('src/background-modern-injector.js');
   const bridge = read('src/content/focused-asset-alias-bridge.js');
   const probe = read('src/content/standalone-instrument-probe.js');
-  assert.equal(manifest.version, '0.11.23');
+  assert.equal(manifest.version, '0.11.24');
   assert.ok(manifest.content_scripts.some(row => Array.isArray(row.js) && row.js.includes('src/content/focused-asset-alias-bridge.js')));
   assert.ok(manifest.content_scripts.some(row => Array.isArray(row.js) && row.js.includes('src/content/standalone-instrument-probe.js') && row.world === 'MAIN'));
   assert.ok(manifest.content_scripts.some(row => Array.isArray(row.js) && row.js.includes('src/content/opaque-frame-recovery.js') && row.match_origin_as_fallback === true));
