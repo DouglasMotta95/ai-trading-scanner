@@ -73,17 +73,12 @@ function mergeObserved(previous = {}, incoming = {}) {
 
 function analystPrefs(state = {}, message = {}) {
   const current = state.analystPreferences || {};
-  const mode = String(message.mode ?? current.mode ?? 'NORMAL').toUpperCase() === 'A_PLUS' ? 'A_PLUS' : 'NORMAL';
-  const holdSeconds = Math.max(3, Math.min(5, Number(message.holdSeconds ?? current.holdSeconds ?? 3) || 3));
-  const preferredExpiration = message.preferredExpiration === null || String(message.preferredExpiration || '').toUpperCase() === 'AUTO'
-    ? null
-    : normExp(message.preferredExpiration ?? current.preferredExpiration ?? state.executionPreferences?.expiration ?? '');
   return {
     ...current,
-    mode,
-    holdSeconds,
+    mode: 'NORMAL',
+    holdSeconds: 3,
     geminiEnabled: message.geminiEnabled == null ? current.geminiEnabled !== false : message.geminiEnabled !== false,
-    preferredExpiration,
+    preferredExpiration: null,
     updatedAt: Date.now()
   };
 }
