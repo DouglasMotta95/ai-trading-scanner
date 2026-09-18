@@ -27,10 +27,10 @@
   function elements() {
     const out = [];
     for (const root of roots()) {
-      try { out.push(...root.querySelectorAll('*')); } catch {}
-      if (out.length > 9000) break;
+      try { out.push(...root.querySelectorAll('button,input,select,[role="button"],[role="combobox"],[aria-selected="true"],[data-state="active"],[data-testid*="expir"],[aria-label*="expir"],label,p,strong,small,span,div')); } catch {}
+      if (out.length > 7500) break;
     }
-    return out.slice(0, 9000);
+    return out.slice(0, 7500);
   }
   function text(el) {
     if (el instanceof HTMLInputElement || el instanceof HTMLSelectElement) return clean(el.value || el.selectedOptions?.[0]?.textContent || '');
@@ -142,6 +142,8 @@
   }
   function scan() {
     let exp = null, tf = null;
+    const bodyValue = bodyExpiration();
+    if (bodyValue) exp = { value: bodyValue, score: 96 };
     const all = elements();
     for (const el of all) {
       if (!visible(el)) continue;
@@ -167,10 +169,6 @@
     if (!exp) {
       const nearby = nearbyExpiration(all);
       if (nearby?.value) exp = nearby;
-    }
-    if (!exp) {
-      const value = bodyExpiration();
-      if (value) exp = { value, score: 96 };
     }
     if (!exp && !tf) return null;
     return {
