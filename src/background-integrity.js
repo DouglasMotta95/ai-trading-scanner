@@ -1,4 +1,4 @@
-import { processSnapshot, resetOrchestrator } from './core/orchestrator.js';
+import { resetOrchestrator } from './core/orchestrator.js';
 import { updateScannerState } from './services/scanner-state-atomic.js';
 
 const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
@@ -211,23 +211,8 @@ async function applyClock(message = {}, sender = {}) {
       };
     }
 
-    const snapshot = {
-      ...state,
-      asset: focus,
-      price: Number(state.price),
-      timeframe,
-      analysisTimeframe: timeframe,
-      expiration,
-      targetExpiration: expiration,
-      secondsRemaining,
-      clockVerified: true,
-      serverTime: Date.now(),
-      candles: Array.isArray(state.candles) ? state.candles : []
-    };
-    const processed = processSnapshot(snapshot, state);
     return {
       ...state,
-      ...processed,
       analysisTimeframe: timeframe,
       targetExpiration: expiration,
       diagnostics: {
@@ -235,9 +220,9 @@ async function applyClock(message = {}, sender = {}) {
         marketClock,
         acquisition: {
           ...(state.diagnostics?.acquisition || {}),
-          stage: processed?.signal?.state === 'SEARCHING' ? 'reading_history' : 'diagnosing_next_candle',
-          reason: processed?.signal?.reason || 'Relógio da vela sincronizado. Diagnosticando a próxima vela.',
-          candleCount: Number(processed?.signal?.candleCount ?? state.candles?.length ?? 0),
+          stage: 'diagnosing_next_candle',
+          reason: 'Relógio da vela sincronizado. Estado consolidado pronto para o loop central.',
+          candleCount: Number(state.candles?.length || 0),
           requiredCandles: 2,
           at: Date.now()
         },
