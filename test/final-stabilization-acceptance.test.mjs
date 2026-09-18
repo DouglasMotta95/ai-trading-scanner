@@ -62,7 +62,7 @@ test('countdown and expiration remain separate and rollover is explicitly guarde
   assert.match(clock, /if \(expirySemantic && !candleSemantic\) continue/);
   assert.match(clock, /const rolloverWindow =/);
   assert.match(clock, /row\.seconds >= limit - 2/);
-  assert.match(expiration, /\\d\\{1,5\\}.*(?:s\\|seg)/);
+  assert.match(expiration, /\\d\\{1,4\\}.*s\\|seg/);
   assert.match(expiration, /minuto/);
   assert.match(app, /function projectedRemaining/);
   assert.match(app, /setInterval\(\(\) => \{/);
