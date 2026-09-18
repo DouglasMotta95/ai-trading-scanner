@@ -1,3 +1,4 @@
+(() => {
 const $ = id => document.getElementById(id);
 const PREF_KEY = 'atsScannerUiPreferences';
 const EXACT_CLOCK_SOURCES = new Set(['trader-dom-countdown','network-server-cycle']);
@@ -126,4 +127,6 @@ import(chrome.runtime.getURL('src/sidepanel/trial-ui.js')).catch(() => {});
   await loadPrefs();
   const response = await chrome.runtime.sendMessage({ type: 'ATS_READ_SCANNER_STATE' }).catch(() => null);
   renderShell(response?.state || {});
+})();
+
 })();
