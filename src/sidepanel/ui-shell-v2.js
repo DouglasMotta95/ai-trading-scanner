@@ -50,7 +50,7 @@ function baseHandshake(state = {}) {
     && Number.isFinite(Number(clock?.secondsRemaining))
     && controlsFresh
     && !!clean(controls.observed?.expiration)
-    && rows.length >= 2;
+    && rows.length >= 10;
 }
 
 function exactLiveTime(state = {}) {
