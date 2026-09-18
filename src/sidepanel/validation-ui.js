@@ -1,3 +1,4 @@
+(() => {
 const $ = id => document.getElementById(id);
 
 function pct(value) {
@@ -47,3 +48,5 @@ chrome.storage.onChanged.addListener(changes => {
 import('./trial-ui.js').catch(() => {});
 refresh().catch(() => {});
 setInterval(() => refresh().catch(() => {}), 5000);
+
+})();
