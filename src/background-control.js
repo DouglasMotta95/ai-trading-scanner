@@ -145,6 +145,16 @@ async function injectModern(tabId) {
   return inject(tabId).catch(() => false);
 }
 
+async function refreshTargetTab() {
+  const state = await readScannerState();
+  if (!activeLicense(state.license)) return { ok: false, error: 'license_required', state };
+  const tabId = Number(state.targetTabId || 0);
+  if (!tabId) return { ok: false, error: 'target_tab_missing', state };
+  const injected = await injectModern(tabId);
+  if (!injected) return { ok: false, error: 'runtime_injection_failed', state: await readScannerState() };
+  return { ok: true, tabId, state: await readScannerState() };
+}
+
 async function connectActiveTab() {
   let state = await readScannerState();
   const license = await recoverLicense(state);
@@ -345,6 +355,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (type === 'ATS_CONNECT_ACTIVE_TAB' || type === 'ATS_REFRESH_MARKET') {
     connectActiveTab().then(sendResponse).catch(error => sendResponse({ ok: false, error: String(error?.message || error) }));
+    return true;
+  }
+
+  if (type === 'ATS_REFRESH_TARGET_TAB') {
+    refreshTargetTab().then(sendResponse).catch(error => sendResponse({ ok: false, error: String(error?.message || error) }));
     return true;
   }
 
