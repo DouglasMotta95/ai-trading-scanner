@@ -55,22 +55,41 @@
     m = s.match(/^(\d{1,3}):([0-5]\d)$/); if (m) return `${Number(m[1]) * 60 + Number(m[2])}s`;
     return null;
   }
-  function bodyExpiration() {
-    const raw = clean(document.body?.innerText || document.body?.textContent || '');
-    if (!raw) return null;
-    const body = fold(raw.slice(0, 220000));
+  function expirationAroundLabel(raw = '') {
+    const body = fold(raw);
+    if (!body) return null;
     for (const marker of ['expiracao', 'expiry', 'expiration']) {
       let from = 0;
       for (let attempt = 0; attempt < 12; attempt += 1) {
         const index = body.indexOf(marker, from);
         if (index < 0) break;
-        const windowText = body.slice(index, Math.min(body.length, index + 180));
-        const value = expirationValue(windowText);
-        if (value) return value;
+
+        // Normal DOM order: "Expiração" then the observed value.
+        const after = body.slice(index, Math.min(body.length, index + 180));
+        const direct = expirationValue(after);
+        if (direct) return direct;
+
+        // Responsive/embedded layouts can visually place the label before its
+        // value while DOM/text order is reversed (for example "1 min Expiração").
+        // Only accept a real duration token immediately around an explicit
+        // expiration label; never synthesize a default 60-second value.
+        const before = body.slice(Math.max(0, index - 72), index);
+        const matches = [...before.matchAll(/(?:^|[^0-9])((?:\d{1,3}:[0-5]\d)|(?:\d{1,4}\s*(?:s|seg|segundo|segundos|m|min|minuto|minutos)))\b/g)];
+        const token = matches.at(-1)?.[1] || '';
+        const reversed = expirationValue(token);
+        if (reversed) return reversed;
+
         from = index + marker.length;
       }
     }
     return null;
+  }
+
+  function bodyExpiration() {
+    const raw = clean(document.body?.innerText || document.body?.textContent || '');
+    if (!raw) return null;
+    const body = fold(raw.slice(0, 220000));
+    return expirationAroundLabel(body);
   }
 
   function nearbyExpiration(all = []) {
@@ -87,7 +106,7 @@
       for (let depth = 0; parent && depth < 6; depth += 1, parent = parent.parentElement) {
         const combined = clean(parent.innerText || parent.textContent || '');
         if (combined && combined.length <= 700) {
-          const value = expirationValue(combined);
+          const value = expirationAroundLabel(combined);
           if (value) candidates.push({ value, score: 100 - depth * 2 });
         }
       }
@@ -101,10 +120,12 @@
         if (!value) continue;
         const r = el.getBoundingClientRect();
         const vertical = Math.abs((r.top + r.bottom) / 2 - (lr.top + lr.bottom) / 2);
-        const horizontal = r.left - lr.right;
-        const sameControlBand = vertical <= 90 && horizontal >= -80 && horizontal <= 360;
+        // Measure the actual gap between the label and value, regardless
+        // of which side the responsive layout places the value on.
+        const horizontal = r.right < lr.left ? lr.left - r.right : r.left > lr.right ? r.left - lr.right : 0;
+        const sameControlBand = vertical <= 90 && horizontal <= 360;
         if (!sameControlBand) continue;
-        const distance = Math.abs(horizontal) + vertical * 1.5;
+        const distance = horizontal + vertical * 1.5;
         candidates.push({ value, score: Math.max(91, 99 - distance / 80) });
       }
     }
@@ -130,7 +151,7 @@
       const controlLike = el.matches?.('button,input,select,[role="button"],[role="combobox"],[aria-selected="true"],[data-state="active"]');
       if (!exp && /expira|expiry|expiration|duracao|duration|tempo da operacao|tempo de operacao/.test(ctx)) {
         // CasaTrade often renders the label and value in sibling nodes
-        // ("Expiração" + "5 seg"). Read the labelled container too, but only
+        // ("Expiração" + "1 min"). Read the labelled container too, but only
         // inside expiration semantics so candle countdowns cannot be mistaken.
         const value = expirationValue(own) || expirationValue(ctx);
         if (value && (controlLike || own.length <= 64 || /expira|expiry|expiration|duracao|duration/.test(ctx))) {
