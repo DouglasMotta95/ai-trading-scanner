@@ -68,3 +68,17 @@ test('connect reports reader injection failure instead of pretending success', (
   assert.match(source, /runtime_injection_failed/);
   assert.match(source, /return \{ ok: false, error: 'runtime_injection_failed'/);
 });
+
+
+test('top-frame bootstrap and market session also support direct trader hosts', () => {
+  const manifest = JSON.parse(read('manifest.json'));
+  const top = manifest.content_scripts[0];
+  assert.ok(top.matches.includes('https://casatraders.online/*'));
+  assert.ok(top.matches.includes('https://*.casatraders.online/*'));
+  assert.ok(top.matches.includes('https://ivcasatraders.online/*'));
+  assert.ok(top.matches.includes('https://*.ivcasatraders.online/*'));
+
+  const market = read('src/background-market-session.js');
+  assert.match(market, /const embeddedTrader = tabOwned && traderHost\(frameHost\)/);
+  assert.doesNotMatch(market, /embeddedTrader = tabOwned && Number\(sender\.frameId\) !== 0 && traderHost/);
+});
