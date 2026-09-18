@@ -20,7 +20,9 @@ test('video 14809: stale protocol-selected old asset cannot rollback an active v
   assert.match(session, /const transitionProtectsCurrentFocus = session\.transitioning === true/);
   assert.match(session, /protocol-rollback-during-visible-transition/);
   assert.match(session, /protocol-rollback-after-user-selection/);
-  assert.match(session, /if \(assetChanged && incomingProtocolOnly && \(transitionProtectsCurrentFocus \|\| recentVisualSelection\)\)/);
+  assert.match(session, /protocol-rollback-visual-selection-lock/);
+  assert.match(session, /visualSelectionLock: userSelected/);
+  assert.match(session, /protocolContradictsSelectionLock/);
 });
 
 test('video 14809: asset switch reset clears old price OHLC candles and signal before new market is confirmed', () => {
@@ -52,8 +54,9 @@ test('video 14809: exact countdown survives a brief DOM gap at next-candle rollo
 
 test('video 14809: platform stays connected while selected asset is resynchronizing', () => {
   const shell = read('src/sidepanel/ui-shell-v2.js');
-  assert.match(shell, /const platformLinked = connected \|\| switching/);
-  assert.match(shell, /connectScannerText'\)\.textContent = platformLinked \? 'CONECTADO' : 'DESCONECTADO'/);
+  assert.match(shell, /const dataConnected = baseHandshake\(state\)/);
+  assert.match(shell, /const connected = dataConnected \|\| switching/);
+  assert.match(shell, /connectScannerText'\)\.textContent = connected \? 'CONECTADO' : 'DESCONECTADO'/);
   assert.match(shell, /ATUALIZANDO PARA \$\{pendingAsset\}/);
 });
 
