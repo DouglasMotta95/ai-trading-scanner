@@ -32,7 +32,8 @@ test('focused asset preserves OTC identity and actively observes CasaTrade selec
   assert.match(focus, /MutationObserver/);
   assert.match(focus, /pointerup/);
   assert.match(alias, /visible-selected-asset/);
-  assert.match(session, /switchedAsset/);
+  assert.match(session, /const assetChanged =/);
+  assert.match(session, /resetForSession/);
   assert.match(session, /marketHistory: \{\}/);
 });
 
@@ -52,8 +53,10 @@ test('wrong expiration remains visible but blocks final entry, not technical ana
   const app = read('src/sidepanel/app-v2.js');
   const policy = read('src/background-decision-policy.js');
   assert.match(app, /EXPIRAÇÃO \$\{expLabel\(actualExpiration\)\} — ALTERE PARA 1 MIN/);
-  assert.match(app, /!timeReady && ui === 'ENTER_BUY'/);
-  assert.match(app, /!timeReady && ui === 'ENTER_SELL'/);
+  assert.match(app, /ALTERE PARA 1 MIN/);
+  assert.match(policy, /Expiration is an execution gate, not a technical-analysis gate/);
+  assert.match(policy, /uiState: direction === 'BUY' \? 'POSSIBLE_BUY' : 'POSSIBLE_SELL'/);
+  assert.match(policy, /actionable: false/);
   assert.match(policy, /expirationReady/);
   assert.match(policy, /60s/);
 });
