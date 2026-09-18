@@ -327,8 +327,6 @@ function render(state = {}) {
   setText('decisionText', model.text);
   setText('decisionSubtext', model.sub);
   setText('signalReason', model.reason);
-  setText('technicalConfidence', `${Math.round(model.score)}/100`);
-  setText('technicalConfidenceLabel', 'SCORE');
   const setupLabel = clean(state.signal?.setup || state.signal?.regime?.type || '—') || '—';
   setText('setupType', /^analista$/i.test(setupLabel) ? '—' : setupLabel);
   setText('secondsRemaining', remaining == null ? '—' : exact ? String(Math.max(0, Math.ceil(remaining))) : `~${Math.max(0, Math.ceil(remaining))}`);
