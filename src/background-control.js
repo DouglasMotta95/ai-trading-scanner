@@ -48,7 +48,7 @@ function handshakeReady(state = {}) {
     && Number(clock.at || 0) > 0
     && Date.now() - Number(clock.at) < 3200
     && !!expiration
-    && rows.length >= 2;
+    && rows.length >= 10;
 }
 
 function scheduleConnectionTimeout(tabId, connectedAt) {
