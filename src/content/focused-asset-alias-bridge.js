@@ -113,13 +113,8 @@
         const generic = canonicalFromText(text, true);
         if (generic) return generic;
       }
-      // CasaTrade currently renders some asset rows with obfuscated classes. A
-      // concise alphabetic token directly clicked by the user is therefore a
-      // valid short-lived fallback, while numbers/timers/payouts stay rejected.
-      if (text.length <= 24 && !/[\d%]/.test(text)) {
-        const generic = canonicalFromText(text, true);
-        if (generic) return generic;
-      }
+      // Do not infer an asset from arbitrary text that happened to be clicked.
+      // Generic ticker fallback is allowed only inside a real asset/instrument row.
     }
     return '';
   }
@@ -130,13 +125,14 @@
     if (lastSent.asset === asset && now - lastSent.at < 650) return;
     lastSent = { asset, at: now };
     globalThis.__ATS_FOCUSED_ASSET_VALUE__ = asset;
+    const explicit = source === 'user-selected-alias' || source === 'user-selected-token' || source === 'visible-selected-asset';
     globalThis.__ATS_FOCUSED_ASSET_META__ = {
-      asset, reliable: true, explicit: true, chartScoped: true,
+      asset, reliable: true, explicit, chartScoped: true,
       frameHost: host, frameRole, source, at: now
     };
     await sendMessage({
       type: 'ATS_VISUAL_FOCUS_V2', asset, score, samples: 3,
-      reliable: true, visual: true, explicit: true, interactionHint: source === 'user-selected-alias' || source === 'user-selected-token',
+      reliable: true, visual: true, explicit, interactionHint: source === 'user-selected-alias' || source === 'user-selected-token',
       interactionAt: source === 'user-selected-alias' || source === 'user-selected-token' ? now : null,
       chartScoped: true, chartFound: true, frameHost: host, frameRole, source, at: now
     }).catch(() => {});
@@ -157,13 +153,15 @@
       const isSelected = selected(el);
       const interacted = recentInteraction.asset === asset && Date.now() - recentInteraction.at < 3500;
       const directHeader = !!direct && text.length <= 48 && upperChartArea(el) && !looksLikeListContext(el);
-      if (!strongContext && !isSelected && !interacted && !directHeader) continue;
+      // Passive "asset-like" text is not enough. This prevents an old symbol
+      // still visible in a drawer/header from replacing the selected chart.
+      if (!isSelected && !interacted && !directHeader) continue;
       let score = strongContext ? 500 : 0;
       if (directHeader) score += 720;
-      if (isSelected) score += 500;
-      if (interacted) score += 900;
+      if (isSelected) score += 900;
+      if (interacted) score += 1200;
       if (text.length <= 24) score += 80;
-      rows.push({ asset, score, source: interacted ? 'user-selected-alias' : directHeader ? 'visible-direct-pair' : 'visible-name-alias' });
+      rows.push({ asset, score, source: interacted ? 'user-selected-alias' : isSelected ? 'visible-selected-asset' : 'visible-direct-pair' });
     }
     rows.sort((a, b) => b.score - a.score);
     const first = rows[0];
