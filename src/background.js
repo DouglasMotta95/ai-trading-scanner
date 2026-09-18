@@ -229,3 +229,66 @@ chrome.storage?.onChanged?.addListener?.((changes, area) => {
 });
 
 readScannerState().then(observeState).catch(() => {});
+
+const HEALTH_CHECK_MS = 1000;
+const RECOVERY_AFTER_MS = 4500;
+const RECOVERY_COOLDOWN_MS = 10000;
+let lastRecoveryAt = 0;
+
+function acquisitionGaps(state = {}) {
+  const gaps = [];
+  const focus = state.diagnostics?.focusedAsset || {};
+  const clock = state.diagnostics?.marketClock || {};
+  const controls = state.platformControls || {};
+  const rows = historyFor(state, state.asset || '');
+  if (!state.asset || focus.reliable !== true || !sameMarket(focus.asset, state.asset)) gaps.push('ativo');
+  if (num(state.price) == null) gaps.push('preço');
+  if (rows.length < 2) gaps.push('histórico');
+  const clockFresh = clock.available !== false
+    && Number.isFinite(Number(clock.secondsRemaining))
+    && Number(clock.at || 0) > 0
+    && Date.now() - Number(clock.at) < CLOCK_FRESH_MS;
+  if (!clockFresh) gaps.push('countdown');
+  const controlsFresh = Number(controls.checkedAt || 0) > 0 && Date.now() - Number(controls.checkedAt) < 7000;
+  if (!controlsFresh || !clean(controls.observed?.expiration)) gaps.push('expiração');
+  return gaps;
+}
+
+async function recoverAcquisition() {
+  const state = await readScannerState().catch(() => null);
+  if (!state || !activeAccess(state) || !state.targetTabId) return;
+  if (!['scanning','idle'].includes(clean(state.scanner))) return;
+
+  const startedAt = Number(state.diagnostics?.target?.connectedAt || state.diagnostics?.marketSession?.startedAt || 0);
+  if (!startedAt || Date.now() - startedAt < RECOVERY_AFTER_MS) return;
+
+  const gaps = acquisitionGaps(state);
+  if (!gaps.length) return;
+
+  await updateScannerState(current => ({
+    ...current,
+    diagnostics: {
+      ...(current.diagnostics || {}),
+      health: {
+        state: 'recovering',
+        missing: gaps,
+        at: Date.now()
+      },
+      acquisition: {
+        ...(current.diagnostics?.acquisition || {}),
+        stage: 'recovering_live_readers',
+        reason: `Recuperando leitura real: ${gaps.join(', ')}.`,
+        at: Date.now()
+      }
+    }
+  })).catch(() => {});
+
+  if (Date.now() - lastRecoveryAt < RECOVERY_COOLDOWN_MS) return;
+  const inject = globalThis.__ATS_INJECT_MODERN_PIPELINE__;
+  if (typeof inject !== 'function') return;
+  lastRecoveryAt = Date.now();
+  await inject(Number(state.targetTabId)).catch(() => false);
+}
+
+setInterval(() => recoverAcquisition().catch(() => {}), HEALTH_CHECK_MS);
+
