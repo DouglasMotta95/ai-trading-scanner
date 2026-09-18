@@ -72,10 +72,14 @@ function mergeObserved(previous = {}, incoming = {}) {
     const value = incoming[field];
     const score = Number(incoming.confidence?.[field] || 0);
     const oldScore = Number(oldConfidence[field] || 0);
-    if (value != null && (next[field] == null || score >= oldScore - 2)) {
+    const incomingAt = Number(incoming.observedAt?.[field] || 0);
+    const previousAt = Number(previous.observedAt?.[field] || 0);
+    const previousStale = !previousAt || Date.now() - previousAt >= 7000;
+    const newer = incomingAt > previousAt;
+    if (value != null && (next[field] == null || previousStale || (newer && score >= Math.max(55, oldScore - 15)) || score >= oldScore - 2)) {
       next[field] = value;
       next.confidence[field] = score;
-      next.observedAt[field] = Number(incoming.observedAt?.[field] || Date.now());
+      next.observedAt[field] = incomingAt || Date.now();
     }
   }
   return next;
