@@ -4,7 +4,12 @@ const PREF_KEY = 'atsScannerUiPreferences';
 const EXACT_CLOCK_SOURCES = new Set(['trader-dom-countdown','network-server-cycle']);
 
 function activeLicense(state = {}) {
-  return ['active','valid'].includes(String(state?.license?.status || '').toLowerCase());
+  const status = String(state?.license?.status || '').toLowerCase();
+  return ['active','valid'].includes(status)
+    || state?.license?.devMode === true
+    || String(state?.license?.plan || '').toUpperCase() === 'OWNER_DEV'
+    || state?.diagnostics?.access?.ownerDev === true
+    || state?.diagnostics?.access?.state === 'owner_dev';
 }
 
 function exactLiveTime(state = {}) {
