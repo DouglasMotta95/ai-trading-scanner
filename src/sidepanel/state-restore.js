@@ -34,6 +34,17 @@
     return n.toFixed(digits).replace(/0+$/, '').replace(/\.$/, '');
   };
   const setText = (id, value) => { const el = $(id); if (el) el.textContent = value; };
+  const marketId = value => clean(value).toUpperCase().replace(/\s*\(\s*OTC\s*\)\s*$/i, '');
+  const freshFocus = state => {
+    const focus = state?.diagnostics?.focusedAsset || {};
+    return focus.reliable === true
+      && focus.chartScoped === true
+      && focus.trustedChartFrame === true
+      && !!marketId(focus.asset)
+      && marketId(focus.asset) === marketId(state?.asset)
+      && Number(focus.at || 0) > 0
+      && Date.now() - Number(focus.at) < 5500;
+  };
 
   function renderCached(state = {}) {
     if (!state || typeof state !== 'object') return;
@@ -41,15 +52,16 @@
     const timeframe = normTf(clock.timeframe || state.platformControls?.observed?.timeframe || state.analysisTimeframe || state.timeframe);
     const expiration = state.platformControls?.observed?.expiration || state.targetExpiration || state.expiration || null;
     const remaining = num(clock.secondsRemaining);
-    const exactClock = clock.verified === true && clock.available !== false && ['trader-dom-countdown','network-server-cycle','structured-candle-boundary'].includes(String(clock.source || ''));
+    const currentMarket = freshFocus(state);
+    const exactClock = currentMarket && clock.verified === true && clock.available !== false && ['trader-dom-countdown','network-server-cycle'].includes(String(clock.source || ''));
 
-    setText('asset', state.asset || '—');
-    setText('timeframe', timeframe || '—');
-    setText('price', fmtPrice(state.price));
-    setText('heroExpiration', expLabel(expiration));
-    setText('expiration', expLabel(expiration));
-    setText('heroCountdown', remaining == null ? '—' : `${exactClock ? '' : '~'}${Math.max(0, Math.ceil(remaining))}s`);
-    setText('secondsRemaining', remaining == null ? '—' : `${exactClock ? '' : '~'}${Math.max(0, Math.ceil(remaining))}`);
+    setText('asset', currentMarket ? state.asset : '—');
+    setText('timeframe', currentMarket ? (timeframe || '—') : '—');
+    setText('price', currentMarket ? fmtPrice(state.price) : '—');
+    setText('heroExpiration', currentMarket ? expLabel(expiration) : '—');
+    setText('expiration', currentMarket ? expLabel(expiration) : '—');
+    setText('heroCountdown', !currentMarket || remaining == null ? '—' : `${exactClock ? '' : '~'}${Math.max(0, Math.ceil(remaining))}s`);
+    setText('secondsRemaining', !currentMarket || remaining == null ? '—' : `${exactClock ? '' : '~'}${Math.max(0, Math.ceil(remaining))}`);
 
     const license = state.license || {};
     const active = ['active','valid'].includes(String(license.status || '').toLowerCase());
