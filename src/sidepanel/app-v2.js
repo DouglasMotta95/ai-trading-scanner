@@ -370,7 +370,7 @@ function smoothedRemaining(state = {}) {
   const raw = projectedRemaining(state);
   if (raw == null) { countdownUi = { value: null, at: 0, cycle: '' }; return null; }
   const clock = state.diagnostics?.marketClock || {};
-  const cycle = `${marketId(state.asset || transitionAsset(state))}|${normTf(clock.timeframe || state.analysisTimeframe || state.timeframe) || ''}|${Math.round(Number(clock.closeAt || 0) / 1000)}`;
+  const cycle = `${marketId(state.asset || transitionAsset(state))}|${normTf(clock.timeframe || state.analysisTimeframe || state.timeframe) || ''}|${Math.round(Number(clock.closeAt || 0) / 5000) * 5000}`;
   const now = Date.now();
   const value = Math.max(0, Math.ceil(raw));
   if (!countdownUi.cycle || countdownUi.cycle !== cycle || (countdownUi.value != null && value > countdownUi.value + 20)) {
