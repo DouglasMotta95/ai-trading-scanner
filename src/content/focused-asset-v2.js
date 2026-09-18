@@ -164,9 +164,11 @@
       const context = contextOf(el);
       const chartScoped = nearChart(rect, chart) || /chart|tradingview|instrument|symbol|asset|header/.test(context);
       const listContext = /watchlist|asset-list|instrument-list|listbox|search|history|portfolio|ranking|modal|drawer|dropdown|menu/.test(context);
-      if (listContext && !chartScoped) continue;
-      if (!chartScoped) continue;
       const interaction = interactionFresh(asset);
+      // A visible dropdown/watchlist can contain dozens of symbols over the chart.
+      // Only its selected/current row or the row the user just touched may own focus.
+      if (listContext && !selection.explicit && !interaction) continue;
+      if (!chartScoped) continue;
       let score = selection.score;
       if (chartScoped) score += 520;
       if (chart && nearChart(rect, chart)) score += 480;
