@@ -4,6 +4,7 @@ const PREF_KEY = 'atsScannerUiPreferences';
 const EXACT_CLOCK_SOURCES = new Set(['trader-dom-countdown','network-server-cycle']);
 const CLOCK_FRESH_MS = 3200;
 const CONTROLS_FRESH_MS = 7000;
+const PANEL_OPENED_AT = Date.now();
 
 const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
 const marketId = value => {
@@ -91,7 +92,9 @@ function renderShell(state = {}) {
   const expirationWrong = connected && !!expiration && expiration !== '60s';
   const sessionStartedAt = Number(session.startedAt || state.diagnostics?.target?.connectedAt || 0);
   const sessionAge = sessionStartedAt > 0 ? Date.now() - sessionStartedAt : 0;
-  const expirationReadFailed = connected && !expiration && sessionAge >= 5000;
+  const panelAge = Math.max(0, Date.now() - PANEL_OPENED_AT);
+  const expirationWaitAge = sessionAge > 0 ? Math.min(sessionAge, panelAge) : panelAge;
+  const expirationReadFailed = connected && !expiration && expirationWaitAge >= 5000;
 
   const strip = $('syncStrip');
   if (strip) strip.className = `sync-strip ${platformLinked ? 'live' : 'syncing'}`;
@@ -184,6 +187,14 @@ async function connectNow() {
   }
 }
 
+async function refreshLiveReaders() {
+  const response = await chrome.runtime.sendMessage({ type: 'ATS_REFRESH_MARKET' }).catch(() => null);
+  if (response?.ok && response?.state) {
+    lastState = response.state;
+    renderShell(lastState);
+  }
+}
+
 function syncToggleClasses(prefs = {}) {
   const mapping = [['geminiToggle','geminiEnabled']];
   for (const [id, key] of mapping) {
@@ -232,6 +243,12 @@ import(chrome.runtime.getURL('src/sidepanel/trial-ui.js')).catch(() => {});
   const response = await chrome.runtime.sendMessage({ type: 'ATS_READ_SCANNER_STATE' }).catch(() => null);
   lastState = response?.state || {};
   renderShell(lastState);
+  const targetHost = clean(lastState.diagnostics?.target?.host).toLowerCase();
+  const looksLikeCasaTrade = lastState.platformId === 'casatrade'
+    || /(^|\.)casatrade\.(?:com|io)$/.test(targetHost)
+    || /(^|\.)casatraders\.online$/.test(targetHost)
+    || /(^|\.)ivcasatraders\.online$/.test(targetHost);
+  if (activeLicense(lastState) && looksLikeCasaTrade) refreshLiveReaders().catch(() => {});
 })();
 
 })();
