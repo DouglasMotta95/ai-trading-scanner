@@ -4,12 +4,12 @@ import fs from 'node:fs';
 
 const read = path => fs.readFileSync(new URL('../' + path, import.meta.url), 'utf8');
 
-test('0.11.13 loads standalone instrument focus and feed fallbacks for normal and recovery injection', () => {
+test('current build loads standalone instrument focus and feed fallbacks for normal and recovery injection', () => {
   const manifest = JSON.parse(read('manifest.json'));
   const injector = read('src/background-modern-injector.js');
   const bridge = read('src/content/focused-asset-alias-bridge.js');
   const probe = read('src/content/standalone-instrument-probe.js');
-  assert.equal(manifest.version, '0.11.13');
+  assert.equal(manifest.version, '0.11.19');
   assert.ok(manifest.content_scripts.some(row => Array.isArray(row.js) && row.js.includes('src/content/focused-asset-alias-bridge.js')));
   assert.ok(manifest.content_scripts.some(row => Array.isArray(row.js) && row.js.includes('src/content/standalone-instrument-probe.js') && row.world === 'MAIN'));
   assert.ok(manifest.content_scripts.some(row => Array.isArray(row.js) && row.js.includes('src/content/opaque-frame-recovery.js') && row.match_origin_as_fallback === true));
@@ -29,19 +29,19 @@ test('0.11.13 loads standalone instrument focus and feed fallbacks for normal an
   assert.match(probe, /hookXhr/);
 });
 
-test('focused asset is not duplicated by radar and stale quality is not presented as live', () => {
-  const radar = read('src/sidepanel/radar-ui.js');
+test('focused asset quality stays live while radar is removed from the compact primary UI', () => {
+  const html = read('src/sidepanel/index.html');
   const quality = read('src/sidepanel/asset-quality-ui.js');
-  assert.match(radar, /filter\(row => row\?\.focused !== true\)/);
+  assert.doesNotMatch(html, /radar-ui\.js/);
+  assert.doesNotMatch(html, /assetRadarList/);
   assert.match(quality, /liveCurrentMarket/);
   assert.match(quality, /AGUARDANDO ATIVO AO VIVO/);
 });
 
-test('empty validation is hidden and current-market card no longer repeats next-candle decision', () => {
+test('compact current-market UI removes validation clutter and repeated decision panels', () => {
   const html = read('src/sidepanel/index.html');
-  const validation = read('src/sidepanel/validation-ui.js');
-  assert.match(html, /id="validationCard"[^>]*hidden/);
-  assert.match(validation, /card\.hidden = resolved === 0/);
+  assert.doesNotMatch(html, /id="validationCard"/);
+  assert.doesNotMatch(html, /validation-ui\.js/);
   assert.match(html, /GRÁFICO ATUAL/);
   assert.doesNotMatch(html, /id="analysisTitle"/);
   assert.doesNotMatch(html, /id="analyzingNow"/);
