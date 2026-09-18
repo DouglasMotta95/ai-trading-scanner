@@ -35,6 +35,17 @@
     match = raw.match(/^H(\d{1,3})$/) || raw.match(/^(\d{1,3})H$/);
     return match && Number(match[1]) > 0 ? `H${Number(match[1])}` : null;
   };
+  const normalizeExp = value => {
+    const raw = clean(value).toLowerCase().replace(/\s+/g, '');
+    if (!raw) return null;
+    let match = raw.match(/^(\d{1,5})(?:s|seg|segundo|segundos)$/);
+    if (match) return `${Number(match[1])}s`;
+    match = raw.match(/^(\d{1,4})(?:m|min|minuto|minutos)$/);
+    if (match) return `${Number(match[1]) * 60}s`;
+    match = raw.match(/^(\d{1,2}):(\d{2})$/);
+    if (match) return `${Number(match[1]) * 60 + Number(match[2])}s`;
+    return null;
+  };
   const durationSeconds = timeframe => {
     const tf = normalizeTf(timeframe);
     if (!tf) return null;
@@ -188,6 +199,24 @@
     if (now - lastSentAt < 80) return;
     lastSentAt = now;
     const payload = data.payload || {};
+
+    const networkExpiration = normalizeExp(payload.controls?.expiration);
+    const networkExpirationConfidence = Number(payload.controls?.confidence || 0);
+    const networkExpirationAt = Number(payload.controls?.observedAt || 0);
+    if (networkExpiration && networkExpirationConfidence >= 84 && now - networkExpirationAt < 7000) {
+      sendMessage({
+        type: 'ATS_PLATFORM_CONTROLS_OBSERVED',
+        snapshot: {
+          amount: null,
+          expiration: networkExpiration,
+          timeframe: null,
+          confidence: { amount: 0, expiration: networkExpirationConfidence, timeframe: 0 },
+          source: 'casatrade-network-control',
+          observedAt: networkExpirationAt || now
+        }
+      }).catch(() => {});
+    }
+
     sendMessage({ type: 'ATS_EMBEDDED_FEED', payload }).catch(() => {});
     maybePublishStructuredClock(payload).catch(() => {});
   });
