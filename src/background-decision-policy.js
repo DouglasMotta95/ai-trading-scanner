@@ -189,9 +189,6 @@ function baseDecision(state = {}) {
   if (!time.ready) {
     return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: `AGUARDAR — ${time.reason}` };
   }
-  if (!expiration.ready) {
-    return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: `AGUARDAR — ${expiration.reason}` };
-  }
 
   const seconds = Number(time.secondsRemaining);
   if (!Number.isFinite(seconds) || seconds > 30) {
@@ -212,6 +209,22 @@ function baseDecision(state = {}) {
   const heldFor = Math.max(0, now - possibleSince);
   const finalQuality = technicalFinal && score >= finalScore && additionalConfluenceReady;
   const reason = shortReason(direction, factors.factors, signal.reason);
+
+  // Expiration is an execution gate, not a technical-analysis gate. Keep the
+  // directional POSSIBLE state visible when the pattern exists, but never make
+  // it actionable until the real CasaTrade control confirms M1 + 60 seconds.
+  if (!expiration.ready) {
+    return {
+      ...common,
+      uiState: direction === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL',
+      direction,
+      actionable: false,
+      alert: 'silent',
+      possibleSince,
+      holdRemainingMs: Math.max(0, holdMs - heldFor),
+      reason: `${reason} BLOQUEADO — ${expiration.reason}.`
+    };
+  }
 
   if (seconds > 10) {
     return {
