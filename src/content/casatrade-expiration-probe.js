@@ -203,7 +203,7 @@
       const parts = [];
       let node = el;
       let controlLike = false;
-      for (let depth = 0; node && depth < 3; depth += 1, node = node.parentElement) {
+      for (let depth = 0; node && depth < 5; depth += 1, node = node.parentElement) {
         const nodeText = clean(node.innerText || node.textContent || '').slice(0, 420);
         parts.push(
           nodeText,
