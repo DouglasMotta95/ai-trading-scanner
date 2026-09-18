@@ -56,16 +56,22 @@
     if (!state || typeof state !== 'object') return;
     const clock = state.diagnostics?.marketClock || {};
     const timeframe = normTf(clock.timeframe || state.platformControls?.observed?.timeframe || state.analysisTimeframe || state.timeframe);
-    const expiration = state.platformControls?.observed?.expiration || state.targetExpiration || state.expiration || null;
+    const session = state.diagnostics?.marketSession || {};
+    const expirationAt = Number(state.platformControls?.expirationCheckedAt || state.platformControls?.observed?.observedAt?.expiration || 0);
+    const expirationFresh = expirationAt > 0 && Date.now() - expirationAt < 7000;
+    const expiration = expirationFresh ? state.platformControls?.observed?.expiration || null : null;
     const remaining = num(clock.secondsRemaining);
-    const currentMarket = freshFocus(state);
+    const dataReady = session.dataReady === true && marketId(session.confirmedAsset) === marketId(state.asset);
+    const currentMarket = freshFocus(state) && dataReady;
+    const pendingAsset = session.transitioning === true ? marketId(session.pendingAsset || session.asset) : '';
     const exactClock = currentMarket && clock.verified === true && clock.available !== false && ['trader-dom-countdown','network-server-cycle'].includes(String(clock.source || ''));
 
-    setText('asset', currentMarket ? state.asset : '—');
+    setText('asset', currentMarket ? state.asset : pendingAsset ? `Atualizando para ${pendingAsset}…` : '—');
     setText('timeframe', currentMarket ? (timeframe || '—') : '—');
     setText('price', currentMarket ? fmtPrice(state.price) : '—');
-    setText('heroExpiration', currentMarket ? expLabel(expiration) : '—');
-    setText('expiration', currentMarket ? expLabel(expiration) : '—');
+    const expText = expiration ? expLabel(expiration) : 'LENDO…';
+    setText('heroExpiration', currentMarket || pendingAsset ? expText : '—');
+    setText('expiration', currentMarket || pendingAsset ? expText : '—');
     setText('heroCountdown', !currentMarket || remaining == null ? '—' : `${exactClock ? '' : '~'}${Math.max(0, Math.ceil(remaining))}s`);
     setText('secondsRemaining', !currentMarket || remaining == null ? '—' : `${exactClock ? '' : '~'}${Math.max(0, Math.ceil(remaining))}`);
 
