@@ -96,7 +96,7 @@
     const parentKey = String(meta.parentKey || '');
     const objectKeys = Array.isArray(meta.objectKeys) ? meta.objectKeys.join(' ') : '';
     const genericAllowed = GENERIC_DURATION_KEY.test(semanticKey)
-      && /trade|option|operation|deal|order|expiry|expir/i.test(`${parentKey} ${objectKeys}`);
+      && /trade|option|operation|deal|expiry|expiration/i.test(`${parentKey} ${objectKeys}`);
     if (!CONTROL_EXP_KEY.test(semanticKey) && !genericAllowed) return;
     const confidence = CONTROL_EXP_KEY.test(semanticKey) && !GENERIC_DURATION_KEY.test(semanticKey) ? 97 : 84;
     const current = stats.controlExpiration;
