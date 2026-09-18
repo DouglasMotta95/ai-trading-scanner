@@ -12,6 +12,7 @@ const DEFAULT_PREFS = Object.freeze({
   expectedAsset: ''
 });
 
+const PANEL_OPENED_AT = Date.now();
 let prefs = { ...DEFAULT_PREFS };
 let liveOhlc = null;
 let audioContext = null;
@@ -58,7 +59,9 @@ function expirationObservation(state = {}) {
 }
 function sessionAgeMs(state = {}) {
   const at = Number(sessionInfo(state).startedAt || state.diagnostics?.target?.connectedAt || 0);
-  return at > 0 ? Math.max(0, Date.now() - at) : 0;
+  const panelAge = Math.max(0, Date.now() - PANEL_OPENED_AT);
+  if (!(at > 0)) return panelAge;
+  return Math.min(Math.max(0, Date.now() - at), panelAge);
 }
 
 function normTf(value = '') {
