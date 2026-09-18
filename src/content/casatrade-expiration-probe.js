@@ -1,6 +1,9 @@
 (() => {
-  if (globalThis.__ATS_EXPIRATION_PROBE__) return;
+  // This probe is intentionally restartable. Re-injection must replace the
+  // current reader instead of silently keeping stale readers from an older build.
+  try { globalThis.__ATS_EXPIRATION_PROBE_RUNTIME__?.teardown?.(); } catch {}
   globalThis.__ATS_EXPIRATION_PROBE__ = true;
+
   const sendMessage = typeof globalThis.__ATS_SEND_MESSAGE__ === 'function'
     ? globalThis.__ATS_SEND_MESSAGE__
     : message => new Promise(resolve => {
@@ -14,67 +17,80 @@
 
   const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
   const fold = value => clean(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-  const visible = el => {
+  const expirationSemantics = /\b(?:expiracao|expiry|expiration|tempo de expiracao|tempo da operacao|tempo de operacao|duracao|duration)\b/;
+  const durationExact = /^(?:\d{1,2}:[0-5]\d:[0-5]\d|\d{1,3}:[0-5]\d|\d{1,4}\s*(?:s|seg|segundo|segundos|m|min|minuto|minutos))$/i;
+
+  function visible(el) {
     if (!el || !(el instanceof Element)) return false;
     const r = el.getBoundingClientRect();
     const s = getComputedStyle(el);
-    return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden';
-  };
+    return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden' && Number(s.opacity || 1) > 0;
+  }
+
   function roots() {
     const out = [document], queue = [document], seen = new Set();
-    while (queue.length && out.length < 80) {
+    while (queue.length && out.length < 100) {
       const root = queue.shift();
       if (!root || seen.has(root)) continue;
       seen.add(root);
       let rows = [];
       try { rows = [...root.querySelectorAll('*')]; } catch {}
-      for (const el of rows) if (el.shadowRoot) { out.push(el.shadowRoot); queue.push(el.shadowRoot); }
+      for (const el of rows) {
+        if (el.shadowRoot && !seen.has(el.shadowRoot)) {
+          out.push(el.shadowRoot);
+          queue.push(el.shadowRoot);
+        }
+      }
     }
     return out;
   }
+
   function elements() {
     const out = [];
+    const selector = [
+      'button','input','select','option','label','p','strong','small','span','div','svg text',
+      '[role="button"]','[role="combobox"]','[role="option"]','[role="listbox"]',
+      '[aria-selected]','[aria-current]','[data-state]','[data-value]','[aria-valuetext]','[aria-valuenow]',
+      '[data-testid*="expir" i]','[aria-label*="expir" i]','[name*="expir" i]',
+      '[id*="expir" i]','[class*="expir" i]'
+    ].join(',');
     for (const root of roots()) {
-      try { out.push(...root.querySelectorAll('button,input,select,[role="button"],[role="combobox"],[aria-selected="true"],[data-state="active"],[data-testid*="expir"],[aria-label*="expir"],[aria-valuetext],[aria-valuenow],[data-value],[name*="expir" i],[id*="expir" i],[class*="expir" i],label,p,strong,small,span,div,svg text')); } catch {}
-      if (out.length > 7500) break;
+      try { out.push(...root.querySelectorAll(selector)); } catch {}
+      if (out.length > 12000) break;
     }
-    return out.slice(0, 7500);
+    return [...new Set(out)].slice(0, 12000);
   }
-  function text(el) {
-    if (el instanceof HTMLInputElement || el instanceof HTMLSelectElement) return clean(el.value || el.selectedOptions?.[0]?.textContent || '');
-    return clean(
-      el.getAttribute?.('aria-valuetext')
-      || el.getAttribute?.('data-value')
-      || el.getAttribute?.('value')
-      || el.getAttribute?.('aria-valuenow')
-      || el.getAttribute?.('aria-label')
-      || el.getAttribute?.('title')
-      || el.innerText
-      || el.textContent
-      || ''
-    );
+
+  function ownText(el) {
+    if (!el) return '';
+    if (el instanceof HTMLInputElement) return clean(el.value || el.getAttribute?.('aria-valuetext') || el.getAttribute?.('data-value') || '');
+    if (el instanceof HTMLSelectElement) return clean(el.selectedOptions?.[0]?.textContent || el.value || '');
+    return clean(el.innerText || el.textContent || '');
   }
-  function context(el) {
-    const parts = [
-      text(el), el?.id, el?.className, el?.getAttribute?.('data-testid'),
-      el?.getAttribute?.('data-name'), el?.getAttribute?.('name'),
-      el?.getAttribute?.('aria-label'), el?.getAttribute?.('title'),
-      el?.getAttribute?.('data-value'), el?.getAttribute?.('aria-valuenow')
-    ];
-    let p = el?.parentElement;
-    for (let i = 0; p && i < 5; i++, p = p.parentElement) {
-      parts.push(clean(p.innerText || p.textContent || '').slice(0, 520));
-      parts.push(p.id, p.className, p.getAttribute?.('data-testid'), p.getAttribute?.('aria-label'));
-    }
-    return fold(parts.filter(Boolean).join(' '));
+
+  function rawValues(el) {
+    if (!el) return [];
+    return [
+      el instanceof HTMLInputElement ? el.value : '',
+      el instanceof HTMLSelectElement ? el.selectedOptions?.[0]?.textContent : '',
+      el.getAttribute?.('aria-valuetext'),
+      el.getAttribute?.('data-value'),
+      el.getAttribute?.('value'),
+      el.getAttribute?.('aria-valuenow'),
+      ownText(el)
+    ].map(clean).filter(Boolean);
   }
-  function expirationValue(raw = '') {
+
+  function parseExpiration(raw = '') {
     const spaced = fold(raw);
-    const labeled = spaced.match(/(?:expiracao|expiry|expiration|duracao|duration|tempo da operacao|tempo de operacao)[^0-9]{0,48}(\d{1,4})\s*(s|seg|segundo|segundos|m|min|minuto|minutos)\b/);
+    if (!spaced) return null;
+
+    const labeled = spaced.match(/(?:expiracao|expiry|expiration|tempo de expiracao|tempo da operacao|tempo de operacao|duracao|duration)[^0-9]{0,80}(\d{1,4})\s*(s|seg|segundo|segundos|m|min|minuto|minutos)\b/);
     if (labeled) {
       const amount = Number(labeled[1]);
       return /^(m|min|minuto|minutos)$/.test(labeled[2]) ? `${amount * 60}s` : `${amount}s`;
     }
+
     const s = spaced.replace(/\s+/g, '');
     let m = s.match(/^(\d{1,4})(?:s|seg|segundo|segundos)$/); if (m) return `${Number(m[1])}s`;
     m = s.match(/^(\d{1,3})(?:m|min|minuto|minutos)$/); if (m) return `${Number(m[1]) * 60}s`;
@@ -85,269 +101,269 @@
     if (m) return `${Number(m[1]) * 60 + Number(m[2])}s`;
     return null;
   }
-  function expirationFromSemanticElement(el, ctx = '') {
-    const direct = expirationValue(text(el));
-    if (direct) return direct;
-    if (!/expira|expiry|expiration|duracao|duration|tempo da operacao|tempo de operacao/.test(ctx)) return null;
-    const attrs = [
-      el?.getAttribute?.('data-value'),
-      el?.getAttribute?.('value'),
-      el?.getAttribute?.('aria-valuenow'),
-      el?.getAttribute?.('aria-valuetext')
-    ].filter(Boolean);
-    for (const raw of attrs) {
-      const parsed = expirationValue(raw);
-      if (parsed) return parsed;
-      const numeric = String(raw).trim().match(/^\d{1,4}$/);
-      if (numeric) {
-        const seconds = Number(numeric[0]);
-        if (seconds > 0 && seconds <= 3600) return `${seconds}s`;
+
+  function directDuration(el) {
+    for (const raw of rawValues(el)) {
+      if (raw.length <= 40 && durationExact.test(raw)) {
+        const parsed = parseExpiration(raw);
+        if (parsed) return parsed;
       }
     }
     return null;
   }
-  function expirationAroundLabel(raw = '') {
-    const body = fold(raw);
+
+  function semanticText(el) {
+    if (!el) return '';
+    const parts = [
+      ownText(el), el.id, el.className, el.getAttribute?.('data-testid'), el.getAttribute?.('data-name'),
+      el.getAttribute?.('name'), el.getAttribute?.('aria-label'), el.getAttribute?.('title'),
+      el.getAttribute?.('role'), el.getAttribute?.('data-state')
+    ];
+    return fold(parts.filter(Boolean).join(' '));
+  }
+
+  function isExpirationLabel(el) {
+    if (!visible(el)) return false;
+    const own = fold(ownText(el) || el.getAttribute?.('aria-label') || '');
+    if (!own || own.length > 90) return false;
+    return /^(?:expiracao|expiry|expiration)$/.test(own)
+      || /^(?:tempo de expiracao|expiration time)$/.test(own);
+  }
+
+  function selectedLike(el) {
+    const flags = fold([
+      el?.getAttribute?.('aria-selected'),
+      el?.getAttribute?.('aria-current'),
+      el?.getAttribute?.('data-state'),
+      el?.getAttribute?.('data-active'),
+      el?.className
+    ].filter(Boolean).join(' '));
+    return /\b(?:true|active|selected|current|checked|open)\b/.test(flags);
+  }
+
+  function controlLike(el) {
+    return !!el?.matches?.('button,input,select,[role="button"],[role="combobox"],[aria-haspopup],[data-state]');
+  }
+
+  function expirationControlByLabel(all = []) {
+    const labels = all.filter(isExpirationLabel);
+    if (!labels.length) return null;
+    const durationNodes = all
+      .filter(el => visible(el))
+      .map(el => ({ el, value: directDuration(el) }))
+      .filter(row => row.value);
+
+    const candidates = [];
+    for (const label of labels) {
+      const labelOwn = fold(ownText(label) || label.getAttribute?.('aria-label') || '');
+      const strongLabel = /^(?:expiracao|expiry|expiration)$/.test(labelOwn);
+      const lr = label.getBoundingClientRect();
+
+      // Accessibility/custom controls sometimes carry the value on the same
+      // element as the expiration label.
+      const direct = directDuration(label);
+      if (direct) candidates.push({ value: direct, score: strongLabel ? 420 : 350, reason: 'label-direct' });
+
+      // Prefer exact duration tokens physically attached to the visible
+      // "Expiração" card. This avoids choosing arbitrary entries from an open
+      // dropdown ("5 seg", "10 seg", "1 min", ...).
+      for (const row of durationNodes) {
+        const el = row.el;
+        if (el === label) continue;
+        const r = el.getBoundingClientRect();
+        const vertical = Math.abs((r.top + r.bottom) / 2 - (lr.top + lr.bottom) / 2);
+        const below = r.top >= lr.top - 8 && r.top - lr.bottom <= 120;
+        const horizontalGap = r.right < lr.left ? lr.left - r.right : r.left > lr.right ? r.left - lr.right : 0;
+        if (vertical > 150 || horizontalGap > 560) continue;
+
+        let sameContainer = false;
+        let p = label.parentElement;
+        for (let depth = 0; p && depth < 5; depth += 1, p = p.parentElement) {
+          if (p === el.parentElement || p.contains?.(el)) { sameContainer = true; break; }
+        }
+
+        const role = fold(el.getAttribute?.('role') || '');
+        const explicitlyUnselected = el.getAttribute?.('aria-selected') === 'false';
+        let score = strongLabel ? 300 : 225;
+        score += sameContainer ? 105 : 0;
+        score += below ? 55 : 0;
+        score += controlLike(el) ? 35 : 0;
+        score += selectedLike(el) ? 70 : 0;
+        if (role === 'option' && !selectedLike(el)) score -= 110;
+        if (explicitlyUnselected) score -= 150;
+        score -= Math.min(150, horizontalGap / 5 + vertical / 3);
+        candidates.push({ value: row.value, score, reason: 'label-geometry' });
+      }
+
+      // Walk the nearest containers and accept only a single unambiguous
+      // duration. A dropdown containing many options is deliberately rejected.
+      let parent = label.parentElement;
+      for (let depth = 0; parent && depth < 6; depth += 1, parent = parent.parentElement) {
+        let descendants = [];
+        try { descendants = [...parent.querySelectorAll('button,input,select,option,[role="button"],[role="combobox"],[role="option"],span,div,strong,p')].slice(0, 240); } catch {}
+        const values = descendants
+          .filter(visible)
+          .map(directDuration)
+          .filter(Boolean);
+        const unique = [...new Set(values)];
+        if (unique.length === 1) {
+          candidates.push({ value: unique[0], score: (strongLabel ? 360 : 280) - depth * 14, reason: 'single-value-container' });
+          break;
+        }
+      }
+    }
+
+    candidates.sort((a, b) => b.score - a.score);
+    return candidates[0]?.score >= 170 ? candidates[0] : null;
+  }
+
+  function semanticControlExpiration(all = []) {
+    const candidates = [];
+    for (const el of all) {
+      if (!visible(el)) continue;
+      const meta = semanticText(el);
+      if (!expirationSemantics.test(meta)) continue;
+      const own = rawValues(el);
+      for (const raw of own) {
+        const parsed = directDuration({ 
+          matches: () => false,
+          getAttribute: name => name === 'data-value' ? raw : null
+        });
+        if (parsed) candidates.push({ value: parsed, score: controlLike(el) ? 260 : 210, reason: 'semantic-control' });
+      }
+      const combined = clean(el.innerText || el.textContent || '');
+      if (combined && combined.length < 220) {
+        const parsed = parseExpiration(combined);
+        if (parsed) candidates.push({ value: parsed, score: controlLike(el) ? 255 : 205, reason: 'semantic-text' });
+      }
+    }
+    candidates.sort((a, b) => b.score - a.score);
+    return candidates[0] || null;
+  }
+
+  function bodyExpiration() {
+    const body = fold(clean(document.body?.innerText || document.body?.textContent || '').slice(0, 260000));
     if (!body) return null;
-    for (const marker of ['expiracao', 'expiry', 'expiration']) {
+    const labels = ['expiracao', 'expiry', 'expiration'];
+    for (const marker of labels) {
       let from = 0;
-      for (let attempt = 0; attempt < 12; attempt += 1) {
+      for (let attempt = 0; attempt < 20; attempt += 1) {
         const index = body.indexOf(marker, from);
         if (index < 0) break;
-
-        // Normal DOM order: "Expiração" then the observed value.
-        const after = body.slice(index, Math.min(body.length, index + 360));
-        const direct = expirationValue(after);
-        if (direct) return direct;
-
-        // Responsive/embedded layouts can visually place the label before its
-        // value while DOM/text order is reversed (for example "1 min Expiração").
-        // Only accept a real duration token immediately around an explicit
-        // expiration label; never synthesize a default 60-second value.
-        const before = body.slice(Math.max(0, index - 180), index);
-        const matches = [...before.matchAll(/(?:^|[^0-9])((?:\d{1,3}:[0-5]\d)|(?:\d{1,4}\s*(?:s|seg|segundo|segundos|m|min|minuto|minutos)))\b/g)];
-        const token = matches.at(-1)?.[1] || '';
-        const reversed = expirationValue(token);
-        if (reversed) return reversed;
-
+        const after = body.slice(index, Math.min(body.length, index + 180));
+        const labeled = parseExpiration(after);
+        if (labeled) return { value: labeled, score: 180, reason: 'body-label' };
+        const match = after.match(/(?:^|[^0-9])(\d{1,4}\s*(?:s|seg|segundo|segundos|m|min|minuto|minutos))\b/);
+        const parsed = parseExpiration(match?.[1] || '');
+        if (parsed) return { value: parsed, score: 175, reason: 'body-near-label' };
         from = index + marker.length;
       }
     }
     return null;
   }
 
-  function bodyExpiration() {
-    const raw = clean(document.body?.innerText || document.body?.textContent || '');
-    if (!raw) return null;
-    const body = fold(raw.slice(0, 220000));
-    return expirationAroundLabel(body);
-  }
-
-  function nearbyExpiration(all = []) {
-    const labels = all.filter(el => {
-      if (!visible(el)) return false;
-      const own = fold(text(el));
-      return own && own.length <= 160 && /expiracao|expiry|expiration/.test(own);
-    });
-    if (!labels.length) return null;
-
-    const candidates = [];
-    for (const label of labels) {
-      let parent = label;
-      for (let depth = 0; parent && depth < 9; depth += 1, parent = parent.parentElement) {
-        const combined = clean(parent.innerText || parent.textContent || '');
-        if (combined && combined.length <= 1800) {
-          const value = expirationAroundLabel(combined);
-          if (value) candidates.push({ value, score: 100 - depth * 2 });
-        }
-      }
-
-      const lr = label.getBoundingClientRect();
-      for (const el of all) {
-        if (el === label || !visible(el)) continue;
-        const own = text(el);
-        if (!own || own.length > 48) continue;
-        const value = expirationValue(own);
-        if (!value) continue;
-        const r = el.getBoundingClientRect();
-        const vertical = Math.abs((r.top + r.bottom) / 2 - (lr.top + lr.bottom) / 2);
-        // Measure the actual gap between the label and value, regardless
-        // of which side the responsive layout places the value on.
-        const horizontal = r.right < lr.left ? lr.left - r.right : r.left > lr.right ? r.left - lr.right : 0;
-        const sameControlBand = vertical <= 120 && horizontal <= 520;
-        if (!sameControlBand) continue;
-        const distance = horizontal + vertical * 1.5;
-        candidates.push({ value, score: Math.max(91, 99 - distance / 80) });
-      }
-    }
-
-    candidates.sort((a, b) => b.score - a.score);
-    return candidates[0] || null;
-  }
-
-
-  function tradeControlExpiration(all = []) {
-    const candidates = [];
-    const unitOnly = raw => {
-      const own = fold(raw);
-      if (!/^(\d{1,4})\s*(?:s|seg|segundo|segundos|m|min|minuto|minutos)$/.test(own)) return null;
-      return expirationValue(own);
-    };
-    for (const el of all) {
-      if (!visible(el)) continue;
-      const own = text(el);
-      if (!own || own.length > 32) continue;
-      const value = unitOnly(own);
-      if (!value) continue;
-
-      const parts = [];
-      let node = el;
-      let controlLike = false;
-      for (let depth = 0; node && depth < 5; depth += 1, node = node.parentElement) {
-        const nodeText = clean(node.innerText || node.textContent || '').slice(0, 420);
-        parts.push(
-          nodeText,
-          node.id,
-          node.className,
-          node.getAttribute?.('data-testid'),
-          node.getAttribute?.('data-name'),
-          node.getAttribute?.('aria-label'),
-          node.getAttribute?.('role')
-        );
-        if (node.matches?.('button,input,select,[role="button"],[role="combobox"],[aria-selected="true"],[data-state="active"]')) {
-          controlLike = true;
-        }
-      }
-      const local = fold(parts.filter(Boolean).join(' '));
-      const tradeSemantic = /comprar|vender|buy|sell|payout|retorno|return|lucro|profit|amount|valor|stake|trade|option|deal/.test(local);
-      const currencySemantic = /r\$|\$|usd|brl|saldo|balance/.test(local);
-      const candleSemantic = /countdown|timer|vela|candle|fechamento|candle-close|remaining|restante/.test(local);
-      const explicitExpiration = /expira|expiry|expiration|duracao|duration|tempo da operacao|tempo de operacao/.test(local);
-
-      // Compact CasaTrade layouts can render the expiration selector as only
-      // "5 seg" / "1 min", without a visible Expiração label. Accept that
-      // stable unit token only when its local control band is clearly the
-      // trade ticket, never from the chart/candle timer area.
-      if (!explicitExpiration && (!tradeSemantic || (!controlLike && !currencySemantic))) continue;
-      if (candleSemantic && !explicitExpiration) continue;
-
-      let score = explicitExpiration ? 106 : 92;
-      if (tradeSemantic) score += 8;
-      if (controlLike) score += 5;
-      if (currencySemantic) score += 3;
-      if (candleSemantic && !explicitExpiration) score -= 12;
-      candidates.push({ value, score });
-    }
-    candidates.sort((a, b) => b.score - a.score);
-    return candidates[0] || null;
-  }
-
-  function linkedExpiration(all = []) {
-    const labels = all.filter(el => {
-      if (!visible(el)) return false;
-      const own = fold(text(el));
-      return own && /^(expiracao|expiry|expiration)\b/.test(own);
-    });
-    const candidates = [];
-    for (const label of labels) {
-      const probe = node => {
-        if (!(node instanceof Element) || !visible(node)) return;
-        const value = expirationValue(text(node)) || expirationAroundLabel(text(node));
-        if (value) candidates.push({ value, score: 110 });
-      };
-      probe(label.previousElementSibling);
-      probe(label.nextElementSibling);
-      const parent = label.parentElement;
-      if (parent) {
-        for (const child of [...parent.children].slice(0, 18)) probe(child);
-        const combined = clean(parent.innerText || parent.textContent || '');
-        const value = expirationAroundLabel(combined);
-        if (value) candidates.push({ value, score: 108 });
-      }
-      const controls = clean(label.getAttribute?.('aria-controls') || '');
-      if (controls) {
-        try { probe(document.getElementById(controls)); } catch {}
-      }
-    }
-    candidates.sort((a,b) => b.score - a.score);
-    return candidates[0] || null;
-  }
-
   function timeframeValue(raw = '') {
     const s = clean(raw).toUpperCase().replace(/\s+/g, '');
-    let m = s.match(/^M(\d{1,3})$/) || s.match(/^(\d{1,3})M$/); if (m && Number(m[1]) > 0) return `M${Number(m[1])}`;
-    m = s.match(/^S(\d{1,5})$/) || s.match(/^(\d{1,5})S$/); if (m && Number(m[1]) > 0) return `S${Number(m[1])}`;
+    let m = s.match(/^M(\d{1,3})$/) || s.match(/^(\d{1,3})M$/); if (m && Number(m[1]) > 0) return `M${m[1]}`;
+    m = s.match(/^S(\d{1,5})$/) || s.match(/^(\d{1,5})S$/); if (m && Number(m[1]) > 0) return `S${m[1]}`;
     return null;
   }
-  function scan() {
-    let exp = null, tf = null;
-    const all = elements();
+
+  function selectedTimeframe(all = []) {
+    const rows = [];
     for (const el of all) {
       if (!visible(el)) continue;
-      const own = text(el);
-      if (!own || own.length > 160) continue;
-      const ctx = context(el);
-      const controlLike = el.matches?.('button,input,select,[role="button"],[role="combobox"],[aria-selected="true"],[data-state="active"]');
-      if (!exp && /expira|expiry|expiration|duracao|duration|tempo da operacao|tempo de operacao/.test(ctx)) {
-        // CasaTrade often renders the label and value in sibling nodes
-        // ("Expiração" + "1 min"). Read the labelled container too, but only
-        // inside expiration semantics so candle countdowns cannot be mistaken.
-        const value = expirationFromSemanticElement(el, ctx) || expirationValue(ctx);
-        if (value && (controlLike || own.length <= 64 || /expira|expiry|expiration|duracao|duration/.test(ctx))) {
-          exp = { value, score: controlLike ? 99 : /expira|expiry|expiration|duracao|duration/.test(fold(own)) ? 94 : 90 };
-        }
-      }
-      if (!tf && /timeframe|periodo|period|vela|candle/.test(ctx)) {
-        const value = timeframeValue(own);
-        if (value && (controlLike || /selected|active|current|true/.test(ctx))) tf = { value, score: controlLike ? 94 : 75 };
-      }
-      if (exp && tf) break;
+      const own = ownText(el);
+      if (!own || own.length > 24) continue;
+      const value = timeframeValue(own);
+      if (!value) continue;
+      const meta = semanticText(el);
+      let score = 0;
+      if (/timeframe|periodo|period|vela|candle|grafico|gráfico/.test(meta)) score += 70;
+      if (selectedLike(el)) score += 60;
+      if (controlLike(el)) score += 35;
+      if (score >= 70) rows.push({ value, score });
     }
-    if (!exp) {
-      const linked = linkedExpiration(all);
-      if (linked?.value) exp = linked;
-    }
-    if (!exp) {
-      const nearby = nearbyExpiration(all);
-      if (nearby?.value) exp = nearby;
-    }
-    if (!exp) {
-      const tradeControl = tradeControlExpiration(all);
-      if (tradeControl?.value) exp = tradeControl;
-    }
-    if (!exp) {
-      const bodyValue = bodyExpiration();
-      if (bodyValue) exp = { value: bodyValue, score: 96 };
-    }
+    rows.sort((a, b) => b.score - a.score);
+    return rows[0] || null;
+  }
+
+  function scan() {
+    const all = elements();
+    const strong = expirationControlByLabel(all);
+    const semantic = strong || semanticControlExpiration(all);
+    const body = semantic || bodyExpiration();
+    const exp = strong || semantic || body;
+    const tf = selectedTimeframe(all);
+
     if (!exp && !tf) return null;
     return {
       amount: null,
       expiration: exp?.value || null,
       timeframe: tf?.value || null,
-      confidence: { amount: 0, expiration: exp?.score || 0, timeframe: tf?.score || 0 },
-      source: 'casatrade-expiration-probe',
-      observedAt: Date.now()
+      confidence: {
+        amount: 0,
+        // Strong visual-control evidence intentionally dominates older readers
+        // that may still exist in the tab after an unpacked-extension reload.
+        expiration: exp ? Math.max(110, Math.min(140, Number(exp.score || 0))) : 0,
+        timeframe: tf?.score || 0
+      },
+      source: 'casatrade-expiration-probe-v3',
+      observedAt: Date.now(),
+      evidence: exp?.reason || null
     };
   }
 
-  let last = '';
+  let lastKey = '';
   let lastSentAt = 0;
-  globalThis.__ATS_FORCE_EXPIRATION_SCAN__ = () => publish(true);
+  let stopped = false;
+  let scheduled = 0;
+
   async function publish(force = false) {
+    if (stopped) return;
     const snapshot = scan();
     if (!snapshot) return;
-    const key = JSON.stringify([snapshot.expiration, snapshot.timeframe]);
+    const key = JSON.stringify([snapshot.expiration, snapshot.timeframe, snapshot.evidence]);
     const now = Date.now();
-    // The background intentionally clears platform controls on an asset/session
-    // reset. Re-publish unchanged CasaTrade controls as a heartbeat so a stable
-    // "5 seg" value is restored after switching the active market.
-    if (!force && key === last && now - lastSentAt < 900) return;
-    last = key;
+    if (!force && key === lastKey && now - lastSentAt < 450) return;
+    lastKey = key;
     lastSentAt = now;
+    globalThis.__ATS_EXPIRATION_PROBE_LAST__ = snapshot;
     await sendMessage({ type: 'ATS_PLATFORM_CONTROLS_OBSERVED', snapshot });
   }
-  new MutationObserver(() => publish(false).catch(() => {})).observe(document.documentElement, { subtree: true, childList: true, characterData: true, attributes: true });
-  document.addEventListener('click', () => setTimeout(() => publish(true).catch(() => {}), 80), true);
-  setInterval(() => publish(true).catch(() => {}), 1200);
+
+  function schedule(force = false, delay = 40) {
+    if (stopped) return;
+    if (scheduled) clearTimeout(scheduled);
+    scheduled = setTimeout(() => {
+      scheduled = 0;
+      publish(force).catch(() => {});
+    }, delay);
+  }
+
+  const observer = new MutationObserver(() => schedule(false, 35));
+  try { observer.observe(document.documentElement, { subtree: true, childList: true, characterData: true, attributes: true }); } catch {}
+
+  const clickHandler = () => {
+    schedule(true, 45);
+    setTimeout(() => publish(true).catch(() => {}), 220);
+  };
+  document.addEventListener('click', clickHandler, true);
+
+  const intervalId = setInterval(() => publish(true).catch(() => {}), 650);
+  globalThis.__ATS_FORCE_EXPIRATION_SCAN__ = () => publish(true);
+  globalThis.__ATS_EXPIRATION_PROBE_RUNTIME__ = {
+    version: 'expiration-real-v3',
+    scan,
+    parseExpiration,
+    teardown() {
+      stopped = true;
+      try { observer.disconnect(); } catch {}
+      try { document.removeEventListener('click', clickHandler, true); } catch {}
+      try { clearInterval(intervalId); } catch {}
+      if (scheduled) { try { clearTimeout(scheduled); } catch {} }
+    }
+  };
+
   publish(true).catch(() => {});
 })();
