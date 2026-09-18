@@ -9,6 +9,8 @@ const core = fs.readFileSync(new URL('../src/core/live-fast-decision.js', import
 test('fast decision receives and prioritizes the current CasaTrade market clock', () => {
   assert.match(background, /secondsRemaining:\s*observed\.diagnostics\?\.marketClock\?\.secondsRemaining\s*\?\?\s*observed\.signal\?\.secondsRemaining/);
   assert.match(core, /Number\(context\.secondsRemaining \?\? signal\.secondsRemaining \?\? 0\)/);
+  assert.match(background, /targetStart:\s*observed\.diagnostics\?\.marketClock\?\.closeAt\s*\?\?\s*observed\.signal\?\.targetStart/);
+  assert.match(core, /num\(context\.targetStart\) \?\? num\(signal\.targetStart\) \?\? now \+ seconds \* 1000/);
   assert.doesNotMatch(core, /Number\(signal\.secondsRemaining \?\? context\.secondsRemaining \?\? 0\)/);
 });
 
