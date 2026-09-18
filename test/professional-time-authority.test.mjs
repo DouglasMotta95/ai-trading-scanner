@@ -11,7 +11,7 @@ test('CasaTrade time is the only authority for a user-facing entry', () => {
   const panel = read('src/sidepanel/app-v2.js');
 
   assert.doesNotMatch(clock, /\|\|\s*'M1'/);
-  assert.match(clock, /if \(expirySemantic && !candleSemantic && !chartScoped\) continue/);
+  assert.match(clock, /if \(expirySemantic && !candleSemantic\) continue/);
   assert.match(clock, /clockSource: 'platform-cycle-derived'/);
   assert.match(clock, /verified: false, operational: true/);
   assert.match(policy, /EXACT_CLOCK_SOURCES = new Set\(\['trader-dom-countdown', 'network-server-cycle'\]\)/);
