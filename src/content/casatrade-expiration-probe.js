@@ -55,6 +55,64 @@
     m = s.match(/^(\d{1,3}):([0-5]\d)$/); if (m) return `${Number(m[1]) * 60 + Number(m[2])}s`;
     return null;
   }
+  function bodyExpiration() {
+    const raw = clean(document.body?.innerText || document.body?.textContent || '');
+    if (!raw) return null;
+    const body = fold(raw.slice(0, 220000));
+    for (const marker of ['expiracao', 'expiry', 'expiration']) {
+      let from = 0;
+      for (let attempt = 0; attempt < 12; attempt += 1) {
+        const index = body.indexOf(marker, from);
+        if (index < 0) break;
+        const windowText = body.slice(index, Math.min(body.length, index + 180));
+        const value = expirationValue(windowText);
+        if (value) return value;
+        from = index + marker.length;
+      }
+    }
+    return null;
+  }
+
+  function nearbyExpiration(all = []) {
+    const labels = all.filter(el => {
+      if (!visible(el)) return false;
+      const own = fold(text(el));
+      return own && own.length <= 90 && /expiracao|expiry|expiration/.test(own);
+    });
+    if (!labels.length) return null;
+
+    const candidates = [];
+    for (const label of labels) {
+      let parent = label;
+      for (let depth = 0; parent && depth < 6; depth += 1, parent = parent.parentElement) {
+        const combined = clean(parent.innerText || parent.textContent || '');
+        if (combined && combined.length <= 700) {
+          const value = expirationValue(combined);
+          if (value) candidates.push({ value, score: 100 - depth * 2 });
+        }
+      }
+
+      const lr = label.getBoundingClientRect();
+      for (const el of all) {
+        if (el === label || !visible(el)) continue;
+        const own = text(el);
+        if (!own || own.length > 48) continue;
+        const value = expirationValue(own);
+        if (!value) continue;
+        const r = el.getBoundingClientRect();
+        const vertical = Math.abs((r.top + r.bottom) / 2 - (lr.top + lr.bottom) / 2);
+        const horizontal = r.left - lr.right;
+        const sameControlBand = vertical <= 90 && horizontal >= -80 && horizontal <= 360;
+        if (!sameControlBand) continue;
+        const distance = Math.abs(horizontal) + vertical * 1.5;
+        candidates.push({ value, score: Math.max(91, 99 - distance / 80) });
+      }
+    }
+
+    candidates.sort((a, b) => b.score - a.score);
+    return candidates[0] || null;
+  }
+
   function timeframeValue(raw = '') {
     const s = clean(raw).toUpperCase().replace(/\s+/g, '');
     let m = s.match(/^M(\d{1,3})$/) || s.match(/^(\d{1,3})M$/); if (m && Number(m[1]) > 0) return `M${Number(m[1])}`;
@@ -63,7 +121,8 @@
   }
   function scan() {
     let exp = null, tf = null;
-    for (const el of elements()) {
+    const all = elements();
+    for (const el of all) {
       if (!visible(el)) continue;
       const own = text(el);
       if (!own || own.length > 90) continue;
@@ -85,9 +144,12 @@
       if (exp && tf) break;
     }
     if (!exp) {
-      const body = clean(document.body?.innerText || document.body?.textContent || '');
-      const value = expirationValue(body.slice(0, 30000));
-      if (value) exp = { value, score: 88 };
+      const nearby = nearbyExpiration(all);
+      if (nearby?.value) exp = nearby;
+    }
+    if (!exp) {
+      const value = bodyExpiration();
+      if (value) exp = { value, score: 96 };
     }
     if (!exp && !tf) return null;
     return {
