@@ -188,7 +188,7 @@ async function connectNow() {
 }
 
 async function refreshLiveReaders() {
-  const response = await chrome.runtime.sendMessage({ type: 'ATS_REFRESH_MARKET' }).catch(() => null);
+  const response = await chrome.runtime.sendMessage({ type: 'ATS_REFRESH_TARGET_TAB' }).catch(() => null);
   if (response?.ok && response?.state) {
     lastState = response.state;
     renderShell(lastState);
