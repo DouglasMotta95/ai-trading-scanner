@@ -132,6 +132,10 @@ export function fastLiveDecision(signal = {}, context = {}) {
   const hits = observe(key, direction, strong, at);
   if (strong && hits >= FAST_DECISION.confirmHits) return enter(signal, direction, score, seconds, q);
 
+  // The first valid final-window hit stays visible as POSSÍVEL. Only the second
+  // hit inside the confirmation gap upgrades it to ENTRAR.
+  if (strong && hits > 0) return possible(signal, direction, score, seconds, q);
+
   return waitFinal(signal, score, direction
     ? `decisão final sem confirmação suficiente para ${direction === 'BUY' ? 'COMPRA' : 'VENDA'}`
     : 'sem direção confiável');
