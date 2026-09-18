@@ -307,6 +307,23 @@ async function applyFocus(message = {}, sender = {}) {
     const userSelected = message.interactionHint === true && interactionAt > 0 && now - interactionAt < 3500;
     const oldFresh = Number(old?.at || 0) > 0 && now - Number(old.at) < 2600;
     const oldEmbeddedTrader = old?.embeddedTrader === true;
+    const incomingExplicit = message.explicit === true;
+    const incomingStable = Number(message.stableFor || 0) >= 220 || Number(message.samples || 0) >= 3;
+
+    // A passive symbol change from the same frame must prove stability before it
+    // can replace a fresh selected market. User interaction/explicit selection wins immediately.
+    if (assetChanged && oldFresh && !userSelected && !incomingExplicit && !incomingStable) {
+      return {
+        ...state,
+        diagnostics: {
+          ...(state.diagnostics || {}),
+          focusRejected: {
+            asset, frameId: info.frameId, frameHost: info.frameHost,
+            reason: 'passive-asset-change-not-stable', at: now
+          }
+        }
+      };
+    }
 
     // Hidden/inactive CasaTrade market frames can stay alive and keep publishing
     // their old symbol. They must never roll the visible user-selected chart back.
