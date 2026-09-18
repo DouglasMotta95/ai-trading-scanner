@@ -27,10 +27,10 @@
   function elements() {
     const out = [];
     for (const root of roots()) {
-      try { out.push(...root.querySelectorAll('button,input,select,[role="button"],[role="combobox"],[aria-selected="true"],[data-state="active"],span,div')); } catch {}
-      if (out.length > 7000) break;
+      try { out.push(...root.querySelectorAll('*')); } catch {}
+      if (out.length > 9000) break;
     }
-    return out.slice(0, 7000);
+    return out.slice(0, 9000);
   }
   function text(el) {
     if (el instanceof HTMLInputElement || el instanceof HTMLSelectElement) return clean(el.value || el.selectedOptions?.[0]?.textContent || '');
@@ -39,7 +39,7 @@
   function context(el) {
     const parts = [text(el), el?.id, el?.className, el?.getAttribute?.('data-testid')];
     let p = el?.parentElement;
-    for (let i = 0; p && i < 2; i++, p = p.parentElement) parts.push(clean(p.innerText || p.textContent || '').slice(0, 180));
+    for (let i = 0; p && i < 4; i++, p = p.parentElement) parts.push(clean(p.innerText || p.textContent || '').slice(0, 420));
     return fold(parts.filter(Boolean).join(' '));
   }
   function expirationValue(raw = '') {
@@ -65,7 +65,7 @@
         if (index < 0) break;
 
         // Normal DOM order: "Expiração" then the observed value.
-        const after = body.slice(index, Math.min(body.length, index + 180));
+        const after = body.slice(index, Math.min(body.length, index + 360));
         const direct = expirationValue(after);
         if (direct) return direct;
 
@@ -73,7 +73,7 @@
         // value while DOM/text order is reversed (for example "1 min Expiração").
         // Only accept a real duration token immediately around an explicit
         // expiration label; never synthesize a default 60-second value.
-        const before = body.slice(Math.max(0, index - 72), index);
+        const before = body.slice(Math.max(0, index - 180), index);
         const matches = [...before.matchAll(/(?:^|[^0-9])((?:\d{1,3}:[0-5]\d)|(?:\d{1,4}\s*(?:s|seg|segundo|segundos|m|min|minuto|minutos)))\b/g)];
         const token = matches.at(-1)?.[1] || '';
         const reversed = expirationValue(token);
@@ -96,16 +96,16 @@
     const labels = all.filter(el => {
       if (!visible(el)) return false;
       const own = fold(text(el));
-      return own && own.length <= 90 && /expiracao|expiry|expiration/.test(own);
+      return own && own.length <= 160 && /expiracao|expiry|expiration/.test(own);
     });
     if (!labels.length) return null;
 
     const candidates = [];
     for (const label of labels) {
       let parent = label;
-      for (let depth = 0; parent && depth < 6; depth += 1, parent = parent.parentElement) {
+      for (let depth = 0; parent && depth < 9; depth += 1, parent = parent.parentElement) {
         const combined = clean(parent.innerText || parent.textContent || '');
-        if (combined && combined.length <= 700) {
+        if (combined && combined.length <= 1800) {
           const value = expirationAroundLabel(combined);
           if (value) candidates.push({ value, score: 100 - depth * 2 });
         }
@@ -123,7 +123,7 @@
         // Measure the actual gap between the label and value, regardless
         // of which side the responsive layout places the value on.
         const horizontal = r.right < lr.left ? lr.left - r.right : r.left > lr.right ? r.left - lr.right : 0;
-        const sameControlBand = vertical <= 90 && horizontal <= 360;
+        const sameControlBand = vertical <= 120 && horizontal <= 520;
         if (!sameControlBand) continue;
         const distance = horizontal + vertical * 1.5;
         candidates.push({ value, score: Math.max(91, 99 - distance / 80) });
@@ -146,7 +146,7 @@
     for (const el of all) {
       if (!visible(el)) continue;
       const own = text(el);
-      if (!own || own.length > 90) continue;
+      if (!own || own.length > 160) continue;
       const ctx = context(el);
       const controlLike = el.matches?.('button,input,select,[role="button"],[role="combobox"],[aria-selected="true"],[data-state="active"]');
       if (!exp && /expira|expiry|expiration|duracao|duration|tempo da operacao|tempo de operacao/.test(ctx)) {
