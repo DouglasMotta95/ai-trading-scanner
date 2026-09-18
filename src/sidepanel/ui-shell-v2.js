@@ -74,6 +74,18 @@ async function connectNow() {
   try {
     const response = await chrome.runtime.sendMessage({ type: 'ATS_CONNECT_ACTIVE_TAB' }).catch(() => null);
     renderShell(response?.state || {});
+    if (!response?.ok) {
+      const error = String(response?.error || 'background_no_response');
+      const messages = {
+        platform_not_registered: 'Abra a CasaTrade na aba ativa e clique em CONECTAR novamente.',
+        runtime_injection_failed: 'CasaTrade reconhecida, mas os leitores ao vivo não entraram na página. Recarregue a aba e conecte novamente.',
+        license_required: 'A licença precisa estar ativa antes de conectar.',
+        background_no_response: 'O serviço da extensão não respondeu. Recarregue a extensão e a aba da CasaTrade.'
+      };
+      if ($('syncTitle')) $('syncTitle').textContent = 'CONEXÃO NÃO INICIADA';
+      if ($('syncText')) $('syncText').textContent = messages[error] || `Falha ao conectar: ${error}`;
+      $('connectScannerText').textContent = 'CONECTAR';
+    }
   } finally {
     button.classList.remove('loading');
   }
