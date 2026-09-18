@@ -41,10 +41,17 @@ test('panel open gets a fresh read window and silently reinjects current CasaTra
   const app = read('src/sidepanel/app-v2.js');
   assert.match(shell, /const PANEL_OPENED_AT = Date\.now\(\)/);
   assert.match(shell, /const expirationWaitAge = sessionAge > 0 \? Math\.min\(sessionAge, panelAge\) : panelAge/);
-  assert.match(shell, /ATS_REFRESH_MARKET/);
+  assert.match(shell, /ATS_REFRESH_TARGET_TAB/);
   assert.match(shell, /refreshLiveReaders\(\)/);
   assert.match(app, /const PANEL_OPENED_AT = Date\.now\(\)/);
   assert.match(app, /return Math\.min\(Math\.max\(0, Date\.now\(\) - at\), panelAge\)/);
+});
+
+test('panel refresh targets the registered CasaTrade tab without reconnecting the active tab', () => {
+  const background = read('src/background-control.js');
+  assert.match(background, /async function refreshTargetTab\(\)/);
+  assert.match(background, /const tabId = Number\(state\.targetTabId \|\| 0\)/);
+  assert.match(background, /type === 'ATS_REFRESH_TARGET_TAB'/);
 });
 
 test('manual entry gate uses expiration-specific freshness', () => {
