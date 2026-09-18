@@ -330,7 +330,6 @@ async function applyClock(message = {}, sender = {}) {
     if ((!exact && !fallback) || !validRemaining) {
       return {
         ...state,
-        signal: null,
         diagnostics: {
           ...(state.diagnostics || {}),
           marketClock: {
@@ -425,8 +424,7 @@ async function applyFeed(payload = {}, sender = {}) {
         ...(state.capabilities || {}),
         structuredQuotes: true,
         candles: mergedHistory.length >= 2
-      },
-      ...(!clock ? { signal: null } : {})
+      }
     };
     return {
       ...next,
@@ -475,7 +473,6 @@ async function applyChartPrice(message = {}, sender = {}) {
     let next = {
       ...state,
       asset: normAsset(focus.asset), price, lastSeen: Date.now(), connection: 'online',
-      ...(!clock ? { signal: null } : {}),
       diagnostics: {
         ...(state.diagnostics || {}),
         marketSession: { ...(state.diagnostics?.marketSession || {}), dataMode: 'live', lastLiveAt: Date.now() },
