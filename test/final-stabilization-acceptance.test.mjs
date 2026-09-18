@@ -48,6 +48,8 @@ test('connection handshake times out instead of remaining in indefinite syncing 
 
   assert.match(control, /CONNECT_TIMEOUT_MS = 7000/);
   assert.match(control, /handshakeReady/);
+  assert.match(control, /rows\.length >= 10/);
+  assert.match(shell, /rows\.length >= 10/);
   assert.match(control, /Falha ao conectar — tentar novamente/);
   assert.match(shell, /CONECTADO/);
   assert.match(shell, /DESCONECTADO/);
@@ -75,7 +77,9 @@ test('live quote path populates real observed OHLC and recovers missing readers'
 
   assert.match(session, /function observedCurrentCandle/);
   assert.match(session, /source: 'live-price-observed'/);
+  assert.match(session, /openReliable: false, rangeReliable: false/);
   assert.match(background, /RECOVERY_AFTER_MS = 4500/);
+  assert.match(background, /rows\.length < 10/);
   assert.match(background, /Recuperando leitura real/);
   assert.match(chart, /setInterval\(tick, 400\)/);
 });
