@@ -34,7 +34,13 @@
     return n.toFixed(digits).replace(/0+$/, '').replace(/\.$/, '');
   };
   const setText = (id, value) => { const el = $(id); if (el) el.textContent = value; };
-  const marketId = value => clean(value).toUpperCase().replace(/\s*\(\s*OTC\s*\)\s*$/i, '');
+  const marketId = value => {
+    const raw = clean(value).toUpperCase();
+    if (!raw) return '';
+    const otc = /(?:\(|\b|[_-])OTC(?:\)|\b)?/i.test(raw);
+    const pair = raw.match(/\b([A-Z0-9]{2,20})\s*[\/_-]\s*([A-Z0-9]{2,12})/i);
+    return pair ? `${pair[1]}/${pair[2]}${otc ? ' (OTC)' : ''}` : raw;
+  };
   const freshFocus = state => {
     const focus = state?.diagnostics?.focusedAsset || {};
     return focus.reliable === true
