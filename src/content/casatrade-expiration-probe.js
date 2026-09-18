@@ -1,8 +1,16 @@
 (() => {
   if (globalThis.__ATS_EXPIRATION_PROBE__) return;
   globalThis.__ATS_EXPIRATION_PROBE__ = true;
-  const sendMessage = globalThis.__ATS_SEND_MESSAGE__;
-  if (typeof sendMessage !== 'function') return;
+  const sendMessage = typeof globalThis.__ATS_SEND_MESSAGE__ === 'function'
+    ? globalThis.__ATS_SEND_MESSAGE__
+    : message => new Promise(resolve => {
+        try {
+          chrome.runtime.sendMessage(message, response => {
+            try { void chrome.runtime.lastError; } catch {}
+            resolve(response || null);
+          });
+        } catch { resolve(null); }
+      });
 
   const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
   const fold = value => clean(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
@@ -134,6 +142,37 @@
     return candidates[0] || null;
   }
 
+  function linkedExpiration(all = []) {
+    const labels = all.filter(el => {
+      if (!visible(el)) return false;
+      const own = fold(text(el));
+      return own && /^(expiracao|expiry|expiration)\b/.test(own);
+    });
+    const candidates = [];
+    for (const label of labels) {
+      const probe = node => {
+        if (!(node instanceof Element) || !visible(node)) return;
+        const value = expirationValue(text(node)) || expirationAroundLabel(text(node));
+        if (value) candidates.push({ value, score: 110 });
+      };
+      probe(label.previousElementSibling);
+      probe(label.nextElementSibling);
+      const parent = label.parentElement;
+      if (parent) {
+        for (const child of [...parent.children].slice(0, 18)) probe(child);
+        const combined = clean(parent.innerText || parent.textContent || '');
+        const value = expirationAroundLabel(combined);
+        if (value) candidates.push({ value, score: 108 });
+      }
+      const controls = clean(label.getAttribute?.('aria-controls') || '');
+      if (controls) {
+        try { probe(document.getElementById(controls)); } catch {}
+      }
+    }
+    candidates.sort((a,b) => b.score - a.score);
+    return candidates[0] || null;
+  }
+
   function timeframeValue(raw = '') {
     const s = clean(raw).toUpperCase().replace(/\s+/g, '');
     let m = s.match(/^M(\d{1,3})$/) || s.match(/^(\d{1,3})M$/); if (m && Number(m[1]) > 0) return `M${Number(m[1])}`;
@@ -165,6 +204,10 @@
       if (exp && tf) break;
     }
     if (!exp) {
+      const linked = linkedExpiration(all);
+      if (linked?.value) exp = linked;
+    }
+    if (!exp) {
       const nearby = nearbyExpiration(all);
       if (nearby?.value) exp = nearby;
     }
@@ -185,6 +228,7 @@
 
   let last = '';
   let lastSentAt = 0;
+  globalThis.__ATS_FORCE_EXPIRATION_SCAN__ = () => publish(true);
   async function publish(force = false) {
     const snapshot = scan();
     if (!snapshot) return;
