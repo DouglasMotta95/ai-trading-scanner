@@ -263,6 +263,34 @@ async function applyFocus(message = {}, sender = {}) {
     const oldEmbeddedTrader = old?.embeddedTrader === true;
     const incomingExplicit = message.explicit === true;
     const incomingStable = Number(message.stableFor || 0) >= 220 || Number(message.samples || 0) >= 3;
+    const session = state.diagnostics?.marketSession || {};
+    const incomingProtocolOnly = message.visual === false || clean(message.source) === 'protocol-selected';
+    const transitionProtectsCurrentFocus = session.transitioning === true
+      && !!old?.asset
+      && sameMarket(session.pendingAsset || session.asset, old.asset);
+    const recentVisualSelection = old?.visual !== false
+      && old?.interactionHint === true
+      && Number(old?.interactionAt || old?.at || 0) > 0
+      && now - Number(old.interactionAt || old.at) < 8000;
+
+    // During a visible market switch, stale protocol/network state from the
+    // previous instrument can continue to announce itself as selected for a
+    // few seconds. Never let that non-visual source roll the current visible
+    // transition back to the old market. This is the guard against mixing
+    // USO/USD price/history into a newly selected AUD/CAD session.
+    if (assetChanged && incomingProtocolOnly && (transitionProtectsCurrentFocus || recentVisualSelection)) {
+      return {
+        ...state,
+        diagnostics: {
+          ...(state.diagnostics || {}),
+          focusRejected: {
+            asset, frameId: info.frameId, frameHost: info.frameHost,
+            reason: transitionProtectsCurrentFocus ? 'protocol-rollback-during-visible-transition' : 'protocol-rollback-after-user-selection',
+            at: now
+          }
+        }
+      };
+    }
 
     // A passive symbol change from the same frame must prove stability before it
     // can replace a fresh selected market. User interaction/explicit selection wins immediately.
