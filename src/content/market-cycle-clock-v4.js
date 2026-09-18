@@ -140,7 +140,9 @@
       const chartScoped = inOrNearChart(rect, chart);
       const candleSemantic = /vela|candle|remaining|restante|countdown|timer|fechamento|close/.test(context);
       const expirySemantic = /expira|expiry|expiration/.test(context);
-      if (expirySemantic && !candleSemantic && !chartScoped) continue;
+      // Expiration is a different control. Never let "5 seg" / "1 min"
+      // from the expiration selector become the candle countdown.
+      if (expirySemantic && !candleSemantic) continue;
       if (!candleSemantic && !chartScoped) continue;
       for (const value of values) {
         if (value.seconds < 0 || value.seconds > limit + 2) continue;
@@ -152,6 +154,20 @@
         if (/^\d{1,3}:[0-5]\d$/.test(own)) score += 35;
         rows.push({ ...value, text: own, score, chartScoped, expirySemantic });
       }
+    }
+    const now = Date.now();
+    const previousSeconds = Number(domProbe?.seconds);
+    const previousAt = Number(domProbe?.at || 0);
+    const rolloverWindow = Number.isFinite(previousSeconds)
+      && previousSeconds <= 2
+      && previousAt > 0
+      && now - previousAt > 180
+      && now - previousAt < 4500;
+    if (rolloverWindow) {
+      const rolled = rows
+        .filter(row => row.seconds >= limit - 2 && row.seconds <= limit + 1)
+        .sort((a, b) => b.score - a.score)[0];
+      if (rolled) return rolled;
     }
     rows.sort((a, b) => b.score - a.score || a.seconds - b.seconds);
     return rows[0] || null;
@@ -179,7 +195,7 @@
     const clock = state?.diagnostics?.marketClock || null;
     if (!clock || !focus?.asset) return null;
     if (clock.verified !== true || clock.available === false || clock.role !== 'candle-close') return null;
-    if (!['trader-dom-countdown', 'network-server-cycle', 'structured-candle-boundary'].includes(String(clock.source || ''))) return null;
+    if (!['trader-dom-countdown', 'network-server-cycle'].includes(String(clock.source || ''))) return null;
     if (!sameMarket(clock.asset, focus.asset)) return null;
     if (tf(clock.timeframe) && cycleTf && tf(clock.timeframe) !== tf(cycleTf)) return null;
     if (Number(clock.frameId) !== Number(focus.frameId)) return null;
@@ -303,10 +319,10 @@
         clockText: domClock.text, clockToken: domClock.token, confidence: 99, frameHost: host, at: Date.now()
       } : boundary ? {
         type: 'ATS_MARKET_CLOCK_V2', asset: focus.asset, timeframe: cycleTf,
-        secondsRemaining: boundary.seconds, expiration, available: true, verified: true, operational: true,
-        clockRole: 'candle-close', clockSource: 'structured-candle-boundary', clockMode: 'structured-casatrade-candle-boundary',
-        clockText: 'Fechamento ancorado na vela estruturada da CasaTrade', clockToken: `${boundary.seconds}s`,
-        confidence: 96, frameHost: host, at: Date.now()
+        secondsRemaining: boundary.seconds, expiration, available: true, verified: false, operational: true,
+        clockRole: 'candle-close', clockSource: 'platform-cycle-derived', clockMode: 'structured-candle-boundary-fallback',
+        clockText: 'Clock temporário derivado da vela estruturada enquanto o countdown exato reaparece', clockToken: `${boundary.seconds}s`,
+        confidence: 70, frameHost: host, at: Date.now()
       } : {
         type: 'ATS_MARKET_CLOCK_V2', asset: focus.asset, timeframe: cycleTf,
         secondsRemaining: null, expiration, available: false, verified: false, operational: false,
