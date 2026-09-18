@@ -182,7 +182,14 @@
   let domVerifiedAt = 0;
   function verifiedDomCountdown(cycleTf) {
     const candidate = exactDomCountdown(cycleTf);
-    if (!candidate) { domProbe = null; return null; }
+    if (!candidate) {
+      // CasaTrade can briefly destroy/recreate the countdown node exactly at
+      // candle rollover. Keep the last 0-2s observation long enough for the
+      // new 60..52s token to prove the rollover instead of dropping to an
+      // estimated clock for several seconds.
+      if (!domProbe || Date.now() - Number(domProbe.at || 0) >= 9000) domProbe = null;
+      return null;
+    }
     const duration = secondsFor(cycleTf);
     const now = Date.now();
     const previous = domProbe;
@@ -190,7 +197,11 @@
     const delta = sameTf ? now - Number(previous.at || 0) : 0;
     const drop = sameTf ? Number(previous.seconds) - Number(candidate.seconds) : 0;
     const progressed = !!previous && sameTf && delta > 200 && delta < 4500 && drop > 0 && drop <= Math.max(4, Math.ceil(delta / 1000) + 2);
-    const rolled = !!previous && sameTf && delta > 200 && delta < 4500 && Number(previous.seconds) <= 2 && Number(candidate.seconds) >= duration - 2;
+    const rolled = !!previous && sameTf
+      && delta > 200 && delta < 9000
+      && Number(previous.seconds) <= 2
+      && Number(candidate.seconds) >= duration - 8
+      && (candidate.chartScoped === true || candidate.colonOnly === true);
     domProbe = { timeframe: cycleTf, seconds: candidate.seconds, at: now, text: candidate.text };
     if (progressed || rolled) domVerifiedAt = now;
     return Date.now() - domVerifiedAt < 2600 ? candidate : null;
@@ -282,7 +293,10 @@
       const localDelta = previous ? observedAt - previous.at : 0;
       const drop = previous ? previous.seconds - seconds : 0;
       const progressed = !!previous && previous.cycleTf === cycleTf && localDelta > 150 && localDelta < 4500 && drop > 0 && drop <= Math.max(4, Math.ceil(localDelta / 1000) + 2);
-      const rolled = !!previous && previous.cycleTf === cycleTf && localDelta > 150 && localDelta < 4500 && previous.seconds <= 2 && seconds >= duration - 2 && seconds <= duration + 1;
+      const rolled = !!previous && previous.cycleTf === cycleTf
+        && localDelta > 150 && localDelta < 9000
+        && previous.seconds <= 2
+        && seconds >= duration - 8 && seconds <= duration + 1;
       lastCanvas = { seconds, at: observedAt, cycleTf };
       if (!progressed && !rolled) return;
       const expiration = controlsFresh ? clean(state.platformControls?.observed?.expiration || '') || null : null;
