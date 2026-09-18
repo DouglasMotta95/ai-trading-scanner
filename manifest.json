@@ -41,7 +41,11 @@
         "https://casatrade.com/*",
         "https://*.casatrade.com/*",
         "https://casatrade.io/*",
-        "https://*.casatrade.io/*"
+        "https://*.casatrade.io/*",
+        "https://casatraders.online/*",
+        "https://*.casatraders.online/*",
+        "https://ivcasatraders.online/*",
+        "https://*.ivcasatraders.online/*"
       ],
       "js": [
         "src/content/runtime-message-compat.js",
