@@ -176,6 +176,7 @@ async function runCentralAnalysis(force = false) {
         expiration: current.expiration,
         targetExpiration: current.targetExpiration,
         candles: current.candles,
+        currentCandle: current.currentCandle || processed?.currentCandle || null,
         marketHistory: current.marketHistory,
         lastSeen: current.lastSeen,
         connection: current.connection,
