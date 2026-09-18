@@ -137,3 +137,55 @@ test('generic network duration requires trade expiration semantics and rejects g
   assert.equal(trade?.expiration, '60s');
   assert.equal(trade?.confidence, 84);
 });
+
+
+test('video regression: compact CasaTrade trade ticket can expose unlabeled 5 seg or 1 min expiration', () => {
+  const probe = read('src/content/casatrade-expiration-probe.js');
+  assert.match(probe, /function tradeControlExpiration\(all = \[\]\)/);
+  assert.match(probe, /comprar\|vender\|buy\|sell\|payout/);
+  assert.match(probe, /const tradeControl = tradeControlExpiration\(all\)/);
+  assert.match(probe, /if \(candleSemantic && !explicitExpiration\) continue/);
+});
+
+test('video regression: M1 state can bound a plain MM:SS CasaTrade countdown while progression remains mandatory', () => {
+  const clock = read('src/content/market-cycle-clock-v4.js');
+  assert.match(clock, /const colonOnly = \/\^\\d\{1,3\}:\[0-5\]\\d\$\//);
+  assert.match(clock, /if \(!candleSemantic && !chartScoped && !colonOnly\) continue/);
+  assert.match(clock, /const stateTf = tf\(state\.analysisTimeframe \|\| state\.timeframe\)/);
+  assert.match(clock, /return controlTf \|\| chartTf \|\| exactTf \|\| platformTf \|\| stateTf \|\| null/);
+  assert.match(clock, /const progressed = !!previous/);
+});
+
+test('video regression: connection handshake is market-data readiness, not exact countdown readiness', () => {
+  const control = read('src/background-control.js');
+  const start = control.indexOf('function handshakeReady(');
+  const end = control.indexOf('\nfunction scheduleConnectionTimeout', start);
+  assert.ok(start >= 0 && end > start);
+  const handshake = control.slice(start, end);
+  assert.match(handshake, /session\.dataReady === true/);
+  assert.match(handshake, /rows\.length >= 2/);
+  assert.doesNotMatch(handshake, /marketClock|EXACT_CLOCK_SOURCES|secondsRemaining/);
+});
+
+test('video regression: sidepanel separates CONNECTED state from exact entry clock', () => {
+  const shell = read('src/sidepanel/ui-shell-v2.js');
+  const baseStart = shell.indexOf('function baseHandshake(');
+  const baseEnd = shell.indexOf('\nfunction exactClockReady', baseStart);
+  const exactStart = shell.indexOf('function exactClockReady(');
+  const exactEnd = shell.indexOf('\nfunction exactLiveTime', exactStart);
+  assert.ok(baseStart >= 0 && baseEnd > baseStart && exactStart >= 0 && exactEnd > exactStart);
+  const base = shell.slice(baseStart, baseEnd);
+  const exact = shell.slice(exactStart, exactEnd);
+  assert.match(base, /session\.dataReady === true/);
+  assert.doesNotMatch(base, /EXACT_CLOCK_SOURCES|secondsRemaining/);
+  assert.match(exact, /EXACT_CLOCK_SOURCES/);
+  assert.match(shell, /if \(baseHandshake\(state\)\) return ''/);
+});
+
+test('video regression: recovered live feed clears stale connection timeout and countdown gets warmup window', () => {
+  const session = read('src/background-market-session.js');
+  const app = read('src/sidepanel/app-v2.js');
+  assert.match(session, /delete diagnostics\.connectionError/);
+  assert.match(app, /SINCRONIZANDO COUNTDOWN DA CASATRADE…/);
+  assert.match(app, /sessionAgeMs\(state\) < 5000 \? 'waiting' : 'technical'/);
+});
