@@ -27,9 +27,6 @@ function activeLicense(state = {}) {
 function baseHandshake(state = {}) {
   const focus = state.diagnostics?.focusedAsset || null;
   const clock = state.diagnostics?.marketClock || null;
-  const controls = state.platformControls || {};
-  const rows = Array.isArray(state.candles) ? state.candles : [];
-  const controlsFresh = Number(controls.checkedAt || 0) > 0 && Date.now() - Number(controls.checkedAt) < CONTROLS_FRESH_MS;
   return activeLicense(state)
     && state.connection === 'online'
     && !!state.asset
@@ -47,10 +44,7 @@ function baseHandshake(state = {}) {
     && clean(clock?.frameHost).toLowerCase() === clean(focus?.frameHost).toLowerCase()
     && Number(clock?.at || 0) > 0
     && Date.now() - Number(clock.at) < CLOCK_FRESH_MS
-    && Number.isFinite(Number(clock?.secondsRemaining))
-    && controlsFresh
-    && !!clean(controls.observed?.expiration)
-    && rows.length >= 10;
+    && Number.isFinite(Number(clock?.secondsRemaining));
 }
 
 function exactLiveTime(state = {}) {
