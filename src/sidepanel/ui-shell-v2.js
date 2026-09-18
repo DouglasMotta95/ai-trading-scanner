@@ -29,7 +29,8 @@ function exactLiveTime(state = {}) {
     && String(clock?.frameHost || '').toLowerCase() === String(focus?.frameHost || '').toLowerCase()
     && Number(clock?.at || 0) > 0
     && Date.now() - Number(clock.at) < 3000
-    && !!actualExpiration
+    && String(clock?.timeframe || state.analysisTimeframe || state.timeframe || '').toUpperCase() === 'M1'
+    && actualExpiration === '60s'
     && controlsFresh;
 }
 
