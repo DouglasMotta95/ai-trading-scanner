@@ -200,14 +200,16 @@ function resetForSession(state = {}, { asset, timeframe = null, info, reason, so
 
 function clockRecord(message = {}, info = {}, asset = '', timeframe = null, secondsRemaining = null) {
   const verified = message.verified === true;
+  const at = Date.now();
+  const closeAt = secondsRemaining == null ? null : Math.round((at + Number(secondsRemaining) * 1000) / 1000) * 1000;
   return {
-    asset, timeframe, secondsRemaining, available: true, verified,
+    asset, timeframe, secondsRemaining, closeAt, available: true, verified,
     operational: verified || message.operational === true,
     quality: verified ? 'exact' : 'fallback', role: 'candle-close',
     source: clean(message.clockSource), mode: clean(message.clockMode || (verified ? 'exact' : 'fallback')),
     confidence: Number(message.confidence || 0),
     text: clean(message.clockText || ''), token: clean(message.clockToken || ''),
-    frameId: info.frameId, frameHost: info.frameHost, at: Date.now()
+    frameId: info.frameId, frameHost: info.frameHost, at
   };
 }
 
@@ -470,9 +472,10 @@ function observedCurrentCandle(state = {}, price, clock = null) {
   const duration = timeframeSeconds(timeframe);
   if (!timeframe || !duration || num(price) == null) return state.currentCandle || null;
   const remaining = num(clock?.secondsRemaining);
-  const closeAt = num(clock?.closeAt) ?? (remaining != null ? Date.now() + remaining * 1000 : null);
+  const anchorAt = num(clock?.at);
+  const closeAt = num(clock?.closeAt) ?? (remaining != null && anchorAt != null ? anchorAt + remaining * 1000 : null);
   if (closeAt == null) return state.currentCandle || null;
-  const cycleKey = `${normAsset(state.asset)}|${timeframe}|${Math.round(closeAt / 1000)}`;
+  const cycleKey = `${normAsset(state.asset)}|${timeframe}|${Math.round(closeAt / 5000) * 5000}`;
   const previous = state.currentCandle;
   const same = previous?.source === 'live-price-observed' && previous?.cycleKey === cycleKey;
   const open = same ? num(previous.open) : Number(price);
