@@ -145,29 +145,35 @@ test('video regression: compact CasaTrade trade ticket can expose unlabeled 5 se
   assert.match(probe, /comprar\|vender\|buy\|sell\|payout/);
   assert.match(probe, /const tradeControl = tradeControlExpiration\(all\)/);
   assert.match(probe, /if \(candleSemantic && !explicitExpiration\) continue/);
+  assert.match(probe, /depth < 5/);
 });
 
-test('video regression: M1 state can bound a plain MM:SS CasaTrade countdown while progression remains mandatory', () => {
+test('video regression: confirmed structured M1 can bound a plain MM:SS countdown without becoming clock authority itself', () => {
   const clock = read('src/content/market-cycle-clock-v4.js');
   assert.match(clock, /const colonOnly = \/\^\\d\{1,3\}:\[0-5\]\\d\$\//);
   assert.match(clock, /if \(!candleSemantic && !chartScoped && !colonOnly\) continue/);
-  assert.match(clock, /const stateTf = tf\(state\.analysisTimeframe \|\| state\.timeframe\)/);
-  assert.match(clock, /return controlTf \|\| chartTf \|\| exactTf \|\| platformTf \|\| stateTf \|\| null/);
+  assert.match(clock, /function structuredFeedTf\(state = \{\}, focus = null\)/);
+  assert.match(clock, /session\.dataReady !== true/);
+  assert.match(clock, /return tf\(state\.analysisTimeframe \|\| state\.timeframe\)/);
+  assert.match(clock, /liveCycleTf\(state, controlsFresh\) \|\| structuredFeedTf\(state, focus\)/);
+  assert.match(clock, /return controlTf \|\| chartTf \|\| exactTf \|\| platformTf \|\| null/);
   assert.match(clock, /const progressed = !!previous/);
 });
 
-test('video regression: connection handshake is market-data readiness, not exact countdown readiness', () => {
+test('video regression: connection handshake requires a live clock but not candle count, expiration, or exact-entry authority', () => {
   const control = read('src/background-control.js');
   const start = control.indexOf('function handshakeReady(');
   const end = control.indexOf('\nfunction scheduleConnectionTimeout', start);
   assert.ok(start >= 0 && end > start);
   const handshake = control.slice(start, end);
-  assert.match(handshake, /session\.dataReady === true/);
-  assert.match(handshake, /rows\.length >= 2/);
-  assert.doesNotMatch(handshake, /marketClock|EXACT_CLOCK_SOURCES|secondsRemaining/);
+  assert.match(handshake, /clock\.secondsRemaining/);
+  assert.doesNotMatch(handshake, /rows\.length|expiration|EXACT_CLOCK_SOURCES/);
+  assert.match(control, /if \(marketDataConnected\(state\)\)/);
+  assert.match(control, /stage: 'syncing_clock'/);
+  assert.match(control, /connection: 'online'/);
 });
 
-test('video regression: sidepanel separates CONNECTED state from exact entry clock', () => {
+test('video regression: sidepanel keeps CONNECTED stable while exact entry clock remains a separate gate', () => {
   const shell = read('src/sidepanel/ui-shell-v2.js');
   const baseStart = shell.indexOf('function baseHandshake(');
   const baseEnd = shell.indexOf('\nfunction exactClockReady', baseStart);
@@ -176,9 +182,9 @@ test('video regression: sidepanel separates CONNECTED state from exact entry clo
   assert.ok(baseStart >= 0 && baseEnd > baseStart && exactStart >= 0 && exactEnd > exactStart);
   const base = shell.slice(baseStart, baseEnd);
   const exact = shell.slice(exactStart, exactEnd);
-  assert.match(base, /session\.dataReady === true/);
-  assert.doesNotMatch(base, /EXACT_CLOCK_SOURCES|secondsRemaining/);
+  assert.doesNotMatch(base, /rows\.length|EXACT_CLOCK_SOURCES|secondsRemaining/);
   assert.match(exact, /EXACT_CLOCK_SOURCES/);
+  assert.match(shell, /connected \? 'CONECTADO' : 'DESCONECTADO'/);
   assert.match(shell, /if \(baseHandshake\(state\)\) return ''/);
 });
 
