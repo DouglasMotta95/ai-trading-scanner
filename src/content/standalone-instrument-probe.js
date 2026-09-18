@@ -76,6 +76,20 @@
     if (!raw || raw.length > 120 || SENSITIVE.test(raw)) return '';
     const otc = /(?:\(|\b|[_-])OTC(?:\)|\b)?/.test(raw);
     const stripped = raw.replace(/\(\s*OTC\s*\)|\bOTC\b/g, ' ').replace(/\s+/g, ' ').trim();
+
+    // Prefer the literal CasaTrade instrument when it is present. This covers
+    // forex, crypto and OTC variants such as AUD/CAD, AUDCAD and USOUSD.
+    let match = stripped.match(/\b([A-Z0-9]{2,12})\s*[\/_-]\s*([A-Z0-9]{2,12})\b/);
+    if (match) return `${match[1]}/${match[2]}${otc ? ' (OTC)' : ''}`;
+
+    const compact = stripped.replace(/[^A-Z0-9]/g, '');
+    const quotes = ['USDT','USD','EUR','GBP','JPY','CAD','AUD','CHF','NZD','BTC','ETH'];
+    for (const quote of quotes) {
+      if (!compact.endsWith(quote) || compact.length <= quote.length + 1) continue;
+      const base = compact.slice(0, -quote.length);
+      if (/^[A-Z0-9]{2,12}$/.test(base)) return `${base}/${quote}${otc ? ' (OTC)' : ''}`;
+    }
+
     for (const [label, pair] of ALIASES) {
       const pattern = new RegExp(`(^|[^A-Z0-9])${label.replace(/ /g, '\\s+')}([^A-Z0-9]|$)`);
       if (pattern.test(stripped)) return `${pair}${otc ? ' (OTC)' : ''}`;
