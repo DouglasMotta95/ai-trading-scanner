@@ -32,7 +32,8 @@ test('visible expiration such as 5 seg is captured and kept separate from candle
   const clock = read('src/content/market-cycle-clock-v4.js');
   const panel = read('src/sidepanel/app-v2.js');
 
-  assert.match(expiration, /querySelectorAll\('\*'\)/);
+  assert.match(expiration, /const bodyValue = bodyExpiration\(\)/);
+  assert.match(expiration, /label,p,strong,small,span,div/);
   assert.match(expiration, /index \+ 360/);
   assert.match(expiration, /index - 180/);
   assert.match(expiration, /horizontal <= 520/);
