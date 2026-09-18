@@ -76,7 +76,8 @@ function mergeObserved(previous = {}, incoming = {}) {
     const previousAt = Number(previous.observedAt?.[field] || 0);
     const previousStale = !previousAt || Date.now() - previousAt >= 7000;
     const newer = incomingAt > previousAt;
-    if (value != null && (next[field] == null || previousStale || (newer && score >= Math.max(55, oldScore - 15)) || score >= oldScore - 2)) {
+    const notOlder = incomingAt >= previousAt;
+    if (value != null && (next[field] == null || previousStale || (newer && score >= Math.max(55, oldScore - 15)) || (notOlder && score >= oldScore - 2))) {
       next[field] = value;
       next.confidence[field] = score;
       next.observedAt[field] = incomingAt || Date.now();
