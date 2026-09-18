@@ -26,9 +26,9 @@ test('account refresh preserves an existing saved license key when response omit
 test('sidepanel has dark first paint and separates timeframe, expiration and candle countdown', () => {
   const html = read('src/sidepanel/index.html');
   assert.match(html, /background:#06101a/);
-  assert.match(html, /TIMEFRAME DO GRÁFICO/);
-  assert.match(html, /EXPIRAÇÃO REAL/);
-  assert.match(html, /COUNTDOWN DA VELA/);
+  assert.match(html, /id="timeframe"/);
+  assert.match(html, /id="heroExpiration"/);
+  assert.match(html, /id="heroCountdown"/);
   assert.match(html, /id="heroExpiration"/);
   assert.ok(html.indexOf('state-restore.js') < html.indexOf('app-v2.js'));
 });
