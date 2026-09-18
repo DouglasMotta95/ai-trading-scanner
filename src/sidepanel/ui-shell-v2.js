@@ -152,7 +152,7 @@ function renderShell(state = {}) {
     button.classList.toggle('live', platformLinked);
     button.disabled = !activeLicense(state) || connecting || switching;
     if (!button.classList.contains('loading')) {
-      $('connectScannerText').textContent = connected ? 'CONECTADO' : 'DESCONECTADO';
+      $('connectScannerText').textContent = platformLinked ? 'CONECTADO' : 'DESCONECTADO';
     }
   }
 
