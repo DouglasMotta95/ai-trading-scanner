@@ -45,18 +45,16 @@ test('overlay v2 is optional, click-through and consumes scanner analysis instea
   assert.doesNotMatch(overlay, /processSnapshot|analyzeCandles/);
 });
 
-test('sidepanel has three OFF-by-default controls and deduplicates sounds on decision-state transitions', () => {
+test('compact sidepanel removes nonessential overlay/sound toggles and delegates live alerts to background', () => {
   const html = read('src/sidepanel/index.html');
   const app = read('src/sidepanel/app-v2.js');
-  for (const id of ['overlayToggle','possibleSoundToggle','confirmSoundToggle']) assert.match(html, new RegExp(`id="${id}"`));
+  const entry = read('src/background-entry.js');
+  for (const id of ['overlayToggle','possibleSoundToggle','confirmSoundToggle']) assert.doesNotMatch(html, new RegExp(`id="${id}"`));
+  assert.match(html, /id="notificationToggle"/);
+  assert.match(html, /id="alertLevel"/);
   assert.match(app, /overlayEnabled: false/);
-  assert.match(app, /possibleSoundEnabled: false/);
-  assert.match(app, /confirmSoundEnabled: false/);
-  assert.match(app, /if \(key === lastSignalKey\) return/);
-  assert.match(app, /POSSIBLE_BUY.*POSSIBLE_SELL/);
-  assert.match(app, /ENTER_BUY.*ENTER_SELL/);
-  assert.match(app, /play\('possible'\)/);
-  assert.match(app, /play\('confirm'\)/);
+  assert.doesNotMatch(app, /function maybeSound/);
+  assert.match(entry, /background-system-alerts\.js/);
 });
 
 test('sidepanel unwraps ATS_READ_SCANNER_STATE response envelope before rendering', () => {
