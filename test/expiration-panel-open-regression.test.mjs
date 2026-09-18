@@ -9,7 +9,7 @@ test('expiration probe reads custom-control attributes and 00:01:00 format', () 
   assert.match(probe, /\[aria-valuenow\]/);
   assert.match(probe, /\[data-value\]/);
   assert.match(probe, /aria-valuetext/);
-  assert.match(probe, /\(\d\{1,2\}\):\(\[0-5\]\\d\):\(\[0-5\]\\d\)/);
+  assert.match(probe, /Number\(m\[1\]\) \* 3600 \+ Number\(m\[2\]\) \* 60 \+ Number\(m\[3\]\)/);
   assert.match(probe, /expirationFromSemanticElement/);
   assert.match(probe, /if \(seconds > 0 && seconds <= 3600\) return/);
 });
