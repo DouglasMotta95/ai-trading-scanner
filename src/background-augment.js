@@ -1,4 +1,3 @@
-import { resetOrchestrator } from './core/orchestrator.js';
 import { isCasaTradeHost } from './platforms/registry.js';
 import { updateScannerState } from './services/scanner-state-atomic.js';
 import { storageLocalGet } from './services/chrome-compat.js';
@@ -259,7 +258,6 @@ async function setFocusedAsset(message = {}, sender = {}) {
     const stateAssetMismatch = scannerState.asset && !sameAsset(scannerState.asset, focused);
     const mustResetMarket = (changed || stateAssetMismatch) && reliable;
     const stableSince = sameStoredFocus ? Number(previousStored?.stableSince || previousStored?.at || Date.now()) : Date.now();
-    if (mustResetMarket) resetOrchestrator();
 
     return {
       ...scannerState,
@@ -330,7 +328,6 @@ async function applyEmbeddedFeed(payload = {}, sender = {}) {
     const expiration = normExp(clock?.expiration) || normExp(candidate.expiration) || scannerState.targetExpiration || scannerState.expiration || null;
     const secondsRemaining = clock ? Number(clock.secondsRemaining) : null;
     const switchedAsset = !!scannerState.asset && !sameAsset(scannerState.asset, asset);
-    if (switchedAsset) resetOrchestrator();
 
     const snapshot = {
       platformId: 'casatrade', platformName: 'CasaTrade', connection: 'online', asset,
