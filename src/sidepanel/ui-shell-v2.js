@@ -74,56 +74,72 @@ function setBadge(id, label, tone) {
 
 function renderShell(state = {}) {
   const connected = baseHandshake(state);
+  const session = state.diagnostics?.marketSession || {};
+  const pendingAsset = clean(session.pendingAsset || session.asset || '');
+  const switching = session.transitioning === true && !!pendingAsset;
+  const platformLinked = connected || switching;
   const tradeReady = exactLiveTime(state);
   const failure = connectionFailure(state);
-  const connecting = !connected && !failure && activeLicense(state)
+  const connecting = !platformLinked && !failure && activeLicense(state)
     && (state.connection === 'connecting' || state.scanner === 'scanning');
-  const expiration = clean(state.platformControls?.observed?.expiration);
-  const expirationWrong = connected && expiration !== '60s';
 
-  setBadge('connectionBadge', connected ? 'CONECTADO' : 'DESCONECTADO', connected ? 'ok' : 'warn');
+  const expirationAt = Number(state.platformControls?.expirationCheckedAt || state.platformControls?.observed?.observedAt?.expiration || 0);
+  const expirationFresh = expirationAt > 0 && Date.now() - expirationAt < CONTROLS_FRESH_MS;
+  const expiration = expirationFresh ? clean(state.platformControls?.observed?.expiration) : '';
+  const expirationWrong = connected && !!expiration && expiration !== '60s';
+  const sessionStartedAt = Number(session.startedAt || state.diagnostics?.target?.connectedAt || 0);
+  const sessionAge = sessionStartedAt > 0 ? Date.now() - sessionStartedAt : 0;
+  const expirationReadFailed = connected && !expiration && sessionAge >= 5000;
 
   const strip = $('syncStrip');
-  if (strip) strip.className = `sync-strip ${connected ? 'live' : 'syncing'}`;
+  if (strip) strip.className = `sync-strip ${platformLinked ? 'live' : 'syncing'}`;
 
   if ($('syncTitle')) {
-    $('syncTitle').textContent = failure
-      ? 'FALHA AO CONECTAR'
-      : connected && expirationWrong
-        ? 'CONECTADO — AJUSTE A EXPIRAÇÃO'
-        : tradeReady
-          ? 'CONECTADO — PRONTO PARA ANALISAR'
-          : connected
-            ? 'CONECTADO — VALIDANDO ENTRADA'
-            : connecting
-              ? 'CONECTANDO À CASATRADE'
-              : activeLicense(state)
-                ? 'DESCONECTADO'
-                : 'AGUARDANDO ATIVAÇÃO';
+    $('syncTitle').textContent = switching
+      ? `ATUALIZANDO PARA ${pendingAsset}`
+      : failure
+        ? 'FALHA AO CONECTAR'
+        : expirationReadFailed
+          ? 'CONECTADO — FALHA NA LEITURA DA EXPIRAÇÃO'
+          : connected && expirationWrong
+            ? 'CONECTADO — AJUSTE A EXPIRAÇÃO'
+            : tradeReady
+              ? 'CONECTADO — PRONTO PARA ANALISAR'
+              : connected
+                ? 'CONECTADO — VALIDANDO ENTRADA'
+                : connecting
+                  ? 'CONECTANDO À CASATRADE'
+                  : activeLicense(state)
+                    ? 'DESCONECTADO'
+                    : 'AGUARDANDO ATIVAÇÃO';
   }
 
   if ($('syncText')) {
     const acquisition = state.diagnostics?.acquisition || {};
-    $('syncText').textContent = failure
-      || (connected && expirationWrong
-        ? `${state.asset} • expiração ${expiration}. ALTERE PARA 1 MIN para liberar ENTRAR.`
-        : tradeReady
-          ? `${state.asset} • M1 • countdown e expiração confirmados pela CasaTrade.`
-          : connected
-            ? `${state.asset} conectado. Dados reais recebidos; validando condições finais da entrada.`
-            : connecting
-              ? clean(acquisition.reason || 'Identificando ativo, preço, velas, countdown e expiração.')
-              : activeLicense(state)
-                ? 'Abra a CasaTrade e toque em CONECTAR.'
-                : 'Ative o acesso para iniciar o scanner.');
+    $('syncText').textContent = switching
+      ? 'Dados do ativo anterior foram limpos. Confirmando preço e velas reais do novo instrumento.'
+      : failure
+        || (expirationReadFailed
+          ? 'Não foi possível ler a expiração — verifique o seletor na CasaTrade e tente novamente.'
+          : connected && expirationWrong
+            ? `${state.asset} • expiração ${expiration}. ALTERE PARA 1 MIN para liberar ENTRAR.`
+            : tradeReady
+              ? `${state.asset} • M1 • countdown e expiração confirmados pela CasaTrade.`
+              : connected
+                ? `${state.asset} conectado. Dados reais recebidos; validando condições finais da entrada.`
+                : connecting
+                  ? clean(acquisition.reason || 'Identificando ativo, preço, velas, countdown e expiração.')
+                  : activeLicense(state)
+                    ? 'Abra a CasaTrade e toque em CONECTAR.'
+                    : 'Ative o acesso para iniciar o scanner.');
   }
 
   const button = $('connectScanner');
   if (button) {
-    button.classList.toggle('live', connected);
-    button.disabled = !activeLicense(state) || connecting;
+    button.classList.toggle('live', platformLinked);
+    button.disabled = !activeLicense(state) || connecting || switching;
     if (!button.classList.contains('loading')) {
-      $('connectScannerText').textContent = connected
+      $('connectScannerText').textContent = platformLinked
         ? 'CONECTADO'
         : failure
           ? 'TENTAR NOVAMENTE'
@@ -132,8 +148,10 @@ function renderShell(state = {}) {
             : 'CONECTAR';
     }
   }
-}
 
+  const retry = $('retryLiveRead');
+  if (retry) retry.hidden = !(expirationReadFailed || failure);
+}
 async function connectNow() {
   const button = $('connectScanner');
   if (!button || button.classList.contains('loading')) return;
@@ -184,6 +202,7 @@ $('geminiToggle')?.addEventListener('change', event => {
 });
 
 $('connectScanner')?.addEventListener('click', () => connectNow().catch(() => {}));
+$('retryLiveRead')?.addEventListener('click', () => connectNow().catch(() => {}));
 $('activateLicense')?.addEventListener('click', () => {
   const button = $('activateLicense');
   button?.classList.add('loading');
