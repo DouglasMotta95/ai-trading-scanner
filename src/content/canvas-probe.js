@@ -423,6 +423,12 @@
           transport: 'rendered'
         }],
         candidateCount: 1,
+        controls: expiration ? {
+          expiration,
+          confidence: 96,
+          observedAt: Date.now(),
+          sourceKey: 'rendered-expiration-control'
+        } : null,
         recentCandles,
         feedQuality: 80,
         parser: {
