@@ -12,7 +12,6 @@ const DEFAULT_PREFS = Object.freeze({
 });
 
 let prefs = { ...DEFAULT_PREFS };
-let lastSignalKey = '';
 let liveOhlc = null;
 let audioContext = null;
 
@@ -273,6 +272,7 @@ function render(state = {}) {
   setText('timeframe', actualTf || '—');
   setText('price', fmtPrice(state.price));
   setText('heroCountdown', remaining == null ? '—' : exact ? `${Math.ceil(remaining)}s` : `~${Math.ceil(remaining)}s`);
+  setText('heroExpiration', expLabel(actualExp));
   setText('heroTimeStatus', timeReady ? 'OK' : dataLive ? 'AGUARDAR' : 'SYNC');
   setText('sessionMode', timeReady ? 'LIVE' : dataLive ? 'LIVE • CLOCK ESTIMADO' : 'SYNC');
 
@@ -348,20 +348,6 @@ function play(kind) {
   tone(760,0,.18,.17); tone(940,.17,.19,.19); tone(1120,.31,.22,.22);
   try { navigator?.vibrate?.([110,55,150,55,210]); } catch {}
 }
-function maybeSound(state = {}, model = {}) {
-  const ui = String(model.uiState || '');
-  const cycle = clean(state.professionalDecision?.cycleKey || state.signal?.targetStart || '');
-  const key = `${cycle}|${ui}`;
-  if (key === lastSignalKey) return;
-  lastSignalKey = key;
-  if (prefs.alertLevel === 'off') return;
-  if (ui === 'POSSIBLE_BUY' || ui === 'POSSIBLE_SELL') play('possible');
-  if ((ui === 'ENTER_BUY' || ui === 'ENTER_SELL') && entryTimeReady(state)) {
-    if (prefs.alertLevel === 'strong') play('confirm');
-    else play('possible');
-  }
-}
-
 function syncSettingsUi() {
   if ($('overlayToggle')) $('overlayToggle').checked = !!prefs.overlayEnabled;
   if ($('geminiToggle')) $('geminiToggle').checked = prefs.geminiEnabled !== false;
@@ -377,9 +363,10 @@ function syncSettingsUi() {
 async function pushAnalystPreferences() {
   await chrome.runtime.sendMessage({
     type: 'ATS_SET_ANALYST_PREFERENCES',
-    mode: prefs.analystMode,
+    mode: 'NORMAL',
     geminiEnabled: prefs.geminiEnabled,
-    holdSeconds: prefs.holdSeconds
+    holdSeconds: 3,
+    preferredExpiration: null
   }).catch(() => null);
 }
 
@@ -405,11 +392,12 @@ async function loadPrefs() {
   prefs = {
     ...DEFAULT_PREFS,
     ...raw,
+    overlayEnabled: false,
     notificationsEnabled: raw.notificationsEnabled !== false,
     alertLevel: ['off','discrete','strong'].includes(migratedAlert) ? migratedAlert : DEFAULT_PREFS.alertLevel,
-    analystMode: String(raw.analystMode || 'NORMAL').toUpperCase() === 'A_PLUS' ? 'A_PLUS' : 'NORMAL',
+    analystMode: 'NORMAL',
     geminiEnabled: raw.geminiEnabled !== false,
-    holdSeconds: Math.max(3, Math.min(5, Number(raw.holdSeconds) || 3))
+    holdSeconds: 3
   };
   syncSettingsUi();
   await pushAnalystPreferences();
