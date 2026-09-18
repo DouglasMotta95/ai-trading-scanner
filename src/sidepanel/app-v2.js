@@ -389,22 +389,52 @@ function render(state = {}) {
   const model = decisionModel(state);
   const clock = state.diagnostics?.marketClock || {};
   const exact = exactClockReady(state);
+  const estimated = !exact && operationalClockReady(state);
   const dataLive = sessionReady(state);
   const timeReady = entryTimeReady(state);
   lastRenderedState = state;
-  const remaining = projectedRemaining(state);
-  const actualTf = normTf(clock.timeframe || state.platformControls?.observed?.timeframe || state.analysisTimeframe || state.timeframe);
-  const actualExp = normExp(state.platformControls?.observed?.expiration || state.targetExpiration || state.expiration);
 
-  const freshMarket = focusReady(state) && sameMarket(state.diagnostics?.focusedAsset?.asset, state.asset);
-  const visibleAsset = freshMarket ? state.diagnostics?.focusedAsset?.asset || state.asset : null;
-  setText('asset', visibleAsset || '—');
-  setText('timeframe', freshMarket ? (actualTf || '—') : '—');
+  const remaining = smoothedRemaining(state);
+  const actualTf = normTf(clock.timeframe || state.platformControls?.observed?.timeframe || state.analysisTimeframe || state.timeframe);
+  const expirationObs = expirationObservation(state);
+  const actualExp = expirationObs.value;
+  const pending = transitionAsset(state);
+  const session = sessionInfo(state);
+  const freshMarket = marketDataReady(state) && focusReady(state) && sameMarket(state.diagnostics?.focusedAsset?.asset, state.asset);
+  const visibleAsset = freshMarket ? marketId(session.confirmedAsset || state.asset) : '';
+
+  setText('asset', visibleAsset || (pending ? `Atualizando para ${pending}…` : '—'));
+  setText('timeframe', freshMarket || pending ? (actualTf || '—') : '—');
   setText('price', freshMarket ? fmtPrice(state.price) : '—');
-  setText('heroCountdown', remaining == null ? '—' : exact ? `${Math.ceil(remaining)}s` : `~${Math.ceil(remaining)}s`);
-  setText('heroExpiration', expLabel(actualExp));
+
+  if (freshMarket) setSourceState('assetSource', 'REAL', 'real', 'Ativo confirmado pelo gráfico + feed da CasaTrade.');
+  else if (pending) setSourceState('assetSource', 'ATUALIZANDO', 'estimated', 'Troca detectada; preço e velas anteriores já foram descartados.');
+  else setSourceState('assetSource', 'STALE', 'stale', 'Ativo ainda não confirmado.');
+
+  if (actualExp) {
+    setText('heroExpiration', actualExp === '60s' ? '1 min ✓' : expLabel(actualExp));
+    setText('expiration', actualExp === '60s' ? '1 min ✓' : expLabel(actualExp));
+    setSourceState('expirationSource', 'REAL', 'real', 'Expiração relida diretamente do controle da CasaTrade.');
+  } else if (sessionAgeMs(state) < 5000) {
+    setText('heroExpiration', 'LENDO…');
+    setText('expiration', 'LENDO…');
+    setSourceState('expirationSource', 'LENDO', 'estimated', 'Aguardando leitura do seletor de expiração.');
+  } else {
+    setText('heroExpiration', 'ERRO');
+    setText('expiration', 'ERRO');
+    setSourceState('expirationSource', 'STALE', 'stale', 'Não foi possível reler a expiração da CasaTrade.');
+  }
+
+  const countdownText = remaining == null ? '—' : exact ? `${remaining}s` : `~${remaining}s`;
+  setText('heroCountdown', countdownText);
+  setText('secondsRemaining', remaining == null ? '—' : exact ? String(remaining) : `~${remaining}`);
+  if (exact) setSourceState('countdownSource', 'REAL', 'real', 'Countdown exato lido da CasaTrade.');
+  else if (estimated && remaining != null) setSourceState('countdownSource', 'ESTIMADO', 'estimated', 'Countdown temporário calculado enquanto a fonte exata não está disponível.');
+  else setSourceState('countdownSource', 'STALE', 'stale', 'Countdown não confirmado.');
+
   setText('heroTimeStatus', timeReady ? 'OK' : dataLive ? 'AGUARDAR' : 'SYNC');
-  setText('sessionMode', timeReady ? 'LIVE' : dataLive ? 'LIVE • CLOCK ESTIMADO' : 'SYNC');
+  setText('sessionMode', timeReady ? 'LIVE' : dataLive ? (exact ? 'LIVE • GATE' : 'LIVE • ESTIMADO') : 'SYNC');
+  setText('timeSyncStatus', exact ? 'EXATO • CASATRADE' : estimated ? '~ ESTIMADO' : 'NÃO CONFIRMADO');
 
   setText('signalTitle', model.title);
   setText('decisionText', model.text);
@@ -412,9 +442,6 @@ function render(state = {}) {
   setText('signalReason', model.reason);
   const setupLabel = clean(state.signal?.setup || state.signal?.regime?.type || '—') || '—';
   setText('setupType', /^analista$/i.test(setupLabel) ? '—' : setupLabel);
-  setText('secondsRemaining', remaining == null ? '—' : exact ? String(Math.max(0, Math.ceil(remaining))) : `~${Math.max(0, Math.ceil(remaining))}`);
-  setText('expiration', expLabel(actualExp));
-  setText('timeSyncStatus', timeReady ? 'OK • CASATRADE' : exact ? entryBlockReason(state) : operationalClockReady(state) ? 'ESTIMADO • BLOQUEADO' : 'SINCRONIZANDO');
 
   const decisionCard = $('decisionCard');
   if (decisionCard) decisionCard.className = `card decision-card ${model.tone}`;
@@ -435,19 +462,68 @@ function render(state = {}) {
   const canSell = model.actionable && model.direction === 'SELL' && timeReady;
   if (buy) { buy.disabled = !canBuy; buy.classList.toggle('selected', canBuy); }
   if (sell) { sell.disabled = !canSell; sell.classList.toggle('selected', canSell); }
-  setText('tradeActionStatus', model.actionable && timeReady
-    ? `Entrada manual liberada para ${model.direction === 'BUY' ? 'COMPRA' : 'VENDA'} na próxima vela.`
-    : !timeReady
-      ? 'Bloqueado: confirme countdown + timeframe + expiração reais da CasaTrade.'
-      : model.uiState.startsWith('POSSIBLE_')
-        ? `Possível sinal em hold (${Math.ceil(Number(state.professionalDecision?.holdRemainingMs || 0) / 1000)}s restantes).`
-        : 'Aguardando decisão final desta vela.');
+
+  const actionStatus = $('tradeActionStatus');
+  if (actionStatus) {
+    const kind = gateKind(state);
+    actionStatus.classList.remove('rule-block','technical-block');
+    if (model.actionable && timeReady) {
+      actionStatus.textContent = `Entrada manual liberada para ${model.direction === 'BUY' ? 'COMPRA' : 'VENDA'} na próxima vela.`;
+    } else if (!timeReady) {
+      const block = entryBlockReason(state);
+      if (kind === 'rule') {
+        actionStatus.classList.add('rule-block');
+        actionStatus.textContent = `Bloqueado por regra: ${block}`;
+      } else if (kind === 'technical') {
+        actionStatus.classList.add('technical-block');
+        actionStatus.textContent = `Falha técnica: ${block}`;
+      } else {
+        actionStatus.textContent = block;
+      }
+    } else if (model.uiState.startsWith('POSSIBLE_')) {
+      actionStatus.textContent = `Possível sinal em hold (${Math.ceil(Number(state.professionalDecision?.holdRemainingMs || 0) / 1000)}s restantes).`;
+    } else {
+      actionStatus.textContent = 'Aguardando decisão final desta vela.';
+    }
+  }
+
+  const expected = marketId(prefs.expectedAsset || '');
+  const selectedNow = marketId(visibleAsset || pending);
+  const warning = $('expectedAssetWarning');
+  if (warning) {
+    const mismatch = !!expected && !!selectedNow && !sameMarket(expected, selectedNow);
+    warning.hidden = !mismatch;
+    warning.textContent = mismatch ? `Você trocou para ${selectedNow}. Ativo esperado: ${expected}. Deseja continuar a análise nele?` : '';
+  }
+
+  const log = $('assetSwitchLog');
+  if (log) {
+    const rows = Array.isArray(state.diagnostics?.assetSwitchLog) ? state.diagnostics.assetSwitchLog.slice(-6).reverse() : [];
+    log.replaceChildren();
+    if (!rows.length) {
+      const empty = document.createElement('span'); empty.textContent = 'Nenhuma troca registrada.'; log.append(empty);
+    } else {
+      for (const row of rows) {
+        const item = document.createElement('span');
+        item.className = row.cleanupOk ? 'ok' : '';
+        const when = new Date(Number(row.at || 0)).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+        item.textContent = `${when} • ${row.from || '—'} → ${row.to || '—'} • limpeza ${row.cleanupOk ? 'OK' : 'PENDENTE'}`;
+        log.append(item);
+      }
+    }
+  }
+
+  const retry = $('retryLiveRead');
+  if (retry) {
+    const expirationTimedOut = dataLive && !actualExp && sessionAgeMs(state) >= 5000;
+    const marketTimedOut = !!pending && sessionAgeMs(state) >= 8000;
+    retry.hidden = !(expirationTimedOut || marketTimedOut);
+  }
 
   renderOhlc(freshMarket ? state : {});
   renderCandles(freshMarket ? state : {});
   renderLicense(state);
   globalThis.__ATS_MARK_UI_READY__?.();
-  // Live signal audio is emitted by the background alert worker so it also works with the sidepanel closed.
 }
 
 function tone(frequency, delay, duration, gain = .12) {
@@ -482,6 +558,7 @@ function syncSettingsUi() {
   if ($('holdSeconds')) $('holdSeconds').value = String(Math.max(3, Math.min(5, Number(prefs.holdSeconds) || 3)));
   if ($('possibleSoundToggle')) $('possibleSoundToggle').checked = prefs.alertLevel === 'discrete' || prefs.alertLevel === 'strong';
   if ($('confirmSoundToggle')) $('confirmSoundToggle').checked = prefs.alertLevel === 'strong';
+  if ($('expectedAsset')) $('expectedAsset').value = clean(prefs.expectedAsset || '');
   document.querySelectorAll('.toggle-row').forEach(row => row.classList.toggle('active', !!row.querySelector('input[type=checkbox]')?.checked));
 }
 
@@ -522,7 +599,8 @@ async function loadPrefs() {
     alertLevel: ['off','discrete','strong'].includes(migratedAlert) ? migratedAlert : DEFAULT_PREFS.alertLevel,
     analystMode: 'NORMAL',
     geminiEnabled: raw.geminiEnabled !== false,
-    holdSeconds: 3
+    holdSeconds: 3,
+    expectedAsset: clean(raw.expectedAsset || '')
   };
   syncSettingsUi();
   await pushAnalystPreferences();
@@ -536,6 +614,7 @@ $('alertLevel')?.addEventListener('change', event => setPref('alertLevel', event
 $('holdSeconds')?.addEventListener('change', event => setPref('holdSeconds', Math.max(3, Math.min(5, Number(event.currentTarget.value) || 3))));
 $('possibleSoundToggle')?.addEventListener('change', event => setPref('possibleSoundEnabled', !!event.currentTarget.checked));
 $('confirmSoundToggle')?.addEventListener('change', event => setPref('confirmSoundEnabled', !!event.currentTarget.checked));
+$('expectedAsset')?.addEventListener('change', event => setPref('expectedAsset', clean(event.currentTarget.value || '')));
 
 $('activateLicense')?.addEventListener('click', async () => {
   const key = clean($('licenseKey')?.value || '');
@@ -546,7 +625,7 @@ $('activateLicense')?.addEventListener('click', async () => {
 
 setInterval(() => {
   if (!lastRenderedState || !Object.keys(lastRenderedState).length) return;
-  const remaining = projectedRemaining(lastRenderedState);
+  const remaining = smoothedRemaining(lastRenderedState);
   const exact = exactClockReady(lastRenderedState);
   const actualTf = normTf(lastRenderedState.diagnostics?.marketClock?.timeframe || lastRenderedState.analysisTimeframe || lastRenderedState.timeframe);
   setText('heroCountdown', remaining == null ? '—' : exact ? `${Math.ceil(remaining)}s` : `~${Math.ceil(remaining)}s`);
