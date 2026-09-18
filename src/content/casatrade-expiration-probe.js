@@ -142,8 +142,6 @@
   }
   function scan() {
     let exp = null, tf = null;
-    const bodyValue = bodyExpiration();
-    if (bodyValue) exp = { value: bodyValue, score: 96 };
     const all = elements();
     for (const el of all) {
       if (!visible(el)) continue;
@@ -169,6 +167,10 @@
     if (!exp) {
       const nearby = nearbyExpiration(all);
       if (nearby?.value) exp = nearby;
+    }
+    if (!exp) {
+      const bodyValue = bodyExpiration();
+      if (bodyValue) exp = { value: bodyValue, score: 96 };
     }
     if (!exp && !tf) return null;
     return {
