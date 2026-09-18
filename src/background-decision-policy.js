@@ -88,9 +88,18 @@ export function exactCasaTradeTime(state = {}) {
 
 export function CasaTradeExpiration(state = {}, timeframe = null) {
   const controls = state.platformControls || {};
-  const observed = normExp(controls.observed?.expiration);
-  const fresh = Number(controls.checkedAt || 0) > 0 && Date.now() - Number(controls.checkedAt) < 7000;
-  if (!observed || !fresh) return { ready: false, actual: observed, reason: 'Expiração real da CasaTrade ainda não foi confirmada.' };
+  const expirationAt = Number(controls.expirationCheckedAt || controls.observed?.observedAt?.expiration || 0);
+  const fresh = expirationAt > 0 && Date.now() - expirationAt < 7000;
+  const observed = fresh ? normExp(controls.observed?.expiration) : null;
+  const startedAt = Number(state.diagnostics?.marketSession?.startedAt || state.diagnostics?.target?.connectedAt || 0);
+  const waiting = startedAt > 0 && Date.now() - startedAt < 5000;
+  if (!observed || !fresh) return {
+    ready: false,
+    actual: null,
+    reason: waiting
+      ? 'Lendo expiração real da CasaTrade'
+      : 'Não foi possível ler a expiração — verifique o seletor na CasaTrade'
+  };
   if (normTf(timeframe || state.analysisTimeframe || state.timeframe) === 'M1' && observed !== '60s') {
     return { ready: false, actual: observed, required: '60s', reason: 'Ajuste a expiração da CasaTrade para 1 minuto' };
   }
