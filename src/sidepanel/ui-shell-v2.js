@@ -27,7 +27,8 @@ function activeLicense(state = {}) {
 
 function baseHandshake(state = {}) {
   const focus = state.diagnostics?.focusedAsset || null;
-  const clock = state.diagnostics?.marketClock || null;
+  const session = state.diagnostics?.marketSession || {};
+  const rows = Array.isArray(state.candles) ? state.candles : [];
   return activeLicense(state)
     && state.connection === 'online'
     && !!state.asset
@@ -36,7 +37,18 @@ function baseHandshake(state = {}) {
     && focus?.chartScoped === true
     && focus?.trustedChartFrame === true
     && sameMarket(focus?.asset, state.asset)
-    && clock?.verified === true
+    && session.dataReady === true
+    && sameMarket(session.confirmedAsset || session.asset, state.asset)
+    && rows.length >= 2
+    && Number(state.lastSeen || 0) > 0
+    && Date.now() - Number(state.lastSeen) < 7000;
+}
+
+function exactClockReady(state = {}) {
+  if (!baseHandshake(state)) return false;
+  const focus = state.diagnostics?.focusedAsset || null;
+  const clock = state.diagnostics?.marketClock || null;
+  return clock?.verified === true
     && clock?.available !== false
     && clock?.role === 'candle-close'
     && EXACT_CLOCK_SOURCES.has(clean(clock?.source))
@@ -49,7 +61,7 @@ function baseHandshake(state = {}) {
 }
 
 function exactLiveTime(state = {}) {
-  if (!baseHandshake(state)) return false;
+  if (!exactClockReady(state)) return false;
   const clock = state.diagnostics?.marketClock || {};
   const expirationAt = Number(state.platformControls?.expirationCheckedAt || state.platformControls?.observed?.observedAt?.expiration || 0);
   const expirationFresh = expirationAt > 0 && Date.now() - expirationAt < CONTROLS_FRESH_MS;
@@ -59,6 +71,7 @@ function exactLiveTime(state = {}) {
 }
 
 function connectionFailure(state = {}) {
+  if (baseHandshake(state)) return '';
   const stage = clean(state.diagnostics?.acquisition?.stage);
   const error = state.diagnostics?.connectionError || {};
   if (stage === 'connect_timeout' || clean(error.code) === 'handshake_timeout') {
