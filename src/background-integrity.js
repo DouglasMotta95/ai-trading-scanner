@@ -154,7 +154,6 @@ async function applyClock(message = {}, sender = {}) {
     if (!exact) {
       return {
         ...state,
-        signal: null,
         analysisTimeframe: timeframe,
         targetExpiration: expiration,
         diagnostics: {
@@ -204,7 +203,7 @@ async function applyClock(message = {}, sender = {}) {
     if (!freshPrice || state.connection !== 'online') {
       return {
         ...state,
-        ...(state.connection === 'online' && !freshPrice ? { connection: 'connecting', signal: null } : {}),
+        ...(state.connection === 'online' && !freshPrice ? { connection: 'connecting' } : {}),
         analysisTimeframe: timeframe,
         targetExpiration: expiration,
         diagnostics: { ...(state.diagnostics || {}), marketClock, integrity: { state: 'awaiting_fresh_price', expectedAsset: focus, at: Date.now() } }
@@ -293,7 +292,6 @@ function enforceStateIntegrity(nextState = {}) {
   if (signalClockMismatch) {
     return {
       ...nextState,
-      signal: null,
       diagnostics: {
         ...(nextState.diagnostics || {}),
         acquisition: {
