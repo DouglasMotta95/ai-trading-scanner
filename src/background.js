@@ -3,7 +3,7 @@ import { readScannerState, updateScannerState } from './services/scanner-state-a
 
 // Single owner of technical analysis.
 // All acquisition modules only update scannerState. This loop coalesces those
-// updates and is the only runtime path allowed to call processSnapshot().
+// updates and is the only runtime path allowed to invoke the technical orchestrator.
 const ANALYSIS_CADENCE_MS = 650;
 const BURST_COALESCE_MS = 80;
 const CLOCK_FRESH_MS = 3200;
@@ -109,6 +109,7 @@ function rawInputSignature(state = {}, snapshot = null) {
 let analysisTimer = null;
 let analysisRunning = false;
 let pendingForce = false;
+let pendingAfterRun = false;
 let lastRunAt = 0;
 let lastInputSignature = '';
 let lastMarketKey = '';
@@ -116,7 +117,11 @@ let revision = 0;
 
 function scheduleAnalysis(force = false) {
   pendingForce ||= force;
-  if (analysisTimer || analysisRunning) return;
+  if (analysisRunning) {
+    pendingAfterRun = true;
+    return;
+  }
+  if (analysisTimer) return;
   const sinceLast = Date.now() - lastRunAt;
   const cadenceDelay = Math.max(0, ANALYSIS_CADENCE_MS - sinceLast);
   const delay = Math.max(BURST_COALESCE_MS, cadenceDelay);
@@ -193,6 +198,10 @@ async function runCentralAnalysis(force = false) {
     analysisRunning = false;
   }
 
+  if (pendingAfterRun) {
+    pendingAfterRun = false;
+    scheduleAnalysis(pendingForce);
+  }
   if (needsConfirmationFollowup) scheduleAnalysis(true);
 }
 
