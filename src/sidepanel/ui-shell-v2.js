@@ -50,7 +50,9 @@ function baseHandshake(state = {}) {
 function exactLiveTime(state = {}) {
   if (!baseHandshake(state)) return false;
   const clock = state.diagnostics?.marketClock || {};
-  const actualExpiration = clean(state.platformControls?.observed?.expiration);
+  const expirationAt = Number(state.platformControls?.expirationCheckedAt || state.platformControls?.observed?.observedAt?.expiration || 0);
+  const expirationFresh = expirationAt > 0 && Date.now() - expirationAt < CONTROLS_FRESH_MS;
+  const actualExpiration = expirationFresh ? clean(state.platformControls?.observed?.expiration) : '';
   return clean(clock.timeframe || state.analysisTimeframe || state.timeframe).toUpperCase() === 'M1'
     && actualExpiration === '60s';
 }
