@@ -435,12 +435,12 @@ async function applyFeed(payload = {}, sender = {}) {
 
     const incomingHistory = historyFor(payload, asset);
     const previousHistory = stateHistory(state, asset);
-    const acceptedHistory = mergeRows(previousHistory, incomingHistory);
+    const mergedHistory = mergeRows(previousHistory, incomingHistory);
     const bundle = validateMarketBundle({
       focusAsset: asset,
       candidateAsset: candidate.asset,
       price: candidate.price,
-      candles: acceptedHistory,
+      candles: mergedHistory,
       requireCandles: true
     });
     if (!bundle.ok) {
