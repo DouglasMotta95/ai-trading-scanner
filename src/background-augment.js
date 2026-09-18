@@ -349,7 +349,7 @@ async function applyEmbeddedFeed(payload = {}, sender = {}) {
 
     const base = {
       ...scannerState, ...snapshot, targetTabId: sender.tab.id, scanner: 'scanning', connection: 'online',
-      signal: clock ? scannerState.signal : null,
+      signal: scannerState.signal,
       lastConfirmed: switchedAsset ? null : (scannerState.lastConfirmed || null),
       tradeIntent: switchedAsset ? null : (scannerState.tradeIntent || null),
       lastSeen: Date.now(),
@@ -380,7 +380,7 @@ async function applyEmbeddedFeed(payload = {}, sender = {}) {
     };
 
     // Acquisition only: the central background.js analysis loop owns
-    // processSnapshot() and consumes this consolidated state on its cadence.
+    // the technical orchestrator and consumes this consolidated state on its cadence.
     return base;
   });
 }
