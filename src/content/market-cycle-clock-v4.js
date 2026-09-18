@@ -140,10 +140,15 @@
       const chartScoped = inOrNearChart(rect, chart);
       const candleSemantic = /vela|candle|remaining|restante|countdown|timer|fechamento|close/.test(context);
       const expirySemantic = /expira|expiry|expiration/.test(context);
+      const colonOnly = /^\d{1,3}:[0-5]\d$/.test(own);
       // Expiration is a different control. Never let "5 seg" / "1 min"
       // from the expiration selector become the candle countdown.
       if (expirySemantic && !candleSemantic) continue;
-      if (!candleSemantic && !chartScoped) continue;
+      // On compact/tablet CasaTrade layouts the visible candle clock can be a
+      // plain DOM token such as "00:51" without useful chart classes. Keep it
+      // as a low-confidence candidate; verifiedDomCountdown still requires
+      // real second-by-second progression before it becomes authoritative.
+      if (!candleSemantic && !chartScoped && !colonOnly) continue;
       for (const value of values) {
         if (value.seconds < 0 || value.seconds > limit + 2) continue;
         let score = chartScoped ? 230 : 0;
@@ -151,8 +156,8 @@
         if (/vela|candle|fechamento|close/.test(context)) score += 100;
         if (/remaining|restante|countdown|timer/.test(context)) score += 55;
         if (expirySemantic) score -= 45;
-        if (/^\d{1,3}:[0-5]\d$/.test(own)) score += 35;
-        rows.push({ ...value, text: own, score, chartScoped, expirySemantic });
+        if (colonOnly) score += chartScoped || candleSemantic ? 35 : 90;
+        rows.push({ ...value, text: own, score, chartScoped, expirySemantic, colonOnly });
       }
     }
     const now = Date.now();
@@ -211,7 +216,12 @@
     const exactTf = tf(freshExactClock(state, state.diagnostics?.focusedAsset || null, null)?.timeframe);
     const platformDiag = state.diagnostics?.platformTime || {};
     const platformTf = Number(platformDiag.at || 0) > 0 && Date.now() - Number(platformDiag.at) < 7000 ? tf(platformDiag.timeframe) : null;
-    return controlTf || chartTf || exactTf || platformTf || null;
+    // The structured market feed can already have confirmed M1 before the
+    // compact UI control reader catches up. It is safe to use that timeframe
+    // only as the duration bound for a DOM countdown candidate; the countdown
+    // itself still must prove real progression before becoming exact authority.
+    const stateTf = tf(state.analysisTimeframe || state.timeframe);
+    return controlTf || chartTf || exactTf || platformTf || stateTf || null;
   }
 
   let stateBoundaryProbe = null;
