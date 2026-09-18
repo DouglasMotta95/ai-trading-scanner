@@ -109,6 +109,30 @@ test('stale 5s high-confidence cache is functionally replaced by fresh 60s and c
 
 test('generic network duration requires trade expiration semantics and rejects generic order context', () => {
   const network = read('src/content/network-probe.js');
-  assert.match(network, /trade\\|option\\|operation\\|deal\\|expiry\\|expiration/);
-  assert.doesNotMatch(network, /trade\\|option\\|operation\\|deal\\|order\\|/);
+  const start = network.indexOf('const num =');
+  const end = network.indexOf('  const canonicalAsset', start);
+  assert.ok(start >= 0 && end > start, 'network expiration parser source must be extractable');
+  const behaviorSource = network.slice(start, end);
+
+  const run = parentKey => {
+    const context = {
+      GENERIC_DURATION_KEY: /^duration$/i,
+      CONTROL_EXP_KEY: /^__explicit_only__$/i,
+      stats: { controlExpiration: null },
+      now: () => 10000,
+      result: null
+    };
+    vm.runInNewContext(
+      behaviorSource
+        + "\nrecordControlExpiration('duration', 60, { parentKey, objectKeys: [parentKey, 'duration'] });"
+        + "\nresult = stats.controlExpiration;",
+      { ...context, parentKey }
+    );
+    return context.result;
+  };
+
+  assert.equal(run('order'), null);
+  const trade = run('trade');
+  assert.equal(trade?.expiration, '60s');
+  assert.equal(trade?.confidence, 84);
 });
