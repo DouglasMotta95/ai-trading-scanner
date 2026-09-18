@@ -35,24 +35,42 @@
   function elements() {
     const out = [];
     for (const root of roots()) {
-      try { out.push(...root.querySelectorAll('button,input,select,[role="button"],[role="combobox"],[aria-selected="true"],[data-state="active"],[data-testid*="expir"],[aria-label*="expir"],label,p,strong,small,span,div')); } catch {}
+      try { out.push(...root.querySelectorAll('button,input,select,[role="button"],[role="combobox"],[aria-selected="true"],[data-state="active"],[data-testid*="expir"],[aria-label*="expir"],[aria-valuetext],[aria-valuenow],[data-value],[name*="expir" i],[id*="expir" i],[class*="expir" i],label,p,strong,small,span,div,svg text')); } catch {}
       if (out.length > 7500) break;
     }
     return out.slice(0, 7500);
   }
   function text(el) {
     if (el instanceof HTMLInputElement || el instanceof HTMLSelectElement) return clean(el.value || el.selectedOptions?.[0]?.textContent || '');
-    return clean(el.getAttribute?.('aria-valuetext') || el.getAttribute?.('aria-label') || el.getAttribute?.('title') || el.innerText || el.textContent || '');
+    return clean(
+      el.getAttribute?.('aria-valuetext')
+      || el.getAttribute?.('data-value')
+      || el.getAttribute?.('value')
+      || el.getAttribute?.('aria-valuenow')
+      || el.getAttribute?.('aria-label')
+      || el.getAttribute?.('title')
+      || el.innerText
+      || el.textContent
+      || ''
+    );
   }
   function context(el) {
-    const parts = [text(el), el?.id, el?.className, el?.getAttribute?.('data-testid')];
+    const parts = [
+      text(el), el?.id, el?.className, el?.getAttribute?.('data-testid'),
+      el?.getAttribute?.('data-name'), el?.getAttribute?.('name'),
+      el?.getAttribute?.('aria-label'), el?.getAttribute?.('title'),
+      el?.getAttribute?.('data-value'), el?.getAttribute?.('aria-valuenow')
+    ];
     let p = el?.parentElement;
-    for (let i = 0; p && i < 4; i++, p = p.parentElement) parts.push(clean(p.innerText || p.textContent || '').slice(0, 420));
+    for (let i = 0; p && i < 5; i++, p = p.parentElement) {
+      parts.push(clean(p.innerText || p.textContent || '').slice(0, 520));
+      parts.push(p.id, p.className, p.getAttribute?.('data-testid'), p.getAttribute?.('aria-label'));
+    }
     return fold(parts.filter(Boolean).join(' '));
   }
   function expirationValue(raw = '') {
     const spaced = fold(raw);
-    const labeled = spaced.match(/(?:expiracao|expiry|expiration|duracao|duration|tempo da operacao|tempo de operacao)[^0-9]{0,36}(\d{1,4})\s*(s|seg|segundo|segundos|m|min|minuto|minutos)\b/);
+    const labeled = spaced.match(/(?:expiracao|expiry|expiration|duracao|duration|tempo da operacao|tempo de operacao)[^0-9]{0,48}(\d{1,4})\s*(s|seg|segundo|segundos|m|min|minuto|minutos)\b/);
     if (labeled) {
       const amount = Number(labeled[1]);
       return /^(m|min|minuto|minutos)$/.test(labeled[2]) ? `${amount * 60}s` : `${amount}s`;
@@ -61,6 +79,31 @@
     let m = s.match(/^(\d{1,4})(?:s|seg|segundo|segundos)$/); if (m) return `${Number(m[1])}s`;
     m = s.match(/^(\d{1,3})(?:m|min|minuto|minutos)$/); if (m) return `${Number(m[1]) * 60}s`;
     m = s.match(/^(\d{1,3}):([0-5]\d)$/); if (m) return `${Number(m[1]) * 60 + Number(m[2])}s`;
+    m = s.match(/^(\d{1,2}):([0-5]\d):([0-5]\d)$/);
+    if (m) return `${Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3])}s`;
+    m = s.match(/^(\d{1,3})(?:m|min)(\d{1,2})(?:s|seg)$/);
+    if (m) return `${Number(m[1]) * 60 + Number(m[2])}s`;
+    return null;
+  }
+  function expirationFromSemanticElement(el, ctx = '') {
+    const direct = expirationValue(text(el));
+    if (direct) return direct;
+    if (!/expira|expiry|expiration|duracao|duration|tempo da operacao|tempo de operacao/.test(ctx)) return null;
+    const attrs = [
+      el?.getAttribute?.('data-value'),
+      el?.getAttribute?.('value'),
+      el?.getAttribute?.('aria-valuenow'),
+      el?.getAttribute?.('aria-valuetext')
+    ].filter(Boolean);
+    for (const raw of attrs) {
+      const parsed = expirationValue(raw);
+      if (parsed) return parsed;
+      const numeric = String(raw).trim().match(/^\d{1,4}$/);
+      if (numeric) {
+        const seconds = Number(numeric[0]);
+        if (seconds > 0 && seconds <= 3600) return `${seconds}s`;
+      }
+    }
     return null;
   }
   function expirationAroundLabel(raw = '') {
@@ -192,7 +235,7 @@
         // CasaTrade often renders the label and value in sibling nodes
         // ("Expiração" + "1 min"). Read the labelled container too, but only
         // inside expiration semantics so candle countdowns cannot be mistaken.
-        const value = expirationValue(own) || expirationValue(ctx);
+        const value = expirationFromSemanticElement(el, ctx) || expirationValue(ctx);
         if (value && (controlLike || own.length <= 64 || /expira|expiry|expiration|duracao|duration/.test(ctx))) {
           exp = { value, score: controlLike ? 99 : /expira|expiry|expiration|duracao|duration/.test(fold(own)) ? 94 : 90 };
         }
