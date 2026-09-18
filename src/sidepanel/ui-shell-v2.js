@@ -103,7 +103,7 @@ function renderShell(state = {}) {
   const sessionAge = sessionStartedAt > 0 ? Date.now() - sessionStartedAt : 0;
   const panelAge = Math.max(0, Date.now() - PANEL_OPENED_AT);
   const expirationWaitAge = sessionAge > 0 ? Math.min(sessionAge, panelAge) : panelAge;
-  const expirationReadFailed = dataConnected && !expiration && expirationWaitAge >= 5000;
+  const expirationPending = dataConnected && !expiration && expirationWaitAge >= 1500;
 
   const strip = $('syncStrip');
   if (strip) strip.className = `sync-strip ${platformLinked ? 'live' : 'syncing'}`;
@@ -113,8 +113,8 @@ function renderShell(state = {}) {
       ? `ATUALIZANDO PARA ${pendingAsset}`
       : failure
         ? 'FALHA AO CONECTAR'
-        : expirationReadFailed
-          ? 'CONECTADO — FALHA NA LEITURA DA EXPIRAÇÃO'
+        : expirationPending
+          ? 'CONECTADO — EXPIRAÇÃO PENDENTE'
           : connected && expirationWrong
             ? 'CONECTADO — AJUSTE A EXPIRAÇÃO'
             : tradeReady
@@ -133,10 +133,10 @@ function renderShell(state = {}) {
     $('syncText').textContent = switching
       ? 'Dados do ativo anterior foram limpos. Confirmando preço e velas reais do novo instrumento.'
       : failure
-        || (expirationReadFailed
-          ? 'Não foi possível ler a expiração — verifique o seletor na CasaTrade e tente novamente.'
+        || (expirationPending
+          ? 'EXPIRAÇÃO PENDENTE — selecione 1 minuto na CasaTrade e toque em TENTAR NOVAMENTE.'
           : connected && expirationWrong
-            ? `${state.asset} • expiração ${expiration}. ALTERE PARA 1 MIN para liberar ENTRAR.`
+            ? 'Ajuste a expiração da CasaTrade para 1 minuto.'
             : tradeReady
               ? `${state.asset} • M1 • countdown e expiração confirmados pela CasaTrade.`
               : connected
@@ -158,7 +158,7 @@ function renderShell(state = {}) {
   }
 
   const retry = $('retryLiveRead');
-  if (retry) retry.hidden = !(expirationReadFailed || failure);
+  if (retry) retry.hidden = !(expirationPending || failure);
 }
 async function connectNow() {
   const button = $('connectScanner');
@@ -218,7 +218,7 @@ $('geminiToggle')?.addEventListener('change', event => {
 });
 
 $('connectScanner')?.addEventListener('click', () => connectNow().catch(() => {}));
-$('retryLiveRead')?.addEventListener('click', () => connectNow().catch(() => {}));
+$('retryLiveRead')?.addEventListener('click', () => refreshLiveReaders().catch(() => {}));
 $('activateLicense')?.addEventListener('click', () => {
   const button = $('activateLicense');
   button?.classList.add('loading');
