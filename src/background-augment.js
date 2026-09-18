@@ -1,4 +1,4 @@
-import { processSnapshot, resetOrchestrator } from './core/orchestrator.js';
+import { resetOrchestrator } from './core/orchestrator.js';
 import { isCasaTradeHost } from './platforms/registry.js';
 import { updateScannerState } from './services/scanner-state-atomic.js';
 import { storageLocalGet } from './services/chrome-compat.js';
@@ -379,30 +379,9 @@ async function applyEmbeddedFeed(payload = {}, sender = {}) {
       }
     };
 
-    // Market data may update many times per second. Only the verified candle-close
-    // clock from this exact trader frame is allowed to drive a next-candle decision.
-    if (!clock) return base;
-
-    const processed = processSnapshot(snapshot, base);
-    const processedCount = Number(processed.signal?.candleCount ?? candles.length ?? 0);
-    const processedStage = processedCount < 2 || processed.signal?.state === 'SEARCHING'
-      ? 'reading_history'
-      : processed.signal?.currentCandle ? 'diagnosing_next_candle' : 'analyzing_current';
-    return {
-      ...base, ...processed, license: scannerState.license,
-      diagnostics: {
-        ...base.diagnostics,
-        acquisition: {
-          ...base.diagnostics.acquisition, stage: processedStage,
-          reason: processedStage === 'reading_history'
-            ? `Analisando mercado atual • ${processedCount}/2 velas fechadas.`
-            : processedStage === 'analyzing_current'
-              ? 'Analisando a vela atual.'
-              : (processed.signal?.reason || 'Montando padrão da próxima vela.'),
-          candleCount: processedCount, requiredCandles: 2, at: Date.now()
-        }
-      }
-    };
+    // Acquisition only: the central background.js analysis loop owns
+    // processSnapshot() and consumes this consolidated state on its cadence.
+    return base;
   });
 }
 
