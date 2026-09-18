@@ -1,4 +1,3 @@
-import { resetOrchestrator } from './core/orchestrator.js';
 import { updateScannerState } from './services/scanner-state-atomic.js';
 
 const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
@@ -157,7 +156,7 @@ function nextEpoch(previous = {}) {
 }
 
 function resetForSession(state = {}, { asset, timeframe = null, info, reason, source }) {
-  resetOrchestrator();
+
   const previous = state.diagnostics?.marketSession || {};
   const epoch = nextEpoch(previous);
   return {
