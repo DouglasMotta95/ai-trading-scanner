@@ -4,7 +4,7 @@
   if (window !== window.top) return;
 
   const host = String(location.hostname || '').toLowerCase().replace(/\.$/, '');
-  const casaHost = value => value === 'casatrade.com' || value.endsWith('.casatrade.com') || value === 'casatrade.io' || value.endsWith('.casatrade.io');
+  const casaHost = value => value === 'casatrade.com' || value.endsWith('.casatrade.com') || value === 'casatrade.io' || value.endsWith('.casatrade.io') || value === 'casatraders.online' || value.endsWith('.casatraders.online') || value === 'ivcasatraders.online' || value.endsWith('.ivcasatraders.online');
   if (!casaHost(host)) return;
   const sendMessage = globalThis.__ATS_SEND_MESSAGE__;
   if (typeof sendMessage !== 'function') return;
