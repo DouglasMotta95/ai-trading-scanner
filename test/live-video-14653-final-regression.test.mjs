@@ -58,6 +58,8 @@ test('connection status is independent from trade readiness and obsolete analyst
 
   assert.match(shell, /connectScannerText'\)\.textContent = hasMarket \? 'CONECTADO' : 'CONECTAR'/);
   assert.match(shell, /CONECTADO — AJUSTE A EXPIRAÇÃO/);
+  assert.match(shell, /actualExpiration === '60s'/);
+  assert.match(shell, /toUpperCase\(\) === 'M1'/);
   assert.match(app, /function entryBlockReason/);
   assert.match(app, /POSSÍVEL COMPRA/);
   assert.match(app, /POSSÍVEL VENDA/);
