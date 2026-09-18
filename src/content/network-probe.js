@@ -10,6 +10,8 @@
   const TIME_KEYS = ['timestamp', 'time', 'ts', 'createdAt', 'created_at', 'serverTime', 'server_time'];
   const TF_KEYS = ['timeframe', 'interval', 'period', 'resolution', 'tf'];
   const EXP_KEYS = ['expiration', 'expiry', 'expiresAt', 'expires_at', 'duration'];
+  const CONTROL_EXP_KEY = /^(?:expiration|expiry|expirationTime|expiration_time|expiryTime|expiry_time|optionDuration|option_duration|tradeDuration|trade_duration|operationDuration|operation_duration|dealDuration|deal_duration)$/i;
+  const GENERIC_DURATION_KEY = /^duration$/i;
   const PAYOUT_KEYS = ['payout', 'profit', 'return', 'yield', 'percent'];
   const SELECTED_KEYS = ['selected', 'active', 'isActive', 'is_active', 'current', 'isCurrent', 'is_current'];
   const TYPE_KEYS = ['type', 'instrumentType', 'instrument_type', 'mode', 'optionType', 'option_type'];
@@ -24,6 +26,7 @@
     keys: new Set(),
     assets: new Map(),
     candles: new Map(),
+    controlExpiration: null,
     parse: { frames: 0, decoded: 0, candidates: 0, candles: 0, binary: 0 }
   };
 
@@ -52,6 +55,16 @@
     for (const k of names) { const real = lower.get(k.toLowerCase()); if (real && o[real] != null) return o[real]; }
     return null;
   };
+  const pickEntry = (o, names) => {
+    if (!o || typeof o !== 'object') return null;
+    for (const k of names) if (Object.prototype.hasOwnProperty.call(o, k) && o[k] != null) return { key: k, value: o[k] };
+    const lower = new Map(Object.keys(o).map(k => [k.toLowerCase(), k]));
+    for (const k of names) {
+      const real = lower.get(k.toLowerCase());
+      if (real && o[real] != null) return { key: real, value: o[real] };
+    }
+    return null;
+  };
   const normalizeTime = v => {
     let t = num(v);
     if (t == null) return null;
@@ -75,6 +88,29 @@
     const n = num(v);
     if (n != null && n > 0 && n <= 3600) return n < 60 ? `${n}s` : n === 60 ? '60s' : n % 60 === 0 ? `${n / 60}m` : `${n}s`;
     return null;
+  };
+  const recordControlExpiration = (key, value, meta = {}) => {
+    const expiration = normalizeExp(value);
+    if (!expiration) return;
+    const semanticKey = String(key || '');
+    const parentKey = String(meta.parentKey || '');
+    const objectKeys = Array.isArray(meta.objectKeys) ? meta.objectKeys.join(' ') : '';
+    const genericAllowed = GENERIC_DURATION_KEY.test(semanticKey)
+      && /trade|option|operation|deal|order|expiry|expir/i.test(`${parentKey} ${objectKeys}`);
+    if (!CONTROL_EXP_KEY.test(semanticKey) && !genericAllowed) return;
+    const confidence = CONTROL_EXP_KEY.test(semanticKey) && !GENERIC_DURATION_KEY.test(semanticKey) ? 97 : 84;
+    const current = stats.controlExpiration;
+    const observedAt = now();
+    if (!current || confidence > Number(current.confidence || 0) || observedAt - Number(current.observedAt || 0) > 2500) {
+      stats.controlExpiration = {
+        expiration,
+        confidence,
+        sourceKey: semanticKey,
+        transport: meta.transport || null,
+        endpoint: meta.endpoint || null,
+        observedAt
+      };
+    }
   };
   const canonicalAsset = v => {
     let raw = String(v ?? '').trim().toUpperCase();
@@ -182,7 +218,14 @@
     if (price == null && bid == null && ask == null && close == null) return null;
     const timestamp = pick(o, TIME_KEYS);
     const timeframe = normalizeTf(pick(o, TF_KEYS));
-    const expiration = normalizeExp(pick(o, EXP_KEYS));
+    const expirationEntry = pickEntry(o, EXP_KEYS);
+    const expiration = normalizeExp(expirationEntry?.value);
+    if (expirationEntry) {
+      recordControlExpiration(expirationEntry.key, expirationEntry.value, {
+        parentKey: inheritedAsset,
+        objectKeys: Object.keys(o).slice(0, 40)
+      });
+    }
     const payout = num(pick(o, PAYOUT_KEYS));
     const selected = SELECTED_KEYS.some(k => Object.prototype.hasOwnProperty.call(o, k) && bool(o[k]));
     const typeRaw = pick(o, TYPE_KEYS);
@@ -206,7 +249,10 @@
     if (close != null) c.close = close;
     if (timestamp != null) c.timestamp = timestamp;
     if (timeframe) c.timeframe = timeframe;
-    if (expiration) c.expiration = expiration;
+    if (expiration) {
+      c.expiration = expiration;
+      c.expirationSourceKey = expirationEntry?.key || null;
+    }
     if (payout != null) c.payout = payout;
     if (iType) c.instrumentType = iType;
     if (marketType) c.marketType = marketType;
@@ -258,6 +304,12 @@
       for (const [k, val] of Object.entries(v)) {
         if (SENSITIVE.test(k)) continue;
         if (k.length <= 64) stats.keys.add(k);
+        recordControlExpiration(k, val, {
+          parentKey: key,
+          objectKeys: Object.keys(v).slice(0, 40),
+          transport: meta.transport,
+          endpoint: meta.endpoint
+        });
         let childAsset = ownAsset;
         if (!childAsset && QUOTE_CONTAINER.test(key || k)) childAsset = canonicalAsset(k) || assetFromText(k);
         if (!childAsset) childAsset = canonicalAsset(k) || '';
@@ -309,6 +361,9 @@
         payload: {
           messages: { ...stats.messages }, connections: { ...stats.connections }, endpoints: [...stats.endpoints].slice(-24),
           keys: [...stats.keys].slice(0, 160), candidates, candidateCount: candidates.length, recentCandles,
+          controls: stats.controlExpiration && t - Number(stats.controlExpiration.observedAt || 0) < 7000
+            ? { expiration: stats.controlExpiration.expiration, confidence: stats.controlExpiration.confidence, sourceKey: stats.controlExpiration.sourceKey, observedAt: stats.controlExpiration.observedAt }
+            : null,
           feedQuality: feedQuality(), parser: { ...stats.parse }, primaryTransport: stats.connections.ws > 0 ? 'ws' : 'http',
           privacy: 'Somente respostas de mercado recebidas pela página são observadas. Cookies, headers, corpos de requisição, tokens e campos de autenticação não são coletados.'
         }
