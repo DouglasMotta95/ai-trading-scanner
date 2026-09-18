@@ -285,6 +285,8 @@
       if (String(focus.frameHost || '').toLowerCase() !== host) return;
       if (lastCanvasAsset && lastCanvasAsset !== focus.asset) { lastCanvas = null; canvasVerifiedAt = 0; }
       lastCanvasAsset = focus.asset;
+      const expirationAt = Number(state.platformControls?.expirationCheckedAt || state.platformControls?.observed?.observedAt?.expiration || 0);
+      const expirationFresh = expirationAt > 0 && Date.now() - expirationAt < 7000;
       const controlsFresh = Number(state.platformControls?.checkedAt || 0) > 0 && Date.now() - Number(state.platformControls.checkedAt) < 5000;
       const cycleTf = liveCycleTf(state, controlsFresh) || structuredFeedTf(state, focus);
       const duration = secondsFor(cycleTf);
@@ -299,7 +301,7 @@
         && seconds >= duration - 8 && seconds <= duration + 1;
       lastCanvas = { seconds, at: observedAt, cycleTf };
       if (!progressed && !rolled) return;
-      const expiration = controlsFresh ? clean(state.platformControls?.observed?.expiration || '') || null : null;
+      const expiration = expirationFresh ? clean(state.platformControls?.observed?.expiration || '') || null : null;
       canvasVerifiedAt = Date.now();
       await sendMessage({
         type: 'ATS_MARKET_CLOCK_V2', asset: focus.asset, timeframe: cycleTf,
@@ -328,28 +330,27 @@
       if (!focus?.asset || focus.reliable !== true || focus.chartScoped !== true || focus.trustedChartFrame !== true) return;
       if (String(focus.frameHost || '').toLowerCase() !== host) return;
 
+      const expirationAt = Number(state.platformControls?.expirationCheckedAt || state.platformControls?.observed?.observedAt?.expiration || 0);
+      const expirationFresh = expirationAt > 0 && Date.now() - expirationAt < 7000;
       const controlsFresh = Number(state.platformControls?.checkedAt || 0) > 0 && Date.now() - Number(state.platformControls.checkedAt) < 5000;
       const cycleTf = liveCycleTf(state, controlsFresh) || structuredFeedTf(state, focus);
       if (!cycleTf) return;
-      const expiration = controlsFresh ? clean(state.platformControls?.observed?.expiration || '') || null : null;
+      const expiration = expirationFresh ? clean(state.platformControls?.observed?.expiration || '') || null : null;
       const domClock = verifiedDomCountdown(cycleTf);
 
       if (!domClock && freshExactClock(state, focus, cycleTf)) return;
       if (!domClock && Date.now() - canvasVerifiedAt < 2300) return;
 
-      const boundary = !domClock ? currentStateBoundary(state, focus, cycleTf) : null;
+      // Never synthesize an operational countdown from candle timestamps.
+      // If CasaTrade's real countdown is not currently verified, publish only
+      // a pending state. The 30s/10s decision gate therefore cannot consume a
+      // local/derived clock as authority.
       const payload = domClock ? {
         type: 'ATS_MARKET_CLOCK_V2', asset: focus.asset, timeframe: cycleTf,
         secondsRemaining: domClock.seconds, expiration, available: true, verified: true, operational: true,
         clockRole: 'candle-close', clockSource: 'trader-dom-countdown',
         clockMode: domClock.chartScoped ? 'chart-geometry-exact' : 'dom-exact',
         clockText: domClock.text, clockToken: domClock.token, confidence: 99, frameHost: host, at: Date.now()
-      } : boundary ? {
-        type: 'ATS_MARKET_CLOCK_V2', asset: focus.asset, timeframe: cycleTf,
-        secondsRemaining: boundary.seconds, expiration, available: true, verified: false, operational: true,
-        clockRole: 'candle-close', clockSource: 'platform-cycle-derived', clockMode: 'structured-candle-boundary-fallback',
-        clockText: 'Clock temporário derivado da vela estruturada enquanto o countdown exato reaparece', clockToken: `${boundary.seconds}s`,
-        confidence: 70, frameHost: host, at: Date.now()
       } : {
         type: 'ATS_MARKET_CLOCK_V2', asset: focus.asset, timeframe: cycleTf,
         secondsRemaining: null, expiration, available: false, verified: false, operational: false,
