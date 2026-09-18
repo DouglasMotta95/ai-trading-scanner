@@ -16,20 +16,19 @@ test('owner dev access does not flicker as inactive in the live panel', () => {
   assert.match(source, /owner_dev/);
 });
 
-test('M1 UI no longer offers contradictory 30s 2m or 5m expiration preferences', () => {
+test('compact M1 UI fixes strategy to real 1 minute expiration without contradictory selectors', () => {
   const html = read('src/sidepanel/index.html');
-  const guard = read('src/sidepanel/expiration-guard-ui.js');
-  assert.match(html, /Expiração da estratégia M1/);
-  assert.match(html, /option value="60s">1 min/);
-  assert.doesNotMatch(html, /option value="300s"/);
-  assert.doesNotMatch(html, /option value="120s"/);
-  assert.doesNotMatch(html, /option value="30s"/);
-  assert.match(guard, /requested === '60s' \? '60s' : null/);
+  assert.match(html, />M1</);
+  assert.match(html, />1 min</);
+  assert.doesNotMatch(html, /id="desiredExpiration"/);
+  assert.doesNotMatch(html, /expiration-guard-ui\.js/);
 });
 
-test('existing CasaTrade clock and market-session core stay byte-for-byte on the previous live-fix baseline', () => {
+test('CasaTrade clock keeps expiration separate and market session rejects unstable passive asset switches', () => {
   const clock = read('src/content/market-cycle-clock-v4.js');
   const market = read('src/background-market-session.js');
-  assert.doesNotMatch(clock, /function orderExpirationFromDom/);
+  assert.match(clock, /if \(expirySemantic && !candleSemantic\) continue/);
+  assert.match(clock, /structured-candle-boundary-fallback/);
+  assert.match(market, /passive-asset-change-not-stable/);
   assert.doesNotMatch(market, /casatrade-clock-frame/);
 });
