@@ -219,6 +219,7 @@ function currentOhlc(state = {}) {
 function entryBlockReason(state = {}) {
   const clock = state.diagnostics?.marketClock || {};
   if (!exactClockReady(state)) {
+    if (sessionAgeMs(state) < 5000) return 'SINCRONIZANDO COUNTDOWN DA CASATRADE…';
     return operationalClockReady(state)
       ? 'COUNTDOWN ESTIMADO — AGUARDANDO TEMPO EXATO DA CASATRADE'
       : 'FALHA TÉCNICA — COUNTDOWN DA CASATRADE NÃO CONFIRMADO';
@@ -236,7 +237,7 @@ function entryBlockReason(state = {}) {
 }
 
 function gateKind(state = {}) {
-  if (!exactClockReady(state)) return 'technical';
+  if (!exactClockReady(state)) return sessionAgeMs(state) < 5000 ? 'waiting' : 'technical';
   const expiration = expirationObservation(state);
   if (!expiration.value) return sessionAgeMs(state) >= 5000 ? 'technical' : 'waiting';
   if (expiration.value !== '60s') return 'rule';
