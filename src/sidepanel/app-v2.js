@@ -315,7 +315,8 @@ function render(state = {}) {
   setText('signalScore', `${Math.round(model.score)}/100`);
   setText('technicalConfidence', `${Math.round(model.score)}/100`);
   setText('technicalConfidenceLabel', model.uiState.startsWith('ENTER_') ? 'CONFIRMADO' : model.uiState.startsWith('POSSIBLE_') ? 'EM OBSERVAÇÃO' : 'FORÇA DO PADRÃO');
-  setText('setupType', clean(state.signal?.setup || state.signal?.regime?.type || '—') || '—');
+  const setupLabel = clean(state.signal?.setup || state.signal?.regime?.type || '—') || '—';
+  setText('setupType', /^analista$/i.test(setupLabel) ? '—' : setupLabel);
   setText('secondsRemaining', remaining == null ? '—' : exact ? String(Math.max(0, Math.ceil(remaining))) : `~${Math.max(0, Math.ceil(remaining))}`);
   setText('expiration', expLabel(actualExp));
   setText('timeSyncStatus', timeReady ? 'OK • CASATRADE' : exact ? entryBlockReason(state) : operationalClockReady(state) ? 'ESTIMADO • BLOQUEADO' : 'SINCRONIZANDO');
