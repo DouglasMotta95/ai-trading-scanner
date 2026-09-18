@@ -43,7 +43,7 @@ function quality(signal = {}, direction = null) {
 function cycleKey(context = {}, signal = {}) {
   const asset = clean(context.asset || signal.asset || 'unknown').toUpperCase();
   const timeframe = clean(context.timeframe || signal.timeframe || 'M1').toUpperCase();
-  const seconds = Math.max(0, Number(signal.secondsRemaining ?? context.secondsRemaining ?? 0));
+  const seconds = Math.max(0, Number(context.secondsRemaining ?? signal.secondsRemaining ?? 0));
   const now = Number(context.serverTime || Date.now());
   const target = num(signal.targetStart) ?? now + seconds * 1000;
   return `${asset}|${timeframe}|${Math.round(target / 5000) * 5000}`;
@@ -100,7 +100,7 @@ export function fastLiveDecision(signal = {}, context = {}) {
   if (signal.uiState === 'ENTER_BUY' || signal.uiState === 'ENTER_SELL' || signal.state === 'CONFIRM') return signal;
 
   const score = Number(signal.analysisScore ?? signal.score ?? 0);
-  const seconds = Math.max(0, Math.ceil(Number(signal.secondsRemaining ?? context.secondsRemaining ?? 0)));
+  const seconds = Math.max(0, Math.ceil(Number(context.secondsRemaining ?? signal.secondsRemaining ?? 0)));
   const direction = directionOf(signal);
   const q = quality(signal, direction);
   const key = cycleKey(context, signal);
