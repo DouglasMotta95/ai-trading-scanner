@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import vm from 'node:vm';
 
 const read = path => fs.readFileSync(new URL('../' + path, import.meta.url), 'utf8');
 
@@ -58,4 +59,56 @@ test('manual entry gate uses expiration-specific freshness', () => {
   const control = read('src/background-control.js');
   assert.match(control, /expirationCheckedAt/);
   assert.match(control, /const controlsFresh = expirationAt > 0 && Date\.now\(\) - expirationAt < 7000/);
+});
+
+
+test('stale 5s high-confidence cache is functionally replaced by fresh 60s and cannot overwrite it back', () => {
+  const source = read('src/background-platform-controls.js');
+  const start = source.indexOf('function mergeObserved(');
+  const end = source.indexOf('\nfunction analystPrefs', start);
+  assert.ok(start >= 0 && end > start, 'mergeObserved source must be extractable');
+  const mergeSource = source.slice(start, end);
+  const now = Date.now();
+
+  const forward = {
+    previous: {
+      expiration: '5s',
+      source: 'old-cache',
+      observedAt: { expiration: now - 8000 },
+      confidence: { expiration: 99 }
+    },
+    incoming: {
+      expiration: '60s',
+      source: 'casatrade-network-control',
+      observedAt: { expiration: now },
+      confidence: { expiration: 84 }
+    },
+    result: null,
+    Date
+  };
+  vm.runInNewContext(mergeSource + '\nresult = mergeObserved(previous, incoming);', forward);
+  assert.equal(forward.result.expiration, '60s');
+  assert.equal(forward.result.observedAt.expiration, now);
+  assert.equal(forward.result.confidence.expiration, 84);
+
+  const backward = {
+    previous: forward.result,
+    incoming: {
+      expiration: '5s',
+      source: 'stale-network',
+      observedAt: { expiration: now - 4000 },
+      confidence: { expiration: 97 }
+    },
+    result: null,
+    Date
+  };
+  vm.runInNewContext(mergeSource + '\nresult = mergeObserved(previous, incoming);', backward);
+  assert.equal(backward.result.expiration, '60s');
+  assert.equal(backward.result.observedAt.expiration, now);
+});
+
+test('generic network duration requires trade expiration semantics and rejects generic order context', () => {
+  const network = read('src/content/network-probe.js');
+  assert.match(network, /trade\\|option\\|operation\\|deal\\|expiry\\|expiration/);
+  assert.doesNotMatch(network, /trade\\|option\\|operation\\|deal\\|order\\|/);
 });
