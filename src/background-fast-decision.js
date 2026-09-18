@@ -31,7 +31,7 @@ async function applyFastDecision(observed = {}) {
   const nextSignal = fastLiveDecision(observed.signal, {
     asset: observed.asset,
     timeframe: observed.analysisTimeframe || observed.timeframe || 'M1',
-    secondsRemaining: observed.signal?.secondsRemaining,
+    secondsRemaining: observed.diagnostics?.marketClock?.secondsRemaining ?? observed.signal?.secondsRemaining,
     serverTime: observed.serverTime || Date.now()
   });
   if (!nextSignal || sameSignal(nextSignal, observed.signal)) return;
