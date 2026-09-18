@@ -1,4 +1,3 @@
-import { resetOrchestrator } from './core/orchestrator.js';
 import { updateScannerState } from './services/scanner-state-atomic.js';
 
 const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
@@ -32,7 +31,7 @@ function senderMeta(sender = {}) {
 }
 
 function resetForFocus(state, asset, meta) {
-  resetOrchestrator();
+
   return {
     ...state,
     connection: 'connecting',
@@ -262,7 +261,7 @@ function enforceStateIntegrity(nextState = {}) {
   const focusAsset = validFocus ? normAsset(nextState.diagnostics?.focusedAsset?.asset) : '';
   const assetMismatch = !!nextState.asset && (!focusAsset || !sameAsset(nextState.asset, focusAsset));
   if (!validFocus || assetMismatch) {
-    resetOrchestrator();
+
     return {
       ...nextState,
       connection: 'connecting',
