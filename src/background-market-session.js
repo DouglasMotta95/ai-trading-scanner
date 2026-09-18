@@ -483,6 +483,8 @@ async function applyFeed(payload = {}, sender = {}) {
         candles: acceptedHistory.length >= 2
       }
     };
+    const diagnostics = { ...(state.diagnostics || {}), ...(next.diagnostics || {}) };
+    delete diagnostics.connectionError;
     return {
       ...next,
       targetTabId: info.tabId,
@@ -490,7 +492,7 @@ async function applyFeed(payload = {}, sender = {}) {
       asset, price, timeframe: timeframe || next.timeframe, analysisTimeframe: timeframe || next.analysisTimeframe,
       serverTime, marketHistory, candles: acceptedHistory, lastSeen: Date.now(), connection: 'online',
       diagnostics: {
-        ...(state.diagnostics || {}), ...(next.diagnostics || {}),
+        ...diagnostics,
         focusedAsset: focus,
         marketClock: state.diagnostics?.marketClock || null,
         marketSession: {
