@@ -45,7 +45,7 @@ function cycleKey(context = {}, signal = {}) {
   const timeframe = clean(context.timeframe || signal.timeframe || 'M1').toUpperCase();
   const seconds = Math.max(0, Number(context.secondsRemaining ?? signal.secondsRemaining ?? 0));
   const now = Number(context.serverTime || Date.now());
-  const target = num(signal.targetStart) ?? now + seconds * 1000;
+  const target = num(context.targetStart) ?? num(signal.targetStart) ?? now + seconds * 1000;
   return `${asset}|${timeframe}|${Math.round(target / 5000) * 5000}`;
 }
 
