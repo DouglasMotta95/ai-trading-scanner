@@ -23,6 +23,16 @@ function guidance(state = {}) {
   const timeReady = decision.timeReady === true && decision.expirationReady === true;
   const block = clean(decision.reason || '');
 
+  if (technical.directionTransition?.from && technical.directionTransition?.to) {
+    const from = technical.directionTransition.from === 'BUY' ? 'COMPRA' : 'VENDA';
+    const to = technical.directionTransition.to === 'BUY' ? 'COMPRA' : 'VENDA';
+    return {
+      tone: 'waiting',
+      value: 'PADRÃO MUDANDO — REAVALIANDO',
+      hint: `${from} → ${to}. A nova direção precisa se sustentar antes de substituir o padrão atual.`
+    };
+  }
+
   if ((professionalUi === 'ENTER_BUY' || professionalUi === 'ENTER_SELL') && decision.actionable === true && timeReady) {
     return {
       tone: direction === 'BUY' ? 'buy' : 'sell',
