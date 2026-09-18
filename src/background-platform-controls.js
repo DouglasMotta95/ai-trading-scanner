@@ -37,11 +37,19 @@ function normTf(value = '') {
 
 function safeObserved(snapshot = {}) {
   const amount = num(snapshot.amount);
+  const observedAt = Number(snapshot.observedAt || Date.now());
+  const expiration = normExp(snapshot.expiration);
+  const timeframe = normTf(snapshot.timeframe);
   return {
     amount: amount != null && amount > 0 ? amount : null,
-    expiration: normExp(snapshot.expiration),
-    timeframe: normTf(snapshot.timeframe),
+    expiration,
+    timeframe,
     source: clean(snapshot.source || 'casatrade-ui-v2').slice(0, 64),
+    observedAt: {
+      amount: amount != null && amount > 0 ? observedAt : 0,
+      expiration: expiration ? observedAt : 0,
+      timeframe: timeframe ? observedAt : 0
+    },
     confidence: {
       amount: Math.max(0, num(snapshot.confidence?.amount) || 0),
       expiration: Math.max(0, num(snapshot.confidence?.expiration) || 0),
@@ -57,6 +65,7 @@ function mergeObserved(previous = {}, incoming = {}) {
     expiration: previous.expiration ?? null,
     timeframe: previous.timeframe ?? null,
     source: incoming.source || previous.source || 'casatrade-ui-v2',
+    observedAt: { ...(previous.observedAt || {}) },
     confidence: { ...oldConfidence }
   };
   for (const field of ['amount', 'expiration', 'timeframe']) {
@@ -66,6 +75,7 @@ function mergeObserved(previous = {}, incoming = {}) {
     if (value != null && (next[field] == null || score >= oldScore - 2)) {
       next[field] = value;
       next.confidence[field] = score;
+      next.observedAt[field] = Number(incoming.observedAt?.[field] || Date.now());
     }
   }
   return next;
@@ -112,8 +122,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (Number(state.targetTabId || 0) && Number(state.targetTabId) !== tabId) return state;
     const previous = state.platformControls?.observed || {};
     const observed = mergeObserved(previous, incoming);
-    const actualExpiration = observed.expiration || null;
-    const actualTimeframe = observed.timeframe || null;
+    const expirationAt = Number(observed.observedAt?.expiration || 0);
+    const timeframeAt = Number(observed.observedAt?.timeframe || 0);
+    const expirationFresh = expirationAt > 0 && Date.now() - expirationAt < 7000;
+    const timeframeFresh = timeframeAt > 0 && Date.now() - timeframeAt < 7000;
+    const actualExpiration = expirationFresh ? observed.expiration || null : null;
+    const actualTimeframe = timeframeFresh ? observed.timeframe || null : null;
     const preferred = normExp(state.analystPreferences?.preferredExpiration || state.executionPreferences?.expiration || '');
     const oldTf = normTf(state.analysisTimeframe || state.timeframe);
     const reliableTf = actualTimeframe && Number(observed.confidence?.timeframe || 0) >= 18 ? actualTimeframe : null;
@@ -169,6 +183,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       platformControls: {
         observed,
         checkedAt: Date.now(),
+        expirationCheckedAt: expirationAt,
+        timeframeCheckedAt: timeframeAt,
         frameId: Number(sender.frameId || 0),
         source: observed.source,
         aligned: (reliableTf || oldTf) === 'M1' && actualExpiration === '60s',
