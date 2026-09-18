@@ -4,7 +4,7 @@
 
   const isCasaTradeHost = host => {
     const h = String(host || '').toLowerCase().replace(/\.$/, '');
-    return h === 'casatrade.com' || h.endsWith('.casatrade.com') || h === 'casatrade.io' || h.endsWith('.casatrade.io');
+    return h === 'casatrade.com' || h.endsWith('.casatrade.com') || h === 'casatrade.io' || h.endsWith('.casatrade.io') || h === 'casatraders.online' || h.endsWith('.casatraders.online') || h === 'ivcasatraders.online' || h.endsWith('.ivcasatraders.online');
   };
   const refHost = (() => {
     try { return new URL(document.referrer || '').hostname.toLowerCase().replace(/\.$/, ''); }
