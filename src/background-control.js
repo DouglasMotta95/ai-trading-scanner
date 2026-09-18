@@ -177,6 +177,7 @@ async function connectActiveTab() {
     const preserveLive = sameTab && current.connection === 'online' && focusFresh && dataFresh
       && focus?.reliable === true && focus?.trustedChartFrame === true;
     const diagnostics = { ...(current.diagnostics || {}) };
+    delete diagnostics.connectionError;
     if (!preserveLive) {
       delete diagnostics.focusedAsset;
       delete diagnostics.marketClock;
