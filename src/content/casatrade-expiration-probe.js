@@ -185,6 +185,63 @@
     return candidates[0] || null;
   }
 
+
+  function tradeControlExpiration(all = []) {
+    const candidates = [];
+    const unitOnly = raw => {
+      const own = fold(raw);
+      if (!/^(\d{1,4})\s*(?:s|seg|segundo|segundos|m|min|minuto|minutos)$/.test(own)) return null;
+      return expirationValue(own);
+    };
+    for (const el of all) {
+      if (!visible(el)) continue;
+      const own = text(el);
+      if (!own || own.length > 32) continue;
+      const value = unitOnly(own);
+      if (!value) continue;
+
+      const parts = [];
+      let node = el;
+      let controlLike = false;
+      for (let depth = 0; node && depth < 3; depth += 1, node = node.parentElement) {
+        const nodeText = clean(node.innerText || node.textContent || '').slice(0, 420);
+        parts.push(
+          nodeText,
+          node.id,
+          node.className,
+          node.getAttribute?.('data-testid'),
+          node.getAttribute?.('data-name'),
+          node.getAttribute?.('aria-label'),
+          node.getAttribute?.('role')
+        );
+        if (node.matches?.('button,input,select,[role="button"],[role="combobox"],[aria-selected="true"],[data-state="active"]')) {
+          controlLike = true;
+        }
+      }
+      const local = fold(parts.filter(Boolean).join(' '));
+      const tradeSemantic = /comprar|vender|buy|sell|payout|retorno|return|lucro|profit|amount|valor|stake|trade|option|deal/.test(local);
+      const currencySemantic = /r\$|\$|usd|brl|saldo|balance/.test(local);
+      const candleSemantic = /countdown|timer|vela|candle|fechamento|candle-close|remaining|restante/.test(local);
+      const explicitExpiration = /expira|expiry|expiration|duracao|duration|tempo da operacao|tempo de operacao/.test(local);
+
+      // Compact CasaTrade layouts can render the expiration selector as only
+      // "5 seg" / "1 min", without a visible Expiração label. Accept that
+      // stable unit token only when its local control band is clearly the
+      // trade ticket, never from the chart/candle timer area.
+      if (!explicitExpiration && (!tradeSemantic || (!controlLike && !currencySemantic))) continue;
+      if (candleSemantic && !explicitExpiration) continue;
+
+      let score = explicitExpiration ? 106 : 92;
+      if (tradeSemantic) score += 8;
+      if (controlLike) score += 5;
+      if (currencySemantic) score += 3;
+      if (candleSemantic && !explicitExpiration) score -= 12;
+      candidates.push({ value, score });
+    }
+    candidates.sort((a, b) => b.score - a.score);
+    return candidates[0] || null;
+  }
+
   function linkedExpiration(all = []) {
     const labels = all.filter(el => {
       if (!visible(el)) return false;
@@ -253,6 +310,10 @@
     if (!exp) {
       const nearby = nearbyExpiration(all);
       if (nearby?.value) exp = nearby;
+    }
+    if (!exp) {
+      const tradeControl = tradeControlExpiration(all);
+      if (tradeControl?.value) exp = tradeControl;
     }
     if (!exp) {
       const bodyValue = bodyExpiration();
