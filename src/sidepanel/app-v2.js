@@ -134,13 +134,9 @@ function exactClockReady(state = {}) {
 }
 
 function operationalClockReady(state = {}) {
-  const clock = state.diagnostics?.marketClock || {};
-  if (!clockBaseReady(state)) return false;
-  if (exactClockReady(state)) return true;
-  return clock.verified !== true
-    && clock.operational === true
-    && clock.source === 'platform-cycle-derived'
-    && Number(clock.confidence || 0) >= 50;
+  // There is no operational fallback clock anymore. The scanner may only use
+  // an exact CasaTrade countdown source as time authority.
+  return exactClockReady(state);
 }
 
 function sessionReady(state = {}) {
@@ -217,30 +213,23 @@ function currentOhlc(state = {}) {
 }
 
 function entryBlockReason(state = {}) {
-  const clock = state.diagnostics?.marketClock || {};
-  if (!exactClockReady(state)) {
-    if (sessionAgeMs(state) < 5000) return 'SINCRONIZANDO COUNTDOWN DA CASATRADE…';
-    return operationalClockReady(state)
-      ? 'COUNTDOWN ESTIMADO — AGUARDANDO TEMPO EXATO DA CASATRADE'
-      : 'FALHA TÉCNICA — COUNTDOWN DA CASATRADE NÃO CONFIRMADO';
-  }
   const expiration = expirationObservation(state);
-  if (!expiration.value) {
-    return sessionAgeMs(state) < 5000
-      ? 'LENDO EXPIRAÇÃO DA CASATRADE…'
-      : 'FALHA TÉCNICA — NÃO FOI POSSÍVEL LER A EXPIRAÇÃO; VERIFIQUE O SELETOR NA CASATRADE';
-  }
-  if (expiration.value !== '60s') return `EXPIRAÇÃO ${expLabel(expiration.value)} — ALTERE PARA 1 MIN`;
+  if (!expiration.value) return 'EXPIRAÇÃO PENDENTE — LEIA O SELETOR DA CASATRADE E TENTE NOVAMENTE';
+  if (expiration.value !== '60s') return 'AJUSTE A EXPIRAÇÃO DA CASATRADE PARA 1 MINUTO';
+
+  const clock = state.diagnostics?.marketClock || {};
+  if (!exactClockReady(state)) return 'COUNTDOWN REAL PENDENTE — AGUARDANDO TEMPO EXATO DA CASATRADE';
+
   const clockTf = normTf(clock.timeframe);
   if (clockTf !== 'M1') return 'AJUSTE O TIMEFRAME DA CASATRADE PARA M1';
   return 'ENTRADA AINDA NÃO LIBERADA';
 }
 
 function gateKind(state = {}) {
-  if (!exactClockReady(state)) return sessionAgeMs(state) < 5000 ? 'waiting' : 'technical';
   const expiration = expirationObservation(state);
-  if (!expiration.value) return sessionAgeMs(state) >= 5000 ? 'technical' : 'waiting';
+  if (!expiration.value) return 'waiting';
   if (expiration.value !== '60s') return 'rule';
+  if (!exactClockReady(state)) return 'waiting';
   const clockTf = normTf(state.diagnostics?.marketClock?.timeframe);
   if (clockTf !== 'M1') return 'rule';
   return 'waiting';
@@ -359,41 +348,26 @@ let lastRenderedState = {};
 let countdownUi = { value: null, at: 0, cycle: '' };
 
 function projectedRemaining(state = {}) {
-  const clock = state.diagnostics?.marketClock || {};
-  const raw = num(clock.secondsRemaining);
-  if (raw == null) return null;
-  const at = Number(clock.at || 0);
-  const exact = clock.verified === true && ['trader-dom-countdown','network-server-cycle'].includes(String(clock.source || ''));
-  if (!exact || !at) return raw;
-  const elapsed = Math.max(0, (Date.now() - at) / 1000);
-  if (elapsed > 3.2) return null;
-  return Math.max(0, raw - elapsed);
+  // Never locally decrement/project the last second. Display and decision timing
+  // must reflect the latest exact CasaTrade observation only.
+  if (!exactClockReady(state)) return null;
+  const raw = num(state.diagnostics?.marketClock?.secondsRemaining);
+  return raw == null ? null : Math.max(0, raw);
 }
 
 function smoothedRemaining(state = {}) {
   const raw = projectedRemaining(state);
-  if (raw == null) { countdownUi = { value: null, at: 0, cycle: '' }; return null; }
-  const clock = state.diagnostics?.marketClock || {};
-  const cycle = `${marketId(state.asset || transitionAsset(state))}|${normTf(clock.timeframe || state.analysisTimeframe || state.timeframe) || ''}|${Math.round(Number(clock.closeAt || 0) / 5000) * 5000}`;
-  const now = Date.now();
-  const value = Math.max(0, Math.ceil(raw));
-  if (!countdownUi.cycle || countdownUi.cycle !== cycle || (countdownUi.value != null && value > countdownUi.value + 20)) {
-    countdownUi = { value, at: now, cycle };
-    return value;
+  if (raw == null) {
+    countdownUi = { value: null, at: 0, cycle: '' };
+    return null;
   }
-  let next = value;
-  const elapsed = now - countdownUi.at;
-  if (countdownUi.value != null && elapsed < 1500 && next < countdownUi.value - 1) next = countdownUi.value - 1;
-  if (countdownUi.value != null && next > countdownUi.value && next - countdownUi.value < 20) next = countdownUi.value;
-  if (next !== countdownUi.value) countdownUi = { value: next, at: now, cycle };
-  return next;
+  return Math.max(0, Math.round(raw));
 }
 
 function render(state = {}) {
   const model = decisionModel(state);
   const clock = state.diagnostics?.marketClock || {};
   const exact = exactClockReady(state);
-  const estimated = !exact && operationalClockReady(state);
   const dataLive = sessionReady(state);
   const timeReady = entryTimeReady(state);
   lastRenderedState = state;
@@ -419,26 +393,21 @@ function render(state = {}) {
     setText('heroExpiration', actualExp === '60s' ? '1 min ✓' : expLabel(actualExp));
     setText('expiration', actualExp === '60s' ? '1 min ✓' : expLabel(actualExp));
     setSourceState('expirationSource', 'REAL', 'real', 'Expiração relida diretamente do controle da CasaTrade.');
-  } else if (sessionAgeMs(state) < 5000) {
-    setText('heroExpiration', 'LENDO…');
-    setText('expiration', 'LENDO…');
-    setSourceState('expirationSource', 'LENDO', 'estimated', 'Aguardando leitura do seletor de expiração.');
   } else {
-    setText('heroExpiration', 'ERRO');
-    setText('expiration', 'ERRO');
-    setSourceState('expirationSource', 'STALE', 'stale', 'Não foi possível reler a expiração da CasaTrade.');
+    setText('heroExpiration', 'PENDENTE');
+    setText('expiration', 'PENDENTE');
+    setSourceState('expirationSource', 'PENDENTE', 'estimated', 'Aguardando leitura real do seletor de expiração da CasaTrade.');
   }
 
-  const countdownText = remaining == null ? '—' : exact ? `${remaining}s` : `~${remaining}s`;
+  const countdownText = remaining == null ? '—' : `${remaining}s`;
   setText('heroCountdown', countdownText);
-  setText('secondsRemaining', remaining == null ? '—' : exact ? String(remaining) : `~${remaining}`);
+  setText('secondsRemaining', remaining == null ? '—' : String(remaining));
   if (exact) setSourceState('countdownSource', 'REAL', 'real', 'Countdown exato lido da CasaTrade.');
-  else if (estimated && remaining != null) setSourceState('countdownSource', 'ESTIMADO', 'estimated', 'Countdown temporário calculado enquanto a fonte exata não está disponível.');
-  else setSourceState('countdownSource', 'STALE', 'stale', 'Countdown não confirmado.');
+  else setSourceState('countdownSource', 'PENDENTE', 'estimated', 'Aguardando countdown real da CasaTrade; nenhum tempo local é usado.');
 
-  setText('heroTimeStatus', timeReady ? 'OK' : dataLive ? 'AGUARDAR' : 'SYNC');
-  setText('sessionMode', timeReady ? 'LIVE' : dataLive ? (exact ? 'LIVE • GATE' : 'LIVE • ESTIMADO') : 'SYNC');
-  setText('timeSyncStatus', exact ? 'EXATO • CASATRADE' : estimated ? '~ ESTIMADO' : 'NÃO CONFIRMADO');
+  setText('heroTimeStatus', timeReady ? 'OK' : 'AGUARDAR');
+  setText('sessionMode', timeReady ? 'LIVE' : exact ? 'LIVE • GATE' : 'LIVE • CLOCK PENDENTE');
+  setText('timeSyncStatus', exact ? 'EXATO • CASATRADE' : 'PENDENTE');
 
   setText('signalTitle', model.title);
   setText('decisionText', model.text);
