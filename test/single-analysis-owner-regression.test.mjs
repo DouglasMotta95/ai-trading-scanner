@@ -50,6 +50,7 @@ test('processSnapshot has one runtime owner and acquisition modules never call i
     const source = read(path);
     assert.doesNotMatch(source, /processSnapshot\(/, path);
     assert.doesNotMatch(source, /processSnapshot\s*,/, path);
+    assert.doesNotMatch(source, /resetOrchestrator\(/, path);
   }
 });
 
@@ -111,4 +112,6 @@ test('central loop coalesces burst updates and schedules a final-window follow-u
   assert.match(central, /needsConfirmationFollowup/);
   assert.match(central, /scheduleAnalysis\(true\)/);
   assert.match(central, /owner: 'background\.js'/);
+  assert.match(central, /Number\(session\.epoch \|\| 0\)/);
+  assert.match(central, /Number\(focus\.frameId \?\? -1\)/);
 });
