@@ -272,20 +272,31 @@ async function applyFocus(message = {}, sender = {}) {
       && old?.interactionHint === true
       && Number(old?.interactionAt || old?.at || 0) > 0
       && now - Number(old.interactionAt || old.at) < 8000;
+    const selectionLock = state.diagnostics?.visualSelectionLock || null;
+    const selectionLockFresh = !!selectionLock?.asset
+      && Number(selectionLock.at || 0) > 0
+      && now - Number(selectionLock.at) < 8000;
+    const protocolContradictsSelectionLock = incomingProtocolOnly
+      && selectionLockFresh
+      && !sameMarket(asset, selectionLock.asset);
 
     // During a visible market switch, stale protocol/network state from the
     // previous instrument can continue to announce itself as selected for a
     // few seconds. Never let that non-visual source roll the current visible
     // transition back to the old market. This is the guard against mixing
     // USO/USD price/history into a newly selected AUD/CAD session.
-    if (assetChanged && incomingProtocolOnly && (transitionProtectsCurrentFocus || recentVisualSelection)) {
+    if (assetChanged && incomingProtocolOnly && (transitionProtectsCurrentFocus || recentVisualSelection || protocolContradictsSelectionLock)) {
       return {
         ...state,
         diagnostics: {
           ...(state.diagnostics || {}),
           focusRejected: {
             asset, frameId: info.frameId, frameHost: info.frameHost,
-            reason: transitionProtectsCurrentFocus ? 'protocol-rollback-during-visible-transition' : 'protocol-rollback-after-user-selection',
+            reason: transitionProtectsCurrentFocus
+              ? 'protocol-rollback-during-visible-transition'
+              : protocolContradictsSelectionLock
+                ? 'protocol-rollback-visual-selection-lock'
+                : 'protocol-rollback-after-user-selection',
             at: now
           }
         }
@@ -352,6 +363,9 @@ async function applyFocus(message = {}, sender = {}) {
       platformId: 'casatrade', platformName: 'CasaTrade', scanner: 'scanning',
       diagnostics: {
         ...(next.diagnostics || {}),
+        visualSelectionLock: userSelected
+          ? { asset, at: interactionAt || now }
+          : (next.diagnostics?.visualSelectionLock || null),
         focusedAsset: {
           asset, at: now, stableSince: changed ? now : previousStableSince,
           score: Number(message.score || 0), samples: Number(message.samples || 0), reliable: true,
