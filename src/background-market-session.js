@@ -40,15 +40,6 @@ function normTf(value) {
   return null;
 }
 
-function normExp(value = '') {
-  const s = clean(value).toLowerCase().replace(/\s+/g, '');
-  if (!s || s === 'auto') return null;
-  let m = s.match(/^(\d{1,5})(?:s|seg|segundo|segundos)$/); if (m) return `${Number(m[1])}s`;
-  m = s.match(/^(\d{1,4})(?:m|min|minuto|minutos)$/); if (m) return `${Number(m[1]) * 60}s`;
-  m = s.match(/^(\d{1,3}):(\d{2})$/); if (m) return `${Number(m[1]) * 60 + Number(m[2])}s`;
-  return null;
-}
-
 function timeframeSeconds(value) {
   const timeframe = normTf(value);
   if (!timeframe) return null;
@@ -481,7 +472,6 @@ async function applyFeed(payload = {}, sender = {}) {
     const clock = usableClock(state, info);
     const timeframe = normTf(clock?.timeframe || state.analysisTimeframe || candidate.timeframe) || null;
     const price = Number(candidate.price);
-    const observedExpiration = normExp(candidate.expiration || '');
     const sourceTimestamp = normalizeTime(candidate.timestamp);
     // candidate.timestamp is often the candle OPEN timestamp and can remain static
     // for the full minute. Runtime observation time must advance for stability logic.
@@ -489,7 +479,7 @@ async function applyFeed(payload = {}, sender = {}) {
     const snapshot = {
       platformId: 'casatrade', platformName: 'CasaTrade', connection: 'online', asset, price,
       timeframe, analysisTimeframe: timeframe,
-      expiration: observedExpiration || state.targetExpiration || state.expiration || null,
+      expiration: state.targetExpiration || state.expiration || candidate.expiration || null,
       secondsRemaining: clock ? Number(clock.secondsRemaining) : null,
       serverTime, candles: mergedHistory,
       capabilities: { ...(state.capabilities || {}), structuredQuotes: true, candles: mergedHistory.length >= 2 },
@@ -504,25 +494,6 @@ async function applyFeed(payload = {}, sender = {}) {
     let processed = null;
     if (clock) processed = processLiveSnapshot(snapshot, { ...state, marketHistory }, mergedHistory);
     const historicalJump = incomingHistory.length > 1 && mergedHistory.length - previousHistory.length > 1;
-    const platformControls = observedExpiration ? {
-      ...(state.platformControls || {}),
-      observed: {
-        ...(state.platformControls?.observed || {}),
-        expiration: observedExpiration,
-        timeframe: timeframe || state.platformControls?.observed?.timeframe || null,
-        source: `embedded-${candidate.transport || payload.primaryTransport || 'market'}`,
-        confidence: {
-          ...(state.platformControls?.observed?.confidence || {}),
-          expiration: Math.max(96, Number(state.platformControls?.observed?.confidence?.expiration || 0)),
-          timeframe: Math.max(90, Number(state.platformControls?.observed?.confidence?.timeframe || 0))
-        }
-      },
-      checkedAt: Date.now(),
-      frameId: info.frameId,
-      source: `embedded-${candidate.transport || payload.primaryTransport || 'market'}`,
-      aligned: (timeframe || state.analysisTimeframe || state.timeframe) === 'M1' && observedExpiration === '60s',
-      liveAuthority: true
-    } : state.platformControls || null;
     const next = processed || {
       ...state, asset, price, timeframe, analysisTimeframe: timeframe, serverTime,
       candles: mergedHistory, lastSeen: Date.now(), connection: 'online', marketHistory,
@@ -533,9 +504,6 @@ async function applyFeed(payload = {}, sender = {}) {
       targetTabId: info.tabId,
       platformId: 'casatrade', platformName: 'CasaTrade', scanner: 'scanning',
       asset, price, timeframe: timeframe || next.timeframe, analysisTimeframe: timeframe || next.analysisTimeframe,
-      expiration: observedExpiration || next.expiration || state.expiration || null,
-      targetExpiration: observedExpiration || next.targetExpiration || state.targetExpiration || null,
-      platformControls,
       serverTime, marketHistory, candles: mergedHistory, lastSeen: Date.now(), connection: 'online',
       diagnostics: {
         ...(state.diagnostics || {}), ...(next.diagnostics || {}),
@@ -556,8 +524,6 @@ async function applyFeed(payload = {}, sender = {}) {
             : 'Preço e histórico prontos. Sincronizando o relógio da vela.',
           clockQuality: clock?.verified === true ? 'exact' : clock ? 'fallback' : 'missing',
           priceSource: candidate.transport || payload.primaryTransport || 'market', candleCount: mergedHistory.length, requiredCandles: 2,
-          expirationSource: observedExpiration ? `embedded-${candidate.transport || payload.primaryTransport || 'market'}` : null,
-          observedExpiration,
           feedQuality: Number(payload.feedQuality || 0), at: Date.now()
         },
         inspector: state.diagnostics?.inspector || null
