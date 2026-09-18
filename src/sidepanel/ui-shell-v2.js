@@ -84,11 +84,12 @@ function setBadge(id, label, tone) {
 }
 
 function renderShell(state = {}) {
-  const connected = baseHandshake(state);
   const session = state.diagnostics?.marketSession || {};
   const pendingAsset = clean(session.pendingAsset || session.asset || '');
   const switching = session.transitioning === true && !!pendingAsset;
-  const platformLinked = connected || switching;
+  const dataConnected = baseHandshake(state);
+  const connected = dataConnected || switching;
+  const platformLinked = connected;
   const tradeReady = exactLiveTime(state);
   const failure = connectionFailure(state);
   const connecting = !platformLinked && !failure && activeLicense(state)
@@ -97,12 +98,12 @@ function renderShell(state = {}) {
   const expirationAt = Number(state.platformControls?.expirationCheckedAt || state.platformControls?.observed?.observedAt?.expiration || 0);
   const expirationFresh = expirationAt > 0 && Date.now() - expirationAt < CONTROLS_FRESH_MS;
   const expiration = expirationFresh ? clean(state.platformControls?.observed?.expiration) : '';
-  const expirationWrong = connected && !!expiration && expiration !== '60s';
+  const expirationWrong = dataConnected && !!expiration && expiration !== '60s';
   const sessionStartedAt = Number(session.startedAt || state.diagnostics?.target?.connectedAt || 0);
   const sessionAge = sessionStartedAt > 0 ? Date.now() - sessionStartedAt : 0;
   const panelAge = Math.max(0, Date.now() - PANEL_OPENED_AT);
   const expirationWaitAge = sessionAge > 0 ? Math.min(sessionAge, panelAge) : panelAge;
-  const expirationReadFailed = connected && !expiration && expirationWaitAge >= 5000;
+  const expirationReadFailed = dataConnected && !expiration && expirationWaitAge >= 5000;
 
   const strip = $('syncStrip');
   if (strip) strip.className = `sync-strip ${platformLinked ? 'live' : 'syncing'}`;
@@ -152,7 +153,7 @@ function renderShell(state = {}) {
     button.classList.toggle('live', platformLinked);
     button.disabled = !activeLicense(state) || connecting || switching;
     if (!button.classList.contains('loading')) {
-      $('connectScannerText').textContent = platformLinked ? 'CONECTADO' : 'DESCONECTADO';
+      $('connectScannerText').textContent = connected ? 'CONECTADO' : 'DESCONECTADO';
     }
   }
 
