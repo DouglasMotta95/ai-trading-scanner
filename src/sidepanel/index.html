@@ -13,6 +13,11 @@
   <link rel="stylesheet" href="compact-live.css">
 </head>
 <body>
+  <div id="bootError" class="boot-error" hidden role="alert">
+    <b>Falha ao abrir o painel</b>
+    <span id="bootErrorText">Reabra a extensão. Se persistir, use Diagnóstico em Avançado.</span>
+  </div>
+
   <main class="shell compact-shell">
     <header class="topbar compact-topbar">
       <div class="brand-lockup">
@@ -21,14 +26,14 @@
       </div>
       <div class="top-status">
         <button id="connectScanner" class="connect-btn" type="button"><span class="connect-dot"></span><b id="connectScannerText">CONECTAR</b></button>
-        <span id="connectionBadge" class="badge warn">OFFLINE</span>
+        <span id="connectionBadge" class="badge warn">DESCONECTADO</span>
         <span id="extensionVersion" class="version">v—</span>
       </div>
     </header>
 
     <section id="syncStrip" class="sync-strip syncing compact-sync" aria-live="polite">
       <span class="scan-pulse" aria-hidden="true"></span>
-      <div><b id="syncTitle">PRONTO PARA CONECTAR</b><span id="syncText">Abra a CasaTrade e toque em CONECTAR.</span></div>
+      <div><b id="syncTitle">DESCONECTADO</b><span id="syncText">Abra a CasaTrade e toque em CONECTAR.</span></div>
       <span class="loading-dots" aria-hidden="true"><i></i><i></i><i></i></span>
     </section>
 
@@ -41,41 +46,42 @@
 
     <section id="decisionCard" class="card decision-card compact-decision">
       <div class="section-head compact-decision-head">
-        <div><span class="eyebrow">PRÓXIMA VELA</span><h2 id="signalTitle">ANALISANDO</h2></div>
+        <div><span class="eyebrow">PRÓXIMA VELA</span><h2 id="signalTitle">AGUARDAR</h2></div>
         <span id="signalBadge" class="badge warn">AGUARDAR</span>
       </div>
 
       <div id="decisionBanner" class="decision-banner waiting" aria-live="assertive">
         <span class="decision-icon" aria-hidden="true"></span>
-        <strong id="decisionText">ANALISANDO MERCADO</strong>
-        <span id="decisionSubtext">Aguardando leitura ao vivo da CasaTrade.</span>
+        <strong id="decisionText">AGUARDAR</strong>
+        <span id="decisionSubtext">Conecte a CasaTrade para iniciar.</span>
       </div>
 
       <div class="trade-actions primary-trade-actions" aria-label="Ação manual para a próxima vela">
         <button id="prepareBuy" class="trade-choice buy-choice" disabled>🟢 COMPRA</button>
         <button id="prepareSell" class="trade-choice sell-choice" disabled>🔴 VENDA</button>
       </div>
-      <p id="tradeActionStatus" class="manual-note">A entrada libera somente após sinal confirmado para a próxima vela.</p>
+      <p id="tradeActionStatus" class="manual-note">A entrada libera somente após confirmação técnica + M1 + expiração de 1 minuto.</p>
 
       <div class="decision-compact-grid">
         <div class="clock-stage compact-clock-stage">
           <div class="clock-ring compact-clock"><span class="clock-sweep" aria-hidden="true"></span><b id="secondsRemaining">—</b><span>SEG</span></div>
           <div class="clock-details compact-clock-details">
-            <span>Tempo <b id="timeSyncStatus">AGUARDANDO</b></span>
             <span>Expiração <b id="expiration">—</b></span>
             <span>Setup <b id="setupType">—</b></span>
-            <span>Força <b id="signalScore">—</b></span>
           </div>
         </div>
 
-        <div id="triggerCard" class="trigger-card waiting compact-trigger">
+        <div id="triggerCard" class="trigger-card waiting compact-trigger analysis-status-card">
           <div class="trigger-top">
-            <span id="triggerTitle">GATILHO TÉCNICO</span>
-            <span class="confidence-pill"><small id="technicalConfidenceLabel">FORÇA</small><b id="technicalConfidence">0/100</b></span>
+            <span id="triggerTitle">ANÁLISE TÉCNICA</span>
+            <span class="confidence-pill"><small id="technicalConfidenceLabel">SCORE</small><b id="technicalConfidence">0/100</b></span>
           </div>
-          <strong id="triggerValue">ANALISANDO</strong>
-          <p id="triggerHint">Lendo força, rejeição, momentum e estrutura.</p>
-          <small id="confidenceNote">Força técnica interna; sem garantia de resultado.</small>
+          <strong id="triggerValue">AGUARDANDO DADOS</strong>
+          <p id="triggerHint">Preço, estrutura, momentum e rejeição serão consolidados aqui.</p>
+          <div class="analysis-status-meta">
+            <span>TEMPO CASATRADE <b id="timeSyncStatus">AGUARDANDO</b></span>
+          </div>
+          <small id="confidenceNote">Score técnico interno de 0 a 100; não representa garantia de resultado.</small>
         </div>
       </div>
 
@@ -85,7 +91,7 @@
 
     <section class="card live-card compact-live-card">
       <div class="section-head">
-        <div><span class="eyebrow">GRÁFICO ATUAL</span><h2>Preço + últimas velas</h2></div>
+        <div><span class="eyebrow">GRÁFICO ATUAL</span><h2>Preço + OHLC + últimas 10 velas</h2></div>
         <span class="quote-pill">COTAÇÃO <b id="price">—</b></span>
       </div>
       <div class="candle-ohlc compact-ohlc">
@@ -94,33 +100,28 @@
         <div><span>MÍNIMA</span><b id="currentLow">—</b></div>
         <div><span>ATUAL</span><b id="currentClose">—</b></div>
       </div>
-      <p id="ohlcQuality" class="ohlc-quality">Aguardando OHLC da vela atual.</p>
-      <div class="recent-head"><span>ÚLTIMAS 10 VELAS REAIS</span><b id="recentCandleCount">0/10</b></div>
+      <p id="ohlcQuality" class="ohlc-quality">Aguardando OHLC real do gráfico.</p>
+      <div class="recent-head"><span>ÚLTIMAS 10 VELAS REAIS</span><b id="recentCandleCount">CARREGANDO</b></div>
       <div id="recentCandles" class="recent-candles compact-recent-candles" aria-label="Últimas 10 velas"></div>
     </section>
 
-    <details class="advanced-panel">
-      <summary><span>ANÁLISE AVANÇADA</span><small>qualidade do ativo + Gemini</small></summary>
+    <details id="advancedPanel" class="advanced-panel">
+      <summary><span>AVANÇADO ▸</span><small>Gemini • qualidade • ajustes • diagnóstico</small></summary>
       <div class="advanced-stack">
         <section id="assetQualityCard" class="card asset-quality-card waiting">
-          <div class="section-head"><div><span class="eyebrow">CONTEXTO DO ATIVO</span><h2 id="assetQualityTitle">AVALIANDO MERCADO</h2></div><span id="assetQualityBadge" class="badge warn">SINCRONIZANDO</span></div>
+          <div class="section-head"><div><span class="eyebrow">CONTEXTO DO ATIVO</span><h2 id="assetQualityTitle">AVALIANDO MERCADO</h2></div><span id="assetQualityBadge" class="badge warn">AGUARDANDO</span></div>
           <p id="assetQualityReason" class="asset-quality-reason">Lendo as velas reais deste ativo.</p>
           <div class="asset-quality-grid"><div><span>QUALIDADE</span><b id="assetQualityScore">—</b></div><div><span>CONTEXTO</span><b id="assetQualityContext">—</b></div><div><span>VIÉS</span><b id="assetQualityBias">—</b></div></div>
         </section>
 
         <section id="aiAuditCard" class="card ai-audit-card">
-          <div class="section-head"><div><span class="eyebrow">GEMINI • SEGUNDA LEITURA</span><h2 id="aiAuditTitle">AGUARDANDO O SCANNER</h2></div><span id="aiAuditBadge" class="badge">EM ESPERA</span></div>
-          <p id="aiAuditSummary" class="ai-audit-summary">A Gemini só entra depois de um possível sinal técnico com tempo sincronizado.</p>
+          <div class="section-head"><div><span class="eyebrow">GEMINI • SEGUNDA LEITURA</span><h2 id="aiAuditTitle">AGUARDANDO CONFIRMAÇÃO TÉCNICA</h2></div><span id="aiAuditBadge" class="badge">EM ESPERA</span></div>
+          <p id="aiAuditSummary" class="ai-audit-summary">A Gemini só é acionada depois de ENTRAR ser confirmado pelo motor técnico primário.</p>
           <div class="ai-audit-grid"><div><span>DIREÇÃO IA</span><b id="aiAuditDirection">—</b></div><div><span>ALINHAMENTO</span><b id="aiAuditAlignment">—</b></div><div><span>LEITURA</span><b id="aiAuditImpact">—</b></div></div>
           <ul id="aiAuditEvidence" class="ai-audit-evidence" hidden></ul>
-          <div class="ai-audit-foot"><span id="aiAuditMeta">Motor técnico principal ativo</span><b>SEM EXECUÇÃO AUTOMÁTICA</b></div>
+          <div class="ai-audit-foot"><span id="aiAuditMeta">Motor técnico primário é autoritativo</span><b>SEM EXECUÇÃO AUTOMÁTICA</b></div>
         </section>
-      </div>
-    </details>
 
-    <details class="advanced-panel">
-      <summary><span>AJUSTES E DIAGNÓSTICO</span><small>som, notificações e acesso</small></summary>
-      <div class="advanced-stack">
         <section class="card preferences-card professional-settings compact-settings">
           <div class="section-head"><div><span class="eyebrow">PERFIL FIXO</span><h2>Scanner M1</h2></div><span class="badge ok">SIMPLES</span></div>
           <div class="fixed-strategy">
@@ -131,19 +132,21 @@
           </div>
           <label class="toggle-row" for="notificationToggle"><span><b>Notificações</b><small>Pré-sinal e decisão final.</small></span><input id="notificationToggle" type="checkbox" role="switch" aria-label="Notificações do sistema"></label>
           <label class="setting-row" for="alertLevel"><span><b>Som</b><small>Alerta somente nos momentos importantes.</small></span><select id="alertLevel" aria-label="Nível de som"><option value="off">Off</option><option value="discrete">Discreto</option><option value="strong">Forte</option></select></label>
-          <label class="toggle-row" for="geminiToggle"><span><b>Gemini</b><small>Segunda leitura; nunca controla a entrada.</small></span><input id="geminiToggle" type="checkbox" role="switch" aria-label="Gemini"></label>
+          <label class="toggle-row" for="geminiToggle"><span><b>Gemini</b><small>Segunda leitura após confirmação técnica.</small></span><input id="geminiToggle" type="checkbox" role="switch" aria-label="Gemini"></label>
           <p class="fixed-strategy-note">A estratégia principal é fixa em M1 + expiração real de 1 minuto. A execução continua manual na CasaTrade.</p>
         </section>
 
         <section id="licenseCard" class="card license-card">
-          <div class="section-head"><div><span class="eyebrow">ACESSO</span><h2 id="licenseTitle">Verificando licença…</h2></div><span id="licenseHealth" class="badge">—</span></div>
+          <div class="section-head"><div><span class="eyebrow">ACESSO E DIAGNÓSTICO</span><h2 id="licenseTitle">Verificando acesso…</h2></div><span id="licenseHealth" class="badge">—</span></div>
           <p id="licenseText" class="muted">Aguardando status do acesso.</p>
           <div id="activationBox" class="activation-box" hidden><input id="licenseKey" autocomplete="off" placeholder="Cole sua chave ATS"><button id="activateLicense" class="primary">ATIVAR</button></div>
+          <button id="copyScannerDiagnostics" class="secondary" type="button">COPIAR DIAGNÓSTICO</button>
         </section>
       </div>
     </details>
   </main>
 
+  <script src="boot-guard.js"></script>
   <script src="state-restore.js"></script>
   <script src="chrome-compat.js"></script>
   <script src="app-v2.js"></script>
