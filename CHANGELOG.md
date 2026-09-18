@@ -1,5 +1,73 @@
 # Changelog
 
+## 0.11.24 — Live asset switch + expiration v2
+
+### 1. Troca de ativo atômica
+- A troca de instrumento agora zera preço, OHLC, velas, histórico, sinal, decisão profissional, auditoria Gemini e dados operacionais antes de aceitar a nova sessão.
+- O novo nome não é publicado como mercado ao vivo até que preço + histórico do mesmo instrumento passem pela validação de identidade.
+- `marketSession` ganhou `pendingAsset`, `confirmedAsset`, `dataReady` e `transitioning`.
+- Feeds atrasados do ativo anterior são rejeitados por identidade e por sanity check de escala entre preço e histórico.
+- Preço avulso do gráfico só é aceito depois que a sessão do novo ativo já foi confirmada por feed + candles.
+- Seleção explícita/estável de um novo ativo pode substituir um foco antigo mesmo quando a autoridade muda de frame.
+- Teste principal: `test/video-14756-v2-regression.test.mjs`, cenário **“five rapid asset switches cannot mix previous asset identity or price scale”**. Ele simula 5 trocas rápidas entre ETH/USD OTC, AUD/CAD OTC, BTC/USD OTC e EUR/USD OTC e tenta contaminar o novo ativo com identidade/preço do anterior.
+
+### 2. Expiração real
+- A freshness da expiração passou a ser independente de timeframe/outros controles: um heartbeat de outro campo não renova mais uma expiração antiga.
+- O probe busca `Expiração` em sibling, parent, children, `aria-controls`, shadow roots, proximidade visual e body text.
+- O probe tem fallback direto para `chrome.runtime.sendMessage` e não morre se o helper de mensagens não estiver disponível.
+- Estado nulo segue a sequência: `LENDO…` → após timeout, `ERRO / Não foi possível ler a expiração`.
+- A mensagem `ALTERE PARA 1 MIN` só aparece quando um valor real fresco foi lido e é diferente de 60 s.
+- Quando 60 s é lido, a UI mostra `1 min ✓`.
+
+### 3. Countdown exato x estimado
+- Countdown exato é identificado como `REAL / EXATO • CASATRADE`.
+- Fallback operacional é identificado com `~` e `ESTIMADO`; nunca se apresenta como exato.
+- A UI aplica suavização para impedir queda visual superior a 1 segundo em menos de 1,5 s.
+- A chave de suavização é estável por ciclo e preserva o rollover da vela.
+
+### 4. Status de conexão
+- Removido o badge duplicado do cabeçalho.
+- O botão permanece como indicador único de conexão.
+- Durante troca de ativo a CasaTrade continua `CONECTADA`; a UI mostra `ATUALIZANDO PARA {ativo}` em vez de simular desconexão.
+
+### 5. Histerese do padrão técnico
+- Mudanças BUY ↔ SELL não substituem o padrão imediatamente.
+- A nova direção precisa de leituras consecutivas/sustentadas antes de assumir o veredito.
+- Durante a mudança, a UI mostra `PADRÃO MUDANDO — REAVALIANDO` com direção anterior e nova.
+
+### 6. Funil de sinal
+- O motor técnico continua com owner único em `background.js`.
+- Um padrão válido permanece visível como `POSSÍVEL COMPRA/VENDA` mesmo quando a entrada final está bloqueada por expiração/timeframe.
+- `ENTRAR` continua exigindo clock exato + M1 + expiração real de 60 s + confirmação técnica.
+- Bloqueios de leitura não apagam silenciosamente o candidato técnico.
+
+### 7. Fonte/confiança do dado
+- ATIVO, EXPIRAÇÃO e VELA exibem `REAL`, `ESTIMADO`, `ATUALIZANDO` ou `STALE`.
+- A UI informa se o countdown veio diretamente da CasaTrade ou de fallback temporário.
+
+### 8. Log de troca de ativo
+- Diagnóstico mantém as últimas 12 trocas com timestamp, ativo anterior, novo ativo, epoch, origem e resultado da limpeza.
+- O log é exibido apenas em `AVANÇADO`.
+
+### 9. Timeouts visíveis
+- Expiração ausente muda de `LENDO…` para erro explícito após 5 s.
+- Transição de ativo prolongada mostra botão `TENTAR NOVAMENTE`.
+- O botão de recovery também aparece para falha de leitura da expiração.
+
+### 10. Bloqueio por regra x falha técnica
+- Bloqueio por estratégia (ex.: expiração real 5 s) possui mensagem/estilo próprio.
+- Falha técnica (ex.: expiração não lida ou countdown ausente) possui mensagem/estilo distinto.
+- A UI não manda o usuário alterar um controle que a extensão não conseguiu ler.
+
+### 11. Ativo esperado
+- Adicionada preferência opcional `Ativo esperado` em Avançado.
+- Ao mudar para outro instrumento, a UI alerta qual ativo foi selecionado e qual era o esperado, sem impedir a análise automaticamente.
+
+### Testes e aceite
+- Novo arquivo: `test/video-14756-v2-regression.test.mjs`.
+- Cobre: 5 trocas rápidas, contaminação cross-asset, reset atômico, freshness da expiração, ausência de falso “altere para 1 min”, suavização/rotulagem do countdown, badge único, histerese BUY/SELL, POSSÍVEL com execution gate, fontes de dados, recovery, log e ativo esperado.
+- A validação ao vivo continua obrigatória para confirmar DOM/frames/WebSocket reais da CasaTrade, especialmente troca de ativo, leitura do seletor de expiração e três rollovers M1 consecutivos.
+
 ## 0.11.23 — CasaTrade live acceptance stabilization
 
 ### 1. Detecção do ativo ativo
