@@ -481,7 +481,7 @@ function observedCurrentCandle(state = {}, price, clock = null) {
   const open = same ? num(previous.open) : Number(price);
   const high = same ? Math.max(num(previous.high) ?? Number(price), Number(price)) : Number(price);
   const low = same ? Math.min(num(previous.low) ?? Number(price), Number(price)) : Number(price);
-  return { cycleKey, timeframe, open, high, low, close: Number(price), source: 'live-price-observed', partial: true, openReliable: true, rangeReliable: true, at: Date.now() };
+  return { cycleKey, timeframe, open, high, low, close: Number(price), source: 'live-price-observed', partial: true, openReliable: false, rangeReliable: false, at: Date.now() };
 }
 
 async function applyChartPrice(message = {}, sender = {}) {
