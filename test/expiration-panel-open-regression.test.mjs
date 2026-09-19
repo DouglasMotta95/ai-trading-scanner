@@ -57,10 +57,11 @@ test('panel refresh targets the registered CasaTrade tab without reconnecting th
   assert.match(background, /type === 'ATS_REFRESH_TARGET_TAB'/);
 });
 
-test('manual entry gate uses expiration-specific freshness', () => {
+test('manual entry gate keeps confirmed expiration until the user changes the control', () => {
   const control = read('src/background-control.js');
   assert.match(control, /expirationCheckedAt/);
-  assert.match(control, /const controlsFresh = expirationAt > 0 && Date\.now\(\) - expirationAt < 7000/);
+  assert.match(control, /const controlsFresh = expirationAt > 0 && !!actualExpiration/);
+  assert.doesNotMatch(control, /expirationAt > 0 && Date\.now\(\) - expirationAt < 7000/);
 });
 
 
@@ -197,4 +198,15 @@ test('video regression: recovered live feed clears stale connection timeout but 
   assert.match(app, /COUNTDOWN REAL PENDENTE/);
   assert.doesNotMatch(app, /COUNTDOWN ESTIMADO/);
   assert.match(app, /return exactClockReady\(state\)/);
+});
+
+
+test('confirmed expiration is sticky but explicit control interaction invalidates it', () => {
+  const background = read('src/background-platform-controls.js');
+  const probe = read('src/content/casatrade-expiration-probe.js');
+  const panel = read('src/sidepanel/app-v2.js');
+  assert.match(background, /incoming\.expirationDirty === true/);
+  assert.match(background, /const expirationFresh = expirationAt > 0 && !!observed\.expiration/);
+  assert.match(probe, /expirationDirty: true/);
+  assert.match(panel, /const fresh = at > 0 && !!value/);
 });
