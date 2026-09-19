@@ -21,7 +21,7 @@ test('video 14809: stale protocol-selected old asset cannot rollback an active v
   assert.match(session, /protocol-rollback-during-visible-transition/);
   assert.match(session, /protocol-rollback-after-user-selection/);
   assert.match(session, /protocol-rollback-visual-selection-lock/);
-  assert.match(session, /visualSelectionLock: userSelected/);
+  assert.match(session, /visualSelectionLock: authoritativeVisual/);
   assert.match(session, /protocolContradictsSelectionLock/);
 });
 
