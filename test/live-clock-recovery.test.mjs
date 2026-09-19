@@ -7,6 +7,6 @@ test('current clock pipeline preserves exact CasaTrade authorities and structure
   const c=read('src/content/market-cycle-clock-v4.js');
   assert.match(c,/trader-dom-countdown/);
   assert.match(c,/network-server-cycle/);
-  assert.match(c,/structured-candle-boundary/);
+  assert.match(c,/structured-current-candle-boundary/);
   assert.match(c,/operational: true/);
 });
