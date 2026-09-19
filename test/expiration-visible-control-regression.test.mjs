@@ -62,7 +62,8 @@ test('structured candle boundary fallback supports the whole operating bucket', 
   assert.match(clock, /function currentStateBoundary/);
   assert.match(clock, /const currentBucket = Math\.floor\(now \/ durationMs\) \* durationMs/);
   assert.match(clock, /const bucketRows = normalized\.filter/);
-  assert.match(clock, /aggregatedSamples: bucketRows\.length/);
+  assert.match(clock, /const openAt = currentBucket/);
+  assert.match(clock, /openAt \+ durationMs - now/);
   assert.match(clock, /clockMode: 'structured-current-candle-boundary'/);
 });
 
