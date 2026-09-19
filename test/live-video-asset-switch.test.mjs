@@ -60,3 +60,12 @@ test('user-selected asset wins immediately over stale tabs and rendered fallback
   assert.match(rendered, /selected: assetRow\?\.selected === true/);
   assert.doesNotMatch(rendered, /selected: true,\s*\n\s*confidence: 96/);
 });
+
+
+test('v0.11.30 passive visual scans cannot starve a new protocol-selected asset forever', () => {
+  const protocol = read('src/content/focused-asset-protocol.js');
+  assert.match(protocol, /Passive visual scans are republished frequently/);
+  assert.match(protocol, /source === 'user-selected-transition'/);
+  assert.match(protocol, /Date\.now\(\) - interactionAt < 3500/);
+  assert.match(protocol, /return false;/);
+});
