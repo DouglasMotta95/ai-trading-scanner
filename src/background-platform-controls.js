@@ -5,6 +5,56 @@ const num = value => value == null || value === '' ? null : Number.isFinite(Numb
 const casaHost = value => value === 'casatrade.com' || value.endsWith('.casatrade.com') || value === 'casatrade.io' || value.endsWith('.casatrade.io');
 const traderHost = value => value === 'casatraders.online' || value.endsWith('.casatraders.online') || value === 'ivcasatraders.online' || value.endsWith('.ivcasatraders.online');
 
+const EXPIRATION_PIPELINE_BG_KEY = 'atsExpirationPipelineBackgroundDiagnosticsV1';
+let expirationPipelineTelemetryQueue = Promise.resolve();
+
+function storageGetLocal(key) {
+  return new Promise(resolve => {
+    try {
+      chrome.storage.local.get(key, value => {
+        try { void chrome.runtime.lastError; } catch {}
+        resolve(value || {});
+      });
+    } catch { resolve({}); }
+  });
+}
+
+function storageSetLocal(value) {
+  return new Promise(resolve => {
+    try {
+      chrome.storage.local.set(value, () => {
+        try { void chrome.runtime.lastError; } catch {}
+        resolve();
+      });
+    } catch { resolve(); }
+  });
+}
+
+function recordExpirationPipelineBackground(kind, details = {}) {
+  expirationPipelineTelemetryQueue = expirationPipelineTelemetryQueue.then(async () => {
+    const stored = await storageGetLocal(EXPIRATION_PIPELINE_BG_KEY);
+    const previous = stored?.[EXPIRATION_PIPELINE_BG_KEY]?.version === 1 ? stored[EXPIRATION_PIPELINE_BG_KEY] : {};
+    const now = Date.now();
+    const next = {
+      version: 1,
+      startedAt: Number(previous.startedAt || now),
+      messagesReceived: Number(previous.messagesReceived || 0),
+      discardedByTargetTabId: Number(previous.discardedByTargetTabId || 0),
+      untrustedRejected: Number(previous.untrustedRejected || 0),
+      lastAt: now,
+      lastKind: kind,
+      lastTabId: Number(details.tabId || 0) || null,
+      lastTargetTabId: Number(details.targetTabId || 0) || null,
+      lastFrameId: Number(details.frameId || 0)
+    };
+    if (kind === 'received') next.messagesReceived += 1;
+    if (kind === 'targetTabDiscard') next.discardedByTargetTabId += 1;
+    if (kind === 'untrusted') next.untrustedRejected += 1;
+    await storageSetLocal({ [EXPIRATION_PIPELINE_BG_KEY]: next });
+  }).catch(() => {});
+}
+
+
 function trusted(sender = {}) {
   let frameHost = '', topHost = '';
   try { frameHost = new URL(sender.url || '').hostname.toLowerCase(); } catch {}
@@ -126,12 +176,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type !== 'ATS_PLATFORM_CONTROLS_OBSERVED') return false;
-  if (!trusted(sender)) { sendResponse({ ok: false, error: 'untrusted_sender' }); return false; }
   const tabId = Number(sender.tab?.id || 0);
+  recordExpirationPipelineBackground('received', { tabId, frameId: Number(sender.frameId || 0) });
+  if (!trusted(sender)) {
+    recordExpirationPipelineBackground('untrusted', { tabId, frameId: Number(sender.frameId || 0) });
+    sendResponse({ ok: false, error: 'untrusted_sender' });
+    return false;
+  }
   const incoming = safeObserved(message.snapshot || {});
 
   updateScannerState(state => {
-    if (Number(state.targetTabId || 0) && Number(state.targetTabId) !== tabId) return state;
+    const targetTabId = Number(state.targetTabId || 0);
+    if (targetTabId && targetTabId !== tabId) {
+      recordExpirationPipelineBackground('targetTabDiscard', {
+        tabId,
+        targetTabId,
+        frameId: Number(sender.frameId || 0)
+      });
+      return state;
+    }
     const previous = state.platformControls?.observed || {};
     const observed = mergeObserved(previous, incoming);
     const expirationAt = Number(observed.observedAt?.expiration || 0);
