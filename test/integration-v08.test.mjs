@@ -8,17 +8,19 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
 const read = file => fs.readFileSync(path.join(root, file), 'utf8');
 
-test('background accepts snapshots only from registered CasaTrade senders', () => {
-  const background = read('src/background.js');
-  assert.match(background, /const platform = detectPlatform\(host\)/);
-  assert.match(background, /if \(!platform \|\| !sameTarget\(scannerState, sender\)\)/);
-  assert.match(background, /connection: 'online'/);
+test('current runtime accepts market data only through registered CasaTrade acquisition owners', () => {
+  const entry = read('src/background-entry.js');
+  const market = read('src/background-market-session.js');
+  assert.match(entry, /background-market-session\.js/);
+  assert.match(market, /senderMeta/);
+  assert.match(market, /if \(!info\.trusted\) return null/);
 });
 
 test('manual trade flow remains confirmation-only', () => {
-  const background = read('src/background.js');
-  assert.match(background, /signal_not_confirmed/);
-  assert.match(background, /platform_not_aligned/);
-  assert.match(background, /ATS_HIGHLIGHT_TRADE/);
-  assert.doesNotMatch(background, /ATS_EXECUTE_TRADE/);
+  const control = read('src/background-control.js');
+  const handoff = read('src/content/trade-handoff-v2.js');
+  assert.match(control, /signal_not_confirmed/);
+  assert.match(control, /ATS_HIGHLIGHT_TRADE/);
+  assert.doesNotMatch(control, /ATS_EXECUTE_TRADE/);
+  assert.doesNotMatch(handoff, /\.click\s*\(/);
 });
