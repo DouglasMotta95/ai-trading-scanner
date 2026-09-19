@@ -147,7 +147,8 @@ function sessionReady(state = {}) {
 }
 
 function entryTimeReady(state = {}) {
-  return state.professionalDecision?.actionable === true;
+  const ui = clean(state.signal?.uiState).toUpperCase();
+  return ui === 'ENTER_BUY' || ui === 'ENTER_SELL';
 }
 
 function completeCandle(row = {}) {
@@ -213,24 +214,17 @@ function decisionModel(state = {}) {
   if (pending) return { uiState: 'ANALYZING_MARKET', title: 'ATUALIZANDO ATIVO', text: `ATUALIZANDO PARA ${pending}`, sub: 'Limpando dados anteriores e confirmando o novo gráfico.', tone: 'waiting', reason: 'Troca de ativo em validação.', score: 0, actionable: false };
   if (!marketDataReady(state) || !focusReady(state)) return { uiState: 'ANALYZING_MARKET', title: 'AGUARDAR', text: 'AGUARDAR', sub: 'Confirmando ativo, preço e velas reais.', tone: 'waiting', reason: 'Identificando o gráfico atual da CasaTrade.', score: 0, actionable: false };
 
-  const p = state.professionalDecision || {};
-  const technical = state.signal || {};
-  const ui = String(p.uiState || technical.uiState || '').toUpperCase();
-  const technicalUi = String(technical.uiState || '').toUpperCase();
-  const direction = String(p.direction || technical.direction || technical.analysisDirection || '').toUpperCase();
-  const score = Number(p.score ?? technical.analysisScore ?? technical.score ?? 0) || 0;
-  const reason = clean(p.reason || technical.reason || 'Aguardando confluência técnica.');
+  const signal = state.signal || {};
+  const ui = clean(signal.uiState).toUpperCase();
+  const direction = ui.includes('BUY') ? 'BUY' : ui.includes('SELL') ? 'SELL' : null;
+  const score = Number(signal.analysisScore ?? signal.score ?? 0) || 0;
+  const reason = clean(signal.reason || 'Aguardando confluência técnica.');
 
-  if (ui === 'ENTER_BUY' && p.actionable === true) return { uiState: ui, title: 'ENTRADA', text: 'ENTRAR: COMPRA', sub: 'Entrada manual agora.', tone: 'buy', reason, score, actionable: true, direction: 'BUY' };
-  if (ui === 'ENTER_SELL' && p.actionable === true) return { uiState: ui, title: 'ENTRADA', text: 'ENTRAR: VENDA', sub: 'Entrada manual agora.', tone: 'sell', reason, score, actionable: true, direction: 'SELL' };
-
-  if (ui === 'POSSIBLE_BUY' || technicalUi === 'POSSIBLE_BUY' || (direction === 'BUY' && score >= 44)) {
-    return { uiState: 'POSSIBLE_BUY', title: 'POSSÍVEL COMPRA', text: 'POSSÍVEL COMPRA', sub: 'Aguardando a janela final de ~10s.', tone: 'possible', reason, score, actionable: false, direction: 'BUY' };
-  }
-  if (ui === 'POSSIBLE_SELL' || technicalUi === 'POSSIBLE_SELL' || (direction === 'SELL' && score >= 44)) {
-    return { uiState: 'POSSIBLE_SELL', title: 'POSSÍVEL VENDA', text: 'POSSÍVEL VENDA', sub: 'Aguardando a janela final de ~10s.', tone: 'possible', reason, score, actionable: false, direction: 'SELL' };
-  }
-
+  // The orchestrator signal is the only decision authority rendered by the UI.
+  if (ui === 'ENTER_BUY') return { uiState: ui, title: 'ENTRADA', text: 'ENTRAR: COMPRA', sub: 'Entrada manual agora.', tone: 'buy', reason, score, actionable: true, direction: 'BUY' };
+  if (ui === 'ENTER_SELL') return { uiState: ui, title: 'ENTRADA', text: 'ENTRAR: VENDA', sub: 'Entrada manual agora.', tone: 'sell', reason, score, actionable: true, direction: 'SELL' };
+  if (ui === 'POSSIBLE_BUY') return { uiState: ui, title: 'POSSÍVEL COMPRA', text: 'POSSÍVEL COMPRA', sub: 'Candidato mantido nesta vela; aguardando confirmação final perto de 10s.', tone: 'possible', reason, score, actionable: false, direction: 'BUY' };
+  if (ui === 'POSSIBLE_SELL') return { uiState: ui, title: 'POSSÍVEL VENDA', text: 'POSSÍVEL VENDA', sub: 'Candidato mantido nesta vela; aguardando confirmação final perto de 10s.', tone: 'possible', reason, score, actionable: false, direction: 'SELL' };
   if (ui === 'ANALYZING_MARKET') return { uiState: ui, title: 'ANALISANDO MERCADO', text: 'ANALISANDO MERCADO', sub: reason, tone: 'waiting', reason, score, actionable: false };
   if (ui === 'BUILDING_PATTERN' || ui === 'DECIDING') return { uiState: ui, title: 'ANALISANDO', text: 'ANALISANDO', sub: reason, tone: 'waiting', reason, score, actionable: false };
   return { uiState: 'WAIT', title: 'AGUARDAR', text: 'AGUARDAR', sub: 'Sem padrão técnico suficiente agora.', tone: 'no-trade', reason: reason.startsWith('AGUARDAR') ? reason : `AGUARDAR — ${reason}`, score, actionable: false };
