@@ -343,15 +343,31 @@ export async function applyFocus(message = {}, sender = {}) {
     const selectionLockFresh = !!selectionLock?.asset
       && Number(selectionLock.at || 0) > 0
       && now - Number(selectionLock.at) < 8000;
-    const protocolContradictsSelectionLock = incomingProtocolOnly
-      && selectionLockFresh
+    const contradictsSelectionLock = selectionLockFresh
       && !sameMarket(asset, selectionLock.asset);
+    const protocolContradictsSelectionLock = incomingProtocolOnly && contradictsSelectionLock;
 
     // During a visible market switch, stale protocol/network state from the
     // previous instrument can continue to announce itself as selected for a
     // few seconds. Never let that non-visual source roll the current visible
     // transition back to the old market. This is the guard against mixing
     // USO/USD price/history into a newly selected AUD/CAD session.
+    if (assetChanged && !userSelected && contradictsSelectionLock) {
+      return {
+        ...state,
+        diagnostics: {
+          ...(state.diagnostics || {}),
+          focusRejected: {
+            asset, frameId: info.frameId, frameHost: info.frameHost,
+            reason: incomingProtocolOnly
+              ? 'protocol-rollback-visual-selection-lock'
+              : 'stale-visual-rollback-selection-lock',
+            at: now
+          }
+        }
+      };
+    }
+
     if (assetChanged && incomingProtocolOnly && (transitionProtectsCurrentFocus || recentVisualSelection || protocolContradictsSelectionLock)) {
       return {
         ...state,
