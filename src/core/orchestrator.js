@@ -147,7 +147,7 @@ function observeStablePossible(cycle, signal = {}, at = Date.now()) {
   }
 
   if (qualifies && rawDirection === cycle.possibleDirection) {
-    cycle.possibleScore = Math.max(Number(cycle.possibleScore || 0), rawScore);
+    cycle.possibleScore = rawScore;
     cycle.lastPossibleStrongAt = at;
     cycle.setup = inferSetup(signal, rawDirection) || cycle.setup;
     cycle.oppositeDirection = null;
