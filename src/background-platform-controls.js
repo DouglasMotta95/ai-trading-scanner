@@ -44,6 +44,7 @@ function safeObserved(snapshot = {}) {
     amount: amount != null && amount > 0 ? amount : null,
     expiration,
     timeframe,
+    expirationDirty: snapshot.expirationDirty === true,
     source: clean(snapshot.source || 'casatrade-ui-v2').slice(0, 64),
     observedAt: {
       amount: amount != null && amount > 0 ? observedAt : 0,
@@ -68,6 +69,12 @@ function mergeObserved(previous = {}, incoming = {}) {
     observedAt: { ...(previous.observedAt || {}) },
     confidence: { ...oldConfidence }
   };
+  if (incoming.expirationDirty === true && incoming.expiration == null) {
+    next.expiration = null;
+    next.observedAt.expiration = 0;
+    next.confidence.expiration = 0;
+  }
+
   for (const field of ['amount', 'expiration', 'timeframe']) {
     const value = incoming[field];
     const score = Number(incoming.confidence?.[field] || 0);
@@ -129,7 +136,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const observed = mergeObserved(previous, incoming);
     const expirationAt = Number(observed.observedAt?.expiration || 0);
     const timeframeAt = Number(observed.observedAt?.timeframe || 0);
-    const expirationFresh = expirationAt > 0 && Date.now() - expirationAt < 7000;
+    // Expiration is a user-selected control, not a streaming tick. Once read
+    // from CasaTrade it remains authoritative for the current session until a
+    // contradictory reading or an explicit interaction invalidates it.
+    const expirationFresh = expirationAt > 0 && !!observed.expiration;
     const timeframeFresh = timeframeAt > 0 && Date.now() - timeframeAt < 7000;
     const actualExpiration = expirationFresh ? observed.expiration || null : null;
     const actualTimeframe = timeframeFresh ? observed.timeframe || null : null;
