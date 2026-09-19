@@ -146,3 +146,30 @@ test('A+ product mode is forced as the default in UI and policy metadata', () =>
   assert.match(app, /mode: 'A_PLUS'/);
   assert.match(policy, /mode: 'A_PLUS'/);
 });
+
+
+test('A+ can still authorize a genuinely aligned high-confidence setup', () => {
+  const candles = trendCandles({ count: 40, direction: 'BUY' });
+  const last = candles.at(-1).close;
+  const result = assessHighConfidence({
+    candles,
+    currentCandle: {
+      time: BASE + 40 * 60_000,
+      open: last,
+      high: last + .0005,
+      low: last - .00035,
+      close: last + .00025
+    },
+    signal: signal('BUY', {
+      rejectionDirection: 'BUY',
+      rejectionStrength: 62,
+      buyPower: 64,
+      sellPower: 30
+    }),
+    direction: 'BUY',
+    cycle: { possibleSince: Date.now() - 7000 }
+  });
+  assert.ok(result.score >= A_PLUS_THRESHOLDS.enterScore);
+  assert.equal(result.finalAllowed, true);
+  assert.deepEqual(result.hardVetoes, []);
+});
