@@ -168,6 +168,31 @@ async function injectModern(tabId) {
 
 function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 
+function executeScriptCompat(details) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (error, result) => {
+      if (settled) return;
+      settled = true;
+      if (error) reject(error);
+      else resolve(Array.isArray(result) ? result : []);
+    };
+    const callback = result => {
+      let runtimeError = null;
+      try { runtimeError = chrome.runtime?.lastError || null; } catch {}
+      finish(runtimeError ? new Error(runtimeError.message || String(runtimeError)) : null, result);
+    };
+    try {
+      const returned = chrome.scripting.executeScript(details, callback);
+      if (returned && typeof returned.then === 'function') {
+        returned.then(result => finish(null, result)).catch(error => finish(error));
+      }
+    } catch (error) {
+      finish(error);
+    }
+  });
+}
+
 function normalizeExpiration(value = '') {
   const s = clean(value).toLowerCase().replace(/\s+/g, '');
   let m = s.match(/^(\d{1,5})(?:s|seg|segundo|segundos)$/); if (m) return `${Number(m[1])}s`;
@@ -179,7 +204,7 @@ function normalizeExpiration(value = '') {
 async function directExpirationProbe(tabId) {
   if (!tabId || !chrome.scripting?.executeScript) return null;
   try {
-    const rows = await chrome.scripting.executeScript({
+    const rows = await executeScriptCompat({
       target: { tabId, allFrames: true },
       world: 'ISOLATED',
       func: () => {
@@ -439,7 +464,7 @@ async function readAndCommitDirectExpiration(tabId) {
 async function forceLiveControlRead(tabId) {
   if (!tabId || !chrome.scripting?.executeScript) return false;
   try {
-    const result = chrome.scripting.executeScript({
+    const result = executeScriptCompat({
       target: { tabId, allFrames: true },
       world: 'ISOLATED',
       func: () => {
@@ -460,7 +485,7 @@ async function forceLiveControlRead(tabId) {
         return { expiration, asset };
       }
     });
-    if (result && typeof result.then === 'function') await result.catch(() => []);
+    await result.catch(() => []);
     await sleep(320);
     return true;
   } catch {
@@ -475,15 +500,27 @@ async function refreshTargetTab() {
   const tabId = Number(state.targetTabId || 0);
   if (!tabId) return { ok: false, error: 'target_tab_missing', state };
 
-  // Retry must not depend on reinjection succeeding. The previous flow returned
-  // early here, which meant TENTAR NOVAMENTE could repeat forever without ever
-  // running the direct expiration reader.
+  // On Android/tablet browsers the scripting API may be callback-only. Read the
+  // visible expiration first through executeScriptCompat; do not make the user
+  // wait for a full pipeline reinjection when market/clock are already healthy.
+  const directExpiration = await readAndCommitDirectExpiration(tabId);
+  if (directExpiration) {
+    forceLiveControlRead(tabId).catch(() => false);
+    return {
+      ok: true,
+      tabId,
+      injected: null,
+      directExpiration,
+      state: await readScannerState()
+    };
+  }
+
   const injected = await injectModern(tabId).catch(() => false);
   await forceLiveControlRead(tabId).catch(() => false);
-  const directExpiration = await readAndCommitDirectExpiration(tabId);
+  const afterInjectionExpiration = await readAndCommitDirectExpiration(tabId);
   const nextState = await readScannerState();
 
-  if (!injected && !directExpiration) {
+  if (!injected && !afterInjectionExpiration) {
     return {
       ok: false,
       error: 'runtime_injection_failed_and_expiration_not_found',
@@ -496,11 +533,10 @@ async function refreshTargetTab() {
     ok: true,
     tabId,
     injected,
-    directExpiration: directExpiration || null,
+    directExpiration: afterInjectionExpiration || null,
     state: nextState
   };
 }
-
 async function connectActiveTab() {
   let state = await readScannerState();
   const license = await recoverLicense(state);
