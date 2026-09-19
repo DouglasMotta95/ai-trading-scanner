@@ -15,6 +15,71 @@
         } catch { resolve(null); }
       });
 
+  const EXPIRATION_DIAG_PREFIX = 'atsExpirationProbeDiagnosticsV1:';
+  const expirationProbeDiag = globalThis.__ATS_EXPIRATION_PROBE_DIAGNOSTICS__ || {
+    version: 1,
+    instanceId: (globalThis.crypto?.randomUUID?.() || (Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10))),
+    startedAt: Date.now(),
+    scans: 0,
+    domFound: 0,
+    domMissed: 0,
+    messagesSent: 0,
+    lastDomValue: null,
+    lastEvidence: null,
+    lastMessageAt: 0,
+    updatedAt: 0
+  };
+  globalThis.__ATS_EXPIRATION_PROBE_DIAGNOSTICS__ = expirationProbeDiag;
+  const expirationDiagStorageKey = EXPIRATION_DIAG_PREFIX + expirationProbeDiag.instanceId;
+  let expirationDiagFlushTimer = 0;
+
+  function expirationDiagSnapshot() {
+    let host = '';
+    try { host = location.hostname || ''; } catch {}
+    let isTop = false;
+    try { isTop = window === top; } catch {}
+    return {
+      version: 1,
+      instanceId: expirationProbeDiag.instanceId,
+      startedAt: Number(expirationProbeDiag.startedAt || 0),
+      scans: Number(expirationProbeDiag.scans || 0),
+      domFound: Number(expirationProbeDiag.domFound || 0),
+      domMissed: Number(expirationProbeDiag.domMissed || 0),
+      messagesSent: Number(expirationProbeDiag.messagesSent || 0),
+      lastDomValue: expirationProbeDiag.lastDomValue || null,
+      lastEvidence: expirationProbeDiag.lastEvidence || null,
+      lastMessageAt: Number(expirationProbeDiag.lastMessageAt || 0),
+      updatedAt: Date.now(),
+      host,
+      isTop
+    };
+  }
+
+  function flushExpirationDiag(immediate = false) {
+    expirationProbeDiag.updatedAt = Date.now();
+    const write = () => {
+      expirationDiagFlushTimer = 0;
+      try {
+        chrome.storage.local.set({ [expirationDiagStorageKey]: expirationDiagSnapshot() }, () => {
+          try { void chrome.runtime.lastError; } catch {}
+        });
+      } catch {}
+    };
+    if (immediate) {
+      if (expirationDiagFlushTimer) { clearTimeout(expirationDiagFlushTimer); expirationDiagFlushTimer = 0; }
+      write();
+      return;
+    }
+    if (!expirationDiagFlushTimer) expirationDiagFlushTimer = setTimeout(write, 250);
+  }
+
+  async function sendControlsObserved(snapshot = {}) {
+    expirationProbeDiag.messagesSent = Number(expirationProbeDiag.messagesSent || 0) + 1;
+    expirationProbeDiag.lastMessageAt = Date.now();
+    flushExpirationDiag();
+    return sendMessage({ type: 'ATS_PLATFORM_CONTROLS_OBSERVED', snapshot });
+  }
+
   const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
   const fold = value => clean(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
   const expirationSemantics = /\b(?:expiracao|expiry|expiration|tempo de expiracao|tempo da operacao|tempo de operacao|duracao|duration)\b/;
@@ -350,6 +415,17 @@
     let exp = marker || strong || semantic || body;
     const tf = selectedTimeframe(all);
     const now = Date.now();
+    expirationProbeDiag.scans = Number(expirationProbeDiag.scans || 0) + 1;
+    if (exp?.value) {
+      expirationProbeDiag.domFound = Number(expirationProbeDiag.domFound || 0) + 1;
+      expirationProbeDiag.lastDomValue = exp.value;
+      expirationProbeDiag.lastEvidence = exp.reason || null;
+    } else {
+      expirationProbeDiag.domMissed = Number(expirationProbeDiag.domMissed || 0) + 1;
+      expirationProbeDiag.lastDomValue = null;
+      expirationProbeDiag.lastEvidence = null;
+    }
+    flushExpirationDiag();
 
     if (exp?.value) {
       lastConfirmedExpiration = exp.value;
@@ -395,7 +471,7 @@
     lastKey = key;
     lastSentAt = now;
     globalThis.__ATS_EXPIRATION_PROBE_LAST__ = snapshot;
-    await sendMessage({ type: 'ATS_PLATFORM_CONTROLS_OBSERVED', snapshot });
+    await sendControlsObserved(snapshot);
   }
 
   function schedule(force = false, delay = 40) {
@@ -413,17 +489,14 @@
   const markControlDirty = event => {
     if (!expirationInteractionTarget(event?.target)) return;
     expirationControlDirtyAt = Date.now();
-    sendMessage({
-      type: 'ATS_PLATFORM_CONTROLS_OBSERVED',
-      snapshot: {
-        amount: null,
-        expiration: null,
-        timeframe: null,
-        expirationDirty: true,
-        confidence: { amount: 0, expiration: 0, timeframe: 0 },
-        source: 'casatrade-expiration-probe-v4-dirty',
-        observedAt: expirationControlDirtyAt
-      }
+    sendControlsObserved({
+      amount: null,
+      expiration: null,
+      timeframe: null,
+      expirationDirty: true,
+      confidence: { amount: 0, expiration: 0, timeframe: 0 },
+      source: 'casatrade-expiration-probe-v4-dirty',
+      observedAt: expirationControlDirtyAt
     }).catch(() => {});
   };
   const clickHandler = event => {
@@ -454,6 +527,7 @@
       try { document.removeEventListener('change', controlChangeHandler, true); } catch {}
       try { clearInterval(intervalId); } catch {}
       if (scheduled) { try { clearTimeout(scheduled); } catch {} }
+      flushExpirationDiag(true);
     }
   };
 
