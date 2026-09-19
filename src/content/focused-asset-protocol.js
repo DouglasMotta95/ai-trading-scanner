@@ -38,14 +38,18 @@
     const source = String(meta.source || '');
     if (source === 'protocol-selected') return false;
 
-    // A direct user asset selection is stronger evidence than a stale network/app
-    // "selected" flag. Keep it authoritative until the protocol catches up to the
-    // same market or another visual interaction replaces it.
+    // Only an actual user-selected transition may temporarily block a conflicting
+    // protocol-selected market. Passive visual scans are republished frequently;
+    // treating their timestamp as a lock can pin the previous asset forever.
     const explicitTransition = source === 'user-selected-transition' || meta.interactionHint === true;
-    if (explicitTransition) return !same(current, asset);
+    if (explicitTransition) {
+      const interactionAt = Number(meta.interactionAt || meta.at || 0);
+      return Date.now() - interactionAt < 3500 && !same(current, asset);
+    }
 
-    if (Date.now() - Number(meta.at) > 5000) return false;
-    return !same(current, asset);
+    // A single selected protocol candidate is stronger than passive chart text
+    // once there is no active user-transition lock.
+    return false;
   }
 
   let lastAsset = '';
