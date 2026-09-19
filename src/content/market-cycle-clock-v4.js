@@ -284,17 +284,17 @@
     const source = state.marketHistory || {};
     const key = Object.keys(source).find(value => sameMarket(value, focus?.asset));
     const rows = key && Array.isArray(source[key]) ? source[key] : Array.isArray(state.candles) && sameMarket(state.asset, focus?.asset) ? state.candles : [];
-    const latest = rows
+    const normalized = rows
       .map(row => ({ row, time: normalizeTime(row?.time ?? row?.timestamp) }))
       .filter(item => item.time && [item.row?.open, item.row?.high, item.row?.low, item.row?.close].every(value => Number.isFinite(Number(value))))
-      .sort((a, b) => a.time - b.time)
-      .at(-1);
-    if (!latest) { stateBoundaryProbe = null; return null; }
+      .sort((a, b) => a.time - b.time);
+    if (!normalized.length) { stateBoundaryProbe = null; return null; }
     const now = Date.now();
-    const openAt = latest.time;
-    const phase = ((openAt % durationMs) + durationMs) % durationMs;
-    const alignedToBoundary = Math.min(phase, durationMs - phase) <= 2500;
-    if (!alignedToBoundary || openAt > now + 1500 || now < openAt - 1500 || now >= openAt + durationMs + 1200) {
+    const currentBucket = Math.floor(now / durationMs) * durationMs;
+    const bucketRows = normalized.filter(item => item.time >= currentBucket && item.time < currentBucket + durationMs);
+    if (!bucketRows.length) { stateBoundaryProbe = null; return null; }
+    const openAt = currentBucket;
+    if (openAt > now + 1500 || now < openAt - 1500 || now >= openAt + durationMs + 1200) {
       stateBoundaryProbe = null;
       return null;
     }
