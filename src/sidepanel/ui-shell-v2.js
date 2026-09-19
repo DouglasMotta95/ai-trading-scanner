@@ -134,7 +134,7 @@ function renderShell(state = {}) {
       ? 'Dados do ativo anterior foram limpos. Confirmando preço e velas reais do novo instrumento.'
       : failure
         || (expirationPending
-          ? 'EXPIRAÇÃO PENDENTE — selecione 1 minuto na CasaTrade e toque em TENTAR NOVAMENTE.'
+          ? 'EXPIRAÇÃO PENDENTE — não foi possível confirmar o valor real; toque em TENTAR NOVAMENTE.'
           : connected && expirationWrong
             ? 'Ajuste a expiração da CasaTrade para 1 minuto.'
             : tradeReady
