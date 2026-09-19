@@ -91,6 +91,15 @@
       return /^(m|min|minuto|minutos)$/.test(labeled[2]) ? `${amount * 60}s` : `${amount}s`;
     }
 
+    // Responsive layouts can reverse DOM/text order even when the visual card
+    // still reads "Expiração 1 min". Accept a duration immediately before the
+    // explicit expiration label, but never infer a default duration.
+    const reversed = spaced.match(/(\d{1,4})\s*(s|seg|segundo|segundos|m|min|minuto|minutos)\b[^0-9]{0,80}(?:expiracao|expiry|expiration|tempo de expiracao)/);
+    if (reversed) {
+      const amount = Number(reversed[1]);
+      return /^(m|min|minuto|minutos)$/.test(reversed[2]) ? `${amount * 60}s` : `${amount}s`;
+    }
+
     const s = spaced.replace(/\s+/g, '');
     let m = s.match(/^(\d{1,4})(?:s|seg|segundo|segundos)$/); if (m) return `${Number(m[1])}s`;
     m = s.match(/^(\d{1,3})(?:m|min|minuto|minutos)$/); if (m) return `${Number(m[1]) * 60}s`;
