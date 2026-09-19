@@ -32,6 +32,18 @@ function normAsset(value = '') {
     const base = compact.slice(0, -quote.length);
     if (/^[A-Z0-9]{2,12}$/.test(base)) return `${base}/${quote}${otc ? ' (OTC)' : ''}`;
   }
+
+  // CasaTrade also exposes named OTC instruments (for example VAULTA or
+  // CARDANO) without a visible quote currency. Accept them only when OTC is
+  // explicit and reject ambiguous currency/UI words, preserving the strict
+  // protocol protection against labels such as EURO.
+  const ambiguous = new Set([
+    'EURO','DOLLAR','DÓLAR','USD','EUR','GBP','JPY','AUD','CAD','CHF','NZD','BRL',
+    'BUY','SELL','COMPRA','VENDA','BLITZ','DIGITAL','INFO','OTC'
+  ]);
+  if (otc && /^[A-Z0-9][A-Z0-9 ._-]{2,30}$/.test(stripped) && !ambiguous.has(stripped)) {
+    return `${stripped} (OTC)`;
+  }
   return '';
 }
 const marketId = value => normAsset(value);
