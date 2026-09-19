@@ -1,5 +1,7 @@
 (() => {
-  if (globalThis.__ATS_FOCUSED_ASSET_TRACKER_V2__) return;
+  const FOCUS_READER_BUILD = 'focused-asset-v2-live-authority-v5';
+  if (globalThis.__ATS_FOCUSED_ASSET_TRACKER_V2_BUILD__ === FOCUS_READER_BUILD) return;
+  globalThis.__ATS_FOCUSED_ASSET_TRACKER_V2_BUILD__ = FOCUS_READER_BUILD;
   globalThis.__ATS_FOCUSED_ASSET_TRACKER_V2__ = true;
   globalThis.__ATS_FOCUSED_ASSET_TRACKER__ = true;
 
