@@ -5,17 +5,15 @@ import { marketRegime } from '../src/core/market-regime.js';
 import { processSnapshot, resetOrchestrator } from '../src/core/orchestrator.js';
 
 const minute = 60_000;
+const aPlusBullishRows = bucket => Array.from({ length: 40 }, (_, index) => {
+  const offset = 39 - index;
+  const open = 1 + index * .002;
+  const close = open + .0016;
+  return { time: bucket - offset * minute, open, high: close + .00045, low: open - .00035, close, timeframe: 'M1' };
+});
 const read = path => fs.readFileSync(new URL('../' + path, import.meta.url), 'utf8');
 
-function bullish(bucket) {
-  return [
-    { time: bucket - 4 * minute, open: 1.000, high: 1.020, low: .990, close: 1.018, timeframe: 'M1' },
-    { time: bucket - 3 * minute, open: 1.018, high: 1.040, low: 1.010, close: 1.038, timeframe: 'M1' },
-    { time: bucket - 2 * minute, open: 1.038, high: 1.060, low: 1.030, close: 1.058, timeframe: 'M1' },
-    { time: bucket - minute, open: 1.058, high: 1.080, low: 1.050, close: 1.078, timeframe: 'M1' },
-    { time: bucket, open: 1.078, high: 1.115, low: 1.075, close: 1.110, timeframe: 'M1' }
-  ];
-}
+function bullish(bucket) { return aPlusBullishRows(bucket); }
 function snapshot(bucket, offset, candles = bullish(bucket)) {
   return {
     platformId: 'casatrade', asset: 'EUR/USD', price: candles.at(-1).close,
