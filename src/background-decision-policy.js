@@ -6,7 +6,7 @@ import { readScannerState, updateScannerState } from './services/scanner-state-a
 const EXACT_CLOCK_SOURCES = new Set(['trader-dom-countdown', 'network-server-cycle']);
 const CLOCK_FRESH_MS = 3000;
 const FOCUS_FRESH_MS = 5500;
-const DEFAULT_PREFS = Object.freeze({ mode: 'NORMAL', geminiEnabled: true, holdSeconds: 3, preferredExpiration: null });
+const DEFAULT_PREFS = Object.freeze({ mode: 'A_PLUS', geminiEnabled: true, holdSeconds: 3, preferredExpiration: null });
 
 const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
 const text = value => String(value ?? '').trim();
@@ -43,7 +43,7 @@ const normExp = value => {
 function preferences(state = {}) {
   const raw = state.analystPreferences || {};
   return {
-    mode: 'NORMAL',
+    mode: 'A_PLUS',
     geminiEnabled: raw.geminiEnabled !== false,
     holdSeconds: 3,
     preferredExpiration: null
