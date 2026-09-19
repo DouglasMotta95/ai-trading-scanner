@@ -1,5 +1,5 @@
 (() => {
-  const FOCUS_READER_BUILD = 'focused-asset-v2-chart-header-authority-v6';
+  const FOCUS_READER_BUILD = 'focused-asset-v2-chart-header-named-asset-v7';
   if (globalThis.__ATS_FOCUSED_ASSET_TRACKER_V2_BUILD__ === FOCUS_READER_BUILD) return;
   globalThis.__ATS_FOCUSED_ASSET_TRACKER_V2_BUILD__ = FOCUS_READER_BUILD;
   globalThis.__ATS_FOCUSED_ASSET_TRACKER_V2__ = true;
@@ -30,6 +30,21 @@
     for (const match of raw.matchAll(pairRe)) add(match[1], match[2], /OTC/i.test(match[0]));
     if (!out.length) for (const match of raw.matchAll(compactFxRe)) add(match[1], match[2], /OTC/i.test(match[0]));
     return out;
+  }
+
+  const AMBIGUOUS_NAMED = new Set([
+    'EURO','DOLLAR','DÓLAR','USD','EUR','GBP','JPY','AUD','CAD','CHF','NZD','BRL',
+    'BUY','SELL','COMPRA','VENDA','BLITZ','DIGITAL','INFO','OTC'
+  ]);
+  function namedChartAsset(value = '') {
+    const raw = clean(value).normalize('NFKC');
+    if (!raw || raw.length > 64 || !/\(\s*OTC\s*\)/i.test(raw)) return '';
+    const name = raw.replace(/\(\s*OTC\s*\)/ig, '').replace(/\s+/g, ' ').trim();
+    const upper = name.toUpperCase();
+    if (!/^[A-Z0-9][A-Z0-9 ._-]{2,30}$/i.test(name)) return '';
+    if (AMBIGUOUS_NAMED.has(upper)) return '';
+    if (/\b(?:PORTF[ÓO]LIO|HIST[ÓO]RICO|TABELA|PROMO[CÇ][AÃ]O|AN[ÁA]LISE|VALOR|EXPIRA[CÇ][AÃ]O|LUCRO)\b/i.test(name)) return '';
+    return `${upper} (OTC)`;
   }
 
   const canonicalAsset = value => assetsIn(value)[0] || '';
@@ -140,7 +155,8 @@
       const text = elementAssetText(el);
       if (!text || text.length > 64) continue;
       const assets = assetsIn(text);
-      if (assets.length !== 1) continue;
+      const named = assets.length ? '' : namedChartAsset(text);
+      if (assets.length !== 1 && !named) continue;
 
       const rect = el.getBoundingClientRect();
       if (rect.bottom < headerTop || rect.top > headerBottom) continue;
@@ -158,7 +174,7 @@
       if (text.length <= 36) score += 200;
       score -= Math.max(0, rect.top - chart.top) * .5;
       rows.push({
-        asset: assets[0],
+        asset: assets[0] || named,
         score,
         explicit: true,
         interaction: interactionFresh(assets[0]),
@@ -194,8 +210,11 @@
     const path = typeof event?.composedPath === 'function' ? event.composedPath() : [event?.target];
     for (const node of path.slice(0, 8)) {
       if (!(node instanceof Element) || !visible(node)) continue;
-      const assets = assetsIn(elementAssetText(node));
+      const text = elementAssetText(node);
+      const assets = assetsIn(text);
       if (assets.length === 1) return assets[0];
+      const named = namedChartAsset(text);
+      if (named) return named;
     }
     return '';
   }
