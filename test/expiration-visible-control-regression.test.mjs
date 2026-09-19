@@ -28,3 +28,26 @@ test('expiration probe also accepts a real duration immediately before the Expir
   assert.match(source, /parseExpiration/);
   assert.doesNotMatch(source, /expiration:\s*['"]60s['"]/);
 });
+
+
+test('v0.11.30 expiration reader uses rendered marker and platform-sync continuously publishes visible controls', () => {
+  const probe = read('src/content/casatrade-expiration-probe.js');
+  const sync = read('src/content/platform-sync.js');
+  assert.match(probe, /function renderedMarkerExpiration\(\)/);
+  assert.match(probe, /__ats_rendered_market__/);
+  assert.match(probe, /rendered-market-marker/);
+  assert.match(sync, /async function publishVisibleControls\(force = false\)/);
+  assert.match(sync, /type: 'ATS_PLATFORM_CONTROLS_OBSERVED'/);
+  assert.match(sync, /setInterval\(\(\) => publishVisibleControls\(true\)/);
+});
+
+test('expiration dirty detector no longer treats a broad ancestor containing Expiração as a control click', () => {
+  const probe = read('src/content/casatrade-expiration-probe.js');
+  const start = probe.indexOf('function expirationInteractionTarget');
+  const end = probe.indexOf('\n  function scan()', start);
+  const block = probe.slice(start, end);
+  assert.match(block, /depth < 3/);
+  assert.match(block, /own.length <= 90/);
+  assert.match(block, /parentOwn.length <= 140/);
+  assert.doesNotMatch(block, /semanticText\(node\)/);
+});
