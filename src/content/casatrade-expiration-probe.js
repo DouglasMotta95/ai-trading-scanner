@@ -355,7 +355,7 @@
         expiration: exp ? Math.max(110, Math.min(140, Number(exp.score || 0))) : 0,
         timeframe: tf?.score || 0
       },
-      source: 'casatrade-expiration-probe-v3',
+      source: 'casatrade-expiration-probe-v4',
       observedAt: Date.now(),
       evidence: exp?.reason || null
     };
@@ -394,6 +394,18 @@
   const markControlDirty = event => {
     if (!expirationInteractionTarget(event?.target)) return;
     expirationControlDirtyAt = Date.now();
+    sendMessage({
+      type: 'ATS_PLATFORM_CONTROLS_OBSERVED',
+      snapshot: {
+        amount: null,
+        expiration: null,
+        timeframe: null,
+        expirationDirty: true,
+        confidence: { amount: 0, expiration: 0, timeframe: 0 },
+        source: 'casatrade-expiration-probe-v4-dirty',
+        observedAt: expirationControlDirtyAt
+      }
+    }).catch(() => {});
   };
   const clickHandler = event => {
     markControlDirty(event);
