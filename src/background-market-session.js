@@ -163,7 +163,74 @@ function nextEpoch(previous = {}) {
   return Math.max(0, Number(previous?.epoch || 0)) + 1;
 }
 
-function resetForSession(state = {}, { asset, timeframe = null, info, reason, source }) {
+export function marketSessionEpoch(state = {}) {
+  return Math.max(0, Number(state?.diagnostics?.marketSession?.epoch || 0));
+}
+
+export function withMarketSessionEpoch(state = {}, expectedEpoch, writer) {
+  const expected = Number(expectedEpoch);
+  if (!Number.isFinite(expected) || marketSessionEpoch(state) !== expected) return state;
+  return typeof writer === 'function' ? writer(state) : state;
+}
+
+export function clearMarketAuthorityState(state = {}, extra = {}) {
+  const previous = state.diagnostics?.marketSession || {};
+  const epoch = nextEpoch(previous);
+  const now = Date.now();
+  const requestedDiagnostics = extra?.diagnostics && typeof extra.diagnostics === 'object'
+    ? { ...extra.diagnostics }
+    : { ...(state.diagnostics || {}) };
+  delete requestedDiagnostics.focusedAsset;
+  delete requestedDiagnostics.marketClock;
+  requestedDiagnostics.marketSession = {
+    epoch,
+    asset: null,
+    pendingAsset: null,
+    confirmedAsset: null,
+    dataReady: false,
+    transitioning: false,
+    timeframe: null,
+    frameId: null,
+    frameHost: null,
+    source: clean(extra.marketSessionSource || 'control-clear'),
+    startedAt: now,
+    dataMode: 'idle'
+  };
+
+  const safeExtra = { ...extra };
+  delete safeExtra.asset;
+  delete safeExtra.price;
+  delete safeExtra.candles;
+  delete safeExtra.marketHistory;
+  delete safeExtra.currentCandle;
+  delete safeExtra.diagnostics;
+  delete safeExtra.marketSessionSource;
+
+  return {
+    ...state,
+    ...safeExtra,
+    asset: null,
+    price: null,
+    timeframe: null,
+    analysisTimeframe: null,
+    expiration: null,
+    targetExpiration: null,
+    serverTime: null,
+    candles: [],
+    currentCandle: null,
+    marketHistory: {},
+    signal: null,
+    professionalDecision: null,
+    aiAudit: null,
+    tradeIntent: null,
+    lastConfirmed: null,
+    lastSeen: null,
+    platformControls: null,
+    diagnostics: requestedDiagnostics
+  };
+}
+
+export function resetForSession(state = {}, { asset, timeframe = null, info, reason, source }) {
   const previous = state.diagnostics?.marketSession || {};
   const epoch = nextEpoch(previous);
   const now = Date.now();
@@ -241,7 +308,7 @@ function clockRecord(message = {}, info = {}, asset = '', timeframe = null, seco
   };
 }
 
-async function applyFocus(message = {}, sender = {}) {
+export async function applyFocus(message = {}, sender = {}) {
   const info = senderMeta(sender);
   const role = clean(message.frameRole || '');
   if (!info.trusted || message.chartScoped !== true || message.reliable !== true || !['trader-frame', 'casa-chart-frame'].includes(role)) return null;
@@ -381,7 +448,7 @@ async function applyFocus(message = {}, sender = {}) {
   });
 }
 
-async function applyClock(message = {}, sender = {}) {
+export async function applyClock(message = {}, sender = {}) {
   const info = senderMeta(sender);
   if (!info.trusted) return null;
   const asset = normAsset(message.asset);
@@ -463,7 +530,7 @@ async function applyClock(message = {}, sender = {}) {
   });
 }
 
-async function applyFeed(payload = {}, sender = {}) {
+export async function applyFeed(payload = {}, sender = {}) {
   const info = senderMeta(sender);
   if (!info.trusted) return null;
   return updateScannerState(state => {
@@ -578,7 +645,7 @@ function observedCurrentCandle(state = {}, price, clock = null) {
   return { cycleKey, timeframe, open, high, low, close: Number(price), source: 'live-price-observed', partial: true, openReliable: false, rangeReliable: false, at: Date.now() };
 }
 
-async function applyChartPrice(message = {}, sender = {}) {
+export async function applyChartPrice(message = {}, sender = {}) {
   const info = senderMeta(sender);
   if (!info.trusted) return null;
   const price = num(message.price);
@@ -646,6 +713,26 @@ async function applyInspector(message = {}, sender = {}) {
         }
       }
     };
+  });
+}
+
+export async function repairMarketSessionIntegrity(observedState = {}) {
+  const expectedEpoch = marketSessionEpoch(observedState);
+  return updateScannerState(current => {
+    if (marketSessionEpoch(current) !== expectedEpoch) return current;
+    const focus = current.diagnostics?.focusedAsset || null;
+    const session = current.diagnostics?.marketSession || null;
+    if (!focus?.asset || !session?.asset) return current;
+    const mismatch = (current.asset && !sameMarket(current.asset, session.asset))
+      || (current.analysisTimeframe && session.timeframe && normTf(current.analysisTimeframe) !== normTf(session.timeframe));
+    if (!mismatch) return current;
+    return resetForSession(current, {
+      asset: normAsset(focus.asset),
+      timeframe: normTf(session.timeframe),
+      info: { frameId: focus.frameId, frameHost: clean(focus.frameHost).toLowerCase() },
+      source: 'session-integrity',
+      reason: 'Dado atrasado de outra sessão foi bloqueado pelo owner do marketSession.'
+    });
   });
 }
 
