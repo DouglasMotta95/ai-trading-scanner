@@ -286,6 +286,36 @@ async function directExpirationProbe(tabId) {
           }
         }
 
+        // Last-resort visible-text reader. This deliberately does not depend on
+        // CasaTrade classes, ids or component structure. On responsive/mobile
+        // layouts the selector can be rendered by a custom component while the
+        // visible text still contains "Expiração" followed by "1 min".
+        const bodyTextRaw = clean(document.body?.innerText || '');
+        const bodyText = fold(bodyTextRaw);
+        const lines = bodyTextRaw.split(/\r?\n/).map(clean).filter(Boolean);
+        for (let i = 0; i < lines.length; i += 1) {
+          const label = fold(lines[i]);
+          if (!/^(?:expiracao|expiry|expiration|tempo de expiracao|expiration time)$/.test(label)) continue;
+          for (let j = i + 1; j <= Math.min(lines.length - 1, i + 4); j += 1) {
+            const value = parse(lines[j]);
+            if (value) {
+              candidates.push({ expiration: value, score: 1300 - (j - i) * 20, evidence: 'visible-lines-after-expiration-label' });
+              break;
+            }
+          }
+        }
+        for (const marker of ['expiracao','expiry','expiration','tempo de expiracao']) {
+          let from = 0;
+          for (let attempt = 0; attempt < 20; attempt += 1) {
+            const index = bodyText.indexOf(marker, from);
+            if (index < 0) break;
+            const slice = bodyText.slice(index, Math.min(bodyText.length, index + 140));
+            const value = parse(slice);
+            if (value) candidates.push({ expiration: value, score: 1180, evidence: 'visible-body-expiration-text' });
+            from = index + marker.length;
+          }
+        }
+
         candidates.sort((a, b) => b.score - a.score);
         const best = candidates[0] || null;
         if (!best || best.score < 420) return null;
@@ -369,6 +399,33 @@ async function commitDirectExpiration(tabId, evidence = null) {
   });
 }
 
+async function readAndCommitDirectExpiration(tabId) {
+  const waits = [0, 180, 480];
+  let lastEvidence = null;
+  for (const wait of waits) {
+    if (wait) await sleep(wait);
+    const evidence = await directExpirationProbe(tabId);
+    if (evidence) {
+      lastEvidence = evidence;
+      await commitDirectExpiration(tabId, evidence);
+      return evidence;
+    }
+  }
+  await updateScannerState(state => ({
+    ...state,
+    diagnostics: {
+      ...(state.diagnostics || {}),
+      directExpirationProbe: {
+        found: false,
+        attempts: waits.length,
+        tabId: Number(tabId || 0),
+        at: Date.now()
+      }
+    }
+  })).catch(() => {});
+  return lastEvidence;
+}
+
 async function forceLiveControlRead(tabId) {
   if (!tabId || !chrome.scripting?.executeScript) return false;
   try {
@@ -407,12 +464,31 @@ async function refreshTargetTab() {
   if (!activeLicense(state.license)) return { ok: false, error: 'license_required', state };
   const tabId = Number(state.targetTabId || 0);
   if (!tabId) return { ok: false, error: 'target_tab_missing', state };
-  const injected = await injectModern(tabId);
-  if (!injected) return { ok: false, error: 'runtime_injection_failed', state: await readScannerState() };
-  await forceLiveControlRead(tabId);
-  const directExpiration = await directExpirationProbe(tabId);
-  if (directExpiration) await commitDirectExpiration(tabId, directExpiration);
-  return { ok: true, tabId, directExpiration: directExpiration || null, state: await readScannerState() };
+
+  // Retry must not depend on reinjection succeeding. The previous flow returned
+  // early here, which meant TENTAR NOVAMENTE could repeat forever without ever
+  // running the direct expiration reader.
+  const injected = await injectModern(tabId).catch(() => false);
+  await forceLiveControlRead(tabId).catch(() => false);
+  const directExpiration = await readAndCommitDirectExpiration(tabId);
+  const nextState = await readScannerState();
+
+  if (!injected && !directExpiration) {
+    return {
+      ok: false,
+      error: 'runtime_injection_failed_and_expiration_not_found',
+      tabId,
+      directExpiration: null,
+      state: nextState
+    };
+  }
+  return {
+    ok: true,
+    tabId,
+    injected,
+    directExpiration: directExpiration || null,
+    state: nextState
+  };
 }
 
 async function connectActiveTab() {
@@ -523,8 +599,7 @@ async function connectActiveTab() {
     return { ok: false, error: 'runtime_injection_failed', platform: { id: platform.id, name: platform.name }, tabId: tab.id, state: failed };
   }
   await forceLiveControlRead(tab.id);
-  const directExpiration = await directExpirationProbe(tab.id);
-  if (directExpiration) await commitDirectExpiration(tab.id, directExpiration);
+  const directExpiration = await readAndCommitDirectExpiration(tab.id);
   const connectedAt = Number(next.diagnostics?.target?.connectedAt || Date.now());
   scheduleConnectionTimeout(tab.id, connectedAt);
   return { ok: true, platform: { id: platform.id, name: platform.name }, tabId: tab.id, directExpiration: directExpiration || null, state: await readScannerState() || next };
