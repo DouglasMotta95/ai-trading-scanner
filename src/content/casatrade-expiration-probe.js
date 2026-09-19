@@ -268,6 +268,59 @@
     return value ? { value, score: 138, reason: 'rendered-market-marker' } : null;
   }
 
+  function semanticTreeExpiration() {
+    const candidates = [];
+    const selector = [
+      '[data-testid*="expir" i]','[aria-label*="expir" i]','[name*="expir" i]',
+      '[id*="expir" i]','[class*="expir" i]','[title*="expir" i]',
+      'label','button','[role="button"]','[role="combobox"]','span','div'
+    ].join(',');
+
+    for (const root of roots()) {
+      let rows = [];
+      try { rows = [...root.querySelectorAll(selector)].slice(0, 5000); } catch {}
+      for (const el of rows) {
+        const attrs = fold([
+          el.id, el.className, el.getAttribute?.('data-testid'), el.getAttribute?.('data-name'),
+          el.getAttribute?.('name'), el.getAttribute?.('aria-label'), el.getAttribute?.('title'),
+          el.getAttribute?.('role')
+        ].filter(Boolean).join(' '));
+
+        // textContent is intentional here: tablet sidepanel layouts can keep
+        // the CasaTrade control mounted but CSS-hidden/offscreen.
+        const own = clean(el.textContent || el.getAttribute?.('aria-valuetext') || el.getAttribute?.('data-value') || '');
+        const ownFold = fold(own);
+        const semantic = expirationSemantics.test(attrs) || expirationSemantics.test(ownFold);
+        if (!semantic) continue;
+
+        const values = [];
+        const direct = parseExpiration(own);
+        if (direct) values.push(direct);
+        for (const raw of rawValues(el)) {
+          const parsed = parseExpiration(raw);
+          if (parsed) values.push(parsed);
+        }
+
+        let parent = el.parentElement;
+        for (let depth = 0; parent && depth < 3; depth += 1, parent = parent.parentElement) {
+          const text = clean(parent.textContent || '').slice(0, 500);
+          const labeled = parseExpiration(text);
+          if (labeled) values.push(labeled);
+        }
+
+        const unique = [...new Set(values.filter(Boolean))];
+        if (unique.length !== 1) continue;
+        let score = 145;
+        if (expirationSemantics.test(attrs)) score += 20;
+        if (el.matches?.('button,input,select,[role="button"],[role="combobox"]')) score += 15;
+        candidates.push({ value: unique[0], score, reason: 'semantic-tree-hidden-safe' });
+      }
+    }
+
+    candidates.sort((a, b) => b.score - a.score);
+    return candidates[0] || null;
+  }
+
   function bodyExpiration() {
     const body = fold(clean(document.body?.innerText || document.body?.textContent || '').slice(0, 260000));
     if (!body) return null;
@@ -346,8 +399,9 @@
     const marker = renderedMarkerExpiration();
     const strong = marker || expirationControlByLabel(all);
     const semantic = strong || semanticControlExpiration(all);
-    const body = semantic || bodyExpiration();
-    let exp = marker || strong || semantic || body;
+    const hiddenSafe = semantic || semanticTreeExpiration();
+    const body = hiddenSafe || bodyExpiration();
+    let exp = marker || strong || semantic || hiddenSafe || body;
     const tf = selectedTimeframe(all);
     const now = Date.now();
 
