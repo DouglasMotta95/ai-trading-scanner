@@ -48,9 +48,9 @@ test('M1 countdown prefers the new 59-60 second candle after a 1-0 second rollov
   assert.match(clock, /const rolloverWindow =/);
   assert.match(clock, /previousSeconds <= 2/);
   assert.match(clock, /row\.seconds >= limit - 2/);
-  assert.match(clock, /clockSource: 'platform-cycle-derived'/);
-  assert.match(clock, /structured-candle-boundary-fallback/);
-  assert.doesNotMatch(clock, /clockSource: 'structured-candle-boundary'/);
+  assert.match(clock, /clockSource: 'casatrade-clock-pending'/);
+  assert.doesNotMatch(clock, /clockSource: 'platform-cycle-derived'/);
+  assert.doesNotMatch(clock, /structured-candle-boundary-fallback/);
 });
 
 test('connection status is independent from trade readiness and obsolete analyst setup is gone', () => {
