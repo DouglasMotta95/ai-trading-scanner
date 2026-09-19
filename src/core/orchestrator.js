@@ -62,7 +62,9 @@ function cycleKey(snapshot = {}, signal = {}) {
   const sampleAt = num(snapshot.serverTime) ?? Date.now();
   const seconds = num(signal.secondsRemaining) ?? num(snapshot.secondsRemaining) ?? 0;
   const rawTarget = num(signal.targetStart) ?? (sampleAt + Math.max(0, seconds) * 1000);
-  const targetKey = Math.round(rawTarget / 5000) * 5000;
+  // Fallback must identify the target CANDLE, not a 5-second slice. Otherwise
+  // countdown jitter creates a new cycle and erases candidate hysteresis.
+  const targetKey = Math.round(rawTarget / tfMs) * tfMs;
   return `${asset}|${timeframe}|${targetKey}`;
 }
 
