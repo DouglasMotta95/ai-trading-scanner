@@ -126,7 +126,7 @@
     if (!limit) return null;
     const chart = chartRect(), rows = [];
     for (const el of nodes(7000)) {
-      if (!visible(el)) continue;
+      const isVisible = visible(el);
       const own = clean(el.getAttribute?.('aria-label') || el.getAttribute?.('aria-valuetext') || el.getAttribute?.('title') || el.innerText || el.textContent || '');
       if (!own || own.length > 100) continue;
       const parentText = clean(el.parentElement?.innerText || el.parentElement?.textContent || '');
@@ -141,6 +141,11 @@
       const candleSemantic = /vela|candle|remaining|restante|countdown|timer|fechamento|close/.test(context);
       const expirySemantic = /expira|expiry|expiration/.test(context);
       const colonOnly = /^\d{1,3}:[0-5]\d$/.test(own);
+      // Compact/tablet layouts may CSS-hide the chart while the real countdown
+      // node keeps updating. Hidden nodes are accepted only with explicit
+      // candle/countdown semantics; verifiedDomCountdown still requires live
+      // progression before granting exact-clock authority.
+      if (!isVisible && !candleSemantic) continue;
       // Expiration is a different control. Never let "5 seg" / "1 min"
       // from the expiration selector become the candle countdown.
       if (expirySemantic && !candleSemantic) continue;
@@ -153,6 +158,7 @@
         if (value.seconds < 0 || value.seconds > limit + 2) continue;
         let score = chartScoped ? 230 : 0;
         if (candleSemantic) score += 180;
+        if (!isVisible && candleSemantic) score += 20;
         if (/vela|candle|fechamento|close/.test(context)) score += 100;
         if (/remaining|restante|countdown|timer/.test(context)) score += 55;
         if (expirySemantic) score -= 45;
