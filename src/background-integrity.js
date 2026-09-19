@@ -1,4 +1,9 @@
-import { updateScannerState } from './services/scanner-state-atomic.js';
+import {
+  applyFocus as reportMarketFocus,
+  applyClock as reportMarketClock,
+  repairMarketSessionIntegrity,
+  marketSessionEpoch
+} from './background-market-session.js';
 
 const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
 const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
@@ -30,204 +35,28 @@ function senderMeta(sender = {}) {
   return { trusted: !!sender.tab?.id && embeddedTrader, embeddedTrader, frameHost, topHost, frameId: sender.frameId };
 }
 
-function resetForFocus(state, asset, meta) {
-
-  return {
-    ...state,
-    connection: 'connecting',
-    asset,
-    price: null,
-    candles: [],
-    currentCandle: null,
-    signal: null,
-    lastConfirmed: null,
-    tradeIntent: null,
-    lastSeen: null,
-    timeframe: null,
-    analysisTimeframe: null,
-    expiration: null,
-    targetExpiration: null,
-    platformControls: null,
-    diagnostics: {
-      ...(state.diagnostics || {}),
-      focusedAsset: meta,
-      marketClock: null,
-      acquisition: {
-        stage: 'reading_price',
-        reason: `Ativo ${asset} confirmado no gráfico. Aguardando cotação, velas e relógio reais do mesmo gráfico.`,
-        assetSource: 'chart-authority-v4',
-        priceSource: null,
-        candleCount: 0,
-        requiredCandles: 2,
-        at: Date.now()
-      },
-      integrity: { state: 'asset_switched', expectedAsset: asset, at: Date.now() }
-    }
-  };
-}
-
 async function applyVisualFocus(message = {}, sender = {}) {
   const info = senderMeta(sender);
-  if (!info.trusted || message.chartScoped !== true || message.frameRole !== 'trader-frame') return { ok: true, ignored: true };
+  if (!info.trusted || message.chartScoped !== true || message.frameRole !== 'trader-frame') {
+    return { ok: true, ignored: true };
+  }
   const asset = normAsset(message.asset);
   if (!asset || message.reliable === false) return { ok: true, ignored: true };
 
-  return updateScannerState(state => {
-    if (!licenseActive(state)) return;
-    if (state.targetTabId && state.targetTabId !== sender.tab.id) return;
-    const now = Date.now();
-    const previous = state.diagnostics?.focusedAsset || null;
-    const previousFresh = previous?.asset && now - Number(previous.at || 0) < FOCUS_FRESH_MS;
-    const sameFrame = Number(previous?.frameId) === Number(sender.frameId) && clean(previous?.frameHost) === info.frameHost;
-    const sameFocus = sameAsset(previous?.asset, asset);
-
-    if (previousFresh && !sameFrame && !sameFocus && message.explicit !== true) {
-      return {
-        ...state,
-        diagnostics: {
-          ...(state.diagnostics || {}),
-          integrity: { state: 'foreign_chart_focus_ignored', expectedAsset: previous.asset, ignoredAsset: asset, at: now }
-        }
-      };
-    }
-
-    const stableSince = sameFocus && sameFrame ? Number(previous?.stableSince || previous?.at || now) : now;
-    const meta = {
-      asset,
-      at: now,
-      stableSince,
-      changedAt: sameFocus && sameFrame ? Number(previous?.changedAt || stableSince) : now,
-      score: Number(message.score || 0),
-      samples: Number(message.samples || 0),
-      reliable: true,
-      visual: true,
-      explicit: message.explicit === true,
-      chartScoped: true,
-      chartFound: message.chartFound === true,
-      source: clean(message.source || 'chart-frame-scoped'),
-      frameId: sender.frameId,
-      frameHost: info.frameHost,
-      embeddedTrader: true,
-      authority: 'visible-chart-frame'
-    };
-
-    const mismatch = !!state.asset && !sameAsset(state.asset, asset);
-    if (!sameFocus || !sameFrame || mismatch) return resetForFocus({ ...state, targetTabId: sender.tab.id }, asset, meta);
-    return {
-      ...state,
-      targetTabId: sender.tab.id,
-      diagnostics: {
-        ...(state.diagnostics || {}),
-        focusedAsset: meta,
-        integrity: { state: sameAsset(state.asset, asset) ? 'matched' : 'awaiting_market', expectedAsset: asset, at: now }
-      }
-    };
-  });
+  // Integrity observes; the market-session owner performs epoch/reset/focus writes.
+  return reportMarketFocus({
+    ...message,
+    asset,
+    reliable: true,
+    chartScoped: true,
+    frameRole: 'trader-frame'
+  }, sender);
 }
 
 async function applyClock(message = {}, sender = {}) {
   const info = senderMeta(sender);
   if (!info.trusted) return { ok: true, ignored: true };
-  const asset = normAsset(message.asset);
-  if (!asset) return { ok: true, ignored: true };
-
-  return updateScannerState(state => {
-    if (!licenseActive(state)) return;
-    if (state.targetTabId && state.targetTabId !== sender.tab.id) return;
-    const focusMeta = state.diagnostics?.focusedAsset || null;
-    const focus = normAsset(focusMeta?.asset || '');
-    const authoritativeFrame = Number(focusMeta?.frameId) === Number(sender.frameId)
-      && clean(focusMeta?.frameHost).toLowerCase() === info.frameHost
-      && focusMeta?.embeddedTrader === true;
-    if (!focus || !sameAsset(focus, asset) || !authoritativeFrame) return;
-
-    const timeframe = clean(message.timeframe || state.analysisTimeframe || state.timeframe || 'M1').toUpperCase();
-    const expiration = clean(message.expiration || '') || null;
-    const exact = message.available === true
-      && message.verified === true
-      && clean(message.clockRole) === 'candle-close'
-      && clean(message.clockSource) === 'trader-dom-countdown'
-      && num(message.secondsRemaining) != null
-      && num(message.secondsRemaining) >= 0;
-
-    if (!exact) {
-      return {
-        ...state,
-        analysisTimeframe: timeframe,
-        targetExpiration: expiration,
-        diagnostics: {
-          ...(state.diagnostics || {}),
-          marketClock: {
-            asset: focus,
-            secondsRemaining: null,
-            timeframe,
-            expiration,
-            verified: false,
-            role: 'candle-close',
-            source: clean(message.clockSource || 'trader-dom-unavailable'),
-            frameId: sender.frameId,
-            frameHost: info.frameHost,
-            at: Date.now()
-          },
-          acquisition: {
-            ...(state.diagnostics?.acquisition || {}),
-            stage: 'syncing_clock',
-            reason: 'Ativo e cotação encontrados. Sincronizando o fechamento da vela visível no gráfico.',
-            at: Date.now()
-          },
-          integrity: { state: 'awaiting_exact_clock', expectedAsset: focus, at: Date.now() }
-        }
-      };
-    }
-
-    const secondsRemaining = Number(message.secondsRemaining);
-    const marketClock = {
-      asset: focus,
-      secondsRemaining,
-      timeframe,
-      expiration,
-      verified: true,
-      role: 'candle-close',
-      source: 'trader-dom-countdown',
-      text: clean(message.clockText || ''),
-      token: clean(message.clockToken || ''),
-      confidence: Number(message.confidence || 0),
-      frameId: sender.frameId,
-      frameHost: info.frameHost,
-      at: Date.now()
-    };
-
-    if (state.asset && !sameAsset(state.asset, focus)) return resetForFocus(state, focus, focusMeta);
-    const freshPrice = num(state.price) != null && state.lastSeen && Date.now() - Number(state.lastSeen) < 8000;
-    if (!freshPrice || state.connection !== 'online') {
-      return {
-        ...state,
-        ...(state.connection === 'online' && !freshPrice ? { connection: 'connecting' } : {}),
-        analysisTimeframe: timeframe,
-        targetExpiration: expiration,
-        diagnostics: { ...(state.diagnostics || {}), marketClock, integrity: { state: 'awaiting_fresh_price', expectedAsset: focus, at: Date.now() } }
-      };
-    }
-
-    return {
-      ...state,
-      analysisTimeframe: timeframe,
-      targetExpiration: expiration,
-      diagnostics: {
-        ...(state.diagnostics || {}),
-        marketClock,
-        acquisition: {
-          ...(state.diagnostics?.acquisition || {}),
-          stage: 'diagnosing_next_candle',
-          reason: 'Relógio da vela sincronizado. Estado consolidado pronto para o loop central.',
-          candleCount: Number(state.candles?.length || 0),
-          requiredCandles: 2,
-          at: Date.now()
-        },
-        integrity: { state: 'matched', expectedAsset: focus, at: Date.now() }
-      }
-    };
-  });
+  return reportMarketClock(message, sender);
 }
 
 function focusValid(state, now = Date.now()) {
@@ -254,68 +83,38 @@ function clockValid(state, now = Date.now()) {
     && num(clock?.secondsRemaining) != null;
 }
 
-function enforceStateIntegrity(nextState = {}) {
-  if (!licenseActive(nextState)) return nextState;
+function stateIntegrityIssue(nextState = {}) {
+  if (!licenseActive(nextState)) return null;
   const now = Date.now();
   const validFocus = focusValid(nextState, now);
   const focusAsset = validFocus ? normAsset(nextState.diagnostics?.focusedAsset?.asset) : '';
-  const assetMismatch = !!nextState.asset && (!focusAsset || !sameAsset(nextState.asset, focusAsset));
-  if (!validFocus || assetMismatch) {
-
+  const session = nextState.diagnostics?.marketSession || {};
+  const sessionAsset = normAsset(session.asset || session.pendingAsset || session.confirmedAsset || '');
+  const assetMismatch = !!nextState.asset && !!sessionAsset && !sameAsset(nextState.asset, sessionAsset);
+  const focusSessionMismatch = !!focusAsset && !!sessionAsset && !sameAsset(focusAsset, sessionAsset);
+  if (!validFocus || assetMismatch || focusSessionMismatch) {
     return {
-      ...nextState,
-      connection: 'connecting',
-      asset: focusAsset || null,
-      price: null,
-      candles: [],
-      currentCandle: null,
-      signal: null,
-      lastConfirmed: null,
-      tradeIntent: null,
-      lastSeen: null,
-      timeframe: null,
-      analysisTimeframe: null,
-      expiration: null,
-      targetExpiration: null,
-      diagnostics: {
-        ...(nextState.diagnostics || {}),
-        integrity: { state: validFocus ? 'asset_mismatch_blocked' : 'awaiting_visible_chart_asset', expectedAsset: focusAsset || null, at: now }
-      }
+      epoch: marketSessionEpoch(nextState),
+      validFocus,
+      focusAsset: focusAsset || null,
+      sessionAsset: sessionAsset || null,
+      reason: !validFocus ? 'awaiting_visible_chart_asset' : 'market_session_mismatch'
     };
   }
-
-  const validClock = clockValid(nextState, now);
-  const signalSeconds = num(nextState.signal?.secondsRemaining);
-  const clockSeconds = num(nextState.diagnostics?.marketClock?.secondsRemaining);
-  const signalClockMismatch = nextState.signal && (!validClock || signalSeconds == null || clockSeconds == null || signalSeconds !== clockSeconds);
-  if (signalClockMismatch) {
-    return {
-      ...nextState,
-      diagnostics: {
-        ...(nextState.diagnostics || {}),
-        acquisition: {
-          ...(nextState.diagnostics?.acquisition || {}),
-          stage: 'syncing_clock',
-          reason: 'Sincronizando a decisão com o fechamento real da vela do gráfico.',
-          at: now
-        },
-        integrity: { state: 'signal_blocked_without_exact_clock', expectedAsset: focusAsset, at: now }
-      }
-    };
-  }
-  return nextState;
+  return null;
 }
 
 chrome.storage.onChanged.addListener(changes => {
   if (!changes.scannerState || integrityRepairing) return;
   const nextState = changes.scannerState.newValue || {};
-  const repaired = enforceStateIntegrity(nextState);
-  if (repaired === nextState) return;
-  const before = JSON.stringify(nextState);
-  const after = JSON.stringify(repaired);
-  if (before === after) return;
+  const issue = stateIntegrityIssue(nextState);
+  if (!issue) return;
+
+  // The integrity module never repairs market fields itself. It asks the owner
+  // to re-evaluate the current epoch; if a newer epoch already exists, the owner
+  // discards this delayed repair request.
   integrityRepairing = true;
-  updateScannerState(() => repaired).finally(() => { integrityRepairing = false; });
+  repairMarketSessionIntegrity(nextState).finally(() => { integrityRepairing = false; });
 });
 
 async function injectIntegrityReaders(tabId) {
