@@ -89,8 +89,8 @@ export function exactCasaTradeTime(state = {}) {
 export function CasaTradeExpiration(state = {}, timeframe = null) {
   const controls = state.platformControls || {};
   const expirationAt = Number(controls.expirationCheckedAt || controls.observed?.observedAt?.expiration || 0);
-  const fresh = expirationAt > 0 && Date.now() - expirationAt < 7000;
-  const observed = fresh ? normExp(controls.observed?.expiration) : null;
+  const observed = normExp(controls.observed?.expiration);
+  const fresh = expirationAt > 0 && !!observed;
   const startedAt = Number(state.diagnostics?.marketSession?.startedAt || state.diagnostics?.target?.connectedAt || 0);
   const waiting = startedAt > 0 && Date.now() - startedAt < 5000;
   if (!observed || !fresh) return {
