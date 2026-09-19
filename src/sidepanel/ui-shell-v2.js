@@ -191,10 +191,22 @@ async function connectNow() {
 }
 
 async function refreshLiveReaders() {
-  const response = await chrome.runtime.sendMessage({ type: 'ATS_REFRESH_TARGET_TAB' }).catch(() => null);
-  if (response?.ok && response?.state) {
-    lastState = response.state;
-    renderShell(lastState);
+  const retry = $('retryLiveRead');
+  if (retry) {
+    retry.disabled = true;
+    retry.textContent = 'RELENDO…';
+  }
+  try {
+    const response = await chrome.runtime.sendMessage({ type: 'ATS_REFRESH_TARGET_TAB' }).catch(() => null);
+    if (response?.ok && response?.state) {
+      lastState = response.state;
+      renderShell(lastState);
+    }
+  } finally {
+    if (retry) {
+      retry.disabled = false;
+      retry.textContent = 'TENTAR NOVAMENTE';
+    }
   }
 }
 
