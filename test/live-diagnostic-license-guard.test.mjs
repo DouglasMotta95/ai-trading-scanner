@@ -13,21 +13,24 @@ test('an explicit visual asset switch cannot be rolled back by stale protocol-se
   assert.doesNotMatch(protocol, /transition \? 8000/);
 });
 
-test('inactive license clears stale market state and cannot restart the scanner', () => {
+test('inactive license clears stale market state through the single market-session owner', () => {
   const control = read('src/background-control.js');
+  const market = read('src/background-market-session.js');
   const clearStart = control.indexOf('function clearMarket');
   const clearEnd = control.indexOf('\nfunction licenseBlockedDiagnostics', clearStart);
   const clearMarket = control.slice(clearStart, clearEnd);
-  for (const expected of [
-    "scanner: 'idle'",
-    "connection: 'offline'",
-    'asset: null',
-    'price: null',
-    'candles: []',
-    'marketHistory: {}',
-    'signal: null',
-    'lastSeen: null'
-  ]) assert.ok(clearMarket.includes(expected), `missing license-block cleanup: ${expected}`);
+
+  assert.match(clearMarket, /clearMarketAuthorityState\(state/);
+  assert.match(clearMarket, /scanner: 'idle'/);
+  assert.match(clearMarket, /connection: 'offline'/);
+  assert.doesNotMatch(clearMarket, /asset: null|price: null|candles: \[\]|marketHistory: \{\}/);
+
+  const ownerStart = market.indexOf('export function clearMarketAuthorityState');
+  const ownerEnd = market.indexOf('\nexport function resetForSession', ownerStart);
+  const ownerClear = market.slice(ownerStart, ownerEnd);
+  for (const expected of ['asset: null','price: null','candles: []','marketHistory: {}','signal: null','lastSeen: null']) {
+    assert.ok(ownerClear.includes(expected), `missing owner cleanup: ${expected}`);
+  }
 
   assert.match(control, /async function validate\(\)[\s\S]*?activeLicense\(license\)[\s\S]*?clearMarket\(current/);
   assert.match(control, /async function setScanner\(enabled = false\)[\s\S]*?enabled && !activeLicense\(state\.license\)/);
