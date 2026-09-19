@@ -76,9 +76,16 @@ function exactLiveTime(state = {}) {
   if (!exactClockReady(state)) return false;
   const clock = state.diagnostics?.marketClock || {};
   const expiration = confirmedExpiration(state);
-  return clean(clock.timeframe || state.analysisTimeframe || state.timeframe).toUpperCase() === 'M1'
+  const tf = clean(state.analystPreferences?.operatingTimeframe || clock.timeframe || state.analysisTimeframe || state.timeframe).toUpperCase();
+  const required = tf === 'M5' ? '300s' : '60s';
+  return ['M1','M5'].includes(tf)
+    && clean(clock.timeframe || state.analysisTimeframe || state.timeframe).toUpperCase() === tf
     && expiration.confirmed
-    && expiration.value === '60s';
+    && expiration.value === required;
+}
+
+function finalWindowSeconds(state = {}) {
+  return clean(state.analystPreferences?.operatingTimeframe || state.analysisTimeframe || state.timeframe).toUpperCase() === 'M5' ? 20 : 10;
 }
 
 function connectionFailure(state = {}) {
@@ -133,7 +140,7 @@ function renderShell(state = {}) {
       ? 'Limpando o ativo anterior e confirmando o gráfico que está aberto agora.'
       : failure
         || (connected
-          ? `${state.asset || pendingAsset || 'CasaTrade'} conectado. Procurando POSSÍVEL COMPRA/VENDA; entrada final perto dos 10s.`
+          ? `${state.asset || pendingAsset || 'CasaTrade'} conectado. Procurando POSSÍVEL COMPRA/VENDA; entrada final perto dos ${finalWindowSeconds(state)}s.`
           : connecting
             ? clean(acquisition.reason || 'Identificando ativo, preço e velas do gráfico atual.')
             : activeLicense(state)
