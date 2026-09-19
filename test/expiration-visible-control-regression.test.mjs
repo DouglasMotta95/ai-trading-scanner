@@ -6,25 +6,25 @@ const read = path => fs.readFileSync(new URL('../' + path, import.meta.url), 'ut
 test('expiration probe searches the whole visible CasaTrade text around the Expiração label', () => {
   const source = read('src/content/casatrade-expiration-probe.js');
   assert.match(source, /function bodyExpiration\(\)/);
-  assert.match(source, /slice\(0, 220000\)/);
+  assert.match(source, /slice\(0, 260000\)/);
   assert.match(source, /body\.indexOf\(marker, from\)/);
-  assert.match(source, /index \\+ 360/);
+  assert.match(source, /index \+ marker\.length/);
 });
 
 test('expiration probe can pair a visible Expiração label with a nearby 1 min value', () => {
   const source = read('src/content/casatrade-expiration-probe.js');
-  assert.match(source, /function nearbyExpiration\(all = \[\]\)/);
+  assert.match(source, /function expirationControlByLabel\(all = \[\]\)/);
   assert.match(source, /expiracao\|expiry\|expiration/);
-  assert.match(source, /sameControlBand/);
-  assert.match(source, /horizontal <= 520/);
+  assert.match(source, /sameContainer/);
+  assert.match(source, /horizontalGap > 560/);
+  assert.match(source, /selectedLike\(el\)/);
 });
 
 test('expiration probe also accepts a real duration immediately before the Expiração label', () => {
   const source = read('src/content/casatrade-expiration-probe.js');
-  assert.match(source, /function expirationAroundLabel\(raw = ''\)/);
-  assert.match(source, /Math\.max\(0, index - 180\)/);
-  assert.match(source, /matches\.at\(-1\)/);
-  assert.match(source, /const reversed = expirationValue\(token\)/);
+  assert.match(source, /const reversed = spaced\.match/);
+  assert.match(source, /Responsive layouts can reverse DOM\/text order/);
   assert.match(source, /r\.right < lr\.left/);
+  assert.match(source, /parseExpiration/);
   assert.doesNotMatch(source, /expiration:\s*['"]60s['"]/);
 });
