@@ -1,5 +1,5 @@
 (() => {
-  if (globalThis.__ATS_FOCUSED_ASSET_ALIAS_BRIDGE__) return;
+  try { globalThis.__ATS_FOCUSED_ASSET_ALIAS_BRIDGE_RUNTIME__?.teardown?.(); } catch {}
   globalThis.__ATS_FOCUSED_ASSET_ALIAS_BRIDGE__ = true;
 
   const host = String(location.hostname || '').toLowerCase().replace(/\.$/, '');
@@ -139,36 +139,13 @@
   }
 
   function scanVisibleAlias() {
-    const rows = [];
-    let seen = 0;
-    for (const el of document.querySelectorAll('*')) {
-      if (++seen > 6000 || !visible(el)) continue;
-      const text = metaText(el);
-      if (!text) continue;
-      const context = contextOf(el);
-      const direct = directPairFromText(text);
-      const strongContext = /chart|header|asset|ativo|instrument|symbol|market|selected|current/.test(context);
-      const asset = direct || canonicalFromText(text, strongContext && text.length <= 28);
-      if (!asset) continue;
-      const isSelected = selected(el);
-      const interacted = recentInteraction.asset === asset && Date.now() - recentInteraction.at < 3500;
-      const directHeader = !!direct && text.length <= 48 && upperChartArea(el) && !looksLikeListContext(el);
-      // Passive "asset-like" text is not enough. This prevents an old symbol
-      // still visible in a drawer/header from replacing the selected chart.
-      if (!isSelected && !interacted && !directHeader) continue;
-      let score = strongContext ? 500 : 0;
-      if (directHeader) score += 720;
-      if (isSelected) score += 900;
-      if (interacted) score += 1200;
-      if (text.length <= 24) score += 80;
-      rows.push({ asset, score, source: interacted ? 'user-selected-alias' : isSelected ? 'visible-selected-asset' : 'visible-direct-pair' });
-    }
-    rows.sort((a, b) => b.score - a.score);
-    const first = rows[0];
-    const second = rows[1];
-    if (!first) return;
-    if (second && second.asset !== first.asset && first.score - second.score < 180 && !first.source.startsWith('user-selected')) return;
-    publish(first.asset, first.source, first.score).catch(() => {});
+    // Alias-only labels such as "Euro" or "NZD" are too ambiguous to own the
+    // market passively. They may publish only while tied to a fresh, direct
+    // user interaction. This prevents stale selected rows/hidden frames from
+    // resurrecting a previous asset after the user switches markets.
+    const asset = recentInteraction.asset;
+    if (!asset || Date.now() - Number(recentInteraction.at || 0) >= 3500) return;
+    publish(asset, 'user-selected-alias', 2200).catch(() => {});
   }
 
   const note = event => {
@@ -183,7 +160,24 @@
   document.addEventListener('pointerup', note, true);
   document.addEventListener('touchend', note, true);
   document.addEventListener('click', note, true);
-  new MutationObserver(() => setTimeout(scanVisibleAlias, 120)).observe(document.documentElement, { subtree: true, childList: true, characterData: true, attributes: true });
-  setInterval(scanVisibleAlias, 900);
-  setTimeout(scanVisibleAlias, 300);
+  const observer = new MutationObserver(() => {
+    if (recentInteraction.asset && Date.now() - Number(recentInteraction.at || 0) < 3500) {
+      setTimeout(scanVisibleAlias, 120);
+    }
+  });
+  try { observer.observe(document.documentElement, { subtree: true, childList: true, characterData: true, attributes: true }); } catch {}
+  const intervalId = setInterval(scanVisibleAlias, 900);
+  const initialTimer = setTimeout(scanVisibleAlias, 300);
+
+  globalThis.__ATS_FOCUSED_ASSET_ALIAS_BRIDGE_RUNTIME__ = {
+    version: 'interaction-only-v2',
+    teardown() {
+      try { observer.disconnect(); } catch {}
+      try { clearInterval(intervalId); } catch {}
+      try { clearTimeout(initialTimer); } catch {}
+      try { document.removeEventListener('pointerup', note, true); } catch {}
+      try { document.removeEventListener('touchend', note, true); } catch {}
+      try { document.removeEventListener('click', note, true); } catch {}
+    }
+  };
 })();

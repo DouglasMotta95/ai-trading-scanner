@@ -325,13 +325,18 @@ export async function applyFocus(message = {}, sender = {}) {
     const assetChanged = !!old?.asset && !sameMarket(old.asset, asset);
     const frameChanged = !!old && (Number(old.frameId) !== Number(info.frameId) || clean(old.frameHost).toLowerCase() !== info.frameHost);
     const interactionAt = Number(message.interactionAt || message.at || 0);
-    const userSelected = message.interactionHint === true && interactionAt > 0 && now - interactionAt < 3500;
+    const userSelected = message.interactionHint === true && interactionAt > 0 && now - interactionAt < 8000;
     const oldFresh = Number(old?.at || 0) > 0 && now - Number(old.at) < 2600;
     const oldEmbeddedTrader = old?.embeddedTrader === true;
     const incomingExplicit = message.explicit === true;
     const incomingStable = Number(message.stableFor || 0) >= 220 || Number(message.samples || 0) >= 3;
     const session = state.diagnostics?.marketSession || {};
     const incomingProtocolOnly = message.visual === false || clean(message.source) === 'protocol-selected';
+    const freshVisualFocus = oldFresh
+      && old?.visual !== false
+      && old?.reliable === true
+      && old?.chartScoped === true
+      && old?.trustedChartFrame === true;
     const transitionProtectsCurrentFocus = session.transitioning === true
       && !!old?.asset
       && sameMarket(session.pendingAsset || session.asset, old.asset);
@@ -340,12 +345,33 @@ export async function applyFocus(message = {}, sender = {}) {
       && Number(old?.interactionAt || old?.at || 0) > 0
       && now - Number(old.interactionAt || old.at) < 8000;
     const selectionLock = state.diagnostics?.visualSelectionLock || null;
-    const selectionLockFresh = !!selectionLock?.asset
-      && Number(selectionLock.at || 0) > 0
-      && now - Number(selectionLock.at) < 8000;
-    const contradictsSelectionLock = selectionLockFresh
+    // Once the user explicitly selects a market, passive readers may confirm
+    // that same market but may not replace it. The lock changes only on the
+    // next explicit user selection; a timeout allowed stale hidden rows to
+    // resurrect EURO/old assets several seconds later.
+    const selectionLockActive = !!selectionLock?.asset && Number(selectionLock.at || 0) > 0;
+    const contradictsSelectionLock = selectionLockActive
       && !sameMarket(asset, selectionLock.asset);
     const protocolContradictsSelectionLock = incomingProtocolOnly && contradictsSelectionLock;
+
+    // The visible chart is the long-lived market authority. Network/protocol
+    // selection is only a bootstrap fallback; it may confirm the same market
+    // but may never replace a fresh reliable visual focus with another asset.
+    // This also neutralizes stale content scripts that survived an unpacked
+    // extension reload and still announce an older/ambiguous market.
+    if (assetChanged && incomingProtocolOnly && freshVisualFocus) {
+      return {
+        ...state,
+        diagnostics: {
+          ...(state.diagnostics || {}),
+          focusRejected: {
+            asset, frameId: info.frameId, frameHost: info.frameHost,
+            reason: 'protocol-conflicts-fresh-visual-focus',
+            at: now
+          }
+        }
+      };
+    }
 
     // During a visible market switch, stale protocol/network state from the
     // previous instrument can continue to announce itself as selected for a
@@ -428,7 +454,17 @@ export async function applyFocus(message = {}, sender = {}) {
     const traderHandoff = !assetChanged && frameChanged && !oldEmbeddedTrader && incomingEmbeddedTrader;
     const changed = assetChanged || traderHandoff || (!old && frameChanged);
     let next = state;
-    if (changed || (state.asset && !sameMarket(state.asset, asset))) {
+
+    // A direct user market selection is the highest visual authority. Clear
+    // stale market identity immediately so the sidepanel cannot continue
+    // displaying the previous instrument while the new feed synchronizes.
+    if (assetChanged && userSelected) {
+      next = resetForSession(state, {
+        asset, info, source: clean(message.source || 'user-selected-transition'),
+        reason: `Ativo ${asset} selecionado na CasaTrade. Limpando a sessão anterior e sincronizando dados do novo ativo.`
+      });
+    }
+    if (!(assetChanged && userSelected) && (changed || (state.asset && !sameMarket(state.asset, asset)))) {
       next = resetForSession(state, {
         asset, info, source: clean(message.source || 'visible-chart'),
         reason: assetChanged

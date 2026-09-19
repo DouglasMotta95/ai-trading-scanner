@@ -110,6 +110,7 @@ function safeObserved(snapshot = {}) {
     expiration,
     timeframe,
     expirationDirty: snapshot.expirationDirty === true,
+    eventAt: observedAt,
     source: clean(snapshot.source || 'casatrade-ui-v2').slice(0, 64),
     observedAt: {
       amount: amount != null && amount > 0 ? observedAt : 0,
@@ -132,12 +133,15 @@ function mergeObserved(previous = {}, incoming = {}) {
     timeframe: previous.timeframe ?? null,
     source: incoming.source || previous.source || 'casatrade-ui-v2',
     observedAt: { ...(previous.observedAt || {}) },
-    confidence: { ...oldConfidence }
+    confidence: { ...oldConfidence },
+    expirationRecheckPendingAt: Number(previous.expirationRecheckPendingAt || 0)
   };
   if (incoming.expirationDirty === true && incoming.expiration == null) {
-    next.expiration = null;
-    next.observedAt.expiration = 0;
-    next.confidence.expiration = 0;
+    // A click/open/change event only means "re-read this control". It is not
+    // evidence that the previously confirmed value ceased to be real.
+    // Keep the last confirmed expiration until a contradictory real reading
+    // arrives; otherwise a transient DOM miss traps the UI in PENDENTE forever.
+    next.expirationRecheckPendingAt = Number(incoming.eventAt || Date.now());
   }
 
   for (const field of ['amount', 'expiration', 'timeframe']) {
@@ -153,6 +157,7 @@ function mergeObserved(previous = {}, incoming = {}) {
       next[field] = value;
       next.confidence[field] = score;
       next.observedAt[field] = incomingAt || Date.now();
+      if (field === 'expiration') next.expirationRecheckPendingAt = 0;
     }
   }
   return next;

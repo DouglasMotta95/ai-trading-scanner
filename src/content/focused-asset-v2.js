@@ -1,5 +1,7 @@
 (() => {
-  if (globalThis.__ATS_FOCUSED_ASSET_TRACKER_V2__) return;
+  const FOCUS_READER_BUILD = 'focused-asset-v2-live-authority-v5';
+  if (globalThis.__ATS_FOCUSED_ASSET_TRACKER_V2_BUILD__ === FOCUS_READER_BUILD) return;
+  globalThis.__ATS_FOCUSED_ASSET_TRACKER_V2_BUILD__ = FOCUS_READER_BUILD;
   globalThis.__ATS_FOCUSED_ASSET_TRACKER_V2__ = true;
   globalThis.__ATS_FOCUSED_ASSET_TRACKER__ = true;
 
@@ -352,6 +354,10 @@
   document.addEventListener('pointerup', noteInteraction, true);
   document.addEventListener('touchend', noteInteraction, true);
   document.addEventListener('click', noteInteraction, true);
+  globalThis.__ATS_FORCE_FOCUSED_ASSET_SCAN__ = () => {
+    invalidateElements();
+    schedulePublish(0, true);
+  };
   setInterval(() => schedulePublish(0, false), 600);
   setTimeout(() => { invalidateElements(); publish(true); }, 250);
 })();

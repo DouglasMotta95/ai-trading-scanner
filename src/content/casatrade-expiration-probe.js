@@ -209,6 +209,33 @@
     return fold(parts.filter(Boolean).join(' '));
   }
 
+  function localSemanticText(el, levels = 3) {
+    const parts = [semanticText(el)];
+    let node = el?.parentElement;
+    for (let depth = 0; node && depth < levels; depth += 1, node = node.parentElement) {
+      const own = clean(node.innerText || node.textContent || '');
+      // Never pull a whole chart/app container into a local-control decision.
+      // Large ancestor text mixes "Período", "Período da vela", countdown and
+      // trade controls and was a source of false semantic matches.
+      if (own && own.length <= 180) parts.push(own);
+      parts.push(
+        node.id,
+        node.className,
+        node.getAttribute?.('data-testid'),
+        node.getAttribute?.('data-name'),
+        node.getAttribute?.('aria-label'),
+        node.getAttribute?.('role')
+      );
+    }
+    return fold(parts.filter(Boolean).join(' '));
+  }
+
+  function isAmountLabel(el) {
+    if (!visible(el)) return false;
+    const own = fold(ownText(el) || el.getAttribute?.('aria-label') || '');
+    return /^(?:valor|amount|investimento|investment|stake)$/.test(own);
+  }
+
   function isExpirationLabel(el) {
     if (!visible(el)) return false;
     const own = fold(ownText(el) || el.getAttribute?.('aria-label') || '');
@@ -230,6 +257,48 @@
 
   function controlLike(el) {
     return !!el?.matches?.('button,input,select,[role="button"],[role="combobox"],[aria-haspopup],[data-state]');
+  }
+
+  function tradePanelExpirationByAmount(all = []) {
+    const amountLabels = all.filter(isAmountLabel);
+    if (!amountLabels.length) return null;
+    const durationNodes = all
+      .filter(el => visible(el))
+      .map(el => ({ el, value: directDuration(el) }))
+      .filter(row => row.value);
+
+    const candidates = [];
+    for (const label of amountLabels) {
+      const lr = label.getBoundingClientRect();
+      for (const row of durationNodes) {
+        const el = row.el;
+        if (el === label) continue;
+        const r = el.getBoundingClientRect();
+        const centerDx = Math.abs((r.left + r.right) / 2 - (lr.left + lr.right) / 2);
+        const verticalGap = r.top >= lr.bottom ? r.top - lr.bottom : lr.top - r.bottom;
+        const belowOrAligned = r.top >= lr.top - 24 && r.top <= lr.bottom + 300;
+        if (!belowOrAligned || centerDx > Math.max(260, lr.width * 3.5) || verticalGap > 260) continue;
+
+        const local = localSemanticText(el, 4);
+        // CasaTrade has separate "Período" (chart range) and "Período da vela"
+        // controls. Neither may be mistaken for the trade expiration below Valor.
+        if (/periodo da vela|periodo de vela|candle period|candle interval|timeframe|grafico|gráfico|chart range|chart period|countdown|contagem|fechamento da vela/.test(local)) continue;
+
+        const role = fold(el.getAttribute?.('role') || '');
+        const explicitlyUnselected = el.getAttribute?.('aria-selected') === 'false';
+        let score = 220;
+        score += controlLike(el) ? 70 : 0;
+        score += selectedLike(el) ? 90 : 0;
+        if (/expiracao|expiry|expiration|duracao|duration/.test(local)) score += 120;
+        if (role === 'option' && !selectedLike(el)) score -= 130;
+        if (explicitlyUnselected) score -= 180;
+        score -= Math.min(150, centerDx / 4 + Math.max(0, verticalGap) / 3);
+        candidates.push({ value: row.value, score, reason: 'trade-panel-below-amount' });
+      }
+    }
+
+    candidates.sort((a, b) => b.score - a.score);
+    return candidates[0]?.score >= 185 ? candidates[0] : null;
   }
 
   function expirationControlByLabel(all = []) {
@@ -382,12 +451,15 @@
       if (!own || own.length > 24) continue;
       const value = timeframeValue(own);
       if (!value) continue;
-      const meta = semanticText(el);
-      let score = 0;
-      if (/timeframe|periodo|period|vela|candle|grafico|gráfico/.test(meta)) score += 70;
-      if (selectedLike(el)) score += 60;
+      const meta = localSemanticText(el, 4);
+      const candleSemantic = /timeframe|periodo da vela|periodo de vela|candle period|candle interval|\bvela\b|\bcandle\b/.test(meta);
+      const chartRangeOnly = /\bperiodo\b|\bperiod\b|grafico|gráfico|chart range|chart period/.test(meta) && !candleSemantic;
+      if (!candleSemantic || chartRangeOnly) continue;
+      let score = 100;
+      if (/periodo da vela|periodo de vela|candle period|candle interval|timeframe/.test(meta)) score += 70;
+      if (selectedLike(el)) score += 80;
       if (controlLike(el)) score += 35;
-      if (score >= 70) rows.push({ value, score });
+      rows.push({ value, score });
     }
     rows.sort((a, b) => b.score - a.score);
     return rows[0] || null;
@@ -397,6 +469,7 @@
   let lastConfirmedExpiration = null;
   let lastConfirmedAt = 0;
   let expirationControlDirtyAt = 0;
+  let expirationInteractionWindowUntil = 0;
 
   function expirationInteractionTarget(target) {
     let node = target instanceof Element ? target : null;
@@ -422,10 +495,11 @@
   function scan() {
     const all = elements();
     const marker = renderedMarkerExpiration();
-    const strong = marker || expirationControlByLabel(all);
-    const semantic = strong || semanticControlExpiration(all);
+    const labeledControl = marker || expirationControlByLabel(all);
+    const tradePanel = labeledControl || tradePanelExpirationByAmount(all);
+    const semantic = tradePanel || semanticControlExpiration(all);
     const body = semantic || bodyExpiration();
-    let exp = marker || strong || semantic || body;
+    let exp = marker || labeledControl || tradePanel || semantic || body;
     const tf = selectedTimeframe(all);
     const now = Date.now();
     expirationProbeDiag.scans = Number(expirationProbeDiag.scans || 0) + 1;
@@ -499,16 +573,51 @@
   const observer = new MutationObserver(() => schedule(false, 35));
   try { observer.observe(document.documentElement, { subtree: true, childList: true, characterData: true, attributes: true }); } catch {}
 
+  function expirationFromInteraction(event, allowUnscoped = false) {
+    const path = typeof event?.composedPath === 'function' ? event.composedPath() : [event?.target];
+    for (const node of path.slice(0, 8)) {
+      if (!(node instanceof Element) || !visible(node)) continue;
+      const value = directDuration(node);
+      if (!value) continue;
+      if (allowUnscoped) return value;
+      const local = localSemanticText(node, 4);
+      const parentText = fold(clean(node.parentElement?.innerText || node.parentElement?.textContent || ''));
+      if (expirationSemantics.test(local) || expirationSemantics.test(parentText)) return value;
+    }
+    return null;
+  }
+
   const markControlDirty = event => {
-    if (!expirationInteractionTarget(event?.target)) return;
-    expirationControlDirtyAt = Date.now();
+    const now = Date.now();
+    const directTarget = expirationInteractionTarget(event?.target);
+    const insideOpenExpiration = expirationInteractionWindowUntil > now;
+    const interactedValue = expirationFromInteraction(event, insideOpenExpiration);
+    if (!directTarget && !(insideOpenExpiration && interactedValue)) return;
+
+    expirationControlDirtyAt = now;
+    if (directTarget && !interactedValue) expirationInteractionWindowUntil = now + 5000;
+    if (interactedValue) expirationInteractionWindowUntil = 0;
+    if (interactedValue) {
+      lastConfirmedExpiration = interactedValue;
+      lastConfirmedAt = expirationControlDirtyAt;
+      sendControlsObserved({
+        amount: null,
+        expiration: interactedValue,
+        timeframe: null,
+        expirationDirty: false,
+        confidence: { amount: 0, expiration: 138, timeframe: 0 },
+        source: 'casatrade-expiration-interaction',
+        observedAt: expirationControlDirtyAt
+      }).catch(() => {});
+      return;
+    }
     sendControlsObserved({
       amount: null,
       expiration: null,
       timeframe: null,
       expirationDirty: true,
       confidence: { amount: 0, expiration: 0, timeframe: 0 },
-      source: 'casatrade-expiration-probe-v4-dirty',
+      source: 'casatrade-expiration-probe-v4-recheck',
       observedAt: expirationControlDirtyAt
     }).catch(() => {});
   };
@@ -516,11 +625,13 @@
     markControlDirty(event);
     schedule(true, 45);
     setTimeout(() => publish(true).catch(() => {}), 220);
+    setTimeout(() => publish(true).catch(() => {}), 650);
   };
   const controlChangeHandler = event => {
     markControlDirty(event);
     schedule(true, 25);
     setTimeout(() => publish(true).catch(() => {}), 140);
+    setTimeout(() => publish(true).catch(() => {}), 500);
   };
   document.addEventListener('click', clickHandler, true);
   document.addEventListener('input', controlChangeHandler, true);

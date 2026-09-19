@@ -40,12 +40,26 @@
 
   function applyGuard() {
     const state = latestState || {};
-    const actual = normExp(state.platformControls?.observed?.expiration || '');
-    const fresh = Number(state.platformControls?.checkedAt || 0) > 0 && Date.now() - Number(state.platformControls.checkedAt) < 7000;
+    const actual = normExp(
+      state.platformControls?.observed?.expiration
+      || state.diagnostics?.expirationGuard?.actual
+      || state.targetExpiration
+      || state.expiration
+      || ''
+    );
+    const confirmedAt = Number(
+      state.platformControls?.observed?.observedAt?.expiration
+      || state.platformControls?.expirationCheckedAt
+      || 0
+    );
+    // Expiration is a selected control, not a streaming quote. Once a real
+    // CasaTrade value has been observed it remains valid until an explicit
+    // expiration interaction invalidates/replaces it.
+    const confirmed = !!actual && confirmedAt > 0;
     const expirationEl = document.getElementById('expiration');
     if (expirationEl && actual) expirationEl.textContent = label(actual);
 
-    if (!actual || !fresh) {
+    if (!confirmed) {
       status.className = 'expiration-guard-status warn';
       status.textContent = 'AGUARDANDO EXPIRAÇÃO REAL DA CASATRADE — entrada bloqueada.';
       return;

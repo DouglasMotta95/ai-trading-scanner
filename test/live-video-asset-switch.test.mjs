@@ -69,3 +69,53 @@ test('v0.11.30 passive visual scans cannot starve a new protocol-selected asset 
   assert.match(protocol, /Date\.now\(\) - interactionAt < 3500/);
   assert.match(protocol, /return false;/);
 });
+
+
+test('protocol focus rejects ambiguous bare asset labels such as EURO so they cannot overwrite USO/USD', () => {
+  const protocol = read('src/content/focused-asset-protocol.js');
+  assert.match(protocol, /Protocol\/network focus must carry a real market identity/);
+  assert.doesNotMatch(protocol, /\['EURO',\s*'EUR\/USD'\]/);
+  assert.doesNotMatch(protocol, /aliases\.get\(bare\)/);
+  assert.match(protocol, /return '';/);
+});
+
+test('focused asset reader exposes a forced rescan for retry without accepting stale protocol rollback', () => {
+  const focused = read('src/content/focused-asset-v2.js');
+  assert.match(focused, /__ATS_FORCE_FOCUSED_ASSET_SCAN__/);
+  assert.match(focused, /schedulePublish\(0, true\)/);
+  assert.match(focused, /protocol-rollback-visual-selection-lock/);
+});
+
+
+test('fresh visual focus blocks conflicting protocol-selected rollback even after hot reload', () => {
+  const market = read('src/background-market-session.js');
+  assert.match(market, /const freshVisualFocus = oldFresh/);
+  assert.match(market, /assetChanged && incomingProtocolOnly && freshVisualFocus/);
+  assert.match(market, /protocol-conflicts-fresh-visual-focus/);
+});
+
+test('asset readers use build markers so a new unpacked build can enter an already open CasaTrade tab', () => {
+  const visual = read('src/content/focused-asset-v2.js');
+  const protocol = read('src/content/focused-asset-protocol.js');
+  assert.match(visual, /FOCUS_READER_BUILD/);
+  assert.match(visual, /__ATS_FOCUSED_ASSET_TRACKER_V2_BUILD__/);
+  assert.match(protocol, /PROTOCOL_FOCUS_BUILD/);
+  assert.match(protocol, /__ATS_PROTOCOL_FOCUS_BUILD__/);
+});
+
+
+test('explicit asset selection remains authoritative until the next explicit user switch', () => {
+  const market = read('src/background-market-session.js');
+  assert.match(market, /const selectionLockActive = !!selectionLock\?\.asset/);
+  assert.match(market, /The lock changes only on the next explicit user selection/);
+  assert.doesNotMatch(market, /selectionLockFresh[\s\S]{0,160}< 8000/);
+  assert.match(market, /assetChanged && !userSelected && contradictsSelectionLock/);
+});
+
+test('alias bridge cannot passively resurrect EURO or another stale alias after a switch', () => {
+  const alias = read('src/content/focused-asset-alias-bridge.js');
+  assert.match(alias, /Alias-only labels such as "Euro" or "NZD" are too ambiguous/);
+  assert.match(alias, /if \(!asset \|\| Date\.now\(\) - Number\(recentInteraction\.at \|\| 0\) >= 3500\) return/);
+  assert.match(alias, /interaction-only-v2/);
+  assert.doesNotMatch(alias, /source: interacted \? 'user-selected-alias' : isSelected/);
+});

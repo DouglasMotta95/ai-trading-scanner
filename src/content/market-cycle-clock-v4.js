@@ -275,7 +275,11 @@
   let stateBoundaryProbe = null;
   function currentStateBoundary(state = {}, focus = null, cycleTf = null) {
     const duration = secondsFor(cycleTf);
-    if (!duration) return null;
+    if (!duration || !focus?.asset) return null;
+    const session = state.diagnostics?.marketSession || {};
+    if (session.dataReady !== true) return null;
+    if (!sameMarket(session.confirmedAsset || session.asset, focus.asset)) return null;
+    if (!sameMarket(state.asset, focus.asset)) return null;
     const durationMs = duration * 1000;
     const source = state.marketHistory || {};
     const key = Object.keys(source).find(value => sameMarket(value, focus?.asset));
@@ -288,7 +292,9 @@
     if (!latest) { stateBoundaryProbe = null; return null; }
     const now = Date.now();
     const openAt = latest.time;
-    if (openAt > now + 1500 || now < openAt - 1500 || now >= openAt + durationMs + 1200) {
+    const phase = ((openAt % durationMs) + durationMs) % durationMs;
+    const alignedToBoundary = Math.min(phase, durationMs - phase) <= 2500;
+    if (!alignedToBoundary || openAt > now + 1500 || now < openAt - 1500 || now >= openAt + durationMs + 1200) {
       stateBoundaryProbe = null;
       return null;
     }
@@ -320,7 +326,7 @@
       if (lastCanvasAsset && lastCanvasAsset !== focus.asset) { lastCanvas = null; canvasVerifiedAt = 0; }
       lastCanvasAsset = focus.asset;
       const expirationAt = Number(state.platformControls?.expirationCheckedAt || state.platformControls?.observed?.observedAt?.expiration || 0);
-      const expirationFresh = expirationAt > 0 && Date.now() - expirationAt < 7000;
+      const expirationFresh = expirationAt > 0 && !!clean(state.platformControls?.observed?.expiration || state.targetExpiration || state.expiration || '');
       const controlsFresh = Number(state.platformControls?.checkedAt || 0) > 0 && Date.now() - Number(state.platformControls.checkedAt) < 5000;
       const cycleTf = liveCycleTf(state, controlsFresh) || structuredFeedTf(state, focus);
       const duration = secondsFor(cycleTf);
@@ -365,26 +371,37 @@
       if (String(focus.frameHost || '').toLowerCase() !== host) return;
 
       const expirationAt = Number(state.platformControls?.expirationCheckedAt || state.platformControls?.observed?.observedAt?.expiration || 0);
-      const expirationFresh = expirationAt > 0 && Date.now() - expirationAt < 7000;
+      const expirationFresh = expirationAt > 0 && !!clean(state.platformControls?.observed?.expiration || state.targetExpiration || state.expiration || '');
       const controlsFresh = Number(state.platformControls?.checkedAt || 0) > 0 && Date.now() - Number(state.platformControls.checkedAt) < 5000;
       const cycleTf = liveCycleTf(state, controlsFresh) || structuredFeedTf(state, focus);
       if (!cycleTf) return;
-      const expiration = expirationFresh ? clean(state.platformControls?.observed?.expiration || '') || null : null;
+      const expiration = expirationFresh
+        ? clean(state.platformControls?.observed?.expiration || state.targetExpiration || state.expiration || '') || null
+        : null;
       const domClock = verifiedDomCountdown(cycleTf);
+      const boundaryClock = domClock ? null : currentStateBoundary(state, focus, cycleTf);
 
-      if (!domClock && freshExactClock(state, focus, cycleTf)) return;
-      if (!domClock && Date.now() - canvasVerifiedAt < 3000) return;
+      if (!domClock && !boundaryClock && freshExactClock(state, focus, cycleTf)) return;
+      if (!domClock && !boundaryClock && Date.now() - canvasVerifiedAt < 3000) return;
 
-      // Never synthesize an operational countdown from candle timestamps.
-      // If CasaTrade's real countdown is not currently verified, publish only
-      // a pending state. The 30s/10s decision gate therefore cannot consume a
-      // local/derived clock as authority.
+      // Preferred authority remains CasaTrade's visible progressing countdown.
+      // When that token is not exposed on compact/tablet layouts, the timestamp
+      // of the CURRENT structured CasaTrade candle is also an exact boundary:
+      // current-candle openAt + real M1 duration = candle close. Two consecutive
+      // observations of the same live candle are required before publication.
       const payload = domClock ? {
         type: 'ATS_MARKET_CLOCK_V2', asset: focus.asset, timeframe: cycleTf,
         secondsRemaining: domClock.seconds, expiration, available: true, verified: true, operational: true,
         clockRole: 'candle-close', clockSource: 'trader-dom-countdown',
         clockMode: domClock.chartScoped ? 'chart-geometry-exact' : 'dom-exact',
         clockText: domClock.text, clockToken: domClock.token, confidence: 99, frameHost: host, at: Date.now()
+      } : boundaryClock ? {
+        type: 'ATS_MARKET_CLOCK_V2', asset: focus.asset, timeframe: cycleTf,
+        secondsRemaining: boundaryClock.seconds, expiration, available: true, verified: true, operational: true,
+        clockRole: 'candle-close', clockSource: 'network-server-cycle',
+        clockMode: 'structured-current-candle-boundary',
+        clockText: 'Fechamento confirmado pela vela atual do feed CasaTrade',
+        clockToken: `${boundaryClock.seconds}s`, confidence: 94, frameHost: host, at: Date.now()
       } : {
         type: 'ATS_MARKET_CLOCK_V2', asset: focus.asset, timeframe: cycleTf,
         secondsRemaining: null, expiration, available: false, verified: false, operational: false,
