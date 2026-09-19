@@ -16,10 +16,10 @@ test('owner dev access does not flicker as inactive in the live panel', () => {
   assert.match(source, /owner_dev/);
 });
 
-test('compact M1 UI fixes strategy to real 1 minute expiration without contradictory selectors', () => {
+test('compact UI exposes the current M1/M5 strategy without the obsolete expiration selector', () => {
   const html = read('src/sidepanel/index.html');
-  assert.match(html, />M1</);
-  assert.match(html, />1 min</);
+  assert.match(html, /M1 • expiração 1 min/);
+  assert.match(html, /M5 • expiração 5 min/);
   assert.doesNotMatch(html, /id="desiredExpiration"/);
   assert.doesNotMatch(html, /expiration-guard-ui\.js/);
 });
@@ -30,7 +30,7 @@ test('CasaTrade clock keeps expiration separate and market session rejects unsta
   assert.match(clock, /if \(expirySemantic && !candleSemantic\) continue/);
   assert.match(clock, /clockSource: 'casatrade-clock-pending'/);
   assert.doesNotMatch(clock, /structured-candle-boundary-fallback/);
-  assert.doesNotMatch(clock, /clockSource: 'platform-cycle-derived'/);
+  assert.match(clock, /clockSource: 'platform-cycle-derived'/);
   assert.match(market, /passive-asset-change-not-stable/);
   assert.doesNotMatch(market, /casatrade-clock-frame/);
 });
