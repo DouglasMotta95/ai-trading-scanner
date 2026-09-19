@@ -5,16 +5,14 @@ import { processSnapshot, resetOrchestrator } from '../src/core/orchestrator.js'
 import { detectPlatform } from '../src/platforms/registry.js';
 
 const minute = 60_000;
+const aPlusBullishRows = bucket => Array.from({ length: 40 }, (_, index) => {
+  const offset = 39 - index;
+  const open = 1 + index * .002;
+  const close = open + .0016;
+  return { time: bucket - offset * minute, open, high: close + .00045, low: open - .00035, close, timeframe: 'M1' };
+});
 
-function bullishRows(bucket) {
-  return [
-    { time: bucket - 4 * minute, open: 1.00, high: 1.02, low: .99, close: 1.018, timeframe: 'M1' },
-    { time: bucket - 3 * minute, open: 1.018, high: 1.04, low: 1.01, close: 1.038, timeframe: 'M1' },
-    { time: bucket - 2 * minute, open: 1.038, high: 1.06, low: 1.03, close: 1.058, timeframe: 'M1' },
-    { time: bucket - minute, open: 1.058, high: 1.08, low: 1.05, close: 1.078, timeframe: 'M1' },
-    { time: bucket, open: 1.078, high: 1.115, low: 1.075, close: 1.11, timeframe: 'M1' }
-  ];
-}
+function bullishRows(bucket) { return aPlusBullishRows(bucket); }
 
 function snap(bucket, atMs, price = 1.11, candles = bullishRows(bucket), extra = {}) {
   return processSnapshot({
