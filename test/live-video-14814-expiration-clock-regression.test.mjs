@@ -138,7 +138,7 @@ function expirationHarness(selectedText) {
 
 test('video 14814: visible Expiração + 1 min wins even with dropdown options open', () => {
   const { runtime } = expirationHarness('1 min');
-  assert.equal(runtime.version, 'expiration-real-v3');
+  assert.equal(runtime.version, 'expiration-real-v4');
   const snapshot = runtime.scan();
   assert.equal(snapshot.expiration, '60s');
   assert.ok(snapshot.confidence.expiration >= 110);
@@ -164,10 +164,10 @@ test('expiration parser converts real CasaTrade labels to seconds', () => {
 test('expiration probe is restartable after extension reader reinjection', () => {
   const { sandbox } = expirationHarness('1 min');
   const first = sandbox.__ATS_EXPIRATION_PROBE_RUNTIME__;
-  assert.equal(first.version, 'expiration-real-v3');
+  assert.equal(first.version, 'expiration-real-v4');
   vm.runInNewContext(read('src/content/casatrade-expiration-probe.js'), sandbox);
   const second = sandbox.__ATS_EXPIRATION_PROBE_RUNTIME__;
-  assert.equal(second.version, 'expiration-real-v3');
+  assert.equal(second.version, 'expiration-real-v4');
   assert.notEqual(second, first);
 });
 
@@ -201,4 +201,21 @@ test('existing 30s -> 10s -> final decision contract remains tied to exact CasaT
   assert.match(policy, /if \(seconds <= 0\)/);
   assert.match(policy, /if \(seconds > 10\)/);
   assert.match(policy, /if \(!expiration\.ready\)/);
+});
+
+
+test('video 14819: transient CasaTrade render gaps do not flap exact expiration/countdown state', () => {
+  const expiration = read('src/content/casatrade-expiration-probe.js');
+  assert.match(expiration, /EXPIRATION_TRANSIENT_CACHE_MS\s*=\s*12000/);
+  assert.match(expiration, /stable-control-cache/);
+  assert.match(expiration, /expirationControlDirtyAt/);
+
+  const clock = read('src/content/market-cycle-clock-v4.js');
+  assert.match(clock, /last DISTINCT second/);
+  assert.match(clock, /now - domVerifiedAt < 3000/);
+  assert.match(clock, /Date\.now\(\) - Number\(clock\.at \|\| 0\) >= 3000/);
+
+  const session = read('src/background-market-session.js');
+  assert.match(session, /CLOCK_FRESH_MS = 3000/);
+  assert.match(session, /if \(exactClock\(state, info\)\) return state/);
 });
