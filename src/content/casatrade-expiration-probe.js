@@ -572,16 +572,44 @@
   const observer = new MutationObserver(() => schedule(false, 35));
   try { observer.observe(document.documentElement, { subtree: true, childList: true, characterData: true, attributes: true }); } catch {}
 
+  function expirationFromInteraction(event) {
+    const path = typeof event?.composedPath === 'function' ? event.composedPath() : [event?.target];
+    for (const node of path.slice(0, 8)) {
+      if (!(node instanceof Element) || !visible(node)) continue;
+      const value = directDuration(node);
+      if (!value) continue;
+      const local = localSemanticText(node, 4);
+      const parentText = fold(clean(node.parentElement?.innerText || node.parentElement?.textContent || ''));
+      if (expirationSemantics.test(local) || expirationSemantics.test(parentText)) return value;
+    }
+    return null;
+  }
+
   const markControlDirty = event => {
     if (!expirationInteractionTarget(event?.target)) return;
     expirationControlDirtyAt = Date.now();
+    const interactedValue = expirationFromInteraction(event);
+    if (interactedValue) {
+      lastConfirmedExpiration = interactedValue;
+      lastConfirmedAt = expirationControlDirtyAt;
+      sendControlsObserved({
+        amount: null,
+        expiration: interactedValue,
+        timeframe: null,
+        expirationDirty: false,
+        confidence: { amount: 0, expiration: 138, timeframe: 0 },
+        source: 'casatrade-expiration-interaction',
+        observedAt: expirationControlDirtyAt
+      }).catch(() => {});
+      return;
+    }
     sendControlsObserved({
       amount: null,
       expiration: null,
       timeframe: null,
       expirationDirty: true,
       confidence: { amount: 0, expiration: 0, timeframe: 0 },
-      source: 'casatrade-expiration-probe-v4-dirty',
+      source: 'casatrade-expiration-probe-v4-recheck',
       observedAt: expirationControlDirtyAt
     }).catch(() => {});
   };
@@ -589,11 +617,13 @@
     markControlDirty(event);
     schedule(true, 45);
     setTimeout(() => publish(true).catch(() => {}), 220);
+    setTimeout(() => publish(true).catch(() => {}), 650);
   };
   const controlChangeHandler = event => {
     markControlDirty(event);
     schedule(true, 25);
     setTimeout(() => publish(true).catch(() => {}), 140);
+    setTimeout(() => publish(true).catch(() => {}), 500);
   };
   document.addEventListener('click', clickHandler, true);
   document.addEventListener('input', controlChangeHandler, true);
