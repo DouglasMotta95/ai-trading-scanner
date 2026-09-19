@@ -158,6 +158,7 @@ test('expiration parser converts real CasaTrade labels to seconds', () => {
   assert.equal(runtime.parseExpiration('30 seg'), '30s');
   assert.equal(runtime.parseExpiration('00:01:00'), '60s');
   assert.equal(runtime.parseExpiration('Expiração 1 min'), '60s');
+  assert.equal(runtime.parseExpiration('1 min Expiração'), '60s');
 });
 
 test('expiration probe is restartable after extension reader reinjection', () => {
