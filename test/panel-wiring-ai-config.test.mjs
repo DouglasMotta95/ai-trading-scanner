@@ -4,15 +4,11 @@ import fs from 'node:fs';
 
 const read = path => fs.readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
-test('side panel actually loads manual trade, bankroll and safe handoff surfaces', () => {
+test('compact side panel keeps safe handoff but omits legacy manual/bankroll polling surfaces', () => {
   const html = read('src/sidepanel/index.html');
-  for (const script of ['manual-trade-ui.js', 'bankroll-ui.js', 'trade-handoff-ui.js']) {
-    assert.match(html, new RegExp(`<script[^>]+src=["']${script.replace('.', '\\.')}`));
-  }
-  const manual = read('src/sidepanel/manual-trade-ui.js');
-  assert.match(manual, /ATS_GET_MANUAL_TRADE_LEDGER/);
-  assert.match(manual, /OPERAÇÃO MANUAL/);
-  assert.match(manual, /SINAL \+ TIMING OK/);
+  assert.match(html, /trade-handoff-ui\.js/);
+  assert.doesNotMatch(html, /manual-trade-ui\.js/);
+  assert.doesNotMatch(html, /bankroll-ui\.js/);
 });
 
 test('Gemini remains server-side only and uses the current stable Flash model by default', () => {
