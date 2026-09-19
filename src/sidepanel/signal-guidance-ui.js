@@ -13,7 +13,27 @@ function technicalDirection(state = {}) {
   return ['BUY','SELL'].includes(direction) ? direction : null;
 }
 
+function activeEntryAdvice(state = {}) {
+  const advice = state.entryAdvice || null;
+  if (!advice?.direction) return null;
+  const now = Date.now();
+  const start = Number(advice.targetStart || 0);
+  const end = Number(advice.activeUntil || 0);
+  return start > 0 && end > start && now >= start && now < end ? advice : null;
+}
+
 function guidance(state = {}) {
+  const advice = activeEntryAdvice(state);
+  if (advice) {
+    const direction = String(advice.direction || '').toUpperCase();
+    const side = direction === 'BUY' ? 'COMPRA' : 'VENDA';
+    return {
+      tone: direction === 'BUY' ? 'buy' : 'sell',
+      value: `SINAL DA VELA • ${side}`,
+      hint: `Sinal final emitido para esta vela${advice.setup ? ` • ${advice.setup}` : ''}. Não repetir a entrada.`
+    };
+  }
+
   const signal = state.signal || {};
   const ui = clean(signal.uiState).toUpperCase();
   const direction = ui.includes('BUY') ? 'BUY' : ui.includes('SELL') ? 'SELL' : null;
@@ -64,7 +84,8 @@ function render(state = {}) {
   const technicalConfidence = assessEntryConfidence(state);
   const decision = state.professionalDecision || {};
   const technical = state.signal || {};
-  const scoreRaw = decision.score ?? technical.analysisScore ?? technical.score ?? technicalConfidence.score;
+  const advice = activeEntryAdvice(state);
+  const scoreRaw = advice?.score ?? decision.score ?? technical.analysisScore ?? technical.score ?? technicalConfidence.score;
   const score = Math.max(0, Math.min(100, Math.round(Number(scoreRaw) || 0)));
   const guide = guidance(state);
   const card = $('triggerCard');
