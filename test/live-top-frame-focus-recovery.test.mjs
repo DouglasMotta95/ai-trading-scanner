@@ -16,7 +16,9 @@ test('single-frame CasaTrade can recover focused asset from direct pair or expli
 
 test('primary next-candle decision and Gemini status are promoted to the top of the side panel', () => {
   const ui = read('src/sidepanel/ai-analysis-ui.js');
+  assert.match(ui, /syncStrip && decisionCard/);
   assert.match(ui, /syncStrip\.after\(decisionCard\)/);
+  assert.match(ui, /decisionCard && card/);
   assert.match(ui, /decisionCard\.after\(card\)/);
   assert.match(ui, /aiTopStatus/);
   assert.match(ui, /IA EM ESPERA/);
