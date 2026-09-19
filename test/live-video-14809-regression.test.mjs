@@ -44,8 +44,10 @@ test('video 14809: asset switch reset clears old price OHLC candles and signal b
 
 test('video 14809: exact countdown survives a brief DOM gap at next-candle rollover', () => {
   const clock = read('src/content/market-cycle-clock-v4.js');
-  assert.match(clock, /Date\.now\(\) - Number\(domProbe\.at \|\| 0\) >= 9000/);
-  assert.match(clock, /delta > 200 && delta < 9000/);
+  assert.match(clock, /Date\.now\(\) - Number\(domProbe\.observedAt \|\| domProbe\.at \|\| 0\) >= 9000/);
+  assert.match(clock, /delta > 200/);
+  assert.match(clock, /delta < 6500/);
+  assert.match(clock, /delta < 9000/);
   assert.match(clock, /Number\(previous\.seconds\) <= 2/);
   assert.match(clock, /Number\(candidate\.seconds\) >= duration - 8/);
   assert.match(clock, /candidate\.chartScoped === true \|\| candidate\.colonOnly === true/);
@@ -62,8 +64,8 @@ test('video 14809: platform stays connected while selected asset is resynchroniz
 
 test('video 14809: build version is unique so 0.11.26 cache cannot be reused', () => {
   const manifest = JSON.parse(read('manifest.json'));
-  assert.equal(manifest.version, '0.11.27');
-  assert.equal(manifest.version_name, '0.11.27-live-market-switch-expiration-hotfix');
+  assert.equal(manifest.version, '0.11.31');
+  assert.equal(manifest.version_name, '0.11.31-android-control-ingress-hotfix');
 });
 
 test('video 14809: central technical analysis owner remains single', () => {

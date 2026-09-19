@@ -5,18 +5,26 @@ const num = value => value == null || value === '' ? null : Number.isFinite(Numb
 const casaHost = value => value === 'casatrade.com' || value.endsWith('.casatrade.com') || value === 'casatrade.io' || value.endsWith('.casatrade.io');
 const traderHost = value => value === 'casatraders.online' || value.endsWith('.casatraders.online') || value === 'ivcasatraders.online' || value.endsWith('.ivcasatraders.online');
 
-function trusted(sender = {}) {
+function senderHosts(sender = {}) {
   let frameHost = '', topHost = '';
   try { frameHost = new URL(sender.url || '').hostname.toLowerCase(); } catch {}
   if (!frameHost) { try { frameHost = new URL(sender.origin || '').hostname.toLowerCase(); } catch {} }
   try { topHost = new URL(sender.tab?.url || '').hostname.toLowerCase(); } catch {}
+  return { frameHost, topHost };
+}
+
+function trusted(sender = {}) {
+  const { frameHost, topHost } = senderHosts(sender);
+  const ownExtension = !sender.id || sender.id === chrome.runtime.id;
   const tabOwned = !!sender.tab?.id && (casaHost(topHost) || traderHost(topHost));
   const knownFrame = casaHost(frameHost) || traderHost(frameHost);
   const opaqueChild = tabOwned && Number(sender.frameId) > 0 && (!frameHost || frameHost === 'null');
-  // match_origin_as_fallback can inject our own content script into an opaque
-  // CasaTrade child frame. That trusted extension sender is allowed to report
-  // only platform controls; ordinary web pages still cannot call this handler.
-  return tabOwned && (knownFrame || opaqueChild);
+
+  // Android Chromium forks may omit sender.tab for a content-script message
+  // even though sender.url/origin still points at a permitted CasaTrade host.
+  // Accept only our own extension sender on an explicitly trusted frame host.
+  const androidKnownFrameFallback = ownExtension && !sender.tab?.id && knownFrame;
+  return (tabOwned && (knownFrame || opaqueChild)) || androidKnownFrameFallback;
 }
 
 function normExp(value = '') {
@@ -44,6 +52,7 @@ function safeObserved(snapshot = {}) {
     amount: amount != null && amount > 0 ? amount : null,
     expiration,
     timeframe,
+    expirationDirty: snapshot.expirationDirty === true,
     source: clean(snapshot.source || 'casatrade-ui-v2').slice(0, 64),
     observedAt: {
       amount: amount != null && amount > 0 ? observedAt : 0,
@@ -68,6 +77,12 @@ function mergeObserved(previous = {}, incoming = {}) {
     observedAt: { ...(previous.observedAt || {}) },
     confidence: { ...oldConfidence }
   };
+  if (incoming.expirationDirty === true && incoming.expiration == null) {
+    next.expiration = null;
+    next.observedAt.expiration = 0;
+    next.confidence.expiration = 0;
+  }
+
   for (const field of ['amount', 'expiration', 'timeframe']) {
     const value = incoming[field];
     const score = Number(incoming.confidence?.[field] || 0);
@@ -120,16 +135,26 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message?.type !== 'ATS_PLATFORM_CONTROLS_OBSERVED') return false;
   if (!trusted(sender)) { sendResponse({ ok: false, error: 'untrusted_sender' }); return false; }
-  const tabId = Number(sender.tab?.id || 0);
+  const senderTabId = Number(sender.tab?.id || 0);
   const incoming = safeObserved(message.snapshot || {});
+  const senderHostInfo = senderHosts(sender);
 
   updateScannerState(state => {
-    if (Number(state.targetTabId || 0) && Number(state.targetTabId) !== tabId) return state;
+    const targetTabId = Number(state.targetTabId || 0);
+    const targetHost = clean(state.diagnostics?.target?.host || '').toLowerCase();
+    const hostMatchesTarget = !!senderHostInfo.frameHost
+      && (!!targetHost ? senderHostInfo.frameHost === targetHost || senderHostInfo.frameHost.endsWith('.' + targetHost) || targetHost.endsWith('.' + senderHostInfo.frameHost) : casaHost(senderHostInfo.frameHost) || traderHost(senderHostInfo.frameHost));
+    const effectiveTabId = senderTabId || (hostMatchesTarget ? targetTabId : 0);
+    if (targetTabId && effectiveTabId && targetTabId !== effectiveTabId) return state;
+    if (targetTabId && !effectiveTabId) return state;
     const previous = state.platformControls?.observed || {};
     const observed = mergeObserved(previous, incoming);
     const expirationAt = Number(observed.observedAt?.expiration || 0);
     const timeframeAt = Number(observed.observedAt?.timeframe || 0);
-    const expirationFresh = expirationAt > 0 && Date.now() - expirationAt < 7000;
+    // Expiration is a user-selected control, not a streaming tick. Once read
+    // from CasaTrade it remains authoritative for the current session until a
+    // contradictory reading or an explicit interaction invalidates it.
+    const expirationFresh = expirationAt > 0 && !!observed.expiration;
     const timeframeFresh = timeframeAt > 0 && Date.now() - timeframeAt < 7000;
     const actualExpiration = expirationFresh ? observed.expiration || null : null;
     const actualTimeframe = timeframeFresh ? observed.timeframe || null : null;
@@ -139,6 +164,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const timeframeChanged = !!oldTf && !!reliableTf && oldTf !== reliableTf;
 
     const diagnostics = { ...(state.diagnostics || {}) };
+    diagnostics.platformControlIngress = {
+      source: incoming.source,
+      expiration: incoming.expiration,
+      timeframe: incoming.timeframe,
+      senderTabId: senderTabId || null,
+      effectiveTabId: effectiveTabId || null,
+      frameId: Number(sender.frameId || 0),
+      frameHost: senderHostInfo.frameHost || null,
+      topHost: senderHostInfo.topHost || null,
+      androidTabFallback: !senderTabId && !!effectiveTabId,
+      at: Date.now()
+    };
     if (timeframeChanged) {
       delete diagnostics.marketClock;
       delete diagnostics.marketSession;

@@ -260,6 +260,67 @@
     return candidates[0] || null;
   }
 
+  function renderedMarkerExpiration() {
+    const marker = document.getElementById?.('__ats_rendered_market__');
+    if (!marker) return null;
+    const text = clean(marker.textContent || marker.innerText || '');
+    const value = parseExpiration(text);
+    return value ? { value, score: 138, reason: 'rendered-market-marker' } : null;
+  }
+
+  function semanticTreeExpiration() {
+    const candidates = [];
+    const selector = [
+      '[data-testid*="expir" i]','[aria-label*="expir" i]','[name*="expir" i]',
+      '[id*="expir" i]','[class*="expir" i]','[title*="expir" i]',
+      'label','button','[role="button"]','[role="combobox"]','span','div'
+    ].join(',');
+
+    for (const root of roots()) {
+      let rows = [];
+      try { rows = [...root.querySelectorAll(selector)].slice(0, 5000); } catch {}
+      for (const el of rows) {
+        const attrs = fold([
+          el.id, el.className, el.getAttribute?.('data-testid'), el.getAttribute?.('data-name'),
+          el.getAttribute?.('name'), el.getAttribute?.('aria-label'), el.getAttribute?.('title'),
+          el.getAttribute?.('role')
+        ].filter(Boolean).join(' '));
+
+        // textContent is intentional here: tablet sidepanel layouts can keep
+        // the CasaTrade control mounted but CSS-hidden/offscreen.
+        const own = clean(el.textContent || el.getAttribute?.('aria-valuetext') || el.getAttribute?.('data-value') || '');
+        const ownFold = fold(own);
+        const semantic = expirationSemantics.test(attrs) || expirationSemantics.test(ownFold);
+        if (!semantic) continue;
+
+        const values = [];
+        const direct = parseExpiration(own);
+        if (direct) values.push(direct);
+        for (const raw of rawValues(el)) {
+          const parsed = parseExpiration(raw);
+          if (parsed) values.push(parsed);
+        }
+
+        let parent = el.parentElement;
+        for (let depth = 0; parent && depth < 3; depth += 1, parent = parent.parentElement) {
+          const text = clean(parent.textContent || '').slice(0, 500);
+          const labeled = parseExpiration(text);
+          if (labeled) values.push(labeled);
+        }
+
+        const unique = [...new Set(values.filter(Boolean))];
+        if (unique.length !== 1) continue;
+        let score = 145;
+        if (expirationSemantics.test(attrs)) score += 20;
+        if (el.matches?.('button,input,select,[role="button"],[role="combobox"]')) score += 15;
+        candidates.push({ value: unique[0], score, reason: 'semantic-tree-hidden-safe' });
+      }
+    }
+
+    candidates.sort((a, b) => b.score - a.score);
+    return candidates[0] || null;
+  }
+
   function bodyExpiration() {
     const body = fold(clean(document.body?.innerText || document.body?.textContent || '').slice(0, 260000));
     if (!body) return null;
@@ -307,13 +368,53 @@
     return rows[0] || null;
   }
 
+  const EXPIRATION_TRANSIENT_CACHE_MS = 12000;
+  let lastConfirmedExpiration = null;
+  let lastConfirmedAt = 0;
+  let expirationControlDirtyAt = 0;
+
+  function expirationInteractionTarget(target) {
+    let node = target instanceof Element ? target : null;
+    for (let depth = 0; node && depth < 3; depth += 1, node = node.parentElement) {
+      const own = clean(ownText(node) || '');
+      const meta = fold([
+        node.id, node.className, node.getAttribute?.('data-testid'),
+        node.getAttribute?.('data-name'), node.getAttribute?.('name'),
+        node.getAttribute?.('aria-label'), node.getAttribute?.('title'),
+        node.getAttribute?.('role')
+      ].filter(Boolean).join(' '));
+      const shortOwn = own.length <= 90 ? fold(own) : '';
+      if (expirationSemantics.test(meta) || (controlLike(node) && expirationSemantics.test(shortOwn))) return true;
+
+      const value = directDuration(node);
+      const parent = node.parentElement;
+      const parentOwn = clean(parent?.innerText || parent?.textContent || '');
+      if (value && parentOwn.length <= 140 && expirationSemantics.test(fold(parentOwn))) return true;
+    }
+    return false;
+  }
+
   function scan() {
     const all = elements();
-    const strong = expirationControlByLabel(all);
+    const marker = renderedMarkerExpiration();
+    const strong = marker || expirationControlByLabel(all);
     const semantic = strong || semanticControlExpiration(all);
-    const body = semantic || bodyExpiration();
-    const exp = strong || semantic || body;
+    const hiddenSafe = semantic || semanticTreeExpiration();
+    const body = hiddenSafe || bodyExpiration();
+    let exp = marker || strong || semantic || hiddenSafe || body;
     const tf = selectedTimeframe(all);
+    const now = Date.now();
+
+    if (exp?.value) {
+      lastConfirmedExpiration = exp.value;
+      lastConfirmedAt = now;
+    } else if (
+      lastConfirmedExpiration
+      && lastConfirmedAt > expirationControlDirtyAt
+      && now - lastConfirmedAt < EXPIRATION_TRANSIENT_CACHE_MS
+    ) {
+      exp = { value: lastConfirmedExpiration, score: 110, reason: 'stable-control-cache' };
+    }
 
     if (!exp && !tf) return null;
     return {
@@ -327,7 +428,7 @@
         expiration: exp ? Math.max(110, Math.min(140, Number(exp.score || 0))) : 0,
         timeframe: tf?.score || 0
       },
-      source: 'casatrade-expiration-probe-v3',
+      source: 'casatrade-expiration-probe-v4',
       observedAt: Date.now(),
       evidence: exp?.reason || null
     };
@@ -363,22 +464,48 @@
   const observer = new MutationObserver(() => schedule(false, 35));
   try { observer.observe(document.documentElement, { subtree: true, childList: true, characterData: true, attributes: true }); } catch {}
 
-  const clickHandler = () => {
+  const markControlDirty = event => {
+    if (!expirationInteractionTarget(event?.target)) return;
+    expirationControlDirtyAt = Date.now();
+    sendMessage({
+      type: 'ATS_PLATFORM_CONTROLS_OBSERVED',
+      snapshot: {
+        amount: null,
+        expiration: null,
+        timeframe: null,
+        expirationDirty: true,
+        confidence: { amount: 0, expiration: 0, timeframe: 0 },
+        source: 'casatrade-expiration-probe-v4-dirty',
+        observedAt: expirationControlDirtyAt
+      }
+    }).catch(() => {});
+  };
+  const clickHandler = event => {
+    markControlDirty(event);
     schedule(true, 45);
     setTimeout(() => publish(true).catch(() => {}), 220);
   };
+  const controlChangeHandler = event => {
+    markControlDirty(event);
+    schedule(true, 25);
+    setTimeout(() => publish(true).catch(() => {}), 140);
+  };
   document.addEventListener('click', clickHandler, true);
+  document.addEventListener('input', controlChangeHandler, true);
+  document.addEventListener('change', controlChangeHandler, true);
 
   const intervalId = setInterval(() => publish(true).catch(() => {}), 650);
   globalThis.__ATS_FORCE_EXPIRATION_SCAN__ = () => publish(true);
   globalThis.__ATS_EXPIRATION_PROBE_RUNTIME__ = {
-    version: 'expiration-real-v3',
+    version: 'expiration-real-v4',
     scan,
     parseExpiration,
     teardown() {
       stopped = true;
       try { observer.disconnect(); } catch {}
       try { document.removeEventListener('click', clickHandler, true); } catch {}
+      try { document.removeEventListener('input', controlChangeHandler, true); } catch {}
+      try { document.removeEventListener('change', controlChangeHandler, true); } catch {}
       try { clearInterval(intervalId); } catch {}
       if (scheduled) { try { clearTimeout(scheduled); } catch {} }
     }

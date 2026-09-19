@@ -104,7 +104,7 @@
   const normalizeExp = value => {
     const s = clean(value).toLowerCase().replace(/\s+/g, '');
     let m = s.match(/^(\d{1,4})(?:s|seg|segundo|segundos)$/); if (m) return `${Number(m[1])}s`;
-    m = s.match(/^(\d{1,3})(?:m|min|minuto|minutos)$/); if (m) return Number(m[1]) === 1 ? '60s' : `${Number(m[1])}m`;
+    m = s.match(/^(\d{1,3})(?:m|min|minuto|minutos)$/); if (m) return `${Number(m[1]) * 60}s`;
     return null;
   };
 
@@ -328,6 +328,7 @@
       href: location.href,
       asset,
       assetScore: Number(app?.selected ? 160 : app?.score || assetRow?.score || 0),
+      selected: app?.selected === true,
       price: num(quote?.price),
       buy: num(quote?.buy),
       sell: num(quote?.sell),
@@ -417,7 +418,10 @@
           ask: buy,
           timeframe,
           expiration,
-          selected: true,
+          // Rendered fallback may identify the market text but it must not
+          // fabricate selection authority. Only application state that exposes
+          // a real selected flag may claim the active market.
+          selected: assetRow?.selected === true,
           confidence: 96,
           observedAt: Date.now(),
           transport: 'rendered'

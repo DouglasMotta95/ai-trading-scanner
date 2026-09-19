@@ -46,3 +46,26 @@ test('overlay never draws analysis for another market, including OTC versus regu
   assert.match(overlay, /if \(!sameMarket\(clock\?\.asset, state\.asset\)\) return false/);
   assert.doesNotMatch(overlay, /replace\([^\n]+OTC[^\n]+''\)/);
 });
+
+
+test('user-selected asset wins immediately over stale tabs and rendered fallback cannot fake selected state', () => {
+  const focused = read('src/content/focused-asset-v2.js');
+  const market = read('src/background-market-session.js');
+  const rendered = read('src/content/canvas-probe.js');
+  assert.match(focused, /source: 'user-selected-transition'/);
+  assert.match(focused, /inactive market tab/);
+  assert.match(focused, /interactionAge < 3500/);
+  assert.match(market, /stale-visual-rollback-selection-lock/);
+  assert.match(rendered, /selected: app\?\.selected === true/);
+  assert.match(rendered, /selected: assetRow\?\.selected === true/);
+  assert.doesNotMatch(rendered, /selected: true,\s*\n\s*confidence: 96/);
+});
+
+
+test('v0.11.30 passive visual scans cannot starve a new protocol-selected asset forever', () => {
+  const protocol = read('src/content/focused-asset-protocol.js');
+  assert.match(protocol, /Passive visual scans are republished frequently/);
+  assert.match(protocol, /source === 'user-selected-transition'/);
+  assert.match(protocol, /Date\.now\(\) - interactionAt < 3500/);
+  assert.match(protocol, /return false;/);
+});

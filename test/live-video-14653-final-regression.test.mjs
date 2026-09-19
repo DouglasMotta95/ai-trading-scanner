@@ -21,7 +21,7 @@ test('asset list and alias readers cannot promote an unrelated visible symbol', 
   const alias = read('src/content/focused-asset-alias-bridge.js');
   const market = read('src/background-market-session.js');
 
-  assert.match(focus, /if \(listContext && !selection\.explicit && !interaction\) continue/);
+  assert.match(focus, /if \(\(listContext \|\| tabContext\) && !selection\.explicit && !interaction\) continue/);
   assert.match(alias, /if \(!isSelected && !interacted && !directHeader\) continue/);
   assert.match(alias, /visible-selected-asset/);
   assert.doesNotMatch(alias, /concise alphabetic token directly clicked/);

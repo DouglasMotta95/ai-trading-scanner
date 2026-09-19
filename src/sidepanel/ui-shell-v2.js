@@ -59,8 +59,8 @@ function exactLiveTime(state = {}) {
   if (!exactClockReady(state)) return false;
   const clock = state.diagnostics?.marketClock || {};
   const expirationAt = Number(state.platformControls?.expirationCheckedAt || state.platformControls?.observed?.observedAt?.expiration || 0);
-  const expirationFresh = expirationAt > 0 && Date.now() - expirationAt < CONTROLS_FRESH_MS;
-  const actualExpiration = expirationFresh ? clean(state.platformControls?.observed?.expiration) : '';
+  const actualExpiration = clean(state.platformControls?.observed?.expiration);
+  const expirationFresh = expirationAt > 0 && !!actualExpiration;
   return clean(clock.timeframe || state.analysisTimeframe || state.timeframe).toUpperCase() === 'M1'
     && actualExpiration === '60s';
 }
@@ -96,8 +96,8 @@ function renderShell(state = {}) {
     && (state.connection === 'connecting' || state.scanner === 'scanning');
 
   const expirationAt = Number(state.platformControls?.expirationCheckedAt || state.platformControls?.observed?.observedAt?.expiration || 0);
-  const expirationFresh = expirationAt > 0 && Date.now() - expirationAt < CONTROLS_FRESH_MS;
-  const expiration = expirationFresh ? clean(state.platformControls?.observed?.expiration) : '';
+  const expiration = clean(state.platformControls?.observed?.expiration);
+  const expirationFresh = expirationAt > 0 && !!expiration;
   const expirationWrong = dataConnected && !!expiration && expiration !== '60s';
   const sessionStartedAt = Number(session.startedAt || state.diagnostics?.target?.connectedAt || 0);
   const sessionAge = sessionStartedAt > 0 ? Date.now() - sessionStartedAt : 0;

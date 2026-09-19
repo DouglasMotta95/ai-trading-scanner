@@ -8,7 +8,8 @@ test('an explicit visual asset switch cannot be rolled back by stale protocol-se
   const protocol = read('src/content/focused-asset-protocol.js');
   assert.match(protocol, /function visualBlocksProtocolRollback\(asset\)/);
   assert.match(protocol, /source === 'user-selected-transition' \|\| meta\.interactionHint === true/);
-  assert.match(protocol, /if \(explicitTransition\) return !same\(current, asset\)/);
+  assert.match(protocol, /if \(explicitTransition\) \{/);
+  assert.match(protocol, /Date\.now\(\) - interactionAt < 3500 && !same\(current, asset\)/);
   assert.match(protocol, /if \(visualBlocksProtocolRollback\(winner\.asset\)\) return/);
   assert.doesNotMatch(protocol, /transition \? 8000/);
 });

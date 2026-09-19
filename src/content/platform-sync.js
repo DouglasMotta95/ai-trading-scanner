@@ -136,7 +136,9 @@
 
   function expirationCandidate() {
     const page = fullText();
-    const direct = page.match(/(?:EXPIRA(?:ÇÃO|CAO)|EXPIRY|DURATION)[^0-9]{0,40}(\d{1,4})\s*(S|SEG|SEGUNDO|SEGUNDOS|M|MIN|MINUTO|MINUTOS)/i);
+    const hiddenPage = clean(document.body?.textContent || '').slice(0, 320000);
+    const direct = page.match(/(?:EXPIRA(?:ÇÃO|CAO)|EXPIRY|DURATION)[^0-9]{0,40}(\d{1,4})\s*(S|SEG|SEGUNDO|SEGUNDOS|M|MIN|MINUTO|MINUTOS)/i)
+      || hiddenPage.match(/(?:EXPIRA(?:ÇÃO|CAO)|EXPIRY|DURATION)[^0-9]{0,80}(\d{1,4})\s*(S|SEG|SEGUNDO|SEGUNDOS|M|MIN|MINUTO|MINUTOS)/i);
     if (direct) {
       const value = normExp(`${direct[1]}${direct[2]}`);
       if (value) return { el: null, value, score: 70 };
@@ -157,7 +159,24 @@
       rows.push({ el, value, score });
     }
     rows.sort((a, b) => b.score - a.score);
-    return rows[0] || null;
+    if (rows[0]) return rows[0];
+
+    // Tablet sidepanels can CSS-hide the trade controls while keeping them
+    // mounted. Read only semantically-labelled expiration nodes in that case.
+    const hiddenRows = [];
+    for (const el of deepElements()) {
+      const meta = fold([
+        el?.id, el?.className, el?.getAttribute?.('data-testid'),
+        el?.getAttribute?.('data-name'), el?.getAttribute?.('name'),
+        el?.getAttribute?.('aria-label'), el?.getAttribute?.('title'),
+        el?.textContent
+      ].filter(Boolean).join(' ')).slice(0, 420);
+      if (!/expira|expiry|expiration|duracao|duration/.test(meta)) continue;
+      const match = meta.match(/(\d{1,4})\s*(s|seg|segundo|segundos|m|min|minuto|minutos)\b/i);
+      const value = normExp(match ? `${match[1]}${match[2]}` : '');
+      if (value) hiddenRows.push({ el, value, score: 66 });
+    }
+    return hiddenRows[0] || null;
   }
 
   function readDom() {
@@ -176,6 +195,32 @@
   }
 
   const localCount = observed => Number(!!observed?.detected?.amount) + Number(!!observed?.detected?.timeframe) + Number(!!observed?.detected?.expiration);
+
+  let lastPublishedControlKey = '';
+  let lastPublishedControlAt = 0;
+  async function publishVisibleControls(force = false) {
+    const observed = readDom();
+    if (!observed?.expiration && !observed?.timeframe) return false;
+    const snapshot = {
+      amount: null,
+      expiration: observed.expiration || null,
+      timeframe: observed.timeframe || null,
+      confidence: {
+        amount: 0,
+        expiration: Number(observed.confidence?.expiration || 0),
+        timeframe: Number(observed.confidence?.timeframe || 0)
+      },
+      source: 'casatrade-platform-sync-live',
+      observedAt: Number(observed.at || Date.now())
+    };
+    const key = JSON.stringify([snapshot.expiration, snapshot.timeframe]);
+    const now = Date.now();
+    if (!force && key === lastPublishedControlKey && now - lastPublishedControlAt < 900) return true;
+    lastPublishedControlKey = key;
+    lastPublishedControlAt = now;
+    await sendMessage({ type: 'ATS_PLATFORM_CONTROLS_OBSERVED', snapshot });
+    return true;
+  }
 
   async function read(seed = null) {
     const observed = seed || readDom();
@@ -271,6 +316,13 @@
     };
     return { ok: !!(matched.amount && matched.timeframe && matched.expiration), desired, before, after, attempted, applied, matched };
   }
+
+  const controlsObserver = new MutationObserver(() => {
+    publishVisibleControls(false).catch(() => {});
+  });
+  try { controlsObserver.observe(document.documentElement, { subtree: true, childList: true, characterData: true, attributes: true }); } catch {}
+  setInterval(() => publishVisibleControls(true).catch(() => {}), 900);
+  setTimeout(() => publishVisibleControls(true).catch(() => {}), 250);
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type === 'ATS_PLATFORM_READ') {
