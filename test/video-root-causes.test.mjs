@@ -57,8 +57,9 @@ test('clock v4 rejects purchase/duration timers and accepts bounded CasaTrade ex
   assert.match(clock, /if \(value\.seconds < 0 \|\| value\.seconds > limit \+ 2\) continue/);
   assert.match(clock, /clockRole: 'candle-close'/);
   assert.match(clock, /clockSource: 'trader-dom-countdown'/);
-  assert.match(clock, /clockSource: 'platform-cycle-derived'/);
-  assert.match(clock, /available: false, verified: false/);
+  assert.match(clock, /clockSource: 'casatrade-clock-pending'/);
+  assert.doesNotMatch(clock, /clockSource: 'platform-cycle-derived'/);
+  assert.match(clock, /available: false, verified: false, operational: false/);
   assert.doesNotMatch(clock, /function phaseCountdown/);
 });
 
