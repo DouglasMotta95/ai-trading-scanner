@@ -18,13 +18,14 @@ function snapshot(bucket, offset, candles = bullish(bucket)) {
   };
 }
 
-test('stable setup stays in pattern-building before the 30-second preparation window', () => {
+test('stable A+ setup can stay visible as POSSIBLE before the final window without becoming actionable', () => {
   resetOrchestrator();
   const bucket = Math.floor(1_800_300_000_000 / minute) * minute;
   const first = processSnapshot(snapshot(bucket, 10_000), { connection: 'online' });
   const second = processSnapshot(snapshot(bucket, 11_000), { connection: 'online' });
-  assert.notEqual(first.signal.uiState, 'POSSIBLE_BUY');
-  assert.equal(second.signal.uiState, 'BUILDING_PATTERN');
+  assert.notEqual(first.signal.state, 'CONFIRM');
+  assert.equal(second.signal.uiState, 'POSSIBLE_BUY');
+  assert.notEqual(second.signal.state, 'CONFIRM');
   assert.ok(second.signal.secondsRemaining > 30);
 });
 
