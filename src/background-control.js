@@ -689,9 +689,9 @@ async function readSessionHistory() {
 }
 
 function exactTradeReady(state = {}) {
-  const professional = state.professionalDecision || {};
   const focus = state.diagnostics?.focusedAsset || {};
-  if (professional.actionable !== true) return false;
+  const ui = String(state.signal?.uiState || '').toUpperCase();
+  if (!['ENTER_BUY','ENTER_SELL'].includes(ui)) return false;
   if (!state.asset || !sameAsset(focus.asset, state.asset)) return false;
   if (focus.reliable !== true || focus.chartScoped !== true || focus.trustedChartFrame !== true) return false;
   return true;
@@ -706,12 +706,7 @@ async function manualIntent(direction = '') {
   const confirmed = state.signal?.state === 'CONFIRM' || ['ENTER_BUY', 'ENTER_SELL'].includes(String(state.signal?.uiState || ''));
   if (!confirmed || signalDirection !== direction) return { ok: false, error: 'signal_not_confirmed', state };
 
-  const professional = state.professionalDecision || {};
-  const expectedUi = direction === 'BUY' ? 'ENTER_BUY' : 'ENTER_SELL';
-  if (professional.uiState !== expectedUi || professional.direction !== direction || professional.actionable !== true) {
-    return { ok: false, error: 'professional_signal_not_confirmed', state };
-  }
-  if (!exactTradeReady(state)) return { ok: false, error: 'time_not_synchronized', state };
+  if (!exactTradeReady(state)) return { ok: false, error: 'signal_not_ready', state };
 
   const intent = {
     direction, asset: state.asset, timeframe: state.analysisTimeframe || state.timeframe,
