@@ -14,63 +14,49 @@ function technicalDirection(state = {}) {
 }
 
 function guidance(state = {}) {
-  const technical = state.signal || {};
-  const decision = state.professionalDecision || {};
-  const professionalUi = clean(decision.uiState).toUpperCase();
-  const technicalUi = clean(technical.uiState).toUpperCase();
-  const direction = technicalDirection(state);
+  const signal = state.signal || {};
+  const ui = clean(signal.uiState).toUpperCase();
+  const direction = ui.includes('BUY') ? 'BUY' : ui.includes('SELL') ? 'SELL' : null;
   const side = direction === 'BUY' ? 'COMPRA' : direction === 'SELL' ? 'VENDA' : '';
-  const entryReady = decision.actionable === true;
 
-  if (technical.directionTransition?.from && technical.directionTransition?.to) {
-    const from = technical.directionTransition.from === 'BUY' ? 'COMPRA' : 'VENDA';
-    const to = technical.directionTransition.to === 'BUY' ? 'COMPRA' : 'VENDA';
+  if (signal.directionTransition?.from && signal.directionTransition?.to) {
+    const from = signal.directionTransition.from === 'BUY' ? 'COMPRA' : 'VENDA';
+    const to = signal.directionTransition.to === 'BUY' ? 'COMPRA' : 'VENDA';
     return {
-      tone: 'waiting',
-      value: 'PADRÃO MUDANDO — REAVALIANDO',
-      hint: `${from} → ${to}. A nova direção precisa se sustentar antes de substituir o padrão atual.`
+      tone: 'possible',
+      value: `PADRÃO ${to}`,
+      hint: `${from} → ${to}. A nova direção substituiu a anterior após confirmação forte e sustentada.`
     };
   }
 
-  if ((professionalUi === 'ENTER_BUY' || professionalUi === 'ENTER_SELL') && entryReady) {
+  if (ui === 'ENTER_BUY' || ui === 'ENTER_SELL') {
     return {
       tone: direction === 'BUY' ? 'buy' : 'sell',
       value: `CONFIRMADO • ${side}`,
-      hint: clean(decision.reason || 'Confirmação técnica concluída. Entrada manual somente na próxima vela.')
+      hint: clean(signal.reason || 'Confirmação técnica concluída para a entrada.')
     };
   }
 
-  if (professionalUi === 'POSSIBLE_BUY' || professionalUi === 'POSSIBLE_SELL') {
-    const remaining = Math.ceil(Math.max(0, Number(decision.holdRemainingMs || 0)) / 1000);
-    return {
-      tone: 'possible',
-      value: `PADRÃO ${side || 'EM OBSERVAÇÃO'}`,
-      hint: `${clean(decision.reason || 'Padrão técnico em confirmação.')}${remaining > 0 ? ` Hold: ${remaining}s.` : ''}`
-    };
-  }
-
-  // Keep showing the primary technical engine even when the user-facing funnel
-  // is blocked by clock/timeframe/expiration. This is analysis, not authorization.
-  if (direction && ['POSSIBLE_BUY','POSSIBLE_SELL','ENTER_BUY','ENTER_SELL','DECIDING'].includes(technicalUi)) {
+  if (ui === 'POSSIBLE_BUY' || ui === 'POSSIBLE_SELL') {
     return {
       tone: 'possible',
       value: `PADRÃO ${side}`,
-      hint: clean(technical.reason || 'Padrão técnico detectado; aguardando a confirmação final perto de 10s.')
+      hint: clean(signal.reason || `Padrão ${side.toLowerCase()} mantido nesta vela; aguardando confirmação final perto de 10s.`)
     };
   }
 
-  if (technicalUi === 'BUILDING_PATTERN' || technicalUi === 'ANALYZING_MARKET') {
+  if (ui === 'BUILDING_PATTERN' || ui === 'ANALYZING_MARKET' || ui === 'DECIDING') {
     return {
       tone: 'waiting',
       value: 'ANALISANDO',
-      hint: clean(technical.reason || 'Lendo preço, força, rejeição, momentum e estrutura.')
+      hint: clean(signal.reason || 'Lendo preço, força, rejeição, momentum e estrutura.')
     };
   }
 
   return {
     tone: 'skip',
     value: 'SEM PADRÃO',
-    hint: clean(technical.reason || block || 'Nenhum padrão técnico válido neste momento.')
+    hint: clean(signal.reason || 'Nenhum padrão técnico válido neste momento.')
   };
 }
 
