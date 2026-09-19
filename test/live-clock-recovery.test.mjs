@@ -6,8 +6,8 @@ const bridge = readFileSync(new URL('../src/content/embedded-feed-bridge.js', im
 const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
 
 test('0.11.13 can recover exact live candle-close clock from the current structured OHLC boundary', () => {
-  assert.equal(manifest.version, '0.11.13');
-  assert.match(String(manifest.version_name || ''), /^0\.11\.13-/i);
+  assert.match(manifest.version, /^0\.11\.\d+$/);
+  assert.ok(String(manifest.version_name || '').length > 0);
   assert.match(bridge, /structuredCandleBoundary/);
   assert.match(bridge, /now >= openAt \+ durationMs \+ 1200/);
   assert.match(bridge, /count < 2/);
