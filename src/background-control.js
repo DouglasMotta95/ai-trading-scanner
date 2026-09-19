@@ -407,8 +407,9 @@ async function commitDirectExpiration(tabId, evidence = null) {
       },
       expirationRecheckPendingAt: 0
     };
-    const timeframe = clean(state.analysisTimeframe || state.timeframe).toUpperCase();
-    const ready = timeframe === 'M1' && expiration === '60s';
+    const timeframe = normalizeOperatingTimeframe(state.analystPreferences?.operatingTimeframe || state.analysisTimeframe || state.timeframe);
+    const requiredExpiration = expirationForOperatingTimeframe(timeframe);
+    const ready = expiration === requiredExpiration;
     return {
       ...state,
       expiration,
@@ -437,13 +438,14 @@ async function commitDirectExpiration(tabId, evidence = null) {
         },
         expirationGuard: {
           ...(state.diagnostics?.expirationGuard || {}),
-          required: '60s',
+          required: requiredExpiration,
           actual: expiration,
           ready,
-          validForM1: ready,
-          reason: expiration === '60s'
-            ? 'Expiração real de 1 minuto confirmada diretamente na CasaTrade.'
-            : 'Ajuste a expiração da CasaTrade para 1 minuto.',
+          validForM1: timeframe === 'M1' && ready,
+          validForM5: timeframe === 'M5' && ready,
+          reason: expiration === requiredExpiration
+            ? `Expiração real de ${timeframe === 'M1' ? '1 minuto' : '5 minutos'} confirmada diretamente na CasaTrade.`
+            : `Ajuste a expiração da CasaTrade para ${timeframe === 'M1' ? '1 minuto' : '5 minutos'}.`,
           source: 'background-direct-expiration-probe',
           evidence: clean(evidence?.evidence || ''),
           at: now
