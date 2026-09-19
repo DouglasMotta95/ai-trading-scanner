@@ -57,5 +57,6 @@ test('user-selected asset wins immediately over stale tabs and rendered fallback
   assert.match(focused, /interactionAge < 3500/);
   assert.match(market, /stale-visual-rollback-selection-lock/);
   assert.match(rendered, /selected: app\?\.selected === true/);
+  assert.match(rendered, /selected: assetRow\?\.selected === true/);
   assert.doesNotMatch(rendered, /selected: true,\s*\n\s*confidence: 96/);
 });
