@@ -88,29 +88,83 @@ function decisionQuality(signal = {}, direction = null) {
   const strongCandle = currentStrength >= ANALYST_THRESHOLDS.candleStrength;
   const rejection = directionalRejection && rejectionStrength >= ANALYST_THRESHOLDS.rejectionStrength;
   const regime = String(signal.regime?.type || '').toLowerCase();
+  const trendAligned = regime === 'uptrend'
+    ? direction === 'BUY'
+    : regime === 'downtrend'
+      ? direction === 'SELL'
+      : false;
+  const counterTrend = regime === 'uptrend'
+    ? direction === 'SELL'
+    : regime === 'downtrend'
+      ? direction === 'BUY'
+      : false;
 
-  // Setup-specific gates increase useful frequency without lowering the approved
-  // 44/58/62/50 analyst thresholds. A continuation no longer has to look like a
-  // rejection and a rejection no longer has to look like momentum.
+  const strongBreakout = analytics.strongBreakout === true
+    && String(analytics.breakoutDirection || '').toUpperCase() === direction;
+  const breakoutMargin = Number(analytics.breakoutDistanceRatio || 0);
+  const rangeMultiple = Number(analytics.currentRangeMultiple || 0);
+  const exhaustionRisk = analytics.exhaustionRisk === true || analytics.overextendedImpulse === true;
+
+  // A large final impulse can be exhaustion, not continuation. Continuation
+  // entries are blocked when the current candle is stretched, unless a genuine
+  // rejection setup is present. This prevents chasing the just-finished candle.
+  if (exhaustionRisk && !rejection) {
+    return { qualifies: false, setup: null, blocker: 'exhaustion-risk' };
+  }
+
   const setups = regime === 'range'
     ? [
         { name: 'rejeição no range', ok: power >= 52 && rejection },
-        { name: 'continuação confirmada no range', ok: power >= 55 && score >= 64 && continuation && momentum }
+        {
+          name: 'rompimento confirmado no range',
+          ok: power >= 55
+            && score >= 64
+            && continuation
+            && momentum
+            && strongBreakout
+            && breakoutMargin >= .18
+            && rangeMultiple > 0
+            && rangeMultiple <= 1.45
+        }
       ]
     : [
         { name: 'rejeição', ok: power >= 48 && rejection },
-        { name: 'continuação', ok: power >= 50 && continuation },
-        { name: 'momentum', ok: power >= 50 && strongCandle && momentum },
-        { name: 'confluência forte', ok: power >= 48 && score >= 68 && momentum && (strongCandle || continuation) }
+        {
+          name: 'continuação com tendência',
+          ok: !counterTrend && trendAligned && power >= 50 && continuation
+        },
+        {
+          name: 'momentum com tendência',
+          ok: !counterTrend && trendAligned && power >= 50 && strongCandle && momentum
+        },
+        {
+          name: 'rompimento com tendência',
+          ok: !counterTrend && trendAligned && power >= 50 && strongBreakout && breakoutMargin >= .18
+        },
+        {
+          name: 'confluência forte',
+          ok: !counterTrend && trendAligned && power >= 48 && score >= 68 && momentum && (strongCandle || continuation || strongBreakout)
+        }
       ];
+
   const matched = setups.find(item => item.ok) || null;
-  return { qualifies: !!matched, setup: matched?.name || null };
+  return { qualifies: !!matched, setup: matched?.name || null, blocker: matched ? null : counterTrend ? 'counter-trend' : null };
 }
 
 function inferSetup(signal = {}, direction = null) {
   if (!direction) return null;
   const a = signal.analytics || {};
+  const regime = String(signal.regime?.type || '').toLowerCase();
+  const counterTrend = regime === 'uptrend'
+    ? direction === 'SELL'
+    : regime === 'downtrend'
+      ? direction === 'BUY'
+      : false;
+  const exhaustionRisk = a.exhaustionRisk === true || a.overextendedImpulse === true;
+
   if (String(a.rejectionDirection || '').toUpperCase() === direction && Number(a.rejectionStrength || 0) >= 40) return 'rejeição';
+  if (exhaustionRisk || counterTrend) return null;
+  if (a.strongBreakout === true && String(a.breakoutDirection || '').toUpperCase() === direction) return 'rompimento';
   if (String(a.continuationDirection || '').toUpperCase() === direction && Number(a.continuationScore || 0) >= 50) return 'continuação';
   if (String(a.momentumDirection || '').toUpperCase() === direction && Number(a.momentumScore || 0) >= 40) return 'momentum';
   const power = Number(direction === 'BUY' ? a.buyPower : a.sellPower) || 0;
@@ -413,7 +467,8 @@ export function processSnapshot(snapshot = {}, state = {}) {
   }
 
   if (signal.state === 'CONFIRM' && ['BUY', 'SELL'].includes(signal.direction)
-      && (!stableDirection || signal.direction === stableDirection)) {
+      && (!stableDirection || signal.direction === stableDirection)
+      && decisionQuality(signal, signal.direction).qualifies) {
     cycle.locked = 'ENTER';
     cycle.direction = signal.direction;
     cycle.score = Math.max(score, Number(signal.score || 0), Number(cycle.possibleScore || 0));
