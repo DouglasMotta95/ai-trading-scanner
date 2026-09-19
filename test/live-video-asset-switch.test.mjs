@@ -85,3 +85,20 @@ test('focused asset reader exposes a forced rescan for retry without accepting s
   assert.match(focused, /schedulePublish\(0, true\)/);
   assert.match(focused, /protocol-rollback-visual-selection-lock/);
 });
+
+
+test('fresh visual focus blocks conflicting protocol-selected rollback even after hot reload', () => {
+  const market = read('src/background-market-session.js');
+  assert.match(market, /const freshVisualFocus = oldFresh/);
+  assert.match(market, /assetChanged && incomingProtocolOnly && freshVisualFocus/);
+  assert.match(market, /protocol-conflicts-fresh-visual-focus/);
+});
+
+test('asset readers use build markers so a new unpacked build can enter an already open CasaTrade tab', () => {
+  const visual = read('src/content/focused-asset-v2.js');
+  const protocol = read('src/content/focused-asset-protocol.js');
+  assert.match(visual, /FOCUS_READER_BUILD/);
+  assert.match(visual, /__ATS_FOCUSED_ASSET_TRACKER_V2_BUILD__/);
+  assert.match(protocol, /PROTOCOL_FOCUS_BUILD/);
+  assert.match(protocol, /__ATS_PROTOCOL_FOCUS_BUILD__/);
+});
