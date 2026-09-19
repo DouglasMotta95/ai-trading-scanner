@@ -168,6 +168,191 @@ async function injectModern(tabId) {
 
 function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 
+function normalizeExpiration(value = '') {
+  const s = clean(value).toLowerCase().replace(/\s+/g, '');
+  let m = s.match(/^(\d{1,5})(?:s|seg|segundo|segundos)$/); if (m) return `${Number(m[1])}s`;
+  m = s.match(/^(\d{1,4})(?:m|min|minuto|minutos)$/); if (m) return `${Number(m[1]) * 60}s`;
+  m = s.match(/^(\d{1,3}):(\d{2})$/); if (m) return `${Number(m[1]) * 60 + Number(m[2])}s`;
+  return null;
+}
+
+async function directExpirationProbe(tabId) {
+  if (!tabId || !chrome.scripting?.executeScript) return null;
+  try {
+    const rows = await chrome.scripting.executeScript({
+      target: { tabId, allFrames: true },
+      world: 'ISOLATED',
+      func: () => {
+        const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
+        const fold = value => clean(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+        const visible = el => {
+          if (!el || !(el instanceof Element)) return false;
+          const r = el.getBoundingClientRect();
+          const s = getComputedStyle(el);
+          return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden' && Number(s.opacity || 1) > 0;
+        };
+        const raw = el => clean(
+          el instanceof HTMLInputElement ? el.value
+            : el instanceof HTMLSelectElement ? (el.selectedOptions?.[0]?.textContent || el.value)
+              : (el.getAttribute?.('aria-valuetext') || el.getAttribute?.('data-value') || el.innerText || el.textContent || '')
+        );
+        const parse = value => {
+          const s = fold(value);
+          let m = s.match(/(?:expiracao|expiry|expiration|tempo de expiracao)[^0-9]{0,80}(\d{1,4})\s*(s|seg|segundo|segundos|m|min|minuto|minutos)\b/);
+          if (m) return /^(m|min|minuto|minutos)$/.test(m[2]) ? `${Number(m[1]) * 60}s` : `${Number(m[1])}s`;
+          m = s.match(/^(\d{1,4})\s*(s|seg|segundo|segundos|m|min|minuto|minutos)$/);
+          if (m) return /^(m|min|minuto|minutos)$/.test(m[2]) ? `${Number(m[1]) * 60}s` : `${Number(m[1])}s`;
+          m = s.match(/^(\d{1,3}):([0-5]\d)$/);
+          return m ? `${Number(m[1]) * 60 + Number(m[2])}s` : null;
+        };
+        const selected = el => {
+          const flags = fold([
+            el?.getAttribute?.('aria-selected'), el?.getAttribute?.('aria-current'),
+            el?.getAttribute?.('data-state'), el?.getAttribute?.('data-active'), el?.className
+          ].filter(Boolean).join(' '));
+          return /\b(?:true|active|selected|current|checked)\b/.test(flags);
+        };
+        const localText = (el, levels = 3) => {
+          const parts = [];
+          let node = el;
+          for (let i = 0; node && i <= levels; i += 1, node = node.parentElement) {
+            const t = clean(node.innerText || node.textContent || '');
+            if (t && t.length <= 220) parts.push(t);
+            parts.push(node.id || '', String(node.className || ''), node.getAttribute?.('data-testid') || '', node.getAttribute?.('aria-label') || '');
+          }
+          return fold(parts.join(' '));
+        };
+        const all = [...document.querySelectorAll('button,input,select,option,label,p,strong,small,span,div,[role="button"],[role="combobox"],[role="option"],[aria-selected],[data-value],[aria-valuetext]')]
+          .filter(visible)
+          .slice(0, 14000);
+        const labels = all.filter(el => {
+          const t = fold(raw(el));
+          return /^(?:expiracao|expiry|expiration|tempo de expiracao|expiration time)$/.test(t)
+            || /^(?:expiracao|expiry|expiration)\b/.test(t) && t.length <= 90;
+        });
+
+        const candidates = [];
+        for (const label of labels) {
+          const labelText = raw(label);
+          const direct = parse(labelText);
+          if (direct) candidates.push({ expiration: direct, score: 1000, evidence: 'direct-label' });
+          const lr = label.getBoundingClientRect();
+
+          let parent = label.parentElement;
+          for (let depth = 0; parent && depth < 5; depth += 1, parent = parent.parentElement) {
+            const text = clean(parent.innerText || parent.textContent || '');
+            if (!text || text.length > 260) continue;
+            const labeled = parse(text);
+            if (labeled) {
+              let score = 900 - depth * 40;
+              if (/\bvalor\b|\bamount\b|stake|investimento/i.test(text)) score += 80;
+              if (/periodo da vela|periodo de vela|candle period|timeframe|chart range|countdown|fechamento da vela/i.test(fold(text))) score -= 350;
+              candidates.push({ expiration: labeled, score, evidence: 'expiration-container' });
+            }
+          }
+
+          for (const el of all) {
+            if (el === label) continue;
+            const value = parse(raw(el));
+            if (!value) continue;
+            const r = el.getBoundingClientRect();
+            const centerY = Math.abs((r.top + r.bottom) / 2 - (lr.top + lr.bottom) / 2);
+            const horizontalGap = r.right < lr.left ? lr.left - r.right : r.left > lr.right ? r.left - lr.right : 0;
+            if (centerY > 145 || horizontalGap > 500) continue;
+            const context = localText(el, 2);
+            if (/periodo da vela|periodo de vela|candle period|candle interval|timeframe|chart range|chart period|countdown|contagem|fechamento da vela/.test(context)) continue;
+            const role = fold(el.getAttribute?.('role') || '');
+            let score = 650 - Math.min(220, centerY + horizontalGap / 3);
+            if (selected(el)) score += 180;
+            if (role === 'option' && !selected(el)) score -= 260;
+            if (/expiracao|expiry|expiration|duracao|duration/.test(context)) score += 160;
+            candidates.push({ expiration: value, score, evidence: selected(el) ? 'selected-near-expiration' : 'near-expiration' });
+          }
+        }
+
+        candidates.sort((a, b) => b.score - a.score);
+        const best = candidates[0] || null;
+        if (!best || best.score < 420) return null;
+        let host = '';
+        try { host = location.hostname || ''; } catch {}
+        return { ...best, host };
+      }
+    }).catch(() => []);
+
+    const candidates = (Array.isArray(rows) ? rows : [])
+      .map(row => ({ frameId: Number(row?.frameId ?? -1), ...(row?.result || {}) }))
+      .filter(row => normalizeExpiration(row.expiration))
+      .sort((a, b) => Number(b.score || 0) - Number(a.score || 0));
+    return candidates[0] || null;
+  } catch {
+    return null;
+  }
+}
+
+async function commitDirectExpiration(tabId, evidence = null) {
+  const expiration = normalizeExpiration(evidence?.expiration || '');
+  if (!expiration) return readScannerState();
+  return updateScannerState(state => {
+    if (Number(state.targetTabId || 0) !== Number(tabId)) return state;
+    const now = Date.now();
+    const previousObserved = state.platformControls?.observed || {};
+    const observed = {
+      ...previousObserved,
+      expiration,
+      source: 'background-direct-expiration-probe',
+      observedAt: {
+        ...(previousObserved.observedAt || {}),
+        expiration: now
+      },
+      confidence: {
+        ...(previousObserved.confidence || {}),
+        expiration: Math.max(145, Number(previousObserved.confidence?.expiration || 0))
+      },
+      expirationRecheckPendingAt: 0
+    };
+    const timeframe = clean(state.analysisTimeframe || state.timeframe).toUpperCase();
+    const ready = timeframe === 'M1' && expiration === '60s';
+    return {
+      ...state,
+      expiration,
+      targetExpiration: expiration,
+      platformControls: {
+        ...(state.platformControls || {}),
+        observed,
+        checkedAt: now,
+        expirationCheckedAt: now,
+        frameId: Number(evidence?.frameId ?? state.platformControls?.frameId ?? 0),
+        source: 'background-direct-expiration-probe',
+        aligned: ready,
+        liveAuthority: true
+      },
+      diagnostics: {
+        ...(state.diagnostics || {}),
+        expirationGuard: {
+          ...(state.diagnostics?.expirationGuard || {}),
+          required: '60s',
+          actual: expiration,
+          ready,
+          validForM1: ready,
+          reason: expiration === '60s'
+            ? 'Expiração real de 1 minuto confirmada diretamente na CasaTrade.'
+            : 'Ajuste a expiração da CasaTrade para 1 minuto.',
+          source: 'background-direct-expiration-probe',
+          evidence: clean(evidence?.evidence || ''),
+          at: now
+        },
+        platformTime: {
+          ...(state.diagnostics?.platformTime || {}),
+          expiration,
+          source: 'background-direct-expiration-probe',
+          ready,
+          at: now
+        }
+      }
+    };
+  });
+}
+
 async function forceLiveControlRead(tabId) {
   if (!tabId || !chrome.scripting?.executeScript) return false;
   try {
@@ -209,7 +394,9 @@ async function refreshTargetTab() {
   const injected = await injectModern(tabId);
   if (!injected) return { ok: false, error: 'runtime_injection_failed', state: await readScannerState() };
   await forceLiveControlRead(tabId);
-  return { ok: true, tabId, state: await readScannerState() };
+  const directExpiration = await directExpirationProbe(tabId);
+  if (directExpiration) await commitDirectExpiration(tabId, directExpiration);
+  return { ok: true, tabId, directExpiration: directExpiration || null, state: await readScannerState() };
 }
 
 async function connectActiveTab() {
@@ -319,9 +506,12 @@ async function connectActiveTab() {
     }));
     return { ok: false, error: 'runtime_injection_failed', platform: { id: platform.id, name: platform.name }, tabId: tab.id, state: failed };
   }
+  await forceLiveControlRead(tab.id);
+  const directExpiration = await directExpirationProbe(tab.id);
+  if (directExpiration) await commitDirectExpiration(tab.id, directExpiration);
   const connectedAt = Number(next.diagnostics?.target?.connectedAt || Date.now());
   scheduleConnectionTimeout(tab.id, connectedAt);
-  return { ok: true, platform: { id: platform.id, name: platform.name }, tabId: tab.id, state: await readScannerState() || next };
+  return { ok: true, platform: { id: platform.id, name: platform.name }, tabId: tab.id, directExpiration: directExpiration || null, state: await readScannerState() || next };
 }
 
 async function activate(key = '') {
