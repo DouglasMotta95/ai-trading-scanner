@@ -11,10 +11,6 @@
   if (typeof sendMessage !== 'function') return;
 
   const quotes = new Set(['USDT','USDC','USD','EUR','GBP','JPY','AUD','CAD','CHF','NZD','BRL','BTC','ETH']);
-  const aliases = new Map([
-    ['TRON', 'TRX/USD'], ['TRX', 'TRX/USD'], ['EURO', 'EUR/USD'], ['EUR', 'EUR/USD'],
-    ['BITCOIN', 'BTC/USD'], ['BTC', 'BTC/USD'], ['ETHEREUM', 'ETH/USD'], ['ETH', 'ETH/USD']
-  ]);
   const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
   function normAsset(value = '') {
     const raw = clean(value).toUpperCase();
@@ -24,9 +20,10 @@
     if (direct && quotes.has(direct[2])) return `${direct[1]}/${direct[2]}${otc ? ' (OTC)' : ''}`;
     const compact = raw.replace(/\(\s*OTC\s*\)|\bOTC\b/gi, '').replace(/\s+/g, '').match(/^([A-Z0-9]{2,20})(USDT|USDC|USD|EUR|GBP|JPY|AUD|CAD|CHF|NZD|BRL|BTC|ETH)$/);
     if (compact) return `${compact[1]}/${compact[2]}${otc ? ' (OTC)' : ''}`;
-    const bare = raw.replace(/\(\s*OTC\s*\)|\bOTC\b/gi, '').trim();
-    const alias = aliases.get(bare);
-    return alias ? `${alias}${otc ? ' (OTC)' : ''}` : '';
+    // Protocol/network focus must carry a real market identity. Bare labels
+    // such as "EURO", "BTC" or an account currency are ambiguous and previously
+    // allowed unrelated UI/network state to overwrite the visible chart asset.
+    return '';
   }
   const identity = value => normAsset(value);
   const same = (a, b) => !!identity(a) && identity(a) === identity(b);
