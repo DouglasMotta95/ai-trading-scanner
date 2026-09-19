@@ -83,7 +83,7 @@
       write();
       return;
     }
-    if (!expirationDiagFlushTimer) expirationDiagFlushTimer = setTimeout(write, 250);
+    if (!expirationDiagFlushTimer) expirationDiagFlushTimer = setTimeout(write, 750);
   }
 
   async function sendControlsObserved(snapshot = {}) {
