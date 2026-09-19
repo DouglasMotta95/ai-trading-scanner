@@ -95,26 +95,27 @@ test('expiration freshness belongs to expiration itself, never to unrelated cont
   assert.doesNotMatch(app.slice(app.indexOf('function entryBlockReason'), app.indexOf('function decisionModel')), /targetExpiration \|\| state\.expiration/);
 });
 
-test('missing expiration never instructs user to change to 1 minute before a real value is read', () => {
+test('missing expiration stays pending and only a confirmed wrong value asks for 1 minute', () => {
   const app = read('src/sidepanel/app-v2.js');
   const block = app.slice(app.indexOf('function entryBlockReason'), app.indexOf('function gateKind'));
-  assert.match(block, /LENDO EXPIRAÇÃO DA CASATRADE/);
-  assert.match(block, /NÃO FOI POSSÍVEL LER A EXPIRAÇÃO/);
-  assert.match(block, /if \(expiration\.value !== '60s'\) return/);
+  assert.match(block, /EXPIRAÇÃO PENDENTE/);
+  assert.match(block, /if \(expiration\.value !== '60s'\) return 'AJUSTE A EXPIRAÇÃO DA CASATRADE PARA 1 MINUTO'/);
+  const shell = read('src/sidepanel/ui-shell-v2.js');
+  assert.match(shell, /não foi possível confirmar o valor real/);
   const probe = read('src/content/casatrade-expiration-probe.js');
-  assert.match(probe, /linkedExpiration/);
+  assert.match(probe, /expirationControlByLabel/);
   assert.match(probe, /globalThis\.__ATS_SEND_MESSAGE__/);
   assert.match(probe, /chrome\.runtime\.sendMessage/);
 });
 
-test('countdown UI labels estimates and clamps rapid drops to one displayed second', () => {
+test('countdown UI shows only the latest exact CasaTrade second and never estimates locally', () => {
   const app = read('src/sidepanel/app-v2.js');
   assert.match(app, /function smoothedRemaining/);
-  assert.match(app, /elapsed < 1500 && next < countdownUi\.value - 1/);
-  assert.match(app, /next = countdownUi\.value - 1/);
-  assert.match(app, /exact \? `\$\{remaining\}s` : `~\$\{remaining\}s`/);
+  assert.match(app, /if \(!exactClockReady\(state\)\) return null/);
+  assert.match(app, /return Math\.max\(0, Math\.round\(raw\)\)/);
   assert.match(app, /EXATO • CASATRADE/);
-  assert.match(app, /~ ESTIMADO/);
+  assert.doesNotMatch(app, /~ ESTIMADO/);
+  assert.doesNotMatch(app, /COUNTDOWN ESTIMADO/);
 });
 
 test('connection status is not duplicated in the header', () => {
@@ -210,6 +211,6 @@ test('data provenance, retry timeout, event log and expected asset preference ar
   assert.match(app, /Você trocou para/);
   assert.match(app, /assetSwitchLog/);
   assert.match(app, /expirationTimedOut/);
-  assert.match(shell, /expirationReadFailed/);
+  assert.match(shell, /expirationPending/);
   assert.match(shell, /ATUALIZANDO PARA/);
 });
