@@ -179,7 +179,7 @@ export function assessHighConfidence({
   const closed = currentBucket == null
     ? allRows.slice(0,-1)
     : allRows.filter(row => Math.floor(row.time / 60000) * 60000 < currentBucket);
-  const m5 = aggregate(closed, 300000).filter(row => row.samples >= 4);
+  const m5 = aggregate(closed, 300000).filter(row => row.samples >= 5);
   const analytics = signal.analytics || {};
   const regime = clean(signal.regime?.type).toLowerCase() || 'unknown';
   const lastPrice = num(currentCandle?.close) ?? allRows.at(-1)?.close ?? null;
