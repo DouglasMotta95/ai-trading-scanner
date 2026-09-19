@@ -558,6 +558,9 @@ export function processSnapshot(snapshot = {}, state = {}) {
   const stableAPlusCandidateAllowed = stableDirection
     ? observeStableAPlusCandidate(cycle, stableAPlus.candidateAllowed === true, at)
     : false;
+  const stablePossibleSignal = stableDirection
+    ? possibleSignal(signal, windows, stableDirection, score, cycle, stableAPlus)
+    : null;
 
   if (cycle.locked === 'ENTER') {
     const lockedAPlus = cycle.aPlus || stableAPlus;
@@ -579,7 +582,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
 
   if (secondsRemaining > windows.decision) {
     const nextSignal = stableDirection && stableAPlusCandidateAllowed
-      ? possibleSignal(signal, windows, stableDirection, score, cycle, stableAPlus)
+      ? stablePossibleSignal
       : stableDirection
         ? aPlusWaitingSignal(signal, windows, stableAPlus, 'BUILDING')
         : withAPlus(buildingSignal(signal, windows), stableAPlus);
@@ -650,7 +653,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
 
   cycles.set(key, cycle);
   const nextSignal = stableDirection && stableAPlusCandidateAllowed
-    ? possibleSignal(signal, windows, stableDirection, score, cycle, stableAPlus)
+    ? stablePossibleSignal
     : stableDirection
       ? aPlusWaitingSignal(signal, windows, stableAPlus, 'FINAL')
       : withAPlus(decidingSignal(signal, windows), stableAPlus);
