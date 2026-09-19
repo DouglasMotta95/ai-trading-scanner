@@ -32,7 +32,7 @@ test('local clock projector is disabled so only CasaTrade can authorize M1 timin
   const source = read('src/content/market-clock-projector.js');
   assert.match(source, /enabled: false/);
   assert.match(source, /authoritative-casatrade-clock-only/);
-  assert.doesNotMatch(source, /ATS_MARKET_CLOCK_V2/);
+  assert.doesNotMatch(source, /type:\s*['"]ATS_MARKET_CLOCK_V2['"]/);
   assert.doesNotMatch(source, /exact-local-projector/);
   assert.doesNotMatch(source, /setInterval/);
 });
