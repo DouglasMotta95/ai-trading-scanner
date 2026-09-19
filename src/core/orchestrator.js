@@ -10,6 +10,13 @@ import { ANALYST_THRESHOLDS } from './analysis.js';
 // one bounded decision for each target candle: ENTER BUY, ENTER SELL or WAIT.
 const CONFIRM_HITS = 2;
 const DECISION_HIT_GAP_MS = 2500;
+const POSSIBLE_CONFIRM_HITS = 2;
+const POSSIBLE_HIT_GAP_MS = 3500;
+const OPPOSITE_SWITCH_HITS = 3;
+const OPPOSITE_MIN_HOLD_MS = 4000;
+const OPPOSITE_SCORE_MARGIN = 8;
+const OPPOSITE_STALE_MS = 5000;
+const FINAL_CANDIDATE_MIN_AGE_MS = 3000;
 const cycles = new Map();
 const wrapperCompletedDecisions = new Map();
 const WRAPPER_ROW_PREFIX = 'wrapper-cycle:';
@@ -47,10 +54,19 @@ function decisionWindows(snapshot = {}, signal = {}) {
 function cycleKey(snapshot = {}, signal = {}) {
   const asset = clean(snapshot.asset || 'unknown');
   const timeframe = clean(snapshot.analysisTimeframe || snapshot.timeframe || signal.timeframe || 'M1').toUpperCase();
+  const tfMs = timeframeMs(timeframe);
+  let currentAt = num(signal.currentCandle?.time ?? signal.currentCandle?.timestamp ?? snapshot.currentCandle?.time ?? snapshot.currentCandle?.timestamp);
+  if (currentAt != null && currentAt > 0 && currentAt < 1e12) currentAt *= 1000;
+  if (currentAt != null) {
+    const bucket = Math.floor(currentAt / tfMs) * tfMs;
+    return `${asset}|${timeframe}|${bucket + tfMs}`;
+  }
   const sampleAt = num(snapshot.serverTime) ?? Date.now();
   const seconds = num(signal.secondsRemaining) ?? num(snapshot.secondsRemaining) ?? 0;
   const rawTarget = num(signal.targetStart) ?? (sampleAt + Math.max(0, seconds) * 1000);
-  const targetKey = Math.round(rawTarget / 5000) * 5000;
+  // Fallback must identify the target CANDLE, not a 5-second slice. Otherwise
+  // countdown jitter creates a new cycle and erases candidate hysteresis.
+  const targetKey = Math.round(rawTarget / tfMs) * tfMs;
   return `${asset}|${timeframe}|${targetKey}`;
 }
 
@@ -76,30 +92,172 @@ function decisionQuality(signal = {}, direction = null) {
   const strongCandle = currentStrength >= ANALYST_THRESHOLDS.candleStrength;
   const rejection = directionalRejection && rejectionStrength >= ANALYST_THRESHOLDS.rejectionStrength;
   const regime = String(signal.regime?.type || '').toLowerCase();
+  const trendAligned = regime === 'uptrend'
+    ? direction === 'BUY'
+    : regime === 'downtrend'
+      ? direction === 'SELL'
+      : false;
+  const counterTrend = regime === 'uptrend'
+    ? direction === 'SELL'
+    : regime === 'downtrend'
+      ? direction === 'BUY'
+      : false;
+  const trendCompatible = regime === 'unknown' || trendAligned;
 
-  // Setup-specific gates increase useful frequency without lowering the approved
-  // 44/58/62/50 analyst thresholds. A continuation no longer has to look like a
-  // rejection and a rejection no longer has to look like momentum.
+  const strongBreakout = analytics.strongBreakout === true
+    && String(analytics.breakoutDirection || '').toUpperCase() === direction;
+  const breakoutMargin = Number(analytics.breakoutDistanceRatio || 0);
+  const rangeMultiple = Number(analytics.currentRangeMultiple || 0);
+  const exhaustionRisk = analytics.exhaustionRisk === true || analytics.overextendedImpulse === true;
+
+  // A large final impulse can be exhaustion, not continuation. Continuation
+  // entries are blocked when the current candle is stretched, unless a genuine
+  // rejection setup is present. This prevents chasing the just-finished candle.
+  if (exhaustionRisk && !rejection) {
+    return { qualifies: false, setup: null, blocker: 'exhaustion-risk' };
+  }
+
   const setups = regime === 'range'
     ? [
         { name: 'rejeição no range', ok: power >= 52 && rejection },
-        { name: 'continuação confirmada no range', ok: power >= 55 && score >= 64 && continuation && momentum }
+        {
+          name: 'rompimento confirmado no range',
+          ok: power >= 55
+            && score >= 64
+            && continuation
+            && momentum
+            && strongBreakout
+            && breakoutMargin >= .18
+            && rangeMultiple > 0
+            && rangeMultiple <= 1.45
+        }
       ]
     : [
         { name: 'rejeição', ok: power >= 48 && rejection },
-        { name: 'continuação', ok: power >= 50 && continuation },
-        { name: 'momentum', ok: power >= 50 && strongCandle && momentum },
-        { name: 'confluência forte', ok: power >= 48 && score >= 68 && momentum && (strongCandle || continuation) }
+        {
+          name: 'continuação com tendência',
+          ok: !counterTrend && trendCompatible && power >= 50 && continuation
+        },
+        {
+          name: 'momentum com tendência',
+          ok: !counterTrend && trendCompatible && power >= 50 && strongCandle && momentum
+        },
+        {
+          name: 'rompimento com tendência',
+          ok: !counterTrend && trendCompatible && power >= 50 && strongBreakout && breakoutMargin >= .18
+        },
+        {
+          name: 'confluência forte',
+          ok: !counterTrend && trendCompatible && power >= 48 && score >= 68 && momentum && (strongCandle || continuation || strongBreakout)
+        }
       ];
+
   const matched = setups.find(item => item.ok) || null;
-  return { qualifies: !!matched, setup: matched?.name || null };
+  return { qualifies: !!matched, setup: matched?.name || null, blocker: matched ? null : counterTrend ? 'counter-trend' : null };
 }
 
-function possibleQuality(signal = {}, direction = null, score = 0) {
-  if (!direction || Number(score) < ANALYST_THRESHOLDS.possibleScore) return false;
-  const stableDirection = clean(signal.stability?.possibleDirection).toUpperCase();
-  const publishedDirection = clean(signal.direction).toUpperCase();
-  return stableDirection === direction || (signal.state === 'WATCH' && publishedDirection === direction);
+function inferSetup(signal = {}, direction = null) {
+  if (!direction) return null;
+  const a = signal.analytics || {};
+  const regime = String(signal.regime?.type || '').toLowerCase();
+  const counterTrend = regime === 'uptrend'
+    ? direction === 'SELL'
+    : regime === 'downtrend'
+      ? direction === 'BUY'
+      : false;
+  const exhaustionRisk = a.exhaustionRisk === true || a.overextendedImpulse === true;
+
+  if (String(a.rejectionDirection || '').toUpperCase() === direction && Number(a.rejectionStrength || 0) >= 40) return 'rejeição';
+  if (exhaustionRisk || counterTrend) return null;
+  if (a.strongBreakout === true && String(a.breakoutDirection || '').toUpperCase() === direction) return 'rompimento';
+  if (String(a.continuationDirection || '').toUpperCase() === direction && Number(a.continuationScore || 0) >= 50) return 'continuação';
+  if (String(a.momentumDirection || '').toUpperCase() === direction && Number(a.momentumScore || 0) >= 40) return 'momentum';
+  const power = Number(direction === 'BUY' ? a.buyPower : a.sellPower) || 0;
+  if (power >= 50 && Number(a.currentStrength || 0) >= 50) return 'força direcional';
+  return null;
+}
+
+function observeStablePossible(cycle, signal = {}, at = Date.now()) {
+  const rawDirection = directionOf(signal);
+  const rawScore = Number(signal.analysisScore ?? signal.score ?? 0);
+  const qualifies = ['BUY','SELL'].includes(rawDirection) && rawScore >= ANALYST_THRESHOLDS.possibleScore;
+
+  if (!cycle.possibleDirection) {
+    if (!qualifies) {
+      cycle.candidateDirection = null;
+      cycle.candidateHits = 0;
+      cycle.lastCandidateAt = null;
+      return null;
+    }
+    const same = cycle.candidateDirection === rawDirection
+      && cycle.lastCandidateAt != null
+      && at - Number(cycle.lastCandidateAt) <= POSSIBLE_HIT_GAP_MS;
+    cycle.candidateDirection = rawDirection;
+    cycle.candidateHits = same ? Number(cycle.candidateHits || 0) + 1 : 1;
+    cycle.lastCandidateAt = at;
+    if (cycle.candidateHits >= POSSIBLE_CONFIRM_HITS) {
+      cycle.possibleDirection = rawDirection;
+      cycle.possibleScore = rawScore;
+      cycle.possibleSince = at;
+      cycle.lastPossibleStrongAt = at;
+      cycle.setup = inferSetup(signal, rawDirection) || cycle.setup;
+    }
+    return cycle.possibleDirection;
+  }
+
+  if (qualifies && rawDirection === cycle.possibleDirection) {
+    cycle.possibleScore = rawScore;
+    cycle.lastPossibleStrongAt = at;
+    cycle.setup = inferSetup(signal, rawDirection) || cycle.setup;
+    cycle.oppositeDirection = null;
+    cycle.oppositeHits = 0;
+    cycle.oppositeSince = null;
+    cycle.lastOppositeAt = null;
+    return cycle.possibleDirection;
+  }
+
+  if (qualifies && rawDirection !== cycle.possibleDirection) {
+    const sameOpposite = cycle.oppositeDirection === rawDirection
+      && cycle.lastOppositeAt != null
+      && at - Number(cycle.lastOppositeAt) <= POSSIBLE_HIT_GAP_MS;
+    cycle.oppositeDirection = rawDirection;
+    cycle.oppositeHits = sameOpposite ? Number(cycle.oppositeHits || 0) + 1 : 1;
+    cycle.oppositeSince = sameOpposite && Number(cycle.oppositeSince || 0) > 0
+      ? Number(cycle.oppositeSince)
+      : at;
+    cycle.lastOppositeAt = at;
+
+    const currentStaleFor = at - Number(cycle.lastPossibleStrongAt || cycle.possibleSince || at);
+    const oppositeHeldFor = at - Number(cycle.oppositeSince || at);
+    const strongerByMargin = rawScore >= Math.max(ANALYST_THRESHOLDS.confirmScore, Number(cycle.possibleScore || 0) + OPPOSITE_SCORE_MARGIN);
+    const replacesStaleCandidate = currentStaleFor >= OPPOSITE_STALE_MS && rawScore >= ANALYST_THRESHOLDS.confirmScore;
+    if (cycle.oppositeHits >= OPPOSITE_SWITCH_HITS
+        && oppositeHeldFor >= OPPOSITE_MIN_HOLD_MS
+        && (strongerByMargin || replacesStaleCandidate)) {
+      const from = cycle.possibleDirection;
+      cycle.possibleDirection = rawDirection;
+      cycle.possibleScore = rawScore;
+      cycle.possibleSince = at;
+      cycle.lastPossibleStrongAt = at;
+      cycle.setup = inferSetup(signal, rawDirection);
+      cycle.directionTransition = { from, to: rawDirection, at };
+      cycle.candidateDirection = rawDirection;
+      cycle.candidateHits = POSSIBLE_CONFIRM_HITS;
+      cycle.lastCandidateAt = at;
+      cycle.oppositeDirection = null;
+      cycle.oppositeHits = 0;
+      cycle.oppositeSince = null;
+      cycle.lastOppositeAt = null;
+      cycle.confirmDirection = null;
+      cycle.confirmHits = 0;
+      cycle.lastHitAt = null;
+    }
+  }
+
+  // Once published, a POSSÍVEL direction is sticky for the rest of this candle.
+  // Weak/null ticks do not erase it. Only a sustained, materially stronger
+  // opposite direction may replace it.
+  return cycle.possibleDirection;
 }
 
 function seedCycle(key, snapshot, signal, state = {}) {
@@ -108,7 +266,11 @@ function seedCycle(key, snapshot, signal, state = {}) {
   if (!cycle && stored?.key === key) cycle = { ...stored };
   if (!cycle) {
     cycle = {
-      key, targetStart: targetStartOf(snapshot, signal), candidateDirection: null,
+      key, targetStart: targetStartOf(snapshot, signal),
+      candidateDirection: null, candidateHits: 0, lastCandidateAt: null,
+      possibleDirection: null, possibleScore: 0, possibleSince: null, lastPossibleStrongAt: null,
+      oppositeDirection: null, oppositeHits: 0, oppositeSince: null, lastOppositeAt: null,
+      directionTransition: null,
       confirmHits: 0, lastHitAt: null, locked: null, direction: null, score: 0,
       setup: null, reason: null, decidedAt: null, resolved: false
     };
@@ -156,16 +318,27 @@ function waitSignal(signal, reason) {
   };
 }
 
-function possibleSignal(signal, windows, direction, score) {
+function possibleSignal(signal, windows, direction, score, cycle = {}) {
   const seconds = Math.max(0, Math.ceil(Number(signal.secondsRemaining || 0)));
   const side = direction === 'BUY' ? 'COMPRA' : 'VENDA';
-  const waiting = clean(signal.waitingFor?.text || signal.reason || 'aguardando confirmação final do padrão');
+  const rawDirection = directionOf(signal);
+  const waiting = rawDirection === direction
+    ? clean(signal.waitingFor?.text || signal.reason || 'aguardando confirmação final do padrão')
+    : `mantendo o padrão ${side.toLowerCase()} já confirmado nesta vela enquanto a leitura instantânea oscila`;
   const reason = `POSSÍVEL ${side} • ${seconds}s restantes — ${waiting}`;
+  const transition = cycle.directionTransition && Date.now() - Number(cycle.directionTransition.at || 0) < 3500
+    ? { ...cycle.directionTransition }
+    : null;
+  const candidateScore = Number(cycle.possibleScore || score || 0);
   return {
     ...signal,
     state: 'WATCH', direction, diagnosis: direction,
     uiState: direction === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL',
-    provisional: true, phase: 'POSSIBLE', score, analysisScore: score,
+    provisional: true, phase: 'POSSIBLE',
+    score: candidateScore,
+    analysisScore: candidateScore,
+    setup: cycle.setup || signal.setup || null,
+    directionTransition: transition,
     reason, hint: reason, decisionWindow: windows
   };
 }
@@ -282,8 +455,8 @@ export function processSnapshot(snapshot = {}, state = {}) {
   const cycle = seedCycle(key, snapshot, signal, state);
   const at = num(snapshot.serverTime) ?? Date.now();
   const score = Number(signal.analysisScore ?? signal.score ?? 0);
-  const direction = directionOf(signal);
-  const canShowPossible = possibleQuality(signal, direction, score);
+  const rawDirection = directionOf(signal);
+  const stableDirection = observeStablePossible(cycle, signal, at);
   const recovered = resolveWrapperDecision(snapshot, result, key, state);
   const rolledLastConfirmed = newerDecision(newerDecision(result.lastConfirmed, latestWrapperCompleted(snapshot)), recovered);
 
@@ -294,56 +467,69 @@ export function processSnapshot(snapshot = {}, state = {}) {
     return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: waitSignal(signal, cycle.reason || 'AGUARDAR — padrão não confirmou a tempo.'), decisionCycle: { ...cycle } };
   }
 
-  if (secondsRemaining > windows.pre) {
-    const nextSignal = signal.state === 'WATCH' || signal.provisional ? buildingSignal(signal, windows) : signal;
-    return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: nextSignal, decisionCycle: { ...cycle } };
-  }
+  // Once a candidate has been published in this candle, never fall back to
+  // AGUARDAR/BUILDING just because one live tick weakened. Keep the candidate
+  // visible until final confirmation, a strong opposite replacement, or the
+  // next candle/asset (which creates a new cycle).
   if (secondsRemaining > windows.decision) {
-    const nextSignal = canShowPossible ? possibleSignal(signal, windows, direction, score) : signal;
+    const nextSignal = stableDirection
+      ? possibleSignal(signal, windows, stableDirection, score, cycle)
+      : buildingSignal(signal, windows);
+    cycles.set(key, cycle);
     return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: nextSignal, decisionCycle: { ...cycle } };
   }
 
-  if (signal.state === 'CONFIRM' && ['BUY', 'SELL'].includes(signal.direction)) {
+  if (signal.state === 'CONFIRM' && ['BUY', 'SELL'].includes(signal.direction)
+      && (!stableDirection || signal.direction === stableDirection)
+      && decisionQuality(signal, signal.direction).qualifies) {
     cycle.locked = 'ENTER';
     cycle.direction = signal.direction;
-    cycle.score = Math.max(score, Number(signal.score || 0));
-    cycle.setup = signal.setup || null;
+    cycle.score = Math.max(score, Number(signal.score || 0), Number(cycle.possibleScore || 0));
+    cycle.setup = signal.setup || cycle.setup || inferSetup(signal, cycle.direction);
     cycle.reason = signal.reason;
     cycle.decidedAt = at;
     cycles.set(key, cycle);
     const trace = appendTrace(state, { key, targetStart: cycle.targetStart, decision: 'ENTER', direction: cycle.direction, score: cycle.score, setup: cycle.setup, reason: cycle.reason, decidedAt: at });
-    return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, decisionCycle: { ...cycle }, decisionTrace: trace };
+    return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: enterSignal(signal, cycle, cycle.direction, cycle.score, cycle.reason), decisionCycle: { ...cycle }, decisionTrace: trace };
   }
 
-  const quality = decisionQuality(signal, direction);
-  const stable = observeDecision(cycle, direction, quality.qualifies, at);
-  if (quality.qualifies) cycle.setup = quality.setup;
-  if (stable) {
-    cycle.locked = 'ENTER';
-    cycle.direction = direction;
-    cycle.score = score;
-    cycle.reason = `ENTRAR NA PRÓXIMA VELA: ${direction === 'BUY' ? 'COMPRA' : 'VENDA'} — ${cycle.setup || 'setup'} confirmado, score ${Math.round(score)}/100.`;
-    cycle.decidedAt = at;
-    cycles.set(key, cycle);
-    const trace = appendTrace(state, { key, targetStart: cycle.targetStart, decision: 'ENTER', direction, score, setup: cycle.setup, reason: cycle.reason, decidedAt: at });
-    return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: enterSignal(signal, cycle, direction, score, cycle.reason), decisionCycle: { ...cycle }, decisionTrace: trace };
+  if (stableDirection) {
+    const quality = decisionQuality(signal, stableDirection);
+    const candidateAge = at - Number(cycle.possibleSince || at);
+    const stableFinal = observeDecision(
+      cycle,
+      stableDirection,
+      quality.qualifies && candidateAge >= FINAL_CANDIDATE_MIN_AGE_MS,
+      at
+    );
+    if (quality.qualifies) cycle.setup = quality.setup || cycle.setup || inferSetup(signal, stableDirection);
+    if (stableFinal) {
+      cycle.locked = 'ENTER';
+      cycle.direction = stableDirection;
+      cycle.score = Math.max(score, Number(cycle.possibleScore || 0));
+      cycle.reason = `ENTRAR NA PRÓXIMA VELA: ${stableDirection === 'BUY' ? 'COMPRA' : 'VENDA'} — ${cycle.setup || 'setup'} confirmado, score ${Math.round(cycle.score)}/100.`;
+      cycle.decidedAt = at;
+      cycles.set(key, cycle);
+      const trace = appendTrace(state, { key, targetStart: cycle.targetStart, decision: 'ENTER', direction: stableDirection, score: cycle.score, setup: cycle.setup, reason: cycle.reason, decidedAt: at });
+      return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: enterSignal(signal, cycle, stableDirection, cycle.score, cycle.reason), decisionCycle: { ...cycle }, decisionTrace: trace };
+    }
   }
 
   if (secondsRemaining <= windows.skip) {
     const blocker = clean(signal.waitingFor?.text || signal.reason || 'qualidade insuficiente para a próxima vela');
     cycle.locked = 'WAIT';
     cycle.direction = null;
-    cycle.score = score;
+    cycle.score = Math.max(score, Number(cycle.possibleScore || 0));
     cycle.reason = `AGUARDAR — ${blocker}`;
     cycle.decidedAt = at;
     cycles.set(key, cycle);
-    const trace = appendTrace(state, { key, targetStart: cycle.targetStart, decision: 'WAIT', direction: null, score, setup: cycle.setup, reason: cycle.reason, decidedAt: at });
+    const trace = appendTrace(state, { key, targetStart: cycle.targetStart, decision: 'WAIT', direction: null, score: cycle.score, setup: cycle.setup, reason: cycle.reason, decidedAt: at });
     return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: waitSignal(signal, cycle.reason), decisionCycle: { ...cycle }, decisionTrace: trace };
   }
 
   cycles.set(key, cycle);
-  const nextSignal = canShowPossible
-    ? possibleSignal(signal, windows, direction, score)
+  const nextSignal = stableDirection
+    ? possibleSignal(signal, windows, stableDirection, score, cycle)
     : decidingSignal(signal, windows);
   return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: nextSignal, decisionCycle: { ...cycle } };
 }

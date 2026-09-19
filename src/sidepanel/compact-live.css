@@ -13,7 +13,7 @@ body{min-width:280px}
 .compact-sync b{font-size:9px}
 .compact-sync span{font-size:8px}
 
-.compact-market{grid-template-columns:minmax(110px,1.45fr) repeat(3,minmax(58px,.7fr));gap:5px}
+.compact-market{grid-template-columns:minmax(120px,1.55fr) repeat(2,minmax(70px,.75fr));gap:5px}
 .compact-market>div{padding:7px 8px;border-radius:10px;gap:2px}
 .compact-market span{font-size:7px}
 .compact-market b{font-size:11px}
@@ -161,3 +161,6 @@ body{min-width:280px}
   .expected-asset-setting{display:grid!important;grid-template-columns:1fr!important}
   .expected-asset-setting input{max-width:none;width:100%;box-sizing:border-box}
 }
+
+.simple-clock-details{grid-template-columns:1fr}
+.simple-market>div:last-child{text-align:center}

@@ -109,7 +109,9 @@ test('explicit asset selection remains authoritative until the next explicit use
   assert.match(market, /const selectionLockActive = !!selectionLock\?\.asset/);
   assert.match(market, /The lock changes only on the next explicit user selection/);
   assert.doesNotMatch(market, /selectionLockFresh[\s\S]{0,160}< 8000/);
-  assert.match(market, /assetChanged && !userSelected && contradictsSelectionLock/);
+  assert.match(market, /const chartHeaderAuthoritative/);
+  assert.match(market, /const authoritativeVisual = userSelected \|\| chartHeaderAuthoritative/);
+  assert.match(market, /assetChanged && !authoritativeVisual && contradictsSelectionLock/);
 });
 
 test('alias bridge cannot passively resurrect EURO or another stale alias after a switch', () => {
@@ -118,4 +120,16 @@ test('alias bridge cannot passively resurrect EURO or another stale alias after 
   assert.match(alias, /if \(!asset \|\| Date\.now\(\) - Number\(recentInteraction\.at \|\| 0\) >= 3500\) return/);
   assert.match(alias, /interaction-only-v2/);
   assert.doesNotMatch(alias, /source: interacted \? 'user-selected-alias' : isSelected/);
+});
+
+
+test('video 14872: visible chart title outranks stale open-market tabs such as NZD while USOUSD is active', () => {
+  const focused = read('src/content/focused-asset-v2.js');
+  const market = read('src/background-market-session.js');
+  assert.match(focused, /function chartHeaderWinner\(chart\)/);
+  assert.match(focused, /source: 'visible-chart-header'/);
+  assert.match(focused, /tablist\|asset-tab\|instrument-tab/);
+  assert.match(focused, /if \(header\?\.asset\) return \{ \.\.\.header, chartFound: true \}/);
+  assert.match(market, /chartHeaderAuthoritative/);
+  assert.match(market, /visualSelectionLock: authoritativeVisual/);
 });

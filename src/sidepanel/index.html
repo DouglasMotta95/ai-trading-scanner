@@ -37,11 +37,10 @@
       <button id="retryLiveRead" class="sync-retry" type="button" hidden>TENTAR NOVAMENTE</button>
     </section>
 
-    <section class="market-hero professional-hero compact-market">
+    <section class="market-hero professional-hero compact-market simple-market">
       <div><span>ATIVO <small id="assetSource" class="source-state stale">STALE</small></span><b id="asset">—</b></div>
       <div><span>TF</span><b id="timeframe">—</b></div>
-      <div><span>EXPIRAÇÃO <small id="expirationSource" class="source-state stale">STALE</small></span><b id="heroExpiration">—</b></div>
-      <div><span>VELA <small id="countdownSource" class="source-state stale">STALE</small></span><b id="heroCountdown">—</b></div>
+      <div><span>VELA</span><b id="heroCountdown">—</b></div>
     </section>
     <p id="expectedAssetWarning" class="expected-asset-warning" hidden></p>
 
@@ -61,13 +60,12 @@
         <button id="prepareBuy" class="trade-choice buy-choice" disabled>🟢 COMPRA</button>
         <button id="prepareSell" class="trade-choice sell-choice" disabled>🔴 VENDA</button>
       </div>
-      <p id="tradeActionStatus" class="manual-note">A entrada libera somente após confirmação técnica + M1 + expiração de 1 minuto.</p>
+      <p id="tradeActionStatus" class="manual-note">Pré-sinal primeiro; entrada final quando o padrão confirmar perto de 10s.</p>
 
       <div class="decision-compact-grid">
         <div class="clock-stage compact-clock-stage">
           <div class="clock-ring compact-clock"><span class="clock-sweep" aria-hidden="true"></span><b id="secondsRemaining">—</b><span>SEG</span></div>
-          <div class="clock-details compact-clock-details">
-            <span>Expiração <b id="expiration">—</b></span>
+          <div class="clock-details compact-clock-details simple-clock-details">
             <span>Setup <b id="setupType">—</b></span>
           </div>
         </div>
@@ -80,7 +78,7 @@
           <strong id="triggerValue">AGUARDANDO DADOS</strong>
           <p id="triggerHint">Preço, estrutura, momentum e rejeição serão consolidados aqui.</p>
           <div class="analysis-status-meta">
-            <span>TEMPO CASATRADE <b id="timeSyncStatus">AGUARDANDO</b></span>
+            <span>ENTRADA FINAL <b>~10s</b></span>
           </div>
           <small id="confidenceNote">Score técnico interno de 0 a 100; não representa garantia de resultado.</small>
         </div>
@@ -127,7 +125,7 @@
           <div class="section-head"><div><span class="eyebrow">PERFIL FIXO</span><h2>Scanner M1</h2></div><span class="badge ok">SIMPLES</span></div>
           <div class="fixed-strategy">
             <span><b>M1</b><small>timeframe</small></span>
-            <span><b>1 min</b><small>expiração</small></span>
+            <span><b>~10 s</b><small>entrada final</small></span>
             <span><b>Normal</b><small>modo</small></span>
             <span><b>3 s</b><small>confirmação</small></span>
           </div>
@@ -136,7 +134,7 @@
           <label class="toggle-row" for="geminiToggle"><span><b>Gemini</b><small>Segunda leitura após confirmação técnica.</small></span><input id="geminiToggle" type="checkbox" role="switch" aria-label="Gemini"></label>
           <label class="setting-row expected-asset-setting" for="expectedAsset"><span><b>Ativo esperado</b><small>Opcional. Avisa quando você muda para outro instrumento.</small></span><input id="expectedAsset" type="text" placeholder="Ex.: AUD/CAD (OTC)" autocomplete="off"></label>
           <div class="asset-switch-history"><b>Trocas de ativo detectadas</b><div id="assetSwitchLog" class="asset-switch-log"><span>Nenhuma troca registrada.</span></div></div>
-          <p class="fixed-strategy-note">A estratégia principal é fixa em M1 + expiração real de 1 minuto. A execução continua manual na CasaTrade.</p>
+          <p class="fixed-strategy-note">Fluxo simples: possível COMPRA/VENDA durante a vela e entrada final perto de 10s. Execução continua manual.</p>
         </section>
 
         <section id="licenseCard" class="card license-card">

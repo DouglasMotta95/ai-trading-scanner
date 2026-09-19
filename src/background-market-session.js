@@ -32,6 +32,18 @@ function normAsset(value = '') {
     const base = compact.slice(0, -quote.length);
     if (/^[A-Z0-9]{2,12}$/.test(base)) return `${base}/${quote}${otc ? ' (OTC)' : ''}`;
   }
+
+  // CasaTrade also exposes named OTC instruments (for example VAULTA or
+  // CARDANO) without a visible quote currency. Accept them only when OTC is
+  // explicit and reject ambiguous currency/UI words, preserving the strict
+  // protocol protection against labels such as EURO.
+  const ambiguous = new Set([
+    'EURO','DOLLAR','DÓLAR','USD','EUR','GBP','JPY','AUD','CAD','CHF','NZD','BRL',
+    'BUY','SELL','COMPRA','VENDA','BLITZ','DIGITAL','INFO','OTC'
+  ]);
+  if (otc && /^[A-Z0-9][A-Z0-9 ._-]{2,30}$/.test(stripped) && !ambiguous.has(stripped)) {
+    return `${stripped} (OTC)`;
+  }
   return '';
 }
 const marketId = value => normAsset(value);
@@ -223,6 +235,7 @@ export function clearMarketAuthorityState(state = {}, extra = {}) {
     professionalDecision: null,
     aiAudit: null,
     tradeIntent: null,
+    entryAdvice: null,
     lastConfirmed: null,
     lastSeen: null,
     platformControls: null,
@@ -269,6 +282,7 @@ export function resetForSession(state = {}, { asset, timeframe = null, info, rea
     aiAudit: null,
     lastConfirmed: null,
     tradeIntent: null,
+    entryAdvice: null,
     lastSeen: null,
     platformControls: state.platformControls || null,
     diagnostics: {
@@ -326,6 +340,11 @@ export async function applyFocus(message = {}, sender = {}) {
     const frameChanged = !!old && (Number(old.frameId) !== Number(info.frameId) || clean(old.frameHost).toLowerCase() !== info.frameHost);
     const interactionAt = Number(message.interactionAt || message.at || 0);
     const userSelected = message.interactionHint === true && interactionAt > 0 && now - interactionAt < 8000;
+    const chartHeaderAuthoritative = clean(message.source) === 'visible-chart-header'
+      && message.visual !== false
+      && message.explicit === true
+      && message.chartScoped === true;
+    const authoritativeVisual = userSelected || chartHeaderAuthoritative;
     const oldFresh = Number(old?.at || 0) > 0 && now - Number(old.at) < 2600;
     const oldEmbeddedTrader = old?.embeddedTrader === true;
     const incomingExplicit = message.explicit === true;
@@ -378,7 +397,7 @@ export async function applyFocus(message = {}, sender = {}) {
     // few seconds. Never let that non-visual source roll the current visible
     // transition back to the old market. This is the guard against mixing
     // USO/USD price/history into a newly selected AUD/CAD session.
-    if (assetChanged && !userSelected && contradictsSelectionLock) {
+    if (assetChanged && !authoritativeVisual && contradictsSelectionLock) {
       return {
         ...state,
         diagnostics: {
@@ -414,7 +433,7 @@ export async function applyFocus(message = {}, sender = {}) {
 
     // A passive symbol change from the same frame must prove stability before it
     // can replace a fresh selected market. User interaction/explicit selection wins immediately.
-    if (assetChanged && oldFresh && !userSelected && !incomingExplicit && !incomingStable) {
+    if (assetChanged && oldFresh && !authoritativeVisual && !incomingExplicit && !incomingStable) {
       return {
         ...state,
         diagnostics: {
@@ -429,7 +448,7 @@ export async function applyFocus(message = {}, sender = {}) {
 
     // Hidden/inactive CasaTrade market frames can stay alive and keep publishing
     // their old symbol. They must never roll the visible user-selected chart back.
-    if (assetChanged && frameChanged && oldFresh && !userSelected && !incomingExplicit && !incomingStable) {
+    if (assetChanged && frameChanged && oldFresh && !authoritativeVisual && !incomingExplicit && !incomingStable) {
       return {
         ...state,
         diagnostics: {
@@ -445,32 +464,50 @@ export async function applyFocus(message = {}, sender = {}) {
     // The same asset is often visible in the CasaTrade shell and the embedded
     // trader frame at the same time. Once the embedded trader owns the live clock,
     // shell heartbeats must not keep resetting the market session.
-    if (!assetChanged && frameChanged && oldEmbeddedTrader && incomingCasaFrame && !userSelected) {
+    if (!assetChanged && frameChanged && oldEmbeddedTrader && incomingCasaFrame && !authoritativeVisual) {
       return state;
     }
 
     // Prefer the embedded trader as the long-lived authority for the same asset.
-    // This is a one-way handoff (shell -> trader), avoiding frame ping-pong.
+    // IMPORTANT: a shell -> trader frame handoff is NOT a market switch. It must
+    // never call resetForSession(), because doing so clears the current candle
+    // candidate and can flip POSSÍVEL VENDA -> POSSÍVEL COMPRA within seconds.
     const traderHandoff = !assetChanged && frameChanged && !oldEmbeddedTrader && incomingEmbeddedTrader;
-    const changed = assetChanged || traderHandoff || (!old && frameChanged);
     let next = state;
 
-    // A direct user market selection is the highest visual authority. Clear
-    // stale market identity immediately so the sidepanel cannot continue
-    // displaying the previous instrument while the new feed synchronizes.
-    if (assetChanged && userSelected) {
+    // Only a REAL asset change may reset market/session analysis state.
+    if (assetChanged) {
       next = resetForSession(state, {
-        asset, info, source: clean(message.source || 'user-selected-transition'),
-        reason: `Ativo ${asset} selecionado na CasaTrade. Limpando a sessão anterior e sincronizando dados do novo ativo.`
+        asset, info, source: clean(message.source || (authoritativeVisual ? 'user-selected-transition' : 'visible-chart')),
+        reason: authoritativeVisual
+          ? `Ativo ${asset} selecionado na CasaTrade. Limpando a sessão anterior e sincronizando dados do novo ativo.`
+          : `Ativo ${asset} confirmado no gráfico. Sincronizando a sessão ao vivo.`
       });
-    }
-    if (!(assetChanged && userSelected) && (changed || (state.asset && !sameMarket(state.asset, asset)))) {
-      next = resetForSession(state, {
-        asset, info, source: clean(message.source || 'visible-chart'),
-        reason: assetChanged
-          ? `Ativo ${asset} confirmado no gráfico. Sincronizando a sessão ao vivo.`
-          : `Gráfico ${asset} vinculado ao frame de mercado ativo.`
-      });
+    } else if (traderHandoff) {
+      const previousSession = state.diagnostics?.marketSession || {};
+      next = {
+        ...state,
+        diagnostics: {
+          ...(state.diagnostics || {}),
+          // Keep the same epoch and all analysis/signal state. Only move the
+          // frame ownership to the embedded trader.
+          marketClock: null,
+          marketSession: {
+            ...previousSession,
+            asset: normAsset(previousSession.asset || asset) || asset,
+            confirmedAsset: normAsset(previousSession.confirmedAsset || state.asset || asset) || asset,
+            frameId: info.frameId,
+            frameHost: info.frameHost,
+            source: 'same-market-trader-handoff'
+          },
+          acquisition: {
+            ...(state.diagnostics?.acquisition || {}),
+            stage: 'syncing_clock_owner',
+            reason: `Mesmo ativo ${asset}; transferindo apenas a autoridade do frame sem reiniciar o sinal.`,
+            at: now
+          }
+        }
+      };
     }
 
     const previousStableSince = sameMarket(old?.asset, asset)
@@ -482,8 +519,8 @@ export async function applyFocus(message = {}, sender = {}) {
       platformId: 'casatrade', platformName: 'CasaTrade', scanner: 'scanning',
       diagnostics: {
         ...(next.diagnostics || {}),
-        visualSelectionLock: userSelected
-          ? { asset, at: interactionAt || now }
+        visualSelectionLock: authoritativeVisual
+          ? { asset, at: userSelected ? (interactionAt || now) : now, source: chartHeaderAuthoritative ? 'visible-chart-header' : 'user-selection' }
           : (next.diagnostics?.visualSelectionLock || null),
         focusedAsset: {
           asset, at: now, stableSince: changed ? now : previousStableSince,
