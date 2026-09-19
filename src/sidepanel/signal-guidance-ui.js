@@ -84,18 +84,24 @@ function render(state = {}) {
   const technicalConfidence = assessEntryConfidence(state);
   const technical = state.signal || {};
   const advice = activeEntryAdvice(state);
-  const scoreRaw = advice?.score ?? technical.analysisScore ?? technical.score ?? technicalConfidence.score;
+  const aPlus = technical.aPlus || null;
+  const scoreRaw = advice?.qualityScore ?? aPlus?.score ?? technical.analysisScore ?? technical.score ?? technicalConfidence.score;
   const score = Math.max(0, Math.min(100, Math.round(Number(scoreRaw) || 0)));
   const guide = guidance(state);
   const card = $('triggerCard');
 
   if (card) card.className = `trigger-card ${guide.tone} compact-trigger analysis-status-card`;
-  if ($('triggerTitle')) $('triggerTitle').textContent = 'ANÁLISE TÉCNICA';
+  if ($('triggerTitle')) $('triggerTitle').textContent = aPlus ? 'ANÁLISE A+ • ALTA CONFIANÇA' : 'ANÁLISE TÉCNICA';
   if ($('triggerValue')) $('triggerValue').textContent = guide.value;
   if ($('triggerHint')) $('triggerHint').textContent = guide.hint;
   if ($('technicalConfidence')) $('technicalConfidence').textContent = `${score}/100`;
-  if ($('technicalConfidenceLabel')) $('technicalConfidenceLabel').textContent = 'SCORE';
-  if ($('confidenceNote')) $('confidenceNote').textContent = 'Score técnico interno de 0 a 100; não representa garantia de resultado.';
+  if ($('technicalConfidenceLabel')) $('technicalConfidenceLabel').textContent = aPlus || advice?.qualityScore ? 'A+ SCORE' : 'SCORE';
+  if ($('confidenceNote')) {
+    const veto = Array.isArray(aPlus?.hardVetoes) && aPlus.hardVetoes.length ? aPlus.hardVetoes[0] : null;
+    $('confidenceNote').textContent = veto
+      ? `Filtro A+ bloqueando entrada: ${String(veto).replace(/-/g,' ')}.`
+      : 'A+ combina estrutura M1/M5, suporte/resistência, price action, momentum, volatilidade e estabilidade. Não garante resultado.';
+  }
 }
 
 async function readState() {

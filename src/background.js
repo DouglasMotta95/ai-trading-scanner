@@ -43,6 +43,74 @@ function historyFor(state = {}, asset = '') {
   return rows.filter(row => [row?.open, row?.high, row?.low, row?.close].every(value => num(value) != null)).slice(-180);
 }
 
+function candleTime(row = {}) {
+  let value = num(row?.time ?? row?.timestamp);
+  if (value != null && value > 0 && value < 1e12) value *= 1000;
+  return Number.isFinite(value) ? value : null;
+}
+
+function journalKey(row = {}) {
+  return `${marketId(row.asset)}|${Number(row.targetStart || 0)}|${String(row.direction || '').toUpperCase()}`;
+}
+
+function resolveSignalJournal(current = {}, snapshot = {}, issued = null, tfMs = 60000) {
+  const now = Date.now();
+  const rows = (Array.isArray(current.signalJournal) ? current.signalJournal : []).slice(-249).map(row => ({ ...row }));
+  const byKey = new Map(rows.map(row => [journalKey(row), row]));
+
+  if (issued?.direction && issued?.targetStart) {
+    const key = journalKey(issued);
+    if (!byKey.has(key)) {
+      byKey.set(key, {
+        key,
+        asset: marketId(issued.asset),
+        direction: issued.direction,
+        targetStart: Number(issued.targetStart),
+        activeUntil: Number(issued.activeUntil || Number(issued.targetStart) + tfMs),
+        issuedAt: Number(issued.issuedAt || now),
+        setup: clean(issued.setup || ''),
+        regime: clean(issued.regime || ''),
+        technicalScore: Number(issued.score || 0),
+        qualityScore: Number(issued.qualityScore || 0),
+        qualityFactors: issued.qualityFactors || null,
+        resolved: false,
+        outcome: null
+      });
+    }
+  }
+
+  const candles = Array.isArray(snapshot.candles) ? snapshot.candles : [];
+  for (const row of byKey.values()) {
+    if (row.resolved === true) continue;
+    if (!sameMarket(row.asset, snapshot.asset)) continue;
+    const targetStart = Number(row.targetStart || 0);
+    if (!targetStart || now < targetStart + tfMs) continue;
+    const target = candles.find(candle => {
+      const time = candleTime(candle);
+      return time != null && Math.floor(time / tfMs) * tfMs === Math.floor(targetStart / tfMs) * tfMs;
+    });
+    if (!target) continue;
+    const open = num(target.open), close = num(target.close);
+    if (open == null || close == null) continue;
+    const direction = String(row.direction || '').toUpperCase();
+    const delta = close - open;
+    const outcome = delta === 0
+      ? 'DRAW'
+      : direction === 'BUY'
+        ? (delta > 0 ? 'WIN' : 'LOSS')
+        : (delta < 0 ? 'WIN' : 'LOSS');
+    row.resolved = true;
+    row.outcome = outcome;
+    row.open = open;
+    row.close = close;
+    row.resolvedAt = now;
+  }
+
+  return [...byKey.values()]
+    .sort((a,b) => Number(a.issuedAt || 0) - Number(b.issuedAt || 0))
+    .slice(-250);
+}
+
 function consolidatedSnapshot(state = {}) {
   if (!activeAccess(state) || state.scanner !== 'scanning' || state.connection !== 'online') return null;
   const asset = marketId(state.asset);
@@ -184,7 +252,10 @@ async function runCentralAnalysis(force = false) {
             asset: snapshot.asset,
             direction: processedDirection,
             setup: clean(processed?.signal?.setup || ''),
+            regime: clean(processed?.signal?.regime?.type || ''),
             score: Number(processed?.signal?.analysisScore ?? processed?.signal?.score ?? 0),
+            qualityScore: Number(processed?.signal?.aPlus?.score || processed?.signal?.qualityScore || 0),
+            qualityFactors: processed?.signal?.aPlus?.factors || null,
             targetStart: signalTargetStart,
             issuedAt: Date.now(),
             activeUntil: signalTargetStart + tfMs,
@@ -193,11 +264,13 @@ async function runCentralAnalysis(force = false) {
         : existingAdviceActive
           ? existingAdvice
           : null;
+      const signalJournal = resolveSignalJournal(current, snapshot, entryAdvice, tfMs);
 
       const next = {
         ...current,
         ...processed,
         entryAdvice,
+        signalJournal,
         // Raw acquisition state remains authoritative.
         asset: current.asset,
         price: current.price,
