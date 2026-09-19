@@ -1,6 +1,9 @@
 (() => {
   const BUTTON_ID = 'copyScannerDiagnostics';
   const STATUS_ID = 'copyScannerDiagnosticsStatus';
+  const EXPIRATION_PROBE_DIAG_KEY = 'atsExpirationProbeDiagnosticsV1';
+  const EXPIRATION_BG_DIAG_KEY = 'atsExpirationPipelineBackgroundDiagnosticsV1';
+  const ACTIVE_PROBE_MS = 5000;
 
   const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
   const clean = (value, max = 180) => String(value ?? '').normalize('NFKC').replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
@@ -72,6 +75,51 @@
         finish(null);
       }
     });
+  }
+
+  function expirationDiagnosticsStorage() {
+    return new Promise(resolve => {
+      try {
+        chrome.storage.local.get([EXPIRATION_PROBE_DIAG_KEY, EXPIRATION_BG_DIAG_KEY], value => {
+          try { void chrome.runtime.lastError; } catch {}
+          resolve(value || {});
+        });
+      } catch { resolve({}); }
+    });
+  }
+
+  function expirationPipelineSummary(local = {}) {
+    const now = Date.now();
+    const probeStore = local?.[EXPIRATION_PROBE_DIAG_KEY];
+    const probeRows = probeStore?.version === 1 && probeStore.frames && typeof probeStore.frames === 'object'
+      ? Object.values(probeStore.frames)
+      : [];
+    const probes = probeRows.filter(row => row?.version === 1 && Number(row.updatedAt || 0) > 0 && now - Number(row.updatedAt) <= ACTIVE_PROBE_MS);
+    const sum = key => probes.reduce((total, row) => total + Math.max(0, Number(row?.[key] || 0)), 0);
+    const background = local?.[EXPIRATION_BG_DIAG_KEY]?.version === 1 ? local[EXPIRATION_BG_DIAG_KEY] : {};
+    return {
+      instrumentation: 'v01130-expiration-pipeline-v1',
+      domFound: sum('domFound'),
+      domMissed: sum('domMissed'),
+      scans: sum('scans'),
+      messagesSent: sum('messagesSent'),
+      messagesReceivedInBackground: Math.max(0, Number(background.messagesReceived || 0)),
+      discardedByTargetTabId: Math.max(0, Number(background.discardedByTargetTabId || 0)),
+      untrustedRejected: Math.max(0, Number(background.untrustedRejected || 0)),
+      activeProbeInstances: probes.length,
+      backgroundAgeMs: age(background.lastAt),
+      probes: probes.slice(0, 24).map(row => ({
+        host: clean(row.host || '', 120),
+        isTop: row.isTop === true,
+        scans: Math.max(0, Number(row.scans || 0)),
+        domFound: Math.max(0, Number(row.domFound || 0)),
+        domMissed: Math.max(0, Number(row.domMissed || 0)),
+        messagesSent: Math.max(0, Number(row.messagesSent || 0)),
+        lastDomValue: clean(row.lastDomValue || '', 40),
+        lastEvidence: clean(row.lastEvidence || '', 80),
+        ageMs: age(row.updatedAt)
+      }))
+    };
   }
 
   function sanitizeState(state = {}, manual = null) {
@@ -219,11 +267,13 @@
     const status = document.getElementById(STATUS_ID);
     if (button) { button.disabled = true; button.textContent = 'GERANDO…'; }
     try {
-      const [stateReply, manualReply] = await Promise.all([
+      const [stateReply, manualReply, expirationTelemetry] = await Promise.all([
         message({ type: 'ATS_READ_SCANNER_STATE' }),
-        message({ type: 'ATS_GET_MANUAL_TRADE_LEDGER' })
+        message({ type: 'ATS_GET_MANUAL_TRADE_LEDGER' }),
+        expirationDiagnosticsStorage()
       ]);
       const report = sanitizeState(stateReply?.state || {}, manualReply?.ok ? manualReply : null);
+      report.expirationPipeline = expirationPipelineSummary(expirationTelemetry);
       const text = `AI Trading Scanner — diagnóstico seguro\n${JSON.stringify(report, null, 2)}`;
       const ok = await writeText(text);
       if (status) status.textContent = ok ? 'DIAGNÓSTICO COPIADO — pode colar no chat.' : 'Não consegui copiar automaticamente.';
