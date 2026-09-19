@@ -328,6 +328,7 @@
       href: location.href,
       asset,
       assetScore: Number(app?.selected ? 160 : app?.score || assetRow?.score || 0),
+      selected: app?.selected === true,
       price: num(quote?.price),
       buy: num(quote?.buy),
       sell: num(quote?.sell),
@@ -420,7 +421,7 @@
           // Rendered fallback may identify the market text but it must not
           // fabricate selection authority. Only application state that exposes
           // a real selected flag may claim the active market.
-          selected: app?.selected === true,
+          selected: assetRow?.selected === true,
           confidence: 96,
           observedAt: Date.now(),
           transport: 'rendered'
