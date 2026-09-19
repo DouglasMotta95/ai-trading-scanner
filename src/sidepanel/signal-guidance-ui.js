@@ -20,8 +20,7 @@ function guidance(state = {}) {
   const technicalUi = clean(technical.uiState).toUpperCase();
   const direction = technicalDirection(state);
   const side = direction === 'BUY' ? 'COMPRA' : direction === 'SELL' ? 'VENDA' : '';
-  const timeReady = decision.timeReady === true && decision.expirationReady === true;
-  const block = clean(decision.reason || '');
+  const entryReady = decision.actionable === true;
 
   if (technical.directionTransition?.from && technical.directionTransition?.to) {
     const from = technical.directionTransition.from === 'BUY' ? 'COMPRA' : 'VENDA';
@@ -33,7 +32,7 @@ function guidance(state = {}) {
     };
   }
 
-  if ((professionalUi === 'ENTER_BUY' || professionalUi === 'ENTER_SELL') && decision.actionable === true && timeReady) {
+  if ((professionalUi === 'ENTER_BUY' || professionalUi === 'ENTER_SELL') && entryReady) {
     return {
       tone: direction === 'BUY' ? 'buy' : 'sell',
       value: `CONFIRMADO • ${side}`,
@@ -56,9 +55,7 @@ function guidance(state = {}) {
     return {
       tone: 'possible',
       value: `PADRÃO ${side}`,
-      hint: timeReady
-        ? clean(technical.reason || 'Padrão técnico detectado; aguardando confirmação final.')
-        : `${clean(technical.reason || 'Padrão técnico detectado.')} Entrada bloqueada: ${block || 'tempo/expiração ainda não confirmados.'}`
+      hint: clean(technical.reason || 'Padrão técnico detectado; aguardando a confirmação final perto de 10s.')
     };
   }
 
