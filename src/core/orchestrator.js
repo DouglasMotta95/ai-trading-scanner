@@ -12,7 +12,7 @@ import { assessHighConfidence, A_PLUS_THRESHOLDS } from './high-confidence.js';
 const CONFIRM_HITS = 2;
 const DECISION_HIT_GAP_MS = 2500;
 const POSSIBLE_CONFIRM_HITS = 2;
-const POSSIBLE_HIT_GAP_MS = 3500;
+const POSSIBLE_HIT_GAP_MS = 8000;
 const OPPOSITE_SWITCH_HITS = 3;
 const OPPOSITE_MIN_HOLD_MS = 4000;
 const OPPOSITE_SCORE_MARGIN = 8;
@@ -319,12 +319,36 @@ function seedCycle(key, snapshot, signal, state = {}) {
       possibleDirection: null, possibleScore: 0, possibleSince: null, lastPossibleStrongAt: null,
       oppositeDirection: null, oppositeHits: 0, oppositeSince: null, lastOppositeAt: null,
       directionTransition: null,
+      aPlusCandidateAllowed: false, aPlusWeakHits: 0, lastAPlusWeakAt: null,
       confirmHits: 0, lastHitAt: null, locked: null, direction: null, score: 0,
       setup: null, reason: null, decidedAt: null, resolved: false
     };
   }
   cycles.set(key, cycle);
   return cycle;
+}
+
+function observeStableAPlusCandidate(cycle, rawAllowed, at = Date.now()) {
+  if (rawAllowed === true) {
+    cycle.aPlusCandidateAllowed = true;
+    cycle.aPlusWeakHits = 0;
+    cycle.lastAPlusWeakAt = null;
+    return true;
+  }
+
+  if (cycle.aPlusCandidateAllowed !== true) return false;
+
+  const consecutiveWeak = cycle.lastAPlusWeakAt != null
+    && at - Number(cycle.lastAPlusWeakAt) <= POSSIBLE_HIT_GAP_MS;
+  cycle.aPlusWeakHits = consecutiveWeak ? Number(cycle.aPlusWeakHits || 0) + 1 : 1;
+  cycle.lastAPlusWeakAt = at;
+
+  if (cycle.aPlusWeakHits >= 2) {
+    cycle.aPlusCandidateAllowed = false;
+    cycle.aPlusWeakHits = 0;
+    cycle.lastAPlusWeakAt = null;
+  }
+  return cycle.aPlusCandidateAllowed === true;
 }
 
 function observeDecision(cycle, direction, qualifies, at) {
@@ -531,6 +555,9 @@ export function processSnapshot(snapshot = {}, state = {}) {
   const stableAPlus = stableDirection
     ? aPlusAssessment(snapshot, result, signal, stableDirection, cycle, state, at)
     : aPlusAssessment(snapshot, result, signal, directionOf(signal), cycle, state, at);
+  const stableAPlusCandidateAllowed = stableDirection
+    ? observeStableAPlusCandidate(cycle, stableAPlus.candidateAllowed === true, at)
+    : false;
 
   if (cycle.locked === 'ENTER') {
     const lockedAPlus = cycle.aPlus || stableAPlus;
@@ -551,7 +578,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
   }
 
   if (secondsRemaining > windows.decision) {
-    const nextSignal = stableDirection && stableAPlus.candidateAllowed
+    const nextSignal = stableDirection && stableAPlusCandidateAllowed
       ? possibleSignal(signal, windows, stableDirection, score, cycle, stableAPlus)
       : stableDirection
         ? aPlusWaitingSignal(signal, windows, stableAPlus, 'BUILDING')
@@ -622,7 +649,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
   }
 
   cycles.set(key, cycle);
-  const nextSignal = stableDirection && stableAPlus.candidateAllowed
+  const nextSignal = stableDirection && stableAPlusCandidateAllowed
     ? possibleSignal(signal, windows, stableDirection, score, cycle, stableAPlus)
     : stableDirection
       ? aPlusWaitingSignal(signal, windows, stableAPlus, 'FINAL')
