@@ -78,10 +78,15 @@ function targetStartOf(snapshot = {}, signal = {}) {
 }
 
 function aPlusAssessment(snapshot = {}, result = {}, signal = {}, direction = null, cycle = {}, state = {}, at = Date.now()) {
+  const effectiveSignal = cycle?.setup && !signal?.setup
+    ? { ...signal, setup: cycle.setup }
+    : cycle?.setup
+      ? { ...signal, setup: cycle.setup }
+      : signal;
   return assessHighConfidence({
     candles: snapshot.candles || [],
     currentCandle: result.currentCandle || signal.currentCandle || snapshot.currentCandle || null,
-    signal,
+    signal: effectiveSignal,
     direction,
     cycle,
     journal: state.signalJournal || [],
