@@ -120,14 +120,16 @@ function nearestLevels(rows = [], price, atrValue) {
   const lowPool = lows.length ? lows : fallbackLows;
   const resistanceCandidates = highPool.filter(level => level > price).sort((a,b)=>a-b);
   const supportCandidates = lowPool.filter(level => level < price).sort((a,b)=>b-a);
-  const resistance = resistanceCandidates[0] ?? Math.max(...fallbackHighs);
-  const support = supportCandidates[0] ?? Math.min(...fallbackLows);
+  const fallbackResistance = Math.max(...fallbackHighs);
+  const fallbackSupport = Math.min(...fallbackLows);
+  const resistance = resistanceCandidates[0] ?? (fallbackResistance > price ? fallbackResistance : null);
+  const support = supportCandidates[0] ?? (fallbackSupport < price ? fallbackSupport : null);
   const safeAtr = Math.max(1e-12, Number(atrValue) || median(sample.map(row=>Math.abs(row.high-row.low))) || 1);
   return {
     support,
     resistance,
-    supportDistanceAtr: Number.isFinite(support) ? Math.max(0, price - support) / safeAtr : Infinity,
-    resistanceDistanceAtr: Number.isFinite(resistance) ? Math.max(0, resistance - price) / safeAtr : Infinity
+    supportDistanceAtr: Number.isFinite(support) ? (price - support) / safeAtr : Infinity,
+    resistanceDistanceAtr: Number.isFinite(resistance) ? (resistance - price) / safeAtr : Infinity
   };
 }
 
