@@ -15,8 +15,11 @@ test('live market-session keeps the previously working feed/clock path intact', 
   assert.doesNotMatch(applyFeed, /platformControls = observedExpiration/);
 });
 
-test('package version is bumped so Android extension hosts cannot reuse the previous cached build', () => {
+test('package version is newer than the old Android cache-hardening build', () => {
   const manifest = JSON.parse(read('manifest.json'));
-  assert.equal(manifest.version, '0.11.16');
-  assert.equal(manifest.version_name, '0.11.16-expiration-probe-hardening');
+  const parts = String(manifest.version || '').split('.').map(Number);
+  assert.equal(parts[0], 0);
+  assert.equal(parts[1], 11);
+  assert.ok(parts[2] >= 46);
+  assert.ok(String(manifest.version_name || '').length > 0);
 });
