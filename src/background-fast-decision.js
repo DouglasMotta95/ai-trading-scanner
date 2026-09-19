@@ -1,5 +1,6 @@
 import { fastLiveDecision } from './core/live-fast-decision.js';
 import { updateScannerState } from './services/scanner-state-atomic.js';
+import { marketSessionEpoch, withMarketSessionEpoch } from './background-market-session.js';
 
 let writing = false;
 const clean = value => String(value ?? '').trim();
@@ -28,6 +29,7 @@ async function applyFastDecision(observed = {}) {
   if (writing || !activeAccess(observed) || observed.scanner !== 'scanning' || observed.connection !== 'online') return;
   if (!marketFresh(observed) || !observed.asset || !Array.isArray(observed.candles) || observed.candles.length < 3 || !observed.signal) return;
 
+  const observedEpoch = marketSessionEpoch(observed);
   const nextSignal = fastLiveDecision(observed.signal, {
     asset: observed.asset,
     timeframe: observed.analysisTimeframe || observed.timeframe || 'M1',
@@ -39,19 +41,20 @@ async function applyFastDecision(observed = {}) {
 
   writing = true;
   try {
-    await updateScannerState(current => {
-      if (!activeAccess(current) || current.scanner !== 'scanning' || current.connection !== 'online') return current;
-      if (clean(current.asset) !== clean(observed.asset)) return current;
+    await updateScannerState(current => withMarketSessionEpoch(current, observedEpoch, epochState => {
+      if (!activeAccess(epochState) || epochState.scanner !== 'scanning' || epochState.connection !== 'online') return epochState;
+      if (clean(epochState.asset) !== clean(observed.asset)) return epochState;
       const decided = nextSignal;
-      if (!decided || sameSignal(decided, current.signal || {})) return current;
+      if (!decided || sameSignal(decided, epochState.signal || {})) return epochState;
       return {
-        ...current,
+        ...epochState,
         signal: decided,
         diagnostics: {
-          ...(current.diagnostics || {}),
+          ...(epochState.diagnostics || {}),
           fastDecision: {
             active: true,
             mode: 'live-core',
+            epoch: observedEpoch,
             uiState: decided.uiState || '',
             direction: decided.direction || '',
             score: Number(decided.score || 0),
@@ -59,7 +62,7 @@ async function applyFastDecision(observed = {}) {
           }
         }
       };
-    });
+    }));
   } finally {
     writing = false;
   }
