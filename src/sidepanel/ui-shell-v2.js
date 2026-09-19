@@ -106,21 +106,9 @@ function renderShell(state = {}) {
   const dataConnected = baseHandshake(state);
   const connected = dataConnected || switching;
   const platformLinked = connected;
-  const tradeReady = exactLiveTime(state);
   const failure = connectionFailure(state);
   const connecting = !platformLinked && !failure && activeLicense(state)
     && (state.connection === 'connecting' || state.scanner === 'scanning');
-
-  const expirationAuthority = confirmedExpiration(state);
-  const expirationAt = expirationAuthority.at;
-  const expiration = expirationAuthority.value;
-  const expirationFresh = expirationAuthority.confirmed;
-  const expirationWrong = dataConnected && expirationFresh && expiration !== '60s';
-  const sessionStartedAt = Number(session.startedAt || state.diagnostics?.target?.connectedAt || 0);
-  const sessionAge = sessionStartedAt > 0 ? Date.now() - sessionStartedAt : 0;
-  const panelAge = Math.max(0, Date.now() - PANEL_OPENED_AT);
-  const expirationWaitAge = sessionAge > 0 ? Math.min(sessionAge, panelAge) : panelAge;
-  const expirationPending = dataConnected && !expirationFresh && expirationWaitAge >= 1500;
 
   const strip = $('syncStrip');
   if (strip) strip.className = `sync-strip ${platformLinked ? 'live' : 'syncing'}`;
@@ -130,39 +118,27 @@ function renderShell(state = {}) {
       ? `ATUALIZANDO PARA ${pendingAsset}`
       : failure
         ? 'FALHA AO CONECTAR'
-        : expirationPending
-          ? 'CONECTADO — EXPIRAÇÃO PENDENTE'
-          : connected && expirationWrong
-            ? 'CONECTADO — AJUSTE A EXPIRAÇÃO'
-            : tradeReady
-              ? 'CONECTADO — PRONTO PARA ANALISAR'
-              : connected
-                ? 'CONECTADO — VALIDANDO ENTRADA'
-                : connecting
-                  ? 'CONECTANDO À CASATRADE'
-                  : activeLicense(state)
-                    ? 'DESCONECTADO'
-                    : 'AGUARDANDO ATIVAÇÃO';
+        : connected
+          ? 'CONECTADO — ANALISANDO SINAL'
+          : connecting
+            ? 'CONECTANDO À CASATRADE'
+            : activeLicense(state)
+              ? 'DESCONECTADO'
+              : 'AGUARDANDO ATIVAÇÃO';
   }
 
   if ($('syncText')) {
     const acquisition = state.diagnostics?.acquisition || {};
     $('syncText').textContent = switching
-      ? 'Dados do ativo anterior foram limpos. Confirmando preço e velas reais do novo instrumento.'
+      ? 'Limpando o ativo anterior e confirmando o gráfico que está aberto agora.'
       : failure
-        || (expirationPending
-          ? 'EXPIRAÇÃO PENDENTE — não foi possível confirmar o valor real; toque em TENTAR NOVAMENTE.'
-          : connected && expirationWrong
-            ? 'Ajuste a expiração da CasaTrade para 1 minuto.'
-            : tradeReady
-              ? `${state.asset} • M1 • countdown e expiração confirmados pela CasaTrade.`
-              : connected
-                ? `${state.asset} conectado. Dados reais recebidos; validando condições finais da entrada.`
-                : connecting
-                  ? clean(acquisition.reason || 'Identificando ativo, preço, velas, countdown e expiração.')
-                  : activeLicense(state)
-                    ? 'Abra a CasaTrade e toque em CONECTAR.'
-                    : 'Ative o acesso para iniciar o scanner.');
+        || (connected
+          ? `${state.asset || pendingAsset || 'CasaTrade'} conectado. Procurando POSSÍVEL COMPRA/VENDA; entrada final perto dos 10s.`
+          : connecting
+            ? clean(acquisition.reason || 'Identificando ativo, preço e velas do gráfico atual.')
+            : activeLicense(state)
+              ? 'Abra a CasaTrade e toque em CONECTAR.'
+              : 'Ative o acesso para iniciar o scanner.');
   }
 
   const button = $('connectScanner');
@@ -175,8 +151,9 @@ function renderShell(state = {}) {
   }
 
   const retry = $('retryLiveRead');
-  if (retry) retry.hidden = !(expirationPending || failure);
+  if (retry) retry.hidden = !failure;
 }
+
 async function connectNow() {
   const button = $('connectScanner');
   if (!button || button.classList.contains('loading')) return;
