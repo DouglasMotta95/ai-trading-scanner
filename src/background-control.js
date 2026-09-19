@@ -204,10 +204,7 @@ function normalizeExpiration(value = '') {
 async function directExpirationProbe(tabId) {
   if (!tabId || !chrome.scripting?.executeScript) return null;
   try {
-    const rows = await executeScriptCompat({
-      target: { tabId, allFrames: true },
-      world: 'ISOLATED',
-      func: () => {
+    const probeFunc = () => {
         const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
         const fold = value => clean(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
         const visible = el => {
@@ -347,8 +344,27 @@ async function directExpirationProbe(tabId) {
         let host = '';
         try { host = location.hostname || ''; } catch {}
         return { ...best, host };
-      }
-    }).catch(() => []);
+      };
+
+    // Android extension engines differ here: some are callback-only, some do
+    // not accept the world option, and an allFrames call can fail because of a
+    // single inaccessible child frame. Try the visible top frame first, then
+    // broaden the search. A failed compatibility mode must not turn a visible
+    // "Expiração 1 min" into PENDENTE.
+    const attempts = [
+      { target: { tabId }, world: 'ISOLATED' },
+      { target: { tabId } },
+      { target: { tabId, allFrames: true }, world: 'ISOLATED' },
+      { target: { tabId, allFrames: true } }
+    ];
+    let rows = [];
+    for (const details of attempts) {
+      try {
+        const result = await executeScriptCompat({ ...details, func: probeFunc });
+        rows = [...rows, ...result];
+        if (result.some(row => row?.result?.expiration)) break;
+      } catch {}
+    }
 
     const candidates = (Array.isArray(rows) ? rows : [])
       .map(row => ({ frameId: Number(row?.frameId ?? -1), ...(row?.result || {}) }))
