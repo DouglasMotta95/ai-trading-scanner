@@ -206,15 +206,16 @@ function baseDecision(state = {}) {
   const now = Date.now();
   const timing = simpleEntryTiming(state, signal);
   const rows = completeCandles(state);
-  const direction = signalDirection(signal);
-  const score = Number(signal.analysisScore ?? signal.score ?? 0) || 0;
   const ui = text(signal.uiState).toUpperCase();
+  const direction = ui.includes('BUY') ? 'BUY' : ui.includes('SELL') ? 'SELL' : null;
+  const score = Number(signal.analysisScore ?? signal.score ?? 0) || 0;
   const cycle = cycleKey(state, signal);
   const factors = confluence(signal, direction);
-  const possibleScore = 44;
-  const finalScore = 58;
-  const technicalCandidate = ['POSSIBLE_BUY', 'POSSIBLE_SELL', 'ENTER_BUY', 'ENTER_SELL'].includes(ui);
-  const technicalFinal = ['ENTER_BUY', 'ENTER_SELL'].includes(ui);
+  const previous = state.professionalDecision || {};
+  const sameCycleDirection = previous.cycleKey === cycle && previous.direction === direction;
+  const possibleSince = sameCycleDirection && Number(previous.possibleSince || 0) > 0
+    ? Number(previous.possibleSince)
+    : now;
 
   const common = {
     profile: pref.mode,
@@ -229,85 +230,80 @@ function baseDecision(state = {}) {
     timeSource: timing.source,
     timeframe: timing.timeframe || normTf(state.analysisTimeframe || state.timeframe) || 'M1',
     secondsRemaining: timing.secondsRemaining,
+    possibleSince,
+    holdRemainingMs: 0,
     updatedAt: now
   };
 
   if (!state.asset || num(state.price) == null || !focusReady(state)) {
-    return { ...common, uiState: 'ANALYZING_MARKET', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: 'Identificando o ativo e a cotação do gráfico atual.' };
-  }
-  if (rows.length < 2) {
-    return { ...common, uiState: 'BUILDING_PATTERN', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: 'Montando o padrão com as velas reais da CasaTrade.' };
-  }
-
-  const candidateReady = technicalCandidate && ['BUY','SELL'].includes(direction) && score >= possibleScore;
-  if (!candidateReady) {
-    return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: 'AGUARDAR — motor técnico ainda não liberou um candidato.' };
-  }
-
-  const previous = state.professionalDecision || {};
-  const sameCandidate = previous.cycleKey === cycle && previous.direction === direction
-    && ['POSSIBLE_BUY','POSSIBLE_SELL','ENTER_BUY','ENTER_SELL'].includes(text(previous.uiState).toUpperCase());
-  const possibleSince = sameCandidate && Number(previous.possibleSince || 0) > 0 ? Number(previous.possibleSince) : now;
-  const holdMs = pref.holdSeconds * 1000;
-  const heldFor = Math.max(0, now - possibleSince);
-  const reason = shortReason(direction, factors.factors, signal.reason);
-  const seconds = Number(timing.secondsRemaining);
-
-  // Simplified product contract:
-  // 1) show POSSÍVEL as soon as the technical engine has a valid direction;
-  // 2) expiration never blocks analysis;
-  // 3) at <=10s remaining, promote only a technically final/stable candidate.
-  if (!timing.ready || !Number.isFinite(seconds) || seconds > 10) {
     return {
       ...common,
-      uiState: direction === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL',
-      direction,
-      actionable: false,
-      alert: 'discrete',
-      possibleSince,
-      holdRemainingMs: Math.max(0, holdMs - heldFor),
-      reason: timing.ready
-        ? `${reason} Entrada final quando a vela chegar aos 10s.`
-        : `${reason} Aguardando apenas o contador da vela para marcar a entrada.`
-    };
-  }
-
-  if (seconds <= 0) {
-    return {
-      ...common,
-      uiState: direction === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL',
-      direction,
+      uiState: 'ANALYZING_MARKET',
+      direction: null,
       actionable: false,
       alert: 'silent',
-      possibleSince,
-      holdRemainingMs: 0,
-      reason: `${reason} Fechamento da vela em andamento.`
+      possibleSince: null,
+      reason: 'Identificando o ativo e a cotação do gráfico atual.'
     };
   }
 
-  const finalQuality = technicalFinal && score >= finalScore;
-  if (!finalQuality || heldFor < holdMs) {
+  if (rows.length < 2) {
     return {
       ...common,
-      uiState: direction === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL',
+      uiState: 'BUILDING_PATTERN',
+      direction: null,
+      actionable: false,
+      alert: 'silent',
+      possibleSince: null,
+      reason: 'Montando o padrão com as velas reais da CasaTrade.'
+    };
+  }
+
+  // Single authority rule: professionalDecision mirrors the orchestrator signal.
+  // It must never invent a POSSÍVEL from score, erase one because score dipped,
+  // or choose a direction independently from state.signal.
+  if (ui === 'ENTER_BUY' || ui === 'ENTER_SELL') {
+    return {
+      ...common,
+      uiState: ui,
+      direction,
+      actionable: true,
+      alert: 'strong',
+      reason: text(signal.reason || `ENTRAR AGORA: ${direction === 'BUY' ? 'COMPRA' : 'VENDA'}.`)
+    };
+  }
+
+  if (ui === 'POSSIBLE_BUY' || ui === 'POSSIBLE_SELL') {
+    return {
+      ...common,
+      uiState: ui,
       direction,
       actionable: false,
       alert: 'discrete',
-      possibleSince,
-      holdRemainingMs: Math.max(0, holdMs - heldFor),
-      reason: `${reason} Janela de entrada aberta; aguardando confirmação final do padrão.`
+      reason: text(signal.reason || `POSSÍVEL ${direction === 'BUY' ? 'COMPRA' : 'VENDA'} — aguardando confirmação final perto de 10s.`)
+    };
+  }
+
+  if (ui === 'ANALYZING_MARKET' || ui === 'BUILDING_PATTERN' || ui === 'DECIDING') {
+    return {
+      ...common,
+      uiState: ui,
+      direction: null,
+      actionable: false,
+      alert: 'silent',
+      possibleSince: null,
+      reason: text(signal.reason || 'Analisando o padrão da vela atual.')
     };
   }
 
   return {
     ...common,
-    uiState: direction === 'BUY' ? 'ENTER_BUY' : 'ENTER_SELL',
-    direction,
-    actionable: true,
-    alert: 'strong',
-    possibleSince,
-    holdRemainingMs: 0,
-    reason: `ENTRAR AGORA: ${direction === 'BUY' ? 'COMPRA' : 'VENDA'} • ${Math.max(1, Math.ceil(seconds))}s restantes.`
+    uiState: 'WAIT',
+    direction: null,
+    actionable: false,
+    alert: 'silent',
+    possibleSince: null,
+    reason: text(signal.reason || 'AGUARDAR — nenhum padrão confirmado para esta vela.')
   };
 }
 
