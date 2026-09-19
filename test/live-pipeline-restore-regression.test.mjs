@@ -12,6 +12,6 @@ test('runtime keeps market session, central analyzer and control wired',()=>{
 
 test('manifest identifies the current live-asset recovery build',()=>{
   const m=JSON.parse(read('manifest.json'));
-  assert.equal(m.version,'0.11.46');
+  assert.equal(m.version,'0.11.48');
   assert.match(m.version_name,/live-asset-reconnect-recovery/);
 });
