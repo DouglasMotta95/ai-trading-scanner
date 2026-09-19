@@ -208,11 +208,40 @@ function gateKind() {
   return 'waiting';
 }
 
+function activeEntryAdvice(state = {}) {
+  const advice = state.entryAdvice || null;
+  if (!advice?.direction || !advice?.asset) return null;
+  const now = Date.now();
+  const start = Number(advice.targetStart || 0);
+  const end = Number(advice.activeUntil || 0);
+  if (!start || !end || now < start || now >= end) return null;
+  if (state.asset && !sameMarket(advice.asset, state.asset)) return null;
+  return advice;
+}
+
 function decisionModel(state = {}) {
   if (!activeLicense(state)) return { uiState: 'WAIT', title: 'AGUARDAR', text: 'AGUARDAR', sub: 'Ative o acesso para iniciar a leitura.', tone: 'waiting', reason: 'Aguardando licença ativa.', score: 0, actionable: false };
   const pending = transitionAsset(state);
   if (pending) return { uiState: 'ANALYZING_MARKET', title: 'ATUALIZANDO ATIVO', text: `ATUALIZANDO PARA ${pending}`, sub: 'Limpando dados anteriores e confirmando o novo gráfico.', tone: 'waiting', reason: 'Troca de ativo em validação.', score: 0, actionable: false };
   if (!marketDataReady(state) || !focusReady(state)) return { uiState: 'ANALYZING_MARKET', title: 'AGUARDAR', text: 'AGUARDAR', sub: 'Confirmando ativo, preço e velas reais.', tone: 'waiting', reason: 'Identificando o gráfico atual da CasaTrade.', score: 0, actionable: false };
+
+  const advice = activeEntryAdvice(state);
+  if (advice) {
+    const direction = String(advice.direction || '').toUpperCase();
+    const side = direction === 'BUY' ? 'COMPRA' : 'VENDA';
+    return {
+      uiState: direction === 'BUY' ? 'ENTRY_ACTIVE_BUY' : 'ENTRY_ACTIVE_SELL',
+      title: 'SINAL DA VELA',
+      text: `SINAL DA VELA: ${side}`,
+      sub: 'Sinal final emitido para a vela atual. Não repetir a entrada.',
+      tone: direction === 'BUY' ? 'buy' : 'sell',
+      reason: `${advice.setup ? advice.setup + ' • ' : ''}score ${Math.round(Number(advice.score || 0))}/100 • sinal mantido até o fechamento desta vela.`,
+      score: Number(advice.score || 0),
+      actionable: false,
+      entryActive: true,
+      direction
+    };
+  }
 
   const signal = state.signal || {};
   const ui = clean(signal.uiState).toUpperCase();
@@ -374,7 +403,7 @@ function render(state = {}) {
   const banner = $('decisionBanner');
   if (banner) banner.className = `decision-banner ${model.tone}`;
   const badgeTone = model.tone === 'buy' ? 'ok' : model.tone === 'sell' ? 'bad' : 'warn';
-  setBadge('signalBadge', model.actionable ? 'ENTRAR' : model.uiState.startsWith('POSSIBLE_') ? 'POSSÍVEL' : 'AGUARDAR', badgeTone);
+  setBadge('signalBadge', model.entryActive ? 'SINAL DA VELA' : model.actionable ? 'ENTRAR' : model.uiState.startsWith('POSSIBLE_') ? 'POSSÍVEL' : 'AGUARDAR', badgeTone);
 
   const duration = timeframeSeconds(actualTf);
   const progress = $('candleProgress');
@@ -392,7 +421,9 @@ function render(state = {}) {
   const actionStatus = $('tradeActionStatus');
   if (actionStatus) {
     actionStatus.classList.remove('rule-block','technical-block');
-    if (model.actionable) {
+    if (model.entryActive) {
+      actionStatus.textContent = `Sinal ${model.direction === 'BUY' ? 'COMPRA' : 'VENDA'} já emitido para esta vela. Não repetir entrada.`;
+    } else if (model.actionable) {
       actionStatus.textContent = `ENTRADA AGORA: ${model.direction === 'BUY' ? 'COMPRA' : 'VENDA'}.`;
     } else if (model.uiState.startsWith('POSSIBLE_')) {
       actionStatus.textContent = 'Sinal possível detectado. Aguardando confirmação final perto de 10s.';
