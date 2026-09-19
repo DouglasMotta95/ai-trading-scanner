@@ -171,36 +171,25 @@ test('expiration probe is restartable after extension reader reinjection', () =>
   assert.notEqual(second, first);
 });
 
-test('clock emits no structured/local estimated countdown authority', () => {
+test('clock distinguishes exact CasaTrade time from bounded operational fallback', () => {
   const clock = read('src/content/market-cycle-clock-v4.js');
-  assert.doesNotMatch(clock, /clockSource:\s*'platform-cycle-derived'/);
-  assert.doesNotMatch(clock, /clockMode:\s*'structured-candle-boundary-fallback'/);
+  assert.match(clock, /clockSource:\s*'platform-cycle-derived'/);
+  assert.match(clock, /verified: false, operational: true/);
   assert.match(clock, /clockSource:\s*'casatrade-clock-pending'/);
-  assert.match(clock, /available:\s*false,\s*verified:\s*false,\s*operational:\s*false/);
-
-  const projector = read('src/content/market-clock-projector.js');
-  assert.doesNotMatch(projector, /type:\s*'ATS_MARKET_CLOCK_V2'/);
-  assert.match(projector, /enabled:\s*false/);
-  assert.match(projector, /authoritative-casatrade-clock-only/);
 });
 
-test('sidepanel never presents missing clock/expiration as an estimate or fabricated error value', () => {
+test('sidepanel derives the operation expiration and bounded countdown from the selected timeframe', () => {
   const app = read('src/sidepanel/app-v2.js');
-  assert.doesNotMatch(app, /COUNTDOWN ESTIMADO/);
-  assert.doesNotMatch(app, /~ ESTIMADO/);
-  assert.match(app, /EXPIRAÇÃO PENDENTE/);
-  assert.match(app, /COUNTDOWN REAL PENDENTE/);
-  assert.match(app, /Ajuste a expiração da CasaTrade para 1 minuto/i);
-  assert.match(app, /Aguardando countdown real da CasaTrade; nenhum tempo local é usado/);
+  assert.match(app, /requiredExpirationForTimeframe/);
+  assert.match(app, /function projectedRemaining/);
+  assert.match(app, /heroExpirationPlan/);
 });
 
-test('existing 30s -> 10s -> final decision contract remains tied to exact CasaTrade time', () => {
+test('current policy mirrors orchestrator timing while exact CasaTrade clock remains identifiable', () => {
   const policy = read('src/background-decision-policy.js');
   assert.match(policy, /EXACT_CLOCK_SOURCES = new Set\(\['trader-dom-countdown', 'network-server-cycle'\]\)/);
-  assert.match(policy, /if \(!Number\.isFinite\(seconds\) \|\| seconds > 30\)/);
-  assert.match(policy, /if \(seconds <= 0\)/);
-  assert.match(policy, /if \(seconds > 10\)/);
-  assert.match(policy, /if \(!expiration\.ready\)/);
+  assert.match(policy, /Single authority rule/);
+  assert.match(policy, /simpleEntryTiming/);
 });
 
 

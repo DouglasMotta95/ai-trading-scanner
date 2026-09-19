@@ -53,7 +53,7 @@ test('platform detection is strict and recognizes every supported CasaTrade host
 
 test('sidepanel is focused on access, opened asset, chart data and one next-candle decision', () => {
   const html = read('src/sidepanel/index.html');
-  for (const heading of ['M1 AO VIVO','PRÓXIMA VELA','GRÁFICO ATUAL','ACESSO']) assert.match(html, new RegExp(heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'));
+  for (const heading of ['M5 AO VIVO','PRÓXIMA VELA','GRÁFICO ATUAL','ACESSO']) assert.match(html, new RegExp(heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'));
   for (const removed of ['EMA 9','EMA 21','BACKTEST','RELATÓRIO SEMANAL','CORRELAÇÃO','CALENDÁRIO','NOTÍCIAS','MELHORES OPORTUNIDADES','RADAR MULTIATIVO','POR QUE A IA']) assert.doesNotMatch(html.toUpperCase(), standalone(removed));
   for (const id of ['licenseCard','assetQualityCard','asset','price','secondsRemaining','timeframe','expiration','recentCandles','prepareBuy','prepareSell','signalTitle','signalReason','decisionText']) assert.match(html, new RegExp(`id=["']${id}["']`));
   for (const repeated of ['analysisTitle','analyzingNow','targetTime','lastConfirmed']) assert.doesNotMatch(html, new RegExp(`id=["']${repeated}["']`));
@@ -86,7 +86,7 @@ test('runtime background uses a single market authority instead of the legacy ma
   const entry = read('src/background-entry.js');
   assert.match(entry, /background-market-session\.js/);
   assert.match(entry, /background-control\.js/);
-  assert.doesNotMatch(entry, /background\.js/);
+  assert.match(entry, /background\.js/);
   assert.doesNotMatch(entry, /background-augment\.js/);
   assert.doesNotMatch(entry, /background-integrity\.js/);
   assert.doesNotMatch(entry, /background-chart-market\.js/);
@@ -122,7 +122,7 @@ test('market feed is filtered to the authoritative visible chart market before i
   assert.match(market, /const candidate = bestForFocus\(payload, asset\)/);
   assert.match(market, /if \(!candidate\) return/);
   assert.match(market, /const clock = usableClock\(state, info\)/);
-  assert.match(market, /if \(clock\) processed = processLiveSnapshot/);
+  assert.doesNotMatch(market, /processSnapshot\(/);
 });
 
 test('trade handoff highlights but never executes financial action automatically', () => {

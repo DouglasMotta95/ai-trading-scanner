@@ -13,11 +13,11 @@ test('sidepanel exposes one dominant analyst decision and real CasaTrade time su
   const html = read('src/sidepanel/index.html');
   const app = read('src/sidepanel/app-v2.js');
 
-  for (const heading of ['Live Decision','DECISÃO DA PRÓXIMA VELA','VELA ATUAL','ACESSO']) assert.match(html, new RegExp(heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'));
+  for (const heading of ['PRÓXIMA VELA','GRÁFICO ATUAL','ACESSO']) assert.match(html, new RegExp(heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'));
   for (const id of [
     'activateLicense','assetQualityCard','asset','price','secondsRemaining','timeframe','expiration','heroCountdown','heroTimeStatus','timeSyncStatus',
     'currentOpen','currentHigh','currentLow','currentClose','recentCandles','recentCandleCount',
-    'signalTitle','signalReason','decisionText','signalScore','prepareBuy','prepareSell'
+    'signalTitle','signalReason','decisionText','prepareBuy','prepareSell'
   ]) assert.match(html, new RegExp(`id=["']${id}["']`));
   for (const repeated of ['analysisTitle','analyzingNow','targetTime','lastConfirmed']) assert.doesNotMatch(html, new RegExp(`id=["']${repeated}["']`));
 
@@ -26,8 +26,8 @@ test('sidepanel exposes one dominant analyst decision and real CasaTrade time su
   assert.match(app, /ATS_READ_SCANNER_STATE/);
   assert.match(app, /function decisionModel\(state = \{\}\)/);
   for (const label of ['ANALISANDO MERCADO ATUAL','MONTANDO PADRÃO DA PRÓXIMA VELA','POSSÍVEL COMPRA','POSSÍVEL VENDA','ENTRAR: COMPRA','ENTRAR: VENDA','AGUARDAR']) assert.match(app, new RegExp(label));
-  assert.match(app, /model\.actionable && model\.direction === 'BUY' && timeReady/);
-  assert.match(app, /model\.actionable && model\.direction === 'SELL' && timeReady/);
+  assert.match(app, /model\.actionable && model\.direction === 'BUY'/);
+  assert.match(app, /model\.actionable && model\.direction === 'SELL'/);
   assert.doesNotMatch(app, /ATS_RUN_BACKTEST|ATS_GET_WEEKLY_REPORT|renderIndicators|renderAI|renderIntelligence/);
 
   for (const removed of ['EMA 9','EMA 21','BACKTEST','RELATÓRIO SEMANAL','CORRELAÇÃO','CALENDÁRIO','NOTÍCIAS','MELHORES OPORTUNIDADES','POR QUE A IA']) assert.doesNotMatch(html.toUpperCase(), standalone(removed));
@@ -45,12 +45,12 @@ test('panel communicates exact versus estimated clock without inventing unavaila
   assert.match(html, /id="secondsRemaining">—</);
 });
 
-test('professional preferences are compact and keep live CasaTrade values authoritative', () => {
+test('professional preferences are compact and expose only the current operation controls', () => {
   const html = read('src/sidepanel/index.html');
-  const guard = read('src/sidepanel/expiration-guard-ui.js');
-  for (const id of ['analystMode','alertLevel','holdSeconds','desiredExpiration','overlayToggle','geminiToggle']) assert.match(html, new RegExp(`id=["']${id}["']`));
-  assert.match(html, /Somente preferência\. O tempo ao vivo sempre vem da CasaTrade/);
-  assert.match(guard, /O tempo ao vivo prevalece/);
+  for (const id of ['alertLevel','geminiToggle','operatingTimeframe']) assert.match(html, new RegExp(`id=["']${id}["']`));
+  for (const id of ['analystMode','holdSeconds','desiredExpiration','overlayToggle']) assert.doesNotMatch(html, new RegExp(`id=["']${id}["']`));
+  assert.match(html, /M1 • expiração 1 min/);
+  assert.match(html, /M5 • expiração 5 min/);
 });
 
 test('confirmed decisions stay session-scoped without exposing a separate history page', () => {

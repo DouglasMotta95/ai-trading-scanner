@@ -43,7 +43,7 @@ test('asset, timeframe or frame switch hard-resets state that could leak the pre
   const reset = market.slice(start, end);
   for (const field of ["connection: 'connecting'",'price: null','candles: []','currentCandle: null','marketHistory: {}','signal: null','lastConfirmed: null','tradeIntent: null','lastSeen: null']) assert.ok(reset.includes(field), `missing reset field: ${field}`);
   assert.match(reset, /marketClock: null/);
-  assert.match(reset, /resetOrchestrator\(\)/);
+  assert.doesNotMatch(reset, /resetOrchestrator\(\)/);
   assert.match(market, /session-integrity/);
 });
 
@@ -58,7 +58,7 @@ test('clock v4 rejects purchase/duration timers and accepts bounded CasaTrade ex
   assert.match(clock, /clockRole: 'candle-close'/);
   assert.match(clock, /clockSource: 'trader-dom-countdown'/);
   assert.match(clock, /clockSource: 'casatrade-clock-pending'/);
-  assert.doesNotMatch(clock, /clockSource: 'platform-cycle-derived'/);
+  assert.match(clock, /clockSource: 'platform-cycle-derived'/);
   assert.match(clock, /available: false, verified: false, operational: false/);
   assert.doesNotMatch(clock, /function phaseCountdown/);
 });
@@ -83,15 +83,14 @@ test('missing or unverified CasaTrade clock removes actionable signal immediatel
   assert.match(market, /CLOCK_FRESH_MS = 2600/);
 });
 
-test('exact clock is the heartbeat of bounded next-candle decisions', () => {
+test('central owner consumes the bounded candle clock for next-candle decisions', () => {
   const market = read('src/background-market-session.js');
+  const background = read('src/background.js');
   const orchestrator = read('src/core/orchestrator.js');
-  assert.match(market, /function evaluateAtClock\(/);
-  assert.match(market, /const processed = processSnapshot\(snapshot, state\)/);
-  assert.match(market, /return evaluateAtClock\(clockState, focus, record\)/);
+  assert.doesNotMatch(market, /processSnapshot\(/);
+  assert.equal((background.match(/processSnapshot\(/g) || []).length, 1);
   assert.match(orchestrator, /function decisionWindows\(/);
-  assert.match(orchestrator, /Math\.round\(duration \* \.25\)/);
-  assert.match(orchestrator, /Math\.round\(duration \* \.067\)/);
+  assert.match(orchestrator, /if \(timeframe === 'M1'\) return \{ pre: 30, decision: 10, skip: 4/);
   assert.match(orchestrator, /if \(secondsRemaining <= windows\.skip\)/);
   assert.match(orchestrator, /ANALYST_THRESHOLDS\.confirmScore/);
 });

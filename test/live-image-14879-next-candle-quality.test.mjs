@@ -34,9 +34,10 @@ test('14879: continuation and momentum cannot fight the identified trend', () =>
   assert.match(orchestrator, /name: 'momentum com tendência'/);
 });
 
-test('14879: a legacy CONFIRM cannot bypass the stricter next-candle quality gate', () => {
+test('14879: a legacy CONFIRM cannot bypass the A+ final quality gate', () => {
   const orchestrator = read('src/core/orchestrator.js');
-  assert.match(orchestrator, /signal\.state === 'CONFIRM'[\s\S]{0,220}decisionQuality\(signal, signal\.direction\)\.qualifies/);
+  assert.match(orchestrator, /signal\.state === 'CONFIRM'/);
+  assert.match(orchestrator, /stableAPlus\.finalAllowed/);
 });
 
 test('14879: unknown regime is neutral rather than a hard veto', () => {

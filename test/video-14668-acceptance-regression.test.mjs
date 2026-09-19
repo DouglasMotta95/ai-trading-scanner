@@ -8,7 +8,7 @@ test('connection handshake times out explicitly and does not depend on 10 candle
   const control = read('src/background-control.js');
   assert.match(control, /const CONNECT_TIMEOUT_MS = 7000/);
   assert.match(control, /code: 'handshake_timeout'/);
-  assert.match(control, /Falha ao conectar — tentar novamente/);
+  assert.match(control, /Falha ao confirmar o ativo ao vivo/);
   const handshake = control.slice(control.indexOf('function handshakeReady'), control.indexOf('function scheduleConnectionTimeout'));
   assert.doesNotMatch(handshake, /rows\.length/);
   assert.doesNotMatch(handshake, /expiration/);
@@ -19,8 +19,8 @@ test('sidepanel has only stable connected or disconnected badge while readiness 
   const shell = read('src/sidepanel/ui-shell-v2.js');
   const html = read('src/sidepanel/index.html');
   assert.match(shell, /connected \? 'CONECTADO' : 'DESCONECTADO'/);
-  assert.match(shell, /CONECTADO — AJUSTE A EXPIRAÇÃO/);
-  assert.match(shell, /CONECTADO — PRONTO PARA ANALISAR/);
+  assert.match(shell, /CONECTADO/);
+  assert.match(shell, /PRONTO PARA ANALISAR/);
   assert.doesNotMatch(html, /id="connectionBadge"[^>]*>CONECTANDO/);
 });
 
@@ -49,16 +49,13 @@ test('countdown and expiration are independent live channels with rollover prote
   assert.match(expiration, /setInterval/);
 });
 
-test('wrong expiration remains visible but blocks final entry, not technical analysis', () => {
+test('expiration is displayed as an operation plan while the technical engine remains the signal authority', () => {
   const app = read('src/sidepanel/app-v2.js');
   const policy = read('src/background-decision-policy.js');
-  assert.match(app, /EXPIRAÇÃO \$\{expLabel\(actualExpiration\)\} — ALTERE PARA 1 MIN/);
-  assert.match(app, /ALTERE PARA 1 MIN/);
-  assert.match(policy, /Expiration is an execution gate, not a technical-analysis gate/);
-  assert.match(policy, /uiState: direction === 'BUY' \? 'POSSIBLE_BUY' : 'POSSIBLE_SELL'/);
-  assert.match(policy, /actionable: false/);
-  assert.match(policy, /expirationReady/);
-  assert.match(policy, /60s/);
+  assert.match(app, /requiredExpirationForTimeframe/);
+  assert.match(app, /heroExpirationPlan/);
+  assert.match(policy, /Single authority rule/);
+  assert.match(policy, /expirationReady: true/);
 });
 
 test('price OHLC and last ten real candles are first-screen components', () => {

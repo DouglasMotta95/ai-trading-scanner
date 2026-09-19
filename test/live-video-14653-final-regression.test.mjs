@@ -39,7 +39,7 @@ test('visible expiration such as 5 seg is captured and kept separate from candle
   assert.match(expiration, /index - 180/);
   assert.match(expiration, /horizontal <= 520/);
   assert.match(clock, /if \(expirySemantic && !candleSemantic\) continue/);
-  assert.match(panel, /EXPIRAÇÃO \$\{expLabel\(actualExpiration\)\} — ALTERE PARA 1 MIN/);
+  assert.match(panel, /requiredExpirationForTimeframe/);
 });
 
 test('M1 countdown prefers the new 59-60 second candle after a 1-0 second rollover', () => {
@@ -59,9 +59,9 @@ test('connection status is independent from trade readiness and obsolete analyst
   const orchestrator = read('src/core/orchestrator.js');
 
   assert.match(shell, /connectScannerText'\)\.textContent = hasMarket \? 'CONECTADO' : 'CONECTAR'/);
-  assert.match(shell, /CONECTADO — AJUSTE A EXPIRAÇÃO/);
-  assert.match(shell, /actualExpiration === '60s'/);
-  assert.match(shell, /toUpperCase\(\) === 'M1'/);
+  assert.match(shell, /CONECTADO/);
+  assert.match(shell, /tf === 'M5' \? '300s' : '60s'/);
+  assert.match(shell, /finalWindowSeconds/);
   assert.match(app, /function entryBlockReason/);
   assert.match(app, /POSSÍVEL COMPRA/);
   assert.match(app, /POSSÍVEL VENDA/);

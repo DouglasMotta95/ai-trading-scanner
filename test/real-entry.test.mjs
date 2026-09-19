@@ -10,12 +10,12 @@ import {
 
 const minute = 60_000;
 const baseBucket = Math.floor(1_701_000_000_000 / minute) * minute;
-const closed = bucket => [
-  { time: bucket - 4 * minute, open: 1.00, high: 1.02, low: .99, close: 1.018, timeframe: 'M1' },
-  { time: bucket - 3 * minute, open: 1.018, high: 1.04, low: 1.01, close: 1.038, timeframe: 'M1' },
-  { time: bucket - 2 * minute, open: 1.038, high: 1.06, low: 1.03, close: 1.058, timeframe: 'M1' },
-  { time: bucket - minute, open: 1.058, high: 1.08, low: 1.05, close: 1.078, timeframe: 'M1' }
-];
+const closed = bucket => Array.from({ length: 39 }, (_, index) => {
+  const offset = 39 - index;
+  const open = 1 + index * .002;
+  const close = open + .0016;
+  return { time: bucket - offset * minute, open, high: close + .00045, low: open - .00035, close, timeframe: 'M1' };
+});
 
 function strongSnapshot(bucket, serverTime) {
   const history = closed(bucket);

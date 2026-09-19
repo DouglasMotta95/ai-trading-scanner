@@ -27,16 +27,16 @@ test('sidepanel has dark first paint and separates timeframe, expiration and can
   const html = read('src/sidepanel/index.html');
   assert.match(html, /background:#06101a/);
   assert.match(html, /id="timeframe"/);
-  assert.match(html, /id="heroExpiration"/);
+  assert.match(html, /id="heroExpirationPlan"/);
   assert.match(html, /id="heroCountdown"/);
-  assert.match(html, /id="heroExpiration"/);
+  assert.match(html, /id="heroExpirationPlan"/);
   assert.ok(html.indexOf('state-restore.js') < html.indexOf('app-v2.js'));
 });
 
 test('sidepanel restores cached scannerState before the live refresh catches up', () => {
   const source = read('src/sidepanel/state-restore.js');
   assert.match(source, /chrome\.runtime\.sendMessage\(\{\s*type:\s*'ATS_READ_SCANNER_STATE'\s*\}/);
-  assert.match(source, /setText\('heroExpiration'/);
+  assert.match(source, /heroExpirationPlan|heroCountdown/);
   assert.match(source, /setText\('heroCountdown'/);
   assert.match(source, /setText\('asset'/);
   assert.match(source, /setText\('timeframe'/);

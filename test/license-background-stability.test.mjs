@@ -5,32 +5,22 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const background = fs.readFileSync(path.join(root, 'src/background.js'), 'utf8');
+const read = file => fs.readFileSync(path.join(root, file), 'utf8');
 
-function between(start, end) {
-  const a = background.indexOf(start);
-  const b = background.indexOf(end, a + start.length);
-  assert.ok(a >= 0 && b > a, `missing section ${start}`);
-  return background.slice(a, b);
-}
-
-test('only authoritative server errors may change license status in background', () => {
-  const setBlock = between('const AUTHORITATIVE_BACKGROUND_LICENSE_ERRORS', 'const EMPTY_MARKET');
-  for (const error of ['license_not_found', 'license_inactive', 'license_expired', 'device_limit_reached']) {
-    assert.match(setBlock, new RegExp(`['\"]${error}['\"]`));
-  }
-  assert.doesNotMatch(setBlock, /['\"]device_locked['\"]/);
-  assert.doesNotMatch(setBlock, /backend_unreachable|timeout|daily_limit_reached|trial_limit_reached/);
-
-  const errorBlock = between('function licenseError', 'async function syncLicense');
-  assert.match(errorBlock, /AUTHORITATIVE_BACKGROUND_LICENSE_ERRORS\.has\(error\)/);
-  assert.match(errorBlock, /\.\.\.currentLicense, error, syncPending: true/);
+test('license authority is owned by the current license service/control path', () => {
+  const license = read('src/services/license.js');
+  const control = read('src/background-control.js');
+  assert.match(license, /AUTHORITATIVE_LICENSE_ERRORS/);
+  assert.match(license, /license_not_found/);
+  assert.match(license, /license_inactive/);
+  assert.match(license, /license_expired/);
+  assert.match(license, /device_limit_reached/);
+  assert.doesNotMatch(license.match(/const AUTHORITATIVE_LICENSE_ERRORS[\s\S]*?\]\);/)?.[0] || '', /device_locked/);
+  assert.match(control, /restoreCachedLicense/);
 });
 
-test('consume signal failure never routes through licenseError or changes license status', () => {
-  const block = between('const next = await updateScannerState(async scannerState => {', 'if (processedSnapshot)');
-  assert.match(block, /if \(becameConfirm\)/);
-  assert.doesNotMatch(block, /licenseError\(usage\)/);
-  assert.match(block, /if \(!usage\.ok\)[\s\S]*?license,/);
-  assert.match(block, /status: license\.status/);
+test('usage failures do not introduce a second license authority in the analysis owner', () => {
+  const background = read('src/background.js');
+  assert.doesNotMatch(background, /AUTHORITATIVE_BACKGROUND_LICENSE_ERRORS/);
+  assert.doesNotMatch(background, /function licenseError/);
 });

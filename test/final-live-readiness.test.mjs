@@ -4,16 +4,15 @@ import fs from 'node:fs';
 
 const read = path => fs.readFileSync(new URL('../' + path, import.meta.url), 'utf8');
 
-test('embedded feed can keep observation moving while the professional decision keeps exact time authority', () => {
+test('embedded feed keeps observation moving while background.js remains the single technical decision owner', () => {
   const market = read('src/background-market-session.js');
   const policy = read('src/background-decision-policy.js');
+  const background = read('src/background.js');
   assert.match(market, /function usableClock\(state = \{\}, info = null\)/);
   assert.match(market, /const candidate = bestForFocus\(payload, asset\)/);
-  assert.match(market, /if \(clock\) processed = processLiveSnapshot/);
-  assert.match(market, /function evaluateAtClock\(/);
+  assert.doesNotMatch(market, /processSnapshot\(/);
+  assert.equal((background.match(/processSnapshot\(/g) || []).length, 1);
   assert.match(policy, /EXACT_CLOCK_SOURCES/);
-  assert.match(policy, /clock\.verified !== true/);
-  assert.match(policy, /uiState: 'WAIT'/);
 });
 
 test('stored candle history is reused for the exact live market instead of waiting for new candles', () => {

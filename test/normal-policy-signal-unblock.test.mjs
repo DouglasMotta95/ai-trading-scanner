@@ -4,15 +4,18 @@ import fs from 'node:fs';
 
 const source = fs.readFileSync(new URL('../src/background-decision-policy.js', import.meta.url), 'utf8');
 
-test('NORMAL trusts a technical candidate instead of applying a second confluence veto', () => {
-  assert.match(source, /const additionalConfluenceReady = pref\.mode !== 'A_PLUS' \|\| factors\.count >= requiredFactors/);
-  assert.match(source, /score < possibleScore \|\| !additionalConfluenceReady/);
-  assert.match(source, /technicalFinal && score >= finalScore && additionalConfluenceReady/);
-  assert.doesNotMatch(source, /score < possibleScore \|\| factors\.count < requiredFactors/);
-  assert.doesNotMatch(source, /technicalFinal && score >= finalScore && factors\.count >= requiredFactors/);
+test('professional policy mirrors the orchestrator signal instead of applying a second confluence veto', () => {
+  const start = source.indexOf('function baseDecision');
+  const end = source.indexOf('\nfunction signature', start);
+  const block = source.slice(start, end);
+  assert.match(block, /Single authority rule/);
+  assert.match(block, /if \(ui === 'ENTER_BUY' \|\| ui === 'ENTER_SELL'\)/);
+  assert.match(block, /if \(ui === 'POSSIBLE_BUY' \|\| ui === 'POSSIBLE_SELL'\)/);
+  assert.doesNotMatch(block, /requiredFactors|possibleScore|finalScore/);
 });
 
-test('A+ keeps its explicit extra three-factor gate', () => {
-  assert.match(source, /const requiredFactors = pref\.mode === 'A_PLUS' \? 3 : 2/);
-  assert.match(source, /pref\.mode !== 'A_PLUS' \|\| factors\.count >= requiredFactors/);
+test('A+ profile is owned by the technical engine and exposed as the current professional profile', () => {
+  assert.match(source, /mode: 'A_PLUS'/);
+  assert.match(source, /profile: pref\.mode/);
+  assert.match(source, /operatingTimeframe/);
 });

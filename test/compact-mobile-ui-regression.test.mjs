@@ -39,21 +39,19 @@ test('compact sidepanel does not load nonessential polling panels or duplicate d
   assert.doesNotMatch(html, /id="validationCard"/);
 });
 
-test('fixed M1 profile removes advanced signal gates from user-facing options', () => {
+test('compact profile exposes only the current A+ M1/M5 operation selector', () => {
   const html = read('src/sidepanel/index.html');
   const app = read('src/sidepanel/app-v2.js');
 
   for (const id of ['analystMode','holdSeconds','desiredExpiration','overlayToggle']) {
     assert.doesNotMatch(html, new RegExp(`id="${id}"`));
   }
-  assert.match(html, />M1</);
-  assert.match(html, />1 min</);
-  assert.match(html, />Normal</);
-  assert.match(html, />3 s</);
-  assert.match(app, /mode: 'NORMAL'/);
+  assert.match(html, /id="operatingTimeframe"/);
+  assert.match(html, /M1 • expiração 1 min/);
+  assert.match(html, /M5 • expiração 5 min/);
+  assert.match(app, /analystMode: 'A_PLUS'/);
   assert.match(app, /holdSeconds: 3/);
-  assert.match(app, /preferredExpiration: null/);
-  assert.match(app, /setText\('heroExpiration', expLabel\(actualExp\)\)/);
+  assert.match(app, /requiredExpirationForTimeframe/);
 });
 
 test('decision policy and entry gates share the same authoritative clock sources', () => {

@@ -38,20 +38,15 @@ test('live CasaTrade controls are authoritative and timeframe changes reset the 
   assert.doesNotMatch(html, /id="desiredExpiration"/);
 });
 
-test('professional policy uses one fixed Normal profile with a stable 3 second hold', () => {
+test('professional policy mirrors the fixed A+ technical profile without a second signal gate', () => {
   const policy = read('src/background-decision-policy.js');
   const controls = read('src/background-platform-controls.js');
-  assert.match(policy, /mode: 'NORMAL'/);
+  assert.match(policy, /mode: 'A_PLUS'/);
   assert.match(policy, /holdSeconds: 3/);
-  assert.match(policy, /const possibleScore = 44/);
-  assert.match(policy, /const finalScore = 58/);
-  assert.doesNotMatch(policy, /pref\.mode === 'A_PLUS'/);
-  assert.match(controls, /mode: 'NORMAL'/);
-  assert.match(controls, /holdSeconds: 3/);
-  assert.match(controls, /preferredExpiration: null/);
-  assert.match(policy, /Math\.max\(0, holdMs - heldFor\)/);
+  assert.match(policy, /Single authority rule/);
   assert.match(policy, /POSSIBLE_BUY/);
   assert.match(policy, /ENTER_BUY/);
+  assert.match(controls, /mode: 'A_PLUS'/);
 });
 
 test('Gemini is a second reading only after the professional possible/final stage', () => {
