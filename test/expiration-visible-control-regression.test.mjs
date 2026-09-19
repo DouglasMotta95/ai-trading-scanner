@@ -204,3 +204,16 @@ test('retry reads expiration before full reinjection when clock and market are a
   assert.ok(direct < inject);
   assert.match(block, /if \(directExpiration\) \{/);
 });
+
+
+test('direct expiration probe falls back across Android world and frame modes', () => {
+  const control = read('src/background-control.js');
+  const start = control.indexOf('async function directExpirationProbe');
+  const end = control.indexOf('\nasync function commitDirectExpiration', start);
+  const block = control.slice(start, end);
+  assert.match(block, /\{ target: \{ tabId \}, world: 'ISOLATED' \}/);
+  assert.match(block, /\{ target: \{ tabId \} \}/);
+  assert.match(block, /\{ target: \{ tabId, allFrames: true \}, world: 'ISOLATED' \}/);
+  assert.match(block, /\{ target: \{ tabId, allFrames: true \} \}/);
+  assert.match(block, /result\.some\(row => row\?\.result\?\.expiration\)/);
+});
