@@ -15,7 +15,7 @@
         } catch { resolve(null); }
       });
 
-  const EXPIRATION_DIAG_PREFIX = 'atsExpirationProbeDiagnosticsV1:';
+  const EXPIRATION_DIAG_STORAGE_KEY = 'atsExpirationProbeDiagnosticsV1';
   const expirationProbeDiag = globalThis.__ATS_EXPIRATION_PROBE_DIAGNOSTICS__ || {
     version: 1,
     instanceId: (globalThis.crypto?.randomUUID?.() || (Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10))),
@@ -30,7 +30,6 @@
     updatedAt: 0
   };
   globalThis.__ATS_EXPIRATION_PROBE_DIAGNOSTICS__ = expirationProbeDiag;
-  const expirationDiagStorageKey = EXPIRATION_DIAG_PREFIX + expirationProbeDiag.instanceId;
   let expirationDiagFlushTimer = 0;
 
   function expirationDiagSnapshot() {
@@ -60,8 +59,22 @@
     const write = () => {
       expirationDiagFlushTimer = 0;
       try {
-        chrome.storage.local.set({ [expirationDiagStorageKey]: expirationDiagSnapshot() }, () => {
+        chrome.storage.local.get(EXPIRATION_DIAG_STORAGE_KEY, stored => {
           try { void chrome.runtime.lastError; } catch {}
+          const current = stored?.[EXPIRATION_DIAG_STORAGE_KEY];
+          const frames = current?.version === 1 && current.frames && typeof current.frames === 'object'
+            ? { ...current.frames }
+            : {};
+          const now = Date.now();
+          for (const [key, row] of Object.entries(frames)) {
+            if (!row || now - Number(row.updatedAt || 0) > 120000) delete frames[key];
+          }
+          frames[expirationProbeDiag.instanceId] = expirationDiagSnapshot();
+          chrome.storage.local.set({
+            [EXPIRATION_DIAG_STORAGE_KEY]: { version: 1, updatedAt: now, frames }
+          }, () => {
+            try { void chrome.runtime.lastError; } catch {}
+          });
         });
       } catch {}
     };
