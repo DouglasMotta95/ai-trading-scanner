@@ -15,12 +15,17 @@ test('CasaTrade-owned chart focus can become live and render overlay without leg
   assert.doesNotMatch(overlay, /if \(!inTraderFrame\) return null/);
 });
 
-test('reconnect refuses to paint a stale same-tab asset as current market', () => {
+test('reconnect refuses to paint a stale same-tab asset and delegates reset to market-session', () => {
   const control = read('src/background-control.js');
+  const market = read('src/background-market-session.js');
   assert.match(control, /const preserveLive = sameTab && current\.connection === 'online' && focusFresh && dataFresh/);
   assert.match(control, /Date\.now\(\) - Number\(focus\.at\) < 2500/);
-  assert.match(control, /delete diagnostics\.focusedAsset/);
-  assert.match(control, /asset: null, price: null, timeframe: null, analysisTimeframe: null/);
+  assert.match(control, /clearMarketAuthorityState\(base/);
+  assert.doesNotMatch(control, /delete diagnostics\.focusedAsset/);
+  assert.doesNotMatch(control, /asset: null, price: null, timeframe: null, analysisTimeframe: null/);
+  assert.match(market, /delete requestedDiagnostics\.focusedAsset/);
+  assert.match(market, /asset: null/);
+  assert.match(market, /price: null/);
 });
 
 test('bankroll reader covers unlabeled top balance plus CasaTrade Invest and Lucro labels', () => {
