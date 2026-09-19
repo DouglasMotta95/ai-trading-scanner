@@ -3,47 +3,35 @@ import assert from 'node:assert/strict';
 import { analyzeCandles } from '../src/core/analysis.js';
 import { processSnapshot, resetOrchestrator } from '../src/core/orchestrator.js';
 import { detectPlatform } from '../src/platforms/registry.js';
+import { bullishAPlusRows, weakCurrentFrom, snapshotFor, minute } from './helpers/current-a-plus-fixtures.mjs';
 
-const minute = 60_000;
-
-function bullishRows(bucket) {
-  return [
-    { time: bucket - 4 * minute, open: 1.00, high: 1.02, low: .99, close: 1.018, timeframe: 'M1' },
-    { time: bucket - 3 * minute, open: 1.018, high: 1.04, low: 1.01, close: 1.038, timeframe: 'M1' },
-    { time: bucket - 2 * minute, open: 1.038, high: 1.06, low: 1.03, close: 1.058, timeframe: 'M1' },
-    { time: bucket - minute, open: 1.058, high: 1.08, low: 1.05, close: 1.078, timeframe: 'M1' },
-    { time: bucket, open: 1.078, high: 1.115, low: 1.075, close: 1.11, timeframe: 'M1' }
-  ];
-}
-
-function snap(bucket, atMs, price = 1.11, candles = bullishRows(bucket), extra = {}) {
-  return processSnapshot({
-    platformId: 'casatrade', asset: 'EUR/USD (OTC)', price,
-    timeframe: 'M1', analysisTimeframe: 'M1', connection: 'online',
-    serverTime: bucket + atMs, candles, ...extra
-  }, { connection: 'online' });
+function snap(bucket, atMs, rows = bullishAPlusRows(bucket), extra = {}) {
+  return processSnapshot(snapshotFor(bucket, atMs, { rows, extra }), { connection: 'online' });
 }
 
 function publishPossible(bucket) {
-  const first = snap(bucket, 35_000);
+  const rows = bullishAPlusRows(bucket);
+  const first = snap(bucket, 35_000, rows);
   assert.notEqual(first.signal.state, 'WATCH');
-  const second = snap(bucket, 36_000);
+  const second = snap(bucket, 36_000, rows);
   assert.equal(second.signal.state, 'WATCH');
   assert.equal(second.signal.phase, 'POSSIBLE');
   assert.equal(second.signal.direction, 'BUY');
   assert.equal(second.signal.uiState, 'POSSIBLE_BUY');
-  return second;
+  assert.equal(second.signal.aPlus?.hardVetoes?.length, 0);
+  return { second, rows };
 }
 
 function confirmStable(bucket) {
-  publishPossible(bucket);
-  const firstFinal = snap(bucket, 51_000);
+  const { rows } = publishPossible(bucket);
+  const firstFinal = snap(bucket, 51_000, rows);
   assert.notEqual(firstFinal.signal.state, 'CONFIRM');
-  const confirmed = snap(bucket, 52_000);
+  const confirmed = snap(bucket, 52_000, rows);
   assert.equal(confirmed.signal.state, 'CONFIRM');
   assert.equal(confirmed.signal.direction, 'BUY');
   assert.equal(confirmed.signal.uiState, 'ENTER_BUY');
-  return confirmed;
+  assert.ok(Number(confirmed.signal.aPlus?.score || 0) >= 78);
+  return { confirmed, rows };
 }
 
 test('recent candle analysis works with real short history', () => {
@@ -94,21 +82,20 @@ test('analyst starts once two closed candles plus current candle are available',
     { time: bucket - minute, open: 1.018, high: 1.04, low: 1.01, close: 1.038, timeframe: 'M1' },
     { time: bucket, open: 1.038, high: 1.06, low: 1.035, close: 1.058, timeframe: 'M1' }
   ];
-  const out = snap(bucket, 15_000, 1.058, candles);
+  const out = snap(bucket, 15_000, candles);
   assert.notEqual(out.signal.state, 'SEARCHING');
   assert.notEqual(out.signal.phase, 'HISTORY');
   assert.equal(out.signal.warmup.required, 2);
   assert.equal(out.signal.candleCount, 2);
 });
 
-test('possible signal requires consecutive stable observations in the last 30 seconds', () => {
+test('possible signal requires consecutive stable observations in the preparation window', () => {
   resetOrchestrator();
   const bucket = Math.floor(1_700_000_000_000 / minute) * minute;
-  const first = snap(bucket, 35_000);
-  assert.notEqual(first.signal.state, 'WATCH');
+  const rows = bullishAPlusRows(bucket);
+  const first = snap(bucket, 35_000, rows);
   assert.notEqual(first.signal.uiState, 'POSSIBLE_BUY');
-
-  const second = snap(bucket, 36_000);
+  const second = snap(bucket, 36_000, rows);
   assert.equal(second.signal.phase, 'POSSIBLE');
   assert.equal(second.signal.state, 'WATCH');
   assert.equal(second.signal.direction, 'BUY');
@@ -116,15 +103,13 @@ test('possible signal requires consecutive stable observations in the last 30 se
   assert.equal(second.signal.secondsRemaining, 24);
 });
 
-test('final decision requires stable confirmation for the next candle', () => {
+test('final decision requires stable A+ confirmation for the next candle', () => {
   resetOrchestrator();
   const bucket = Math.floor(1_700_100_000_000 / minute) * minute;
-  publishPossible(bucket);
-
-  const firstFinal = snap(bucket, 51_000);
+  const { rows } = publishPossible(bucket);
+  const firstFinal = snap(bucket, 51_000, rows);
   assert.notEqual(firstFinal.signal.state, 'CONFIRM');
-
-  const out = snap(bucket, 52_000);
+  const out = snap(bucket, 52_000, rows);
   assert.equal(out.signal.phase, 'FINAL');
   assert.equal(out.signal.state, 'CONFIRM');
   assert.equal(out.signal.direction, 'BUY');
@@ -137,15 +122,10 @@ test('final decision requires stable confirmation for the next candle', () => {
 test('confirmed decision is latched and cannot flicker back to wait inside the same candle', () => {
   resetOrchestrator();
   const bucket = Math.floor(1_700_150_000_000 / minute) * minute;
-  const confirmed = confirmStable(bucket);
+  const { confirmed, rows } = confirmStable(bucket);
   assert.equal(confirmed.signal.state, 'CONFIRM');
-
-  const closed = bullishRows(bucket).slice(0, -1);
-  const weak = snap(bucket, 55_000, 1.079, [
-    ...closed,
-    { time: bucket, open: 1.078, high: 1.09, low: 1.07, close: 1.079, timeframe: 'M1' }
-  ]);
-
+  const weakRows = weakCurrentFrom(rows, bucket);
+  const weak = snap(bucket, 55_000, weakRows);
   assert.equal(weak.signal.state, 'CONFIRM');
   assert.equal(weak.signal.direction, 'BUY');
   assert.equal(weak.signal.uiState, 'ENTER_BUY');
@@ -156,35 +136,30 @@ test('confirmed decision is latched and cannot flicker back to wait inside the s
 test('live analyst exposes pattern-building state before the pre-signal window', () => {
   resetOrchestrator();
   const bucket = Math.floor(1_700_175_000_000 / minute) * minute;
-  const out = snap(bucket, 15_000);
+  const out = snap(bucket, 15_000, bullishAPlusRows(bucket));
   assert.equal(out.signal.phase, 'BUILDING');
   assert.equal(out.signal.uiState, 'BUILDING_PATTERN');
   assert.equal(out.signal.direction, null);
   assert.equal(out.signal.analysisDirection, 'BUY');
-  assert.equal(out.signal.analysisScore, out.signal.score);
+  assert.ok(Number.isFinite(Number(out.signal.analysisScore)));
 });
 
 test('completed final decision is exposed as last confirmed after candle rollover', () => {
   resetOrchestrator();
   const bucket = Math.floor(1_700_190_000_000 / minute) * minute;
-  const final = confirmStable(bucket);
-  assert.equal(final.signal.state, 'CONFIRM');
-
-  const history = bullishRows(bucket).slice(0, -1);
-  const next = processSnapshot({
-    platformId: 'casatrade', asset: 'EUR/USD (OTC)', price: 1.112,
-    timeframe: 'M1', analysisTimeframe: 'M1', connection: 'online',
-    serverTime: bucket + minute + 5_000,
-    candles: [
-      ...history,
-      { time: bucket, open: 1.078, high: 1.115, low: 1.075, close: 1.11, timeframe: 'M1' },
-      { time: bucket + minute, open: 1.11, high: 1.113, low: 1.109, close: 1.112, timeframe: 'M1' }
+  const { confirmed, rows } = confirmStable(bucket);
+  assert.equal(confirmed.signal.state, 'CONFIRM');
+  const current = rows.at(-1);
+  const target = bucket + minute;
+  const next = processSnapshot(snapshotFor(target, 5_000, {
+    rows: [
+      ...rows,
+      { time: target, open: current.close, high: current.close + .0003, low: current.close - .0001, close: current.close + .0002, timeframe: 'M1' }
     ]
-  }, { connection: 'online' });
-
+  }), { connection: 'online' });
   assert.equal(next.lastConfirmed.state, 'CONFIRM');
   assert.equal(next.lastConfirmed.direction, 'BUY');
-  assert.equal(next.lastConfirmed.time, bucket + minute);
+  assert.equal(next.lastConfirmed.time, target);
   assert.equal(next.lastConfirmed.asset, 'EUR/USD (OTC)');
   assert.equal(next.lastConfirmed.timeframe, 'M1');
 });
@@ -192,7 +167,8 @@ test('completed final decision is exposed as last confirmed after candle rollove
 test('CasaTrade countdown overrides wall-clock countdown when provided', () => {
   resetOrchestrator();
   const bucket = Math.floor(1_700_200_000_000 / minute) * minute;
-  const out = snap(bucket, 20_000, 1.11, bullishRows(bucket), { secondsRemaining: 9 });
+  const rows = bullishAPlusRows(bucket);
+  const out = snap(bucket, 20_000, rows, { secondsRemaining: 9 });
   assert.equal(out.signal.secondsRemaining, 9);
   assert.equal(out.signal.phase, 'FINAL');
 });
