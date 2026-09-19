@@ -134,3 +134,30 @@ test('sidepanel no longer depends exclusively on platformControls.observed.expir
   assert.match(shell, /state\.targetExpiration/);
   assert.match(shell, /expirationAuthority\.confirmed/);
 });
+
+
+test('retry still runs the direct expiration reader when reinjection fails', () => {
+  const control = read('src/background-control.js');
+  const start = control.indexOf('async function refreshTargetTab');
+  const end = control.indexOf('\nasync function connectActiveTab', start);
+  const block = control.slice(start, end);
+  assert.match(block, /const injected = await injectModern\(tabId\)\.catch\(\(\) => false\)/);
+  assert.match(block, /const directExpiration = await readAndCommitDirectExpiration\(tabId\)/);
+  assert.doesNotMatch(block, /if \(!injected\) return \{ ok: false/);
+});
+
+test('direct expiration fallback reads visible text Expiração followed by 1 min', () => {
+  const control = read('src/background-control.js');
+  assert.match(control, /visible-lines-after-expiration-label/);
+  assert.match(control, /visible-body-expiration-text/);
+  assert.match(control, /document\.body\?\.innerText/);
+  assert.match(control, /const waits = \[0, 180, 480\]/);
+});
+
+test('successful direct probe records the exact evidence in diagnostics', () => {
+  const control = read('src/background-control.js');
+  assert.match(control, /directExpirationProbe: \{/);
+  assert.match(control, /found: true/);
+  assert.match(control, /evidence: clean\(evidence\?\.evidence/);
+  assert.match(control, /frameId: Number\(evidence\?\.frameId/);
+});
