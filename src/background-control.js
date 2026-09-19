@@ -2,7 +2,7 @@ import { activateLicense, validateLicense, clearLicense, restoreCachedLicense } 
 import { readScannerState, updateScannerState } from './services/scanner-state-atomic.js';
 import { storageLocalGet, storageSessionGet, tabsQuery, sidePanelSetBehavior } from './services/chrome-compat.js';
 import { detectPlatform } from './platforms/registry.js';
-import { clearMarketAuthorityState } from './background-market-session.js';
+import { clearMarketAuthorityState, applyFocus as applyMarketFocus } from './background-market-session.js';
 
 const DEFAULT_LICENSE = Object.freeze({
   status: 'unconfigured', plan: null, planLabel: null, dailyLimit: null, usedToday: 0,
@@ -54,54 +54,45 @@ function handshakeReady(state = {}) {
 }
 
 function scheduleConnectionTimeout(tabId, connectedAt) {
-  setTimeout(() => {
-    readScannerState().then(current => {
-      const sameTarget = Number(current.targetTabId) === Number(tabId)
-        && Number(current.diagnostics?.target?.connectedAt || 0) === Number(connectedAt);
-      if (!sameTarget || handshakeReady(current)) return null;
-      return updateScannerState(state => {
-        const stillSame = Number(state.targetTabId) === Number(tabId)
-          && Number(state.diagnostics?.target?.connectedAt || 0) === Number(connectedAt);
-        if (!stillSame || handshakeReady(state)) return state;
-        if (marketDataConnected(state)) {
-          const diagnostics = { ...(state.diagnostics || {}) };
-          delete diagnostics.connectionError;
-          return {
-            ...state,
-            scanner: 'scanning',
-            connection: 'online',
-            diagnostics: {
-              ...diagnostics,
-              acquisition: {
-                ...(state.diagnostics?.acquisition || {}),
-                stage: 'syncing_clock',
-                reason: 'CasaTrade conectada. Sincronizando o countdown real da vela.',
-                at: Date.now()
-              }
-            }
-          };
-        }
+  setTimeout(async () => {
+    const current = await readScannerState().catch(() => null);
+    if (!current) return;
+    const sameTarget = Number(current.targetTabId) === Number(tabId)
+      && Number(current.diagnostics?.target?.connectedAt || 0) === Number(connectedAt);
+    if (!sameTarget || handshakeReady(current)) return;
+
+    // A healthy runtime injection is not a connection failure. On Android/tablet
+    // the selected-market frame may publish a little later, especially just after
+    // an unpacked extension reload. Keep the scanner alive and actively recover
+    // the visual focus instead of flipping OFFLINE at 7 seconds.
+    if (runtimeInjectionHealthy(current)) {
+      await updateScannerState(state => {
+        if (Number(state.targetTabId) !== Number(tabId) || handshakeReady(state)) return state;
+        const diagnostics = { ...(state.diagnostics || {}) };
+        delete diagnostics.connectionError;
         return {
           ...state,
-          scanner: 'idle',
-          connection: 'offline',
+          scanner: 'scanning',
+          connection: 'connecting',
           diagnostics: {
-            ...(state.diagnostics || {}),
-            connectionError: {
-              code: 'handshake_timeout',
-              message: 'Falha ao conectar — tentar novamente.',
-              at: Date.now()
-            },
+            ...diagnostics,
             acquisition: {
               ...(state.diagnostics?.acquisition || {}),
-              stage: 'connect_timeout',
-              reason: 'Falha ao conectar — tentar novamente.',
+              stage: 'recovering_live_asset',
+              reason: 'Leitores carregados. Confirmando o ativo visível da CasaTrade.',
               at: Date.now()
             }
           }
         };
-      });
-    }).catch(() => {});
+      }).catch(() => {});
+      await recoverFocusedAsset(tabId).catch(() => false);
+      await injectModern(tabId).catch(() => false);
+      await forceLiveControlRead(tabId).catch(() => false);
+      setTimeout(() => finalConnectionCheck(tabId, connectedAt).catch(() => {}), 9000);
+      return;
+    }
+
+    await finalConnectionCheck(tabId, connectedAt);
   }, CONNECT_TIMEOUT_MS);
 }
 
@@ -190,6 +181,149 @@ function executeScriptCompat(details) {
     } catch (error) {
       finish(error);
     }
+  });
+}
+
+
+async function directFocusedAssetProbe(tabId) {
+  if (!tabId || !chrome.scripting?.executeScript) return null;
+  const probeFunc = () => {
+    const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
+    let host = '';
+    try { host = String(location.hostname || '').toLowerCase().replace(/\.$/, ''); } catch {}
+    const meta = globalThis.__ATS_FOCUSED_ASSET_META__ || null;
+    const value = clean(meta?.asset || globalThis.__ATS_FOCUSED_ASSET_VALUE__ || '');
+    if (!value) return null;
+    const trader = host === 'casatraders.online' || host.endsWith('.casatraders.online')
+      || host === 'ivcasatraders.online' || host.endsWith('.ivcasatraders.online');
+    const casa = host === 'casatrade.com' || host.endsWith('.casatrade.com')
+      || host === 'casatrade.io' || host.endsWith('.casatrade.io');
+    if (!trader && !casa) return null;
+    return {
+      asset: value,
+      score: Number(meta?.score || 0),
+      samples: Math.max(3, Number(meta?.samples || 0)),
+      stableFor: Math.max(300, Number(meta?.stableFor || 0)),
+      reliable: true,
+      visual: true,
+      explicit: meta?.explicit === true,
+      interactionHint: meta?.interactionHint === true,
+      interactionAt: Number(meta?.interactionAt || 0) || null,
+      chartScoped: true,
+      chartFound: meta?.chartFound !== false,
+      frameHost: host,
+      frameRole: clean(meta?.frameRole || (trader ? 'trader-frame' : 'casa-chart-frame')),
+      source: clean(meta?.source || 'background-focus-recovery'),
+      at: Date.now()
+    };
+  };
+  const attempts = [
+    { target: { tabId, allFrames: true }, world: 'ISOLATED' },
+    { target: { tabId, allFrames: true } }
+  ];
+  let rows = [];
+  for (const details of attempts) {
+    try {
+      const result = await executeScriptCompat({ ...details, func: probeFunc });
+      rows = [...rows, ...result];
+      if (result.some(row => row?.result?.asset)) break;
+    } catch {}
+  }
+  const candidates = rows
+    .map(row => ({ frameId: Number(row?.frameId ?? -1), ...(row?.result || {}) }))
+    .filter(row => row.asset && ['trader-frame','casa-chart-frame'].includes(clean(row.frameRole)))
+    .sort((a,b) =>
+      Number(b.interactionHint === true) - Number(a.interactionHint === true)
+      || Number(b.explicit === true) - Number(a.explicit === true)
+      || Number(String(b.frameRole) === 'trader-frame') - Number(String(a.frameRole) === 'trader-frame')
+      || Number(b.score || 0) - Number(a.score || 0)
+    );
+  return candidates[0] || null;
+}
+
+async function recoverFocusedAsset(tabId) {
+  if (!tabId) return false;
+  await forceLiveControlRead(tabId).catch(() => false);
+  await sleep(220);
+  const evidence = await directFocusedAssetProbe(tabId);
+  if (!evidence?.asset) return false;
+  const state = await readScannerState().catch(() => ({}));
+  const topHost = clean(state.diagnostics?.target?.host || 'trade.casatrade.com').toLowerCase();
+  const frameHost = clean(evidence.frameHost || '').toLowerCase();
+  const sender = {
+    tab: { id: Number(tabId), url: `https://${topHost}/` },
+    frameId: Number(evidence.frameId ?? 0),
+    url: `https://${frameHost || topHost}/`
+  };
+  const applied = await applyMarketFocus({
+    type: 'ATS_VISUAL_FOCUS_V2',
+    ...evidence,
+    reliable: true,
+    visual: true,
+    chartScoped: true,
+    at: Date.now(),
+    source: evidence.source || 'background-focus-recovery'
+  }, sender).catch(() => null);
+  await updateScannerState(current => ({
+    ...current,
+    diagnostics: {
+      ...(current.diagnostics || {}),
+      directFocusRecovery: {
+        found: true,
+        asset: evidence.asset,
+        frameId: Number(evidence.frameId ?? -1),
+        frameHost,
+        frameRole: evidence.frameRole,
+        applied: !!applied,
+        at: Date.now()
+      }
+    }
+  })).catch(() => {});
+  return !!applied;
+}
+
+function runtimeInjectionHealthy(state = {}) {
+  const runtime = state.diagnostics?.runtimeInjection || {};
+  return Number(runtime.isolated?.ok || 0) > 0 || Number(runtime.main?.ok || 0) > 0;
+}
+
+async function finalConnectionCheck(tabId, connectedAt) {
+  const current = await readScannerState().catch(() => null);
+  if (!current) return;
+  const sameTarget = Number(current.targetTabId) === Number(tabId)
+    && Number(current.diagnostics?.target?.connectedAt || 0) === Number(connectedAt);
+  if (!sameTarget || handshakeReady(current)) return;
+
+  if (runtimeInjectionHealthy(current)) {
+    await recoverFocusedAsset(tabId).catch(() => false);
+    await sleep(1200);
+    const recovered = await readScannerState().catch(() => null);
+    if (recovered && handshakeReady(recovered)) return;
+  }
+
+  await updateScannerState(state => {
+    const stillSame = Number(state.targetTabId) === Number(tabId)
+      && Number(state.diagnostics?.target?.connectedAt || 0) === Number(connectedAt);
+    if (!stillSame || handshakeReady(state)) return state;
+    return {
+      ...state,
+      scanner: 'idle',
+      connection: 'offline',
+      diagnostics: {
+        ...(state.diagnostics || {}),
+        connectionError: {
+          code: 'handshake_timeout',
+          message: 'Falha ao confirmar o ativo ao vivo — tentar novamente.',
+          at: Date.now()
+        },
+        acquisition: {
+          ...(state.diagnostics?.acquisition || {}),
+          stage: 'connect_timeout',
+          reason: 'Os leitores entraram, mas o ativo ao vivo não foi confirmado.',
+          at: Date.now()
+        }
+      }
+    };
   });
 }
 
@@ -523,8 +657,9 @@ async function refreshTargetTab() {
 
   const injected = await injectModern(tabId).catch(() => false);
   await forceLiveControlRead(tabId).catch(() => false);
+  const focusRecovered = await recoverFocusedAsset(tabId).catch(() => false);
   const nextState = await readScannerState();
-  return { ok: !!injected, tabId, injected, state: nextState };
+  return { ok: !!injected || focusRecovered, tabId, injected, focusRecovered, state: nextState };
 }
 
 async function connectActiveTab() {
@@ -635,6 +770,7 @@ async function connectActiveTab() {
     return { ok: false, error: 'runtime_injection_failed', platform: { id: platform.id, name: platform.name }, tabId: tab.id, state: failed };
   }
   await forceLiveControlRead(tab.id);
+  await recoverFocusedAsset(tab.id).catch(() => false);
   const connectedAt = Number(next.diagnostics?.target?.connectedAt || Date.now());
   scheduleConnectionTimeout(tab.id, connectedAt);
   return { ok: true, platform: { id: platform.id, name: platform.name }, tabId: tab.id, state: await readScannerState() || next };
