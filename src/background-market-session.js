@@ -13,7 +13,7 @@ const licenseActive = state => {
     || state?.diagnostics?.access?.ownerDev === true
     || state?.diagnostics?.access?.state === 'owner_dev';
 };
-const CLOCK_FRESH_MS = 2600;
+const CLOCK_FRESH_MS = 3000;
 const FOCUS_FRESH_MS = 5000;
 const EXACT_CLOCK_SOURCES = new Set(['trader-dom-countdown', 'network-server-cycle']);
 const FALLBACK_CLOCK_SOURCE = 'platform-cycle-derived';
@@ -473,6 +473,10 @@ export async function applyClock(message = {}, sender = {}) {
     if (fallback && exactClock(state, info)) return state;
 
     if ((!exact && !fallback) || !validRemaining) {
+      // Do not let a transient "pending" sample erase an exact CasaTrade clock
+      // that is still fresh for this same focused frame. The next exact sample
+      // can refresh it; only a genuinely stale clock is allowed to become pending.
+      if (exactClock(state, info)) return state;
       return {
         ...state,
         diagnostics: {
