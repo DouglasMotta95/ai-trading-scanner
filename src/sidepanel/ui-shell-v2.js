@@ -55,14 +55,30 @@ function exactClockReady(state = {}) {
     && Number.isFinite(Number(clock?.secondsRemaining));
 }
 
+function confirmedExpiration(state = {}) {
+  const value = clean(
+    state.platformControls?.observed?.expiration
+    || state.diagnostics?.expirationGuard?.actual
+    || state.targetExpiration
+    || state.expiration
+    || ''
+  );
+  const at = Number(
+    state.platformControls?.observed?.observedAt?.expiration
+    || state.platformControls?.expirationCheckedAt
+    || (state.diagnostics?.expirationGuard?.source === 'background-direct-expiration-probe' ? state.diagnostics.expirationGuard.at : 0)
+    || 0
+  );
+  return { value, at, confirmed: !!value && at > 0 };
+}
+
 function exactLiveTime(state = {}) {
   if (!exactClockReady(state)) return false;
   const clock = state.diagnostics?.marketClock || {};
-  const expirationAt = Number(state.platformControls?.expirationCheckedAt || state.platformControls?.observed?.observedAt?.expiration || 0);
-  const actualExpiration = clean(state.platformControls?.observed?.expiration);
-  const expirationFresh = expirationAt > 0 && !!actualExpiration;
+  const expiration = confirmedExpiration(state);
   return clean(clock.timeframe || state.analysisTimeframe || state.timeframe).toUpperCase() === 'M1'
-    && actualExpiration === '60s';
+    && expiration.confirmed
+    && expiration.value === '60s';
 }
 
 function connectionFailure(state = {}) {
@@ -95,15 +111,16 @@ function renderShell(state = {}) {
   const connecting = !platformLinked && !failure && activeLicense(state)
     && (state.connection === 'connecting' || state.scanner === 'scanning');
 
-  const expirationAt = Number(state.platformControls?.expirationCheckedAt || state.platformControls?.observed?.observedAt?.expiration || 0);
-  const expiration = clean(state.platformControls?.observed?.expiration);
-  const expirationFresh = expirationAt > 0 && !!expiration;
-  const expirationWrong = dataConnected && !!expiration && expiration !== '60s';
+  const expirationAuthority = confirmedExpiration(state);
+  const expirationAt = expirationAuthority.at;
+  const expiration = expirationAuthority.value;
+  const expirationFresh = expirationAuthority.confirmed;
+  const expirationWrong = dataConnected && expirationFresh && expiration !== '60s';
   const sessionStartedAt = Number(session.startedAt || state.diagnostics?.target?.connectedAt || 0);
   const sessionAge = sessionStartedAt > 0 ? Date.now() - sessionStartedAt : 0;
   const panelAge = Math.max(0, Date.now() - PANEL_OPENED_AT);
   const expirationWaitAge = sessionAge > 0 ? Math.min(sessionAge, panelAge) : panelAge;
-  const expirationPending = dataConnected && !expiration && expirationWaitAge >= 1500;
+  const expirationPending = dataConnected && !expirationFresh && expirationWaitAge >= 1500;
 
   const strip = $('syncStrip');
   if (strip) strip.className = `sync-strip ${platformLinked ? 'live' : 'syncing'}`;
