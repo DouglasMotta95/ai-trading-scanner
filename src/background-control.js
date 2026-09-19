@@ -222,9 +222,25 @@ async function directExpirationProbe(tabId) {
           }
           return fold(parts.join(' '));
         };
-        const all = [...document.querySelectorAll('button,input,select,option,label,p,strong,small,span,div,[role="button"],[role="combobox"],[role="option"],[aria-selected],[data-value],[aria-valuetext]')]
-          .filter(visible)
-          .slice(0, 14000);
+        const selector = 'button,input,select,option,label,p,strong,small,span,div,[role="button"],[role="combobox"],[role="option"],[aria-selected],[data-value],[aria-valuetext]';
+        const all = [];
+        const roots = [document];
+        const seenRoots = new Set();
+        while (roots.length && all.length < 14000) {
+          const root = roots.shift();
+          if (!root || seenRoots.has(root)) continue;
+          seenRoots.add(root);
+          let nodes = [];
+          try { nodes = [...root.querySelectorAll(selector)]; } catch {}
+          for (const node of nodes) {
+            if (visible(node)) all.push(node);
+            if (node.shadowRoot && !seenRoots.has(node.shadowRoot)) roots.push(node.shadowRoot);
+            if (all.length >= 14000) break;
+          }
+          let every = [];
+          try { every = [...root.querySelectorAll('*')].slice(0, 5000); } catch {}
+          for (const node of every) if (node.shadowRoot && !seenRoots.has(node.shadowRoot)) roots.push(node.shadowRoot);
+        }
         const labels = all.filter(el => {
           const t = fold(raw(el));
           return /^(?:expiracao|expiry|expiration|tempo de expiracao|expiration time)$/.test(t)
