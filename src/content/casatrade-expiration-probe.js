@@ -234,11 +234,21 @@
       if (!expirationSemantics.test(meta)) continue;
       const own = rawValues(el);
       for (const raw of own) {
-        const parsed = directDuration({ 
+        const parsed = directDuration({
           matches: () => false,
           getAttribute: name => name === 'data-value' ? raw : null
         });
-        if (parsed) candidates.push({ value: parsed, score: controlLike(el) ? 260 : 210, reason: 'semantic-control' });
+        if (parsed) {
+          candidates.push({ value: parsed, score: controlLike(el) ? 260 : 210, reason: 'semantic-control' });
+          continue;
+        }
+        const numeric = String(raw).trim().match(/^\d{1,4}$/);
+        if (numeric) {
+          const seconds = Number(numeric[0]);
+          if (seconds > 0 && seconds <= 3600) {
+            candidates.push({ value: `${seconds}s`, score: controlLike(el) ? 245 : 195, reason: 'semantic-numeric-seconds' });
+          }
+        }
       }
       const combined = clean(el.innerText || el.textContent || '');
       if (combined && combined.length < 220) {
