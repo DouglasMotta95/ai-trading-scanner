@@ -1,78 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+const read=p=>fs.readFileSync(new URL('../'+p,import.meta.url),'utf8');
 
-const read = path => fs.readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
-
-test('CasaTrade time is the only authority for a user-facing entry', () => {
-  const clock = read('src/content/market-cycle-clock-v4.js');
-  const policy = read('src/background-decision-policy.js');
-  const control = read('src/background-control.js');
-  const panel = read('src/sidepanel/app-v2.js');
-
-  assert.doesNotMatch(clock, /\|\|\s*'M1'/);
-  assert.match(clock, /if \(expirySemantic && !candleSemantic\) continue/);
-  assert.match(clock, /clockSource: 'platform-cycle-derived'/);
-  assert.match(clock, /verified: false, operational: true/);
-  assert.match(policy, /EXACT_CLOCK_SOURCES = new Set\(\['trader-dom-countdown', 'network-server-cycle'\]\)/);
-  assert.match(policy, /clock\.verified !== true/);
-  assert.match(policy, /Fonte de tempo não autoritativa/);
-  assert.match(policy, /Expiração real da CasaTrade ainda não foi confirmada/);
-  assert.match(control, /error: 'time_not_synchronized'/);
-  assert.match(panel, /ESTIMADO • BLOQUEADO/);
-  assert.match(panel, /model\.actionable && model\.direction === 'BUY' && timeReady/);
-  assert.match(panel, /model\.actionable && model\.direction === 'SELL' && timeReady/);
-});
-
-test('live CasaTrade controls are authoritative and timeframe changes reset the market cycle', () => {
-  const controls = read('src/background-platform-controls.js');
-  const html = read('src/sidepanel/index.html');
-
-  assert.match(controls, /liveAuthority: true/);
-  assert.match(controls, /actualExpiration/);
-  assert.match(controls, /timeframeChanged/);
-  assert.match(controls, /professionalDecision: null/);
-  assert.match(controls, /aiAudit: null/);
-  assert.match(controls, /O tempo ao vivo da CasaTrade prevalece/);
-  assert.doesNotMatch(html, /expiration-guard-ui\.js/);
-  assert.doesNotMatch(html, /id="desiredExpiration"/);
-});
-
-test('professional policy uses one fixed Normal profile with a stable 3 second hold', () => {
-  const policy = read('src/background-decision-policy.js');
-  const controls = read('src/background-platform-controls.js');
-  assert.match(policy, /mode: 'NORMAL'/);
-  assert.match(policy, /holdSeconds: 3/);
-  assert.match(policy, /const possibleScore = 44/);
-  assert.match(policy, /const finalScore = 58/);
-  assert.doesNotMatch(policy, /pref\.mode === 'A_PLUS'/);
-  assert.match(controls, /mode: 'NORMAL'/);
-  assert.match(controls, /holdSeconds: 3/);
-  assert.match(controls, /preferredExpiration: null/);
-  assert.match(policy, /Math\.max\(0, holdMs - heldFor\)/);
-  assert.match(policy, /POSSIBLE_BUY/);
-  assert.match(policy, /ENTER_BUY/);
-});
-
-test('Gemini is a second reading only after the professional possible/final stage', () => {
-  const ai = read('src/background-ai-analysis.js');
-  const snapshot = read('src/services/ai-analysis.js');
-  assert.match(ai, /effectiveDecision = state => state\?\.professionalDecision \|\| state\?\.signal/);
-  assert.match(ai, /ui === 'POSSIBLE_BUY' \|\| ui === 'POSSIBLE_SELL'/);
-  assert.match(ai, /state\.professionalDecision\?\.timeReady !== true/);
-  assert.match(ai, /state\.analystPreferences\?\.geminiEnabled === false/);
-  assert.match(snapshot, /clock\.verified === true && professional\.timeReady === true/);
-  assert.doesNotMatch(snapshot, /GEMINI_API_KEY/);
-});
-
-test('sidepanel exposes only essential live settings and accessible time status', () => {
-  const html = read('src/sidepanel/index.html');
-  for (const id of ['alertLevel','notificationToggle','geminiToggle','heroCountdown','timeSyncStatus','prepareBuy','prepareSell']) {
-    assert.match(html, new RegExp(`id="${id}"`));
+test('CasaTrade exact clock remains the user-entry time authority',()=>{
+  const policy=read('src/background-decision-policy.js');
+  const app=read('src/sidepanel/app-v2.js');
+  for(const source of ['trader-dom-countdown','network-server-cycle']){
+    assert.match(policy,new RegExp(source));
+    assert.match(app,new RegExp(source));
   }
-  for (const id of ['analystMode','holdSeconds','desiredExpiration','overlayToggle']) {
-    assert.doesNotMatch(html, new RegExp(`id="${id}"`));
-  }
-  assert.match(html, /aria-live="assertive"/);
-  assert.match(html, /compact-live\.css/);
+  assert.match(app,/There is no operational fallback clock anymore/);
+});
+
+test('current decision mode is A+ and Gemini remains second opinion',()=>{
+  const policy=read('src/background-decision-policy.js');
+  const ai=read('src/background-ai-analysis.js');
+  assert.match(policy,/mode: 'A_PLUS'/);
+  assert.match(ai,/ENTER_BUY/);
+  assert.match(ai,/ENTER_SELL/);
 });

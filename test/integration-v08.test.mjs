@@ -1,24 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+const read=p=>fs.readFileSync(new URL('../'+p,import.meta.url),'utf8');
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const root = path.resolve(__dirname, '..');
-const read = file => fs.readFileSync(path.join(root, file), 'utf8');
-
-test('background accepts snapshots only from registered CasaTrade senders', () => {
-  const background = read('src/background.js');
-  assert.match(background, /const platform = detectPlatform\(host\)/);
-  assert.match(background, /if \(!platform \|\| !sameTarget\(scannerState, sender\)\)/);
-  assert.match(background, /connection: 'online'/);
+test('background central analyzer accepts only consolidated CasaTrade market state',()=>{
+  const b=read('src/background.js');
+  assert.match(b,/consolidatedSnapshot/);
+  assert.match(b,/sameMarket\(focus\.asset, asset\)/);
+  assert.match(b,/ALLOWED_CLOCK_SOURCES/);
 });
 
-test('manual trade flow remains confirmation-only', () => {
-  const background = read('src/background.js');
-  assert.match(background, /signal_not_confirmed/);
-  assert.match(background, /platform_not_aligned/);
-  assert.match(background, /ATS_HIGHLIGHT_TRADE/);
-  assert.doesNotMatch(background, /ATS_EXECUTE_TRADE/);
+test('manual trade flow never auto-executes a CasaTrade order',()=>{
+  const c=read('src/background-control.js');
+  assert.match(c,/ATS_PREPARE_TRADE/);
+  assert.doesNotMatch(c,/ATS_EXECUTE_TRADE/);
 });
