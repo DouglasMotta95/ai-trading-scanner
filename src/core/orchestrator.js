@@ -677,9 +677,23 @@ export function resetOrchestrator() {
 
 export function serializeCompletedDecisions() {
   const legacyRows = legacySerializeCompletedDecisions();
-  const legacyKeys = new Set(legacyRows.map(row => wrapperCompletionKey(row?.decision || {})).filter(key => key && !key.endsWith('|0')));
-  const wrapperRows = [...wrapperCompletedDecisions.entries()].filter(([key]) => !legacyKeys.has(key)).slice(-50).map(([key, decision]) => ({ key: `${WRAPPER_ROW_PREFIX}${key}`, decision: { ...decision } }));
-  return [...legacyRows, ...wrapperRows].slice(-50);
+  const wrapperRows = [...wrapperCompletedDecisions.entries()]
+    .slice(-50)
+    .map(([key, decision]) => ({ key: `${WRAPPER_ROW_PREFIX}${key}`, decision: { ...decision } }));
+
+  // Wrapper/A+ is the current decision authority. If legacy serialized a row
+  // for the same asset+timeframe+target candle, keep the wrapper version so a
+  // confirmed entry (and its real target-candle price) cannot be discarded by
+  // an older NO_TRADE/legacy completion with the same key.
+  const wrapperKeys = new Set(
+    wrapperRows
+      .map(row => wrapperCompletionKey(row?.decision || {}))
+      .filter(key => key && !key.endsWith('|0'))
+  );
+  const filteredLegacy = legacyRows.filter(
+    row => !wrapperKeys.has(wrapperCompletionKey(row?.decision || {}))
+  );
+  return [...filteredLegacy, ...wrapperRows].slice(-50);
 }
 
 export function restoreCompletedDecisions(rows = []) {
