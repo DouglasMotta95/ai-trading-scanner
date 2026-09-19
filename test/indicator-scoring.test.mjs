@@ -1,6 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-const read=p=>fs.readFileSync(new URL('../'+p,import.meta.url),'utf8');
-test('indicator-scoring.test.mjs: current A+ stability contract',()=>{const s=read('src/core/orchestrator.js');assert.match(s,/POSSIBLE_HIT_GAP_MS = 8000/);assert.match(s,/observeStableAPlusCandidate/);assert.match(s,/aPlusWeakHits >= 2/);assert.match(s,/locked === 'ENTER'/);});
-test('indicator-scoring.test.mjs: current high-confidence engine remains active',()=>{const s=read('src/core/high-confidence.js');assert.match(s,/assessHighConfidence/);assert.match(s,/candidateAllowed/);assert.match(s,/finalAllowed/);});
+import { analyzeCandles, INDICATOR_SCORE_WEIGHTS } from '../src/core/analysis.js';
+
+test('approved indicator weights remain unchanged',()=>{
+  assert.deepEqual(INDICATOR_SCORE_WEIGHTS,{rsiFavor:8,macdFavor:10,macdAgainst:-10,ema:0,bollinger:0});
+});
+
+test('indicator layer still augments price action instead of replacing it',()=>{
+  const candles=[];
+  let p=1;
+  for(let i=0;i<40;i++){const open=p,close=open+0.001;candles.push({open,high:close+0.002,low:open-0.002,close});p=close;}
+  const out=analyzeCandles(candles.slice(-10),candles);
+  assert.equal(out.recent.count,10);
+  assert.ok(Number.isFinite(out.score));
+  assert.ok(out.indicators);
+  assert.ok(Number.isFinite(out.analytics.buyPower));
+});
