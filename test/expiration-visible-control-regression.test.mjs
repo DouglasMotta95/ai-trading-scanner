@@ -217,3 +217,16 @@ test('direct expiration probe falls back across Android world and frame modes', 
   assert.match(block, /\{ target: \{ tabId, allFrames: true \} \}/);
   assert.match(block, /result\.some\(row => row\?\.result\?\.expiration\)/);
 });
+
+
+test('mobile visible-text fallback preserves line breaks and accepts icon-prefixed 1 min', () => {
+  const control = read('src/background-control.js');
+  const start = control.indexOf('async function directExpirationProbe');
+  const end = control.indexOf('\nasync function commitDirectExpiration', start);
+  const block = control.slice(start, end);
+  assert.match(block, /String\(document\.body\?\.innerText \|\| ''\)\.normalize\('NFKC'\)/);
+  assert.doesNotMatch(block, /const bodyTextRaw = clean\(document\.body\?\.innerText/);
+  assert.match(block, /visible-lines-after-expiration-label/);
+  assert.match(block, /s\.length <= 48/);
+  assert.match(block, /\(\\d\{1,4\}\)\\s\*\(s\|seg\|segundo\|segundos\|m\|min\|minuto\|minutos\)/);
+});
