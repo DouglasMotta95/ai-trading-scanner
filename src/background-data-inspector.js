@@ -87,10 +87,31 @@ async function accept(message = {}, sender = {}) {
   const state = await readScannerState();
   if (Number(state.targetTabId || 0) && Number(state.targetTabId) !== Number(sender.tab?.id || 0)) return { ok: false, error: 'wrong_tab' };
   const snapshot = safeSnapshot(message.snapshot || {}, sender);
-  await updateScannerState(current => ({
-    ...current,
-    diagnostics: { ...(current.diagnostics || {}), dataInspector: snapshot }
-  }));
+  await updateScannerState(current => {
+    const previous = current.diagnostics?.dataInspector || {};
+    const combined = [
+      ...(Array.isArray(previous.expirationTrace) ? previous.expirationTrace : []),
+      ...(Array.isArray(snapshot.expirationTrace) ? snapshot.expirationTrace : [])
+    ].sort((a, b) => Number(a?.at || 0) - Number(b?.at || 0));
+    const seen = new Set();
+    const expirationTrace = combined.filter(row => {
+      const key = JSON.stringify([
+        Number(row?.at || 0), clean(row?.direction, 8), clean(row?.transport, 16),
+        clean(row?.endpoint, 240), clean(row?.sourceKey, 80), clean(row?.expiration, 24),
+        typeof row?.rawValue === 'number' ? row.rawValue : clean(row?.rawValue, 40)
+      ]);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    }).slice(-48);
+    return {
+      ...current,
+      diagnostics: {
+        ...(current.diagnostics || {}),
+        dataInspector: { ...snapshot, expirationTrace }
+      }
+    };
+  });
   return { ok: true };
 }
 
