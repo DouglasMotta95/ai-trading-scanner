@@ -6,7 +6,6 @@ const casaHost = value => value === 'casatrade.com' || value.endsWith('.casatrad
 const traderHost = value => value === 'casatraders.online' || value.endsWith('.casatraders.online') || value === 'ivcasatraders.online' || value.endsWith('.ivcasatraders.online');
 
 const EXPIRATION_PIPELINE_BG_KEY = 'atsExpirationPipelineBackgroundDiagnosticsV1';
-let expirationPipelineTelemetryQueue = Promise.resolve();
 
 function storageGetLocal(key) {
   return new Promise(resolve => {
@@ -30,30 +29,46 @@ function storageSetLocal(value) {
   });
 }
 
-function recordExpirationPipelineBackground(kind, details = {}) {
-  expirationPipelineTelemetryQueue = expirationPipelineTelemetryQueue.then(async () => {
-    const stored = await storageGetLocal(EXPIRATION_PIPELINE_BG_KEY);
-    const previous = stored?.[EXPIRATION_PIPELINE_BG_KEY]?.version === 1 ? stored[EXPIRATION_PIPELINE_BG_KEY] : {};
-    const now = Date.now();
-    const next = {
-      version: 1,
-      startedAt: Number(previous.startedAt || now),
-      messagesReceived: Number(previous.messagesReceived || 0),
-      discardedByTargetTabId: Number(previous.discardedByTargetTabId || 0),
-      untrustedRejected: Number(previous.untrustedRejected || 0),
-      lastAt: now,
-      lastKind: kind,
-      lastTabId: Number(details.tabId || 0) || null,
-      lastTargetTabId: Number(details.targetTabId || 0) || null,
-      lastFrameId: Number(details.frameId || 0)
-    };
-    if (kind === 'received') next.messagesReceived += 1;
-    if (kind === 'targetTabDiscard') next.discardedByTargetTabId += 1;
-    if (kind === 'untrusted') next.untrustedRejected += 1;
-    await storageSetLocal({ [EXPIRATION_PIPELINE_BG_KEY]: next });
-  }).catch(() => {});
+let expirationPipelineTelemetry = {
+  version: 1,
+  startedAt: Date.now(),
+  messagesReceived: 0,
+  discardedByTargetTabId: 0,
+  untrustedRejected: 0,
+  lastAt: 0,
+  lastKind: '',
+  lastTabId: null,
+  lastTargetTabId: null,
+  lastFrameId: 0
+};
+let expirationPipelineTelemetryFlushTimer = 0;
+const expirationPipelineTelemetryReady = storageGetLocal(EXPIRATION_PIPELINE_BG_KEY).then(stored => {
+  const previous = stored?.[EXPIRATION_PIPELINE_BG_KEY];
+  if (previous?.version === 1) expirationPipelineTelemetry = { ...expirationPipelineTelemetry, ...previous };
+}).catch(() => {});
+
+function flushExpirationPipelineBackground() {
+  if (expirationPipelineTelemetryFlushTimer) return;
+  expirationPipelineTelemetryFlushTimer = setTimeout(() => {
+    expirationPipelineTelemetryFlushTimer = 0;
+    storageSetLocal({ [EXPIRATION_PIPELINE_BG_KEY]: { ...expirationPipelineTelemetry } }).catch(() => {});
+  }, 500);
 }
 
+function recordExpirationPipelineBackground(kind, details = {}) {
+  expirationPipelineTelemetryReady.then(() => {
+    const now = Date.now();
+    if (kind === 'received') expirationPipelineTelemetry.messagesReceived = Number(expirationPipelineTelemetry.messagesReceived || 0) + 1;
+    if (kind === 'targetTabDiscard') expirationPipelineTelemetry.discardedByTargetTabId = Number(expirationPipelineTelemetry.discardedByTargetTabId || 0) + 1;
+    if (kind === 'untrusted') expirationPipelineTelemetry.untrustedRejected = Number(expirationPipelineTelemetry.untrustedRejected || 0) + 1;
+    expirationPipelineTelemetry.lastAt = now;
+    expirationPipelineTelemetry.lastKind = kind;
+    expirationPipelineTelemetry.lastTabId = Number(details.tabId || 0) || null;
+    expirationPipelineTelemetry.lastTargetTabId = Number(details.targetTabId || 0) || null;
+    expirationPipelineTelemetry.lastFrameId = Number(details.frameId || 0);
+    flushExpirationPipelineBackground();
+  }).catch(() => {});
+}
 
 function trusted(sender = {}) {
   let frameHost = '', topHost = '';
