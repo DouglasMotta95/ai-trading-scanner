@@ -1,5 +1,7 @@
 (() => {
-  if (globalThis.__ATS_PROTOCOL_FOCUS__) return;
+  const PROTOCOL_FOCUS_BUILD = 'protocol-focus-strict-market-id-v2';
+  if (globalThis.__ATS_PROTOCOL_FOCUS_BUILD__ === PROTOCOL_FOCUS_BUILD) return;
+  globalThis.__ATS_PROTOCOL_FOCUS_BUILD__ = PROTOCOL_FOCUS_BUILD;
   globalThis.__ATS_PROTOCOL_FOCUS__ = true;
 
   const host = String(location.hostname || '').toLowerCase().replace(/\.$/, '');
