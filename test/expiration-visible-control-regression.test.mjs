@@ -104,3 +104,33 @@ test('mobile expiration dropdown keeps context so a bare 1 min option can confir
   assert.match(probe, /expirationFromInteraction\(event, insideOpenExpiration\)/);
   assert.match(probe, /if \(allowUnscoped\) return value/);
 });
+
+
+test('retry bypasses the fragile content-message expiration pipeline with a direct all-frame probe', () => {
+  const control = read('src/background-control.js');
+  assert.match(control, /async function directExpirationProbe\(tabId\)/);
+  assert.match(control, /target: \{ tabId, allFrames: true \}/);
+  assert.match(control, /background-direct-expiration-probe/);
+  assert.match(control, /const directExpiration = await directExpirationProbe\(tabId\)/);
+  assert.match(control, /await commitDirectExpiration\(tabId, directExpiration\)/);
+});
+
+test('direct expiration authority is written into the central platformControls state', () => {
+  const control = read('src/background-control.js');
+  const start = control.indexOf('async function commitDirectExpiration');
+  const end = control.indexOf('\nasync function forceLiveControlRead', start);
+  const block = control.slice(start, end);
+  assert.match(block, /expirationCheckedAt: now/);
+  assert.match(block, /liveAuthority: true/);
+  assert.match(block, /targetExpiration: expiration/);
+  assert.match(block, /expiration: expiration/);
+  assert.match(block, /actual: expiration/);
+});
+
+test('sidepanel no longer depends exclusively on platformControls.observed.expiration', () => {
+  const shell = read('src/sidepanel/ui-shell-v2.js');
+  assert.match(shell, /function confirmedExpiration\(state = \{\}\)/);
+  assert.match(shell, /state\.diagnostics\?\.expirationGuard\?\.actual/);
+  assert.match(shell, /state\.targetExpiration/);
+  assert.match(shell, /expirationAuthority\.confirmed/);
+});
