@@ -18,7 +18,10 @@
     if (!raw) return '';
     const otc = /(?:\(|\b|[_-])OTC(?:\)|\b)?/.test(raw);
     const direct = raw.match(/\b([A-Z0-9]{2,20})\s*[\/_-]\s*([A-Z0-9]{2,12})/);
-    return direct ? `${direct[1]}/${direct[2]}${otc ? ' (OTC)' : ''}` : '';
+    if (direct) return `${direct[1]}/${direct[2]}${otc ? ' (OTC)' : ''}`;
+    const stripped = raw.replace(/\(\s*OTC\s*\)|\bOTC\b/g, ' ').replace(/\s+/g, ' ').trim();
+    const ambiguous = new Set(['EURO','DOLLAR','DÓLAR','USD','EUR','GBP','JPY','AUD','CAD','CHF','NZD','BRL','BUY','SELL','COMPRA','VENDA','OTC']);
+    return otc && stripped && !ambiguous.has(stripped) ? `${stripped} (OTC)` : '';
   };
   const sameMarket = (a, b) => !!marketId(a) && marketId(a) === marketId(b);
   const normalizeTime = value => {
