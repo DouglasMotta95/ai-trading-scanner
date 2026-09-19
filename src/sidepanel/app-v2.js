@@ -426,7 +426,7 @@ function render(state = {}) {
   setText('strategyTf', desiredTf);
   setText('strategyContext', contextTf);
   setText('strategyExpiration', expLabel(requiredExp));
-  setText('strategyEntryWindow', `~${finalWindow} s`);
+  setText('strategyEntryWindow', `~${finalWindow} s`);\n  setText('analysisEntryWindow', `~${finalWindow}s`);
   setText('strategyNote', `${desiredTf} operacional + contexto ${contextTf}. A entrada é na próxima vela de ${desiredTf === 'M1' ? '1' : '5'} minuto(s), com expiração manual de ${expLabel(requiredExp)}.`);
 
   if (freshMarket) setSourceState('assetSource', 'REAL', 'real', 'Ativo confirmado pelo gráfico + feed da CasaTrade.');
