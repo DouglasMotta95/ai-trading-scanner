@@ -136,7 +136,9 @@
 
   function expirationCandidate() {
     const page = fullText();
-    const direct = page.match(/(?:EXPIRA(?:ÇÃO|CAO)|EXPIRY|DURATION)[^0-9]{0,40}(\d{1,4})\s*(S|SEG|SEGUNDO|SEGUNDOS|M|MIN|MINUTO|MINUTOS)/i);
+    const hiddenPage = clean(document.body?.textContent || '').slice(0, 320000);
+    const direct = page.match(/(?:EXPIRA(?:ÇÃO|CAO)|EXPIRY|DURATION)[^0-9]{0,40}(\d{1,4})\s*(S|SEG|SEGUNDO|SEGUNDOS|M|MIN|MINUTO|MINUTOS)/i)
+      || hiddenPage.match(/(?:EXPIRA(?:ÇÃO|CAO)|EXPIRY|DURATION)[^0-9]{0,80}(\d{1,4})\s*(S|SEG|SEGUNDO|SEGUNDOS|M|MIN|MINUTO|MINUTOS)/i);
     if (direct) {
       const value = normExp(`${direct[1]}${direct[2]}`);
       if (value) return { el: null, value, score: 70 };
@@ -157,7 +159,24 @@
       rows.push({ el, value, score });
     }
     rows.sort((a, b) => b.score - a.score);
-    return rows[0] || null;
+    if (rows[0]) return rows[0];
+
+    // Tablet sidepanels can CSS-hide the trade controls while keeping them
+    // mounted. Read only semantically-labelled expiration nodes in that case.
+    const hiddenRows = [];
+    for (const el of deepElements()) {
+      const meta = fold([
+        el?.id, el?.className, el?.getAttribute?.('data-testid'),
+        el?.getAttribute?.('data-name'), el?.getAttribute?.('name'),
+        el?.getAttribute?.('aria-label'), el?.getAttribute?.('title'),
+        el?.textContent
+      ].filter(Boolean).join(' ')).slice(0, 420);
+      if (!/expira|expiry|expiration|duracao|duration/.test(meta)) continue;
+      const match = meta.match(/(\d{1,4})\s*(s|seg|segundo|segundos|m|min|minuto|minutos)\b/i);
+      const value = normExp(match ? `${match[1]}${match[2]}` : '');
+      if (value) hiddenRows.push({ el, value, score: 66 });
+    }
+    return hiddenRows[0] || null;
   }
 
   function readDom() {
