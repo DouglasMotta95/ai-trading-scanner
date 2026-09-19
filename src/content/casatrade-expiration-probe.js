@@ -213,9 +213,12 @@
     const parts = [semanticText(el)];
     let node = el?.parentElement;
     for (let depth = 0; node && depth < levels; depth += 1, node = node.parentElement) {
-      const own = clean(node.innerText || node.textContent || '').slice(0, 220);
+      const own = clean(node.innerText || node.textContent || '');
+      // Never pull a whole chart/app container into a local-control decision.
+      // Large ancestor text mixes "Período", "Período da vela", countdown and
+      // trade controls and was a source of false semantic matches.
+      if (own && own.length <= 180) parts.push(own);
       parts.push(
-        own,
         node.id,
         node.className,
         node.getAttribute?.('data-testid'),
