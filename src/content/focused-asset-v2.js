@@ -369,7 +369,7 @@
         frameHost: host,
         frameRole,
         at: now,
-        source: winner.interaction ? 'chart-frame-user-confirmed' : winner.explicit ? 'chart-frame-explicit' : 'chart-frame-scoped'
+        source: winner.source || (winner.interaction ? 'chart-frame-user-confirmed' : winner.explicit ? 'chart-frame-explicit' : 'chart-frame-scoped')
       };
       sendFocus(common);
     } finally {
