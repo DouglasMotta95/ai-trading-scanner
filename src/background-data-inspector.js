@@ -36,10 +36,28 @@ function safeSnapshot(raw = {}, sender = {}) {
       messages: raw.transports?.messages && typeof raw.transports.messages === 'object' ? {
         ws: Number(raw.transports.messages.ws || 0), fetch: Number(raw.transports.messages.fetch || 0), xhr: Number(raw.transports.messages.xhr || 0)
       } : {},
+      outbound: raw.transports?.outbound && typeof raw.transports.outbound === 'object' ? {
+        ws: Number(raw.transports.outbound.ws || 0), fetch: Number(raw.transports.outbound.fetch || 0), xhr: Number(raw.transports.outbound.xhr || 0)
+      } : {},
       connections: { ws: Number(raw.transports?.connections?.ws || 0) }
     },
     endpoints: safeStrings(raw.endpoints, 12, 240),
     keys: safeStrings(raw.keys, 80, 64),
+    expirationTrace: (Array.isArray(raw.expirationTrace) ? raw.expirationTrace : []).slice(-24).map(row => ({
+      at: Number(row?.at || 0),
+      direction: clean(row?.direction, 8),
+      transport: clean(row?.transport, 16),
+      endpoint: clean(row?.endpoint, 240),
+      sourceKey: clean(row?.sourceKey, 80),
+      parentKey: clean(row?.parentKey, 80),
+      shape: clean(row?.shape, 80),
+      expiration: clean(row?.expiration, 24),
+      rawValue: typeof row?.rawValue === 'number'
+        ? row.rawValue
+        : typeof row?.rawValue === 'string' && !SENSITIVE.test(row.rawValue)
+          ? clean(row.rawValue, 40)
+          : null
+    })),
     tradeEvidence: {
       detected: trade.detected === true,
       keys: safeStrings(trade.keys, 30, 64),
