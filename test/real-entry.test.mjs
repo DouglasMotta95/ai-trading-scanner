@@ -106,11 +106,12 @@ test('completed decisions can be serialized and restored after a worker restart'
 
 test('primary sidepanel keeps one manual execution surface and no obsolete duplicate entry card', () => {
   const html = fs.readFileSync(new URL('../src/sidepanel/index.html', import.meta.url), 'utf8');
-  const app = fs.readFileSync(new URL('../src/sidepanel/app-v2.js', import.meta.url), 'utf8');
+  const handoff = fs.readFileSync(new URL('../src/sidepanel/trade-handoff-ui.js', import.meta.url), 'utf8');
   assert.match(html, /id="prepareBuy"/);
   assert.match(html, /id="prepareSell"/);
   assert.doesNotMatch(html, /real-entry\.js|ENTRADA REAL|id="targetTime"/i);
-  assert.match(app, /ATS_PREPARE_TRADE/);
-  assert.match(app, /prepareBuy/);
-  assert.match(app, /prepareSell/);
+  assert.match(handoff, /ATS_PREPARE_TRADE/);
+  assert.match(handoff, /prepareBuy/);
+  assert.match(handoff, /prepareSell/);
+  assert.doesNotMatch(handoff, /atsExactTimeReady/);
 });
