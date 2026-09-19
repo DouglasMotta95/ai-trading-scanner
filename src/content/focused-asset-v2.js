@@ -352,6 +352,10 @@
   document.addEventListener('pointerup', noteInteraction, true);
   document.addEventListener('touchend', noteInteraction, true);
   document.addEventListener('click', noteInteraction, true);
+  globalThis.__ATS_FORCE_FOCUSED_ASSET_SCAN__ = () => {
+    invalidateElements();
+    schedulePublish(0, true);
+  };
   setInterval(() => schedulePublish(0, false), 600);
   setTimeout(() => { invalidateElements(); publish(true); }, 250);
 })();
