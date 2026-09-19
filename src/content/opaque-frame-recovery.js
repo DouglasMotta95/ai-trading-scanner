@@ -127,6 +127,9 @@
 
   async function proxy(payload) {
     if (!payload?.type) return null;
+    try {
+      window.top.postMessage({ source: 'ATS_OPAQUE_CHILD_RELAY_V2', payload }, '*');
+    } catch {}
     return sendMessage({ type: 'ATS_OPAQUE_FRAME_PROXY', payload }).catch(() => null);
   }
   async function publishFocus(force = false) {
@@ -157,6 +160,26 @@
       if (!best || score > best.score) best = { price: matches[0], score };
     }
     return best;
+  }
+
+  function selectedExpiration() {
+    const candidates = [];
+    for (const el of elements(5500)) {
+      const text = clean([
+        el?.getAttribute?.('aria-valuetext'), el?.getAttribute?.('data-value'),
+        el?.getAttribute?.('aria-label'), el?.getAttribute?.('title'),
+        el?.textContent
+      ].filter(Boolean).join(' ')).slice(0, 420);
+      const low = text.toLowerCase();
+      if (!/expira|expiry|expiration|duracao|duration/.test(low)) continue;
+      const m = text.match(/(\d{1,4})\s*(s|seg|segundo|segundos|m|min|minuto|minutos)\b/i);
+      if (!m) continue;
+      const n = Number(m[1]);
+      const seconds = /^(m|min|minuto|minutos)$/i.test(m[2]) ? n * 60 : n;
+      if (seconds > 0 && seconds <= 3600) candidates.push({ value: `${seconds}s`, score: 80 });
+    }
+    candidates.sort((a, b) => b.score - a.score);
+    return candidates[0]?.value || null;
   }
 
   function selectedTimeframe() {
@@ -268,8 +291,17 @@
   let lastPrice = null;
   setInterval(() => {
     publishFocus(false).catch(() => {});
-    if (!focus) return;
+    const expiration = selectedExpiration();
     const timeframe = selectedTimeframe() || 'M1';
+    if (expiration) proxy({
+      type: 'ATS_PLATFORM_CONTROLS_OBSERVED',
+      snapshot: {
+        amount: null, expiration, timeframe,
+        confidence: { amount: 0, expiration: 82, timeframe: timeframe ? 55 : 0 },
+        source: 'opaque-frame-control', observedAt: Date.now()
+      }
+    }).catch(() => {});
+    if (!focus) return;
     const countdown = domCountdown(timeframe);
     if (countdown) proxy({ type: 'ATS_MARKET_CLOCK_V2', asset: focus, timeframe, secondsRemaining: countdown.seconds, available: true, verified: true, clockRole: 'candle-close', clockSource: 'trader-dom-countdown', clockMode: 'opaque-frame-dom-exact', clockText: countdown.text, clockToken: `${countdown.seconds}s`, confidence: 96, at: Date.now() }).catch(() => {});
     const quote = priceFromDom();
