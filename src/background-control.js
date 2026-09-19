@@ -262,7 +262,7 @@ async function connectActiveTab() {
     };
 
     if (preserveLive) return base;
-    return clearMarketAuthorityState(base, {
+    const cleared = clearMarketAuthorityState(base, {
       license,
       platformId: platform.id,
       platformName: platform.name,
@@ -272,6 +272,34 @@ async function connectActiveTab() {
       diagnostics: base.diagnostics,
       marketSessionSource: 'connect-active-tab'
     });
+
+    // Reconnecting the same CasaTrade tab must not erase a platform control
+    // that was already confirmed from that tab. Market price/history/focus are
+    // session-scoped and are cleared above; expiration is a persistent selected
+    // control and remains authoritative until a new real reading replaces it.
+    const confirmedExpiration = clean(current.platformControls?.observed?.expiration || '');
+    const confirmedExpirationAt = Number(
+      current.platformControls?.observed?.observedAt?.expiration
+      || current.platformControls?.expirationCheckedAt
+      || 0
+    );
+    if (sameTab && confirmedExpiration && confirmedExpirationAt > 0) {
+      return {
+        ...cleared,
+        expiration: confirmedExpiration,
+        targetExpiration: confirmedExpiration,
+        platformControls: current.platformControls,
+        diagnostics: {
+          ...(cleared.diagnostics || {}),
+          expirationGuard: {
+            ...(current.diagnostics?.expirationGuard || {}),
+            actual: confirmedExpiration,
+            at: Date.now()
+          }
+        }
+      };
+    }
+    return cleared;
   });
 
   const injected = await injectModern(tab.id);
