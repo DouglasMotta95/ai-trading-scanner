@@ -135,7 +135,25 @@
       rows.push({ expiration, score: /expira|expiry/.test(fold(text(el))) ? 20 : 13 });
     }
     rows.sort((a, b) => b.score - a.score);
-    return rows[0] || null;
+    if (rows[0]) return rows[0];
+
+    // Sidepanel/responsive CSS can hide the control without unmounting it.
+    // Use textContent only for nodes that explicitly carry expiration semantics.
+    for (const el of nodes()) {
+      const meta = fold([
+        el?.id, el?.className, el?.getAttribute?.('data-testid'),
+        el?.getAttribute?.('aria-label'), el?.getAttribute?.('title'),
+        el?.textContent
+      ].filter(Boolean).join(' ')).slice(0, 420);
+      if (!/expira|expiry|expiration/.test(meta)) continue;
+      const m = meta.match(/(\d{1,4})\s*(s|seg|segundo|segundos|m|min|minuto|minutos)\b/i);
+      if (!m) continue;
+      const n = Number(m[1]);
+      if (!(n > 0)) continue;
+      const unit = m[2].toLowerCase();
+      return { expiration: /^(m|min|minuto|minutos)$/.test(unit) ? `${n * 60}s` : `${n}s`, score: 14 };
+    }
+    return null;
   }
 
   function timeframeCandidate() {
