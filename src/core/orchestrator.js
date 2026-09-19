@@ -511,7 +511,16 @@ function latestWrapperCompleted(snapshot = {}) {
 function newerDecision(a, b) {
   if (!a) return b || null;
   if (!b) return a;
-  return Number(b.targetStart || b.time || 0) > Number(a.targetStart || a.time || 0) ? b : a;
+  const aTime = Number(a.targetStart || a.time || 0);
+  const bTime = Number(b.targetStart || b.time || 0);
+  if (bTime > aTime) return b;
+  if (bTime < aTime) return a;
+  // The A+ wrapper is the current decision authority. If the legacy engine
+  // rolls a NO_TRADE for the same target candle while the wrapper already
+  // confirmed ENTER, the confirmed decision must win the tie.
+  if (b.state === 'CONFIRM' && a.state !== 'CONFIRM') return b;
+  if (a.state === 'CONFIRM' && b.state !== 'CONFIRM') return a;
+  return b;
 }
 
 function resolveWrapperDecision(snapshot = {}, result = {}, currentKey = '', state = {}) {
