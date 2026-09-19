@@ -45,7 +45,7 @@ test('countdown and expiration are independent live channels with rollover prote
   assert.match(clock, /row\.seconds >= limit - 2/);
   assert.match(clock, /if \(expirySemantic && !candleSemantic\) continue/);
   assert.match(expiration, /ATS_PLATFORM_CONTROLS_OBSERVED/);
-  assert.match(expiration, /expirationAroundLabel/);
+  assert.match(expiration, /expirationControlByLabel/);
   assert.match(expiration, /setInterval/);
 });
 
