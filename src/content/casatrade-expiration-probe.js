@@ -260,6 +260,14 @@
     return candidates[0] || null;
   }
 
+  function renderedMarkerExpiration() {
+    const marker = document.getElementById?.('__ats_rendered_market__');
+    if (!marker) return null;
+    const text = clean(marker.textContent || marker.innerText || '');
+    const value = parseExpiration(text);
+    return value ? { value, score: 138, reason: 'rendered-market-marker' } : null;
+  }
+
   function bodyExpiration() {
     const body = fold(clean(document.body?.innerText || document.body?.textContent || '').slice(0, 260000));
     if (!body) return null;
@@ -314,21 +322,32 @@
 
   function expirationInteractionTarget(target) {
     let node = target instanceof Element ? target : null;
-    for (let depth = 0; node && depth < 5; depth += 1, node = node.parentElement) {
-      const meta = semanticText(node);
-      if (expirationSemantics.test(meta)) return true;
-      const parentText = fold(node.parentElement?.innerText || node.parentElement?.textContent || '');
-      if (directDuration(node) && expirationSemantics.test(parentText)) return true;
+    for (let depth = 0; node && depth < 3; depth += 1, node = node.parentElement) {
+      const own = clean(ownText(node) || '');
+      const meta = fold([
+        node.id, node.className, node.getAttribute?.('data-testid'),
+        node.getAttribute?.('data-name'), node.getAttribute?.('name'),
+        node.getAttribute?.('aria-label'), node.getAttribute?.('title'),
+        node.getAttribute?.('role')
+      ].filter(Boolean).join(' '));
+      const shortOwn = own.length <= 90 ? fold(own) : '';
+      if (expirationSemantics.test(meta) || (controlLike(node) && expirationSemantics.test(shortOwn))) return true;
+
+      const value = directDuration(node);
+      const parent = node.parentElement;
+      const parentOwn = clean(parent?.innerText || parent?.textContent || '');
+      if (value && parentOwn.length <= 140 && expirationSemantics.test(fold(parentOwn))) return true;
     }
     return false;
   }
 
   function scan() {
     const all = elements();
-    const strong = expirationControlByLabel(all);
+    const marker = renderedMarkerExpiration();
+    const strong = marker || expirationControlByLabel(all);
     const semantic = strong || semanticControlExpiration(all);
     const body = semantic || bodyExpiration();
-    let exp = strong || semantic || body;
+    let exp = marker || strong || semantic || body;
     const tf = selectedTimeframe(all);
     const now = Date.now();
 
