@@ -561,6 +561,9 @@ export function processSnapshot(snapshot = {}, state = {}) {
   const stableDirection = observeStablePossible(cycle, signal, at);
   const recovered = resolveWrapperDecision(snapshot, result, key, state);
   const rolledLastConfirmed = newerDecision(newerDecision(result.lastConfirmed, latestWrapperCompleted(snapshot)), recovered);
+  if (rolledLastConfirmed?.state === 'CONFIRM' && rolledLastConfirmed?.entryConfirmed === true) {
+    rememberWrapperCompleted(rolledLastConfirmed);
+  }
   const stableAPlus = stableDirection
     ? aPlusAssessment(snapshot, result, signal, stableDirection, cycle, state, at)
     : aPlusAssessment(snapshot, result, signal, directionOf(signal), cycle, state, at);
