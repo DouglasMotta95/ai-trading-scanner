@@ -164,10 +164,12 @@
       const context = contextOf(el);
       const chartScoped = nearChart(rect, chart) || /chart|tradingview|instrument|symbol|asset|header/.test(context);
       const listContext = /watchlist|asset-list|instrument-list|listbox|search|history|portfolio|ranking|modal|drawer|dropdown|menu/.test(context);
+      const tabContext = /(?:^|[\s_-])tabs?(?:$|[\s_-])|tablist|asset-tab|instrument-tab/.test(context);
       const interaction = interactionFresh(asset);
-      // A visible dropdown/watchlist can contain dozens of symbols over the chart.
-      // Only its selected/current row or the row the user just touched may own focus.
-      if (listContext && !selection.explicit && !interaction) continue;
+      // A visible dropdown/watchlist or an inactive market tab can contain many
+      // symbols around the chart. Only its selected/current row or the row the
+      // user just touched may own focus.
+      if ((listContext || tabContext) && !selection.explicit && !interaction) continue;
       if (!chartScoped) continue;
       let score = selection.score;
       if (chartScoped) score += 520;
@@ -196,8 +198,35 @@
     winners.sort((a, b) => Number(b.interaction) - Number(a.interaction)
       || Number(b.explicit) - Number(a.explicit)
       || b.chartHits - a.chartHits || b.score - a.score || a.top - b.top || a.left - b.left);
-    const first = winners[0] || null;
-    const second = winners[1] || null;
+    let first = winners[0] || null;
+    let second = winners[1] || null;
+
+    // Immediately after a user taps a different asset, the old chart header can
+    // remain in the DOM for a few render frames. During that transition the
+    // user's touched market is authoritative and the stale header/tab may not
+    // roll focus back to the previous asset.
+    const interactionAge = Date.now() - Number(recentInteraction.at || 0);
+    if (recentInteraction.asset && interactionAge >= 0 && interactionAge < 3500) {
+      const touched = winners.find(row => sameAsset(row.asset, recentInteraction.asset));
+      if (touched) {
+        first = { ...touched, interaction: true, explicit: true, score: Math.max(3000, Number(touched.score || 0)) };
+        second = winners.find(row => !sameAsset(row.asset, first.asset)) || null;
+      } else {
+        first = {
+          asset: recentInteraction.asset,
+          score: 3000,
+          explicit: true,
+          interaction: true,
+          chartScoped: true,
+          chartHits: 1,
+          hits: 1,
+          top: 0,
+          left: 0
+        };
+        second = winners[0] || null;
+      }
+    }
+
     if (!first || first.chartHits < 1) return null;
     if (second && !sameAsset(first.asset, second.asset)) {
       const gap = Number(first.score || 0) - Number(second.score || 0);
@@ -225,6 +254,31 @@
   function noteInteractionHint(asset, at = Date.now()) {
     if (!asset) return;
     recentInteraction = { asset, at };
+
+    // Do not wait for the React/canvas tree to finish repainting before telling
+    // the session owner that the user selected another market.
+    sendFocus({
+      asset,
+      score: 5000,
+      samples: 1,
+      stableFor: 0,
+      reliable: true,
+      visual: true,
+      explicit: true,
+      interactionHint: true,
+      interactionAt: at,
+      chartScoped: true,
+      chartFound: true,
+      frameHost: host,
+      frameRole,
+      at,
+      source: 'user-selected-transition'
+    });
+    lastPublished = asset;
+    lastPublishedAt = at;
+    candidate = asset;
+    candidateSince = at;
+    candidateSamples = 1;
   }
 
   function publish(force = false) {
