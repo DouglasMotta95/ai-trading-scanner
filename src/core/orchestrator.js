@@ -254,18 +254,22 @@ function waitSignal(signal, reason) {
 function possibleSignal(signal, windows, direction, score, cycle = {}) {
   const seconds = Math.max(0, Math.ceil(Number(signal.secondsRemaining || 0)));
   const side = direction === 'BUY' ? 'COMPRA' : 'VENDA';
-  const waiting = clean(signal.waitingFor?.text || signal.reason || 'aguardando confirmação final do padrão');
+  const rawDirection = directionOf(signal);
+  const waiting = rawDirection === direction
+    ? clean(signal.waitingFor?.text || signal.reason || 'aguardando confirmação final do padrão')
+    : `mantendo o padrão ${side.toLowerCase()} já confirmado nesta vela enquanto a leitura instantânea oscila`;
   const reason = `POSSÍVEL ${side} • ${seconds}s restantes — ${waiting}`;
   const transition = cycle.directionTransition && Date.now() - Number(cycle.directionTransition.at || 0) < 3500
     ? { ...cycle.directionTransition }
     : null;
+  const candidateScore = Number(cycle.possibleScore || score || 0);
   return {
     ...signal,
     state: 'WATCH', direction, diagnosis: direction,
     uiState: direction === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL',
     provisional: true, phase: 'POSSIBLE',
-    score: Math.max(Number(score || 0), Number(cycle.possibleScore || 0)),
-    analysisScore: Math.max(Number(score || 0), Number(cycle.possibleScore || 0)),
+    score: candidateScore,
+    analysisScore: candidateScore,
     setup: cycle.setup || signal.setup || null,
     directionTransition: transition,
     reason, hint: reason, decisionWindow: windows
