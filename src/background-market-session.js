@@ -345,10 +345,12 @@ export async function applyFocus(message = {}, sender = {}) {
       && Number(old?.interactionAt || old?.at || 0) > 0
       && now - Number(old.interactionAt || old.at) < 8000;
     const selectionLock = state.diagnostics?.visualSelectionLock || null;
-    const selectionLockFresh = !!selectionLock?.asset
-      && Number(selectionLock.at || 0) > 0
-      && now - Number(selectionLock.at) < 8000;
-    const contradictsSelectionLock = selectionLockFresh
+    // Once the user explicitly selects a market, passive readers may confirm
+    // that same market but may not replace it. The lock changes only on the
+    // next explicit user selection; a timeout allowed stale hidden rows to
+    // resurrect EURO/old assets several seconds later.
+    const selectionLockActive = !!selectionLock?.asset && Number(selectionLock.at || 0) > 0;
+    const contradictsSelectionLock = selectionLockActive
       && !sameMarket(asset, selectionLock.asset);
     const protocolContradictsSelectionLock = incomingProtocolOnly && contradictsSelectionLock;
 
