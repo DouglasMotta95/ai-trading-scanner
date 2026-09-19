@@ -66,20 +66,13 @@ test('validation reports real entry performance, skipped opportunities and break
   assert.equal(metrics.lossesByReason[0].reason, 'ROMPIMENTO FALHOU');
 });
 
-test('premium sidepanel exposes radar, explicit trigger, validation and animated connection', () => {
+test('compact sidepanel keeps the decision surface and intentionally omits legacy radar/validation panels', () => {
   const html = read('src/sidepanel/index.html');
   const shell = read('src/sidepanel/ui-shell-v2.js');
-  const guide = read('src/sidepanel/signal-guidance-ui.js');
-  const radar = read('src/sidepanel/radar-ui.js');
-  const validation = read('src/sidepanel/validation-ui.js');
-  for (const id of ['connectScanner','syncStrip','triggerCard','technicalConfidence','assetRadarList','validationWinRate']) assert.match(html, new RegExp(`id="${id}"`));
-  assert.match(html, /premium-v2\.css/);
+  for (const id of ['connectScanner','syncStrip','triggerCard','technicalConfidence']) assert.match(html, new RegExp(`id="${id}"`));
+  assert.doesNotMatch(html, /id="assetRadarList"/);
+  assert.doesNotMatch(html, /id="validationWinRate"/);
   assert.match(shell, /ATS_CONNECT_ACTIVE_TAB/);
-  assert.match(shell, /toggle-row/);
-  assert.match(guide, /waiting\.type === 'breakout'/);
-  assert.match(guide, /NÍVEL \$\{fmt\(waiting\.level\)\}/);
-  assert.match(radar, /ATS_GET_ASSET_RADAR/);
-  assert.match(validation, /ATS_GET_SHADOW_CALIBRATION/);
 });
 
 test('service worker wires radar without replacing the single market authority', () => {
