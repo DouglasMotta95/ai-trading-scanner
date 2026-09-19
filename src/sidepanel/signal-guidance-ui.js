@@ -82,10 +82,9 @@ function guidance(state = {}) {
 
 function render(state = {}) {
   const technicalConfidence = assessEntryConfidence(state);
-  const decision = state.professionalDecision || {};
   const technical = state.signal || {};
   const advice = activeEntryAdvice(state);
-  const scoreRaw = advice?.score ?? decision.score ?? technical.analysisScore ?? technical.score ?? technicalConfidence.score;
+  const scoreRaw = advice?.score ?? technical.analysisScore ?? technical.score ?? technicalConfidence.score;
   const score = Math.max(0, Math.min(100, Math.round(Number(scoreRaw) || 0)));
   const guide = guidance(state);
   const card = $('triggerCard');
