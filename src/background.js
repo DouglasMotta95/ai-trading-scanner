@@ -36,6 +36,10 @@ const activeAccess = state => {
     || state?.diagnostics?.access?.state === 'owner_dev';
 };
 
+const operatingTimeframe = state => normTf(state?.analystPreferences?.operatingTimeframe) === 'M1' ? 'M1' : 'M5';
+const expirationForTimeframe = tf => tf === 'M1' ? '60s' : '300s';
+const finalWindowForTimeframe = tf => tf === 'M1' ? 10 : 20;
+
 function historyFor(state = {}, asset = '') {
   const history = state.marketHistory || {};
   const key = Object.keys(history).find(value => sameMarket(value, asset));
@@ -85,12 +89,15 @@ function resolveSignalJournal(current = {}, snapshot = {}, issued = null, tfMs =
     if (!sameMarket(row.asset, snapshot.asset)) continue;
     const targetStart = Number(row.targetStart || 0);
     if (!targetStart || now < targetStart + tfMs) continue;
-    const target = candles.find(candle => {
-      const time = candleTime(candle);
-      return time != null && Math.floor(time / tfMs) * tfMs === Math.floor(targetStart / tfMs) * tfMs;
-    });
-    if (!target) continue;
-    const open = num(target.open), close = num(target.close);
+    const targetBucket = Math.floor(targetStart / tfMs) * tfMs;
+    const targetRows = candles
+      .map(candle => ({ candle, time: candleTime(candle) }))
+      .filter(item => item.time != null && item.time >= targetBucket && item.time < targetBucket + tfMs)
+      .sort((a,b) => a.time - b.time);
+    if (!targetRows.length) continue;
+    const first = targetRows[0].candle;
+    const last = targetRows.at(-1).candle;
+    const open = num(first.open), close = num(last.close);
     if (open == null || close == null) continue;
     const direction = String(row.direction || '').toUpperCase();
     const delta = close - open;
@@ -129,7 +136,9 @@ function consolidatedSnapshot(state = {}) {
   const secondsRemaining = num(clock.secondsRemaining);
   if (secondsRemaining == null || secondsRemaining < 0) return null;
   const timeframe = normTf(clock.timeframe || state.analysisTimeframe || state.timeframe);
-  if (!timeframe) return null;
+  const desiredTimeframe = operatingTimeframe(state);
+  if (!timeframe || timeframe !== desiredTimeframe) return null;
+  const requiredExpiration = expirationForTimeframe(desiredTimeframe);
   const candles = historyFor(state, asset);
   if (candles.length < 2) return null;
 
@@ -140,9 +149,16 @@ function consolidatedSnapshot(state = {}) {
     asset,
     price,
     timeframe,
-    analysisTimeframe: timeframe,
-    expiration: state.platformControls?.observed?.expiration || state.targetExpiration || state.expiration || clock.expiration || null,
-    targetExpiration: state.platformControls?.observed?.expiration || state.targetExpiration || state.expiration || clock.expiration || null,
+    analysisTimeframe: desiredTimeframe,
+    operatingTimeframe: desiredTimeframe,
+    expiration: requiredExpiration,
+    targetExpiration: requiredExpiration,
+    operationPlan: {
+      timeframe: desiredTimeframe,
+      expiration: requiredExpiration,
+      contextTimeframe: desiredTimeframe === 'M1' ? 'M5' : 'M15',
+      finalWindowSeconds: finalWindowForTimeframe(desiredTimeframe)
+    },
     secondsRemaining,
     serverTime: Date.now(),
     candles,
@@ -168,7 +184,7 @@ function rawInputSignature(state = {}, snapshot = null) {
     Number(row?.open ?? 0), Number(row?.high ?? 0), Number(row?.low ?? 0), Number(row?.close ?? 0)
   ]);
   return JSON.stringify([
-    snapshot.asset, snapshot.price, snapshot.timeframe, snapshot.expiration,
+    snapshot.asset, snapshot.price, snapshot.timeframe, snapshot.operatingTimeframe, snapshot.expiration,
     snapshot.secondsRemaining, Number(clock.at || 0), clean(clock.source),
     Number(state.lastSeen || 0), tail
   ]);
@@ -253,6 +269,7 @@ async function runCentralAnalysis(force = false) {
             direction: processedDirection,
             setup: clean(processed?.signal?.setup || ''),
             regime: clean(processed?.signal?.regime?.type || ''),
+            timeframe: snapshot.analysisTimeframe,
             score: Number(processed?.signal?.analysisScore ?? processed?.signal?.score ?? 0),
             qualityScore: Number(processed?.signal?.aPlus?.score || processed?.signal?.qualityScore || 0),
             qualityFactors: processed?.signal?.aPlus?.factors || null,
@@ -274,8 +291,9 @@ async function runCentralAnalysis(force = false) {
         // Raw acquisition state remains authoritative.
         asset: current.asset,
         price: current.price,
-        timeframe: current.timeframe || snapshot.timeframe,
-        analysisTimeframe: current.analysisTimeframe || snapshot.analysisTimeframe,
+        timeframe: snapshot.timeframe,
+        analysisTimeframe: snapshot.analysisTimeframe,
+        operationPlan: snapshot.operationPlan,
         expiration: current.expiration,
         targetExpiration: current.targetExpiration,
         candles: current.candles,
@@ -303,7 +321,8 @@ async function runCentralAnalysis(force = false) {
       const seconds = num(snapshot.secondsRemaining);
       const locked = clean(next.decisionCycle?.locked).toUpperCase();
       const confirmed = next.signal?.state === 'CONFIRM' || ['ENTER_BUY', 'ENTER_SELL'].includes(clean(next.signal?.uiState).toUpperCase());
-      needsConfirmationFollowup = seconds != null && seconds > 0 && seconds <= 10 && !confirmed && locked !== 'WAIT';
+      const finalWindow = finalWindowForTimeframe(snapshot.analysisTimeframe);
+      needsConfirmationFollowup = seconds != null && seconds > 0 && seconds <= finalWindow && !confirmed && locked !== 'WAIT';
       return next;
     });
   } finally {

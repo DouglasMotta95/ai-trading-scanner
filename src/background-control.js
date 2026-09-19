@@ -407,8 +407,9 @@ async function commitDirectExpiration(tabId, evidence = null) {
       },
       expirationRecheckPendingAt: 0
     };
-    const timeframe = clean(state.analysisTimeframe || state.timeframe).toUpperCase();
-    const ready = timeframe === 'M1' && expiration === '60s';
+    const timeframe = normalizeOperatingTimeframe(state.analystPreferences?.operatingTimeframe || state.analysisTimeframe || state.timeframe);
+    const requiredExpiration = expirationForOperatingTimeframe(timeframe);
+    const ready = expiration === requiredExpiration;
     return {
       ...state,
       expiration,
@@ -437,13 +438,14 @@ async function commitDirectExpiration(tabId, evidence = null) {
         },
         expirationGuard: {
           ...(state.diagnostics?.expirationGuard || {}),
-          required: '60s',
+          required: requiredExpiration,
           actual: expiration,
           ready,
-          validForM1: ready,
-          reason: expiration === '60s'
-            ? 'Expiração real de 1 minuto confirmada diretamente na CasaTrade.'
-            : 'Ajuste a expiração da CasaTrade para 1 minuto.',
+          validForM1: timeframe === 'M1' && ready,
+          validForM5: timeframe === 'M5' && ready,
+          reason: expiration === requiredExpiration
+            ? `Expiração real de ${timeframe === 'M1' ? '1 minuto' : '5 minutos'} confirmada diretamente na CasaTrade.`
+            : `Ajuste a expiração da CasaTrade para ${timeframe === 'M1' ? '1 minuto' : '5 minutos'}.`,
           source: 'background-direct-expiration-probe',
           evidence: clean(evidence?.evidence || ''),
           at: now
@@ -708,14 +710,69 @@ async function manualIntent(direction = '') {
 
   if (!exactTradeReady(state)) return { ok: false, error: 'signal_not_ready', state };
 
+  const operatingTimeframe = normalizeOperatingTimeframe(state.analystPreferences?.operatingTimeframe || state.analysisTimeframe || state.timeframe);
   const intent = {
-    direction, asset: state.asset, timeframe: state.analysisTimeframe || state.timeframe,
-    expiration: null,
+    direction, asset: state.asset, timeframe: operatingTimeframe,
+    expiration: expirationForOperatingTimeframe(operatingTimeframe),
     targetStart: state.signal?.targetStart || null,
     mode: 'manual-only', createdAt: Date.now()
   };
   const next = await updateScannerState(current => ({ ...current, tradeIntent: intent }));
   return { ok: true, intent, state: next };
+}
+
+function normalizeOperatingTimeframe(value = '') {
+  return clean(value).toUpperCase() === 'M1' ? 'M1' : 'M5';
+}
+function expirationForOperatingTimeframe(value = '') {
+  return normalizeOperatingTimeframe(value) === 'M1' ? '60s' : '300s';
+}
+
+async function setAnalystPreferences(message = {}) {
+  const operatingTimeframe = normalizeOperatingTimeframe(message.operatingTimeframe);
+  const preferredExpiration = expirationForOperatingTimeframe(operatingTimeframe);
+  const next = await updateScannerState(current => {
+    const previousTf = normalizeOperatingTimeframe(current.analystPreferences?.operatingTimeframe || 'M5');
+    const changed = previousTf !== operatingTimeframe;
+    return {
+      ...current,
+      analystPreferences: {
+        ...(current.analystPreferences || {}),
+        mode: 'A_PLUS',
+        operatingTimeframe,
+        preferredExpiration,
+        geminiEnabled: message.geminiEnabled !== false,
+        holdSeconds: 3
+      },
+      operationPlan: {
+        timeframe: operatingTimeframe,
+        expiration: preferredExpiration,
+        contextTimeframe: operatingTimeframe === 'M1' ? 'M5' : 'M15',
+        finalWindowSeconds: operatingTimeframe === 'M1' ? 10 : 20
+      },
+      targetExpiration: preferredExpiration,
+      ...(changed ? {
+        signal: null,
+        professionalDecision: null,
+        decisionCycle: null,
+        tradeIntent: null,
+        entryAdvice: null
+      } : {}),
+      diagnostics: {
+        ...(current.diagnostics || {}),
+        operationPlan: {
+          timeframe: operatingTimeframe,
+          expiration: preferredExpiration,
+          contextTimeframe: operatingTimeframe === 'M1' ? 'M5' : 'M15',
+          finalWindowSeconds: operatingTimeframe === 'M1' ? 10 : 20,
+          changedAt: changed ? Date.now() : Number(current.diagnostics?.operationPlan?.changedAt || 0),
+          at: Date.now()
+        }
+      }
+    };
+  });
+  globalThis.__ATS_SCHEDULE_CENTRAL_ANALYSIS__?.(true);
+  return { ok: true, state: next, operatingTimeframe, preferredExpiration };
 }
 
 async function setScanner(enabled = false) {
@@ -801,6 +858,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (type === 'ATS_GET_SESSION_HISTORY') {
     readSessionHistory().then(sendResponse).catch(error => sendResponse({ ok: false, error: String(error?.message || error) }));
+    return true;
+  }
+
+  if (type === 'ATS_SET_ANALYST_PREFERENCES') {
+    setAnalystPreferences(message).then(sendResponse).catch(error => sendResponse({ ok: false, error: String(error?.message || error) }));
     return true;
   }
 

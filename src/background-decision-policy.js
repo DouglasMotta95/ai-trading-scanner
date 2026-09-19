@@ -6,7 +6,7 @@ import { readScannerState, updateScannerState } from './services/scanner-state-a
 const EXACT_CLOCK_SOURCES = new Set(['trader-dom-countdown', 'network-server-cycle']);
 const CLOCK_FRESH_MS = 3000;
 const FOCUS_FRESH_MS = 5500;
-const DEFAULT_PREFS = Object.freeze({ mode: 'A_PLUS', geminiEnabled: true, holdSeconds: 3, preferredExpiration: null });
+const DEFAULT_PREFS = Object.freeze({ mode: 'A_PLUS', operatingTimeframe: 'M5', geminiEnabled: true, holdSeconds: 3, preferredExpiration: '300s' });
 
 const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
 const text = value => String(value ?? '').trim();
@@ -42,11 +42,13 @@ const normExp = value => {
 
 function preferences(state = {}) {
   const raw = state.analystPreferences || {};
+  const operatingTimeframe = normTf(raw.operatingTimeframe) === 'M1' ? 'M1' : 'M5';
   return {
     mode: 'A_PLUS',
+    operatingTimeframe,
     geminiEnabled: raw.geminiEnabled !== false,
     holdSeconds: 3,
-    preferredExpiration: null
+    preferredExpiration: operatingTimeframe === 'M1' ? '60s' : '300s'
   };
 }
 
@@ -79,8 +81,9 @@ export function exactCasaTradeTime(state = {}) {
   const liveTf = normTf(clock.timeframe);
   const stateTf = normTf(state.analysisTimeframe || state.timeframe);
   const controlTf = normTf(state.platformControls?.observed?.timeframe);
+  const expectedTf = preferences(state).operatingTimeframe;
   if (!liveTf) return { ready: false, reason: 'Timeframe real ainda não foi confirmado.' };
-  if (liveTf !== 'M1') return { ready: false, reason: 'Ajuste o timeframe da CasaTrade para M1.' };
+  if (liveTf !== expectedTf) return { ready: false, reason: `Ajuste o timeframe da CasaTrade para ${expectedTf}.` };
   if (stateTf && liveTf !== stateTf) return { ready: false, reason: 'Timeframe interno divergiu do gráfico.' };
   if (controlTf && liveTf !== controlTf) return { ready: false, reason: 'Timeframe visível divergiu do clock da vela.' };
   return { ready: true, timeframe: liveTf, secondsRemaining: Number(clock.secondsRemaining), source: clock.source };
@@ -100,10 +103,12 @@ export function CasaTradeExpiration(state = {}, timeframe = null) {
       ? 'Lendo expiração real da CasaTrade'
       : 'Não foi possível ler a expiração — verifique o seletor na CasaTrade'
   };
-  if (normTf(timeframe || state.analysisTimeframe || state.timeframe) === 'M1' && observed !== '60s') {
-    return { ready: false, actual: observed, required: '60s', reason: 'Ajuste a expiração da CasaTrade para 1 minuto' };
+  const tf = normTf(timeframe || state.analysisTimeframe || state.timeframe) || preferences(state).operatingTimeframe;
+  const required = tf === 'M1' ? '60s' : '300s';
+  if (observed !== required) {
+    return { ready: false, actual: observed, required, reason: `Ajuste a expiração da CasaTrade para ${tf === 'M1' ? '1 minuto' : '5 minutos'}` };
   }
-  return { ready: true, actual: observed, required: '60s', reason: 'Expiração de 1 minuto lida diretamente da CasaTrade.' };
+  return { ready: true, actual: observed, required, reason: `Expiração de ${tf === 'M1' ? '1 minuto' : '5 minutos'} lida diretamente da CasaTrade.` };
 }
 
 function completeCandles(state = {}) {
@@ -154,10 +159,13 @@ function cycleKey(state = {}, signal = {}) {
 function simpleEntryTiming(state = {}, signal = {}) {
   const now = Date.now();
   const clock = state.diagnostics?.marketClock || {};
+  const timeframe = normTf(clock.timeframe || state.analysisTimeframe || state.timeframe || signal.timeframe)
+    || preferences(state).operatingTimeframe;
+  const durationSeconds = timeframe === 'M5' ? 300 : 60;
   const clockSeconds = num(clock.secondsRemaining);
   const clockFresh = clockSeconds != null
     && clockSeconds >= 0
-    && clockSeconds <= 62
+    && clockSeconds <= durationSeconds + 2
     && Number(clock.at || 0) > 0
     && now - Number(clock.at) < 6000;
   if (clockFresh) {
@@ -165,39 +173,36 @@ function simpleEntryTiming(state = {}, signal = {}) {
       ready: true,
       secondsRemaining: clockSeconds,
       source: text(clock.source || 'market-clock'),
-      timeframe: normTf(clock.timeframe || state.analysisTimeframe || state.timeframe) || 'M1'
+      timeframe
     };
   }
 
   const signalSeconds = num(signal.secondsRemaining);
-  if (signalSeconds != null && signalSeconds >= 0 && signalSeconds <= 62) {
+  if (signalSeconds != null && signalSeconds >= 0 && signalSeconds <= durationSeconds + 2) {
     return {
       ready: true,
       secondsRemaining: signalSeconds,
       source: 'technical-signal-clock',
-      timeframe: normTf(signal.timeframe || state.analysisTimeframe || state.timeframe) || 'M1'
+      timeframe
     };
   }
 
-  const timeframe = normTf(state.analysisTimeframe || state.timeframe || signal.timeframe);
-  if (timeframe === 'M1') {
-    const candidates = [
-      state.currentCandle,
-      signal.currentCandle,
-      Array.isArray(state.candles) ? state.candles.at(-1) : null
-    ].filter(Boolean);
-    for (const row of candidates) {
-      let openAt = num(row?.time ?? row?.timestamp);
-      if (openAt != null && openAt > 0 && openAt < 1e12) openAt *= 1000;
-      if (!Number.isFinite(openAt)) continue;
-      const closeAt = openAt + 60_000;
-      if (now < openAt - 1500 || now > closeAt + 1500) continue;
-      const secondsRemaining = Math.max(0, Math.min(60, Math.ceil((closeAt - now) / 1000)));
-      return { ready: true, secondsRemaining, source: 'current-candle-boundary', timeframe: 'M1' };
-    }
+  const candidates = [
+    state.currentCandle,
+    signal.currentCandle,
+    Array.isArray(state.candles) ? state.candles.at(-1) : null
+  ].filter(Boolean);
+  for (const row of candidates) {
+    let openAt = num(row?.time ?? row?.timestamp);
+    if (openAt != null && openAt > 0 && openAt < 1e12) openAt *= 1000;
+    if (!Number.isFinite(openAt)) continue;
+    const closeAt = openAt + durationSeconds * 1000;
+    if (now < openAt - 1500 || now > closeAt + 1500) continue;
+    const secondsRemaining = Math.max(0, Math.min(durationSeconds, Math.ceil((closeAt - now) / 1000)));
+    return { ready: true, secondsRemaining, source: 'current-candle-boundary', timeframe };
   }
 
-  return { ready: false, secondsRemaining: null, source: null, timeframe: timeframe || 'M1' };
+  return { ready: false, secondsRemaining: null, source: null, timeframe };
 }
 
 function baseDecision(state = {}) {
@@ -280,7 +285,7 @@ function baseDecision(state = {}) {
       direction,
       actionable: false,
       alert: 'discrete',
-      reason: text(signal.reason || `POSSÍVEL ${direction === 'BUY' ? 'COMPRA' : 'VENDA'} — aguardando confirmação final perto de 10s.`)
+      reason: text(signal.reason || `POSSÍVEL ${direction === 'BUY' ? 'COMPRA' : 'VENDA'} — aguardando confirmação final na janela operacional.`)
     };
   }
 

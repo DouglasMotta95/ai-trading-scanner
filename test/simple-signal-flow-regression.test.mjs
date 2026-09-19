@@ -35,19 +35,22 @@ test('opposite direction cannot replace current candidate without sustained stro
   assert.match(block, /rawScore >= Math\.max\(ANALYST_THRESHOLDS\.confirmScore, Number\(cycle\.possibleScore/);
 });
 
-test('final entry remains a 10 second decision owned by the orchestrator', () => {
+test('final entry windows are calibrated separately for M1 and M5', () => {
   const orchestrator = read('src/core/orchestrator.js');
-  assert.match(orchestrator, /if \(timeframe === 'M1'\) return \{ pre: 30, decision: 10, skip: 4/);
+  assert.match(orchestrator, /timeframe === 'M1'.*decision: 10/);
+  assert.match(orchestrator, /timeframe === 'M5'.*decision: 20/);
   assert.match(orchestrator, /secondsRemaining > windows\.decision/);
-  assert.match(orchestrator, /ENTRAR NA PRÓXIMA VELA/);
 });
 
-test('sidepanel removes expiration and Tempo CasaTrade as visible gates', () => {
+test('sidepanel shows expiration as operation plan without restoring old expiration gate', () => {
   const html = read('src/sidepanel/index.html');
-  assert.doesNotMatch(html, />EXPIRAÇÃO </);
-  assert.doesNotMatch(html, /TEMPO CASATRADE/);
-  assert.match(html, /ENTRADA FINAL <b>~10s<\/b>/);
-  assert.match(html, /Pré-sinal primeiro; entrada final quando o padrão confirmar perto de 10s/);
+  const policy = read('src/background-decision-policy.js');
+  assert.match(html, /id="operatingTimeframe"/);
+  assert.match(html, /id="heroExpirationPlan"/);
+  assert.match(html, /M5 • expiração 5 min/);
+  const start = policy.indexOf('function baseDecision');
+  const end = policy.indexOf('\nfunction signature', start);
+  assert.doesNotMatch(policy.slice(start, end), /CasaTradeExpiration\(/);
 });
 
 test('connection shell never falls back to EXPIRAÇÃO PENDENTE', () => {

@@ -7,6 +7,7 @@ const DEFAULT_PREFS = Object.freeze({
   alertLevel: 'discrete',
   notificationsEnabled: true,
   analystMode: 'A_PLUS',
+  operatingTimeframe: 'M5',
   geminiEnabled: true,
   holdSeconds: 3,
   expectedAsset: ''
@@ -93,6 +94,26 @@ function expLabel(value = '') {
   if (seconds % 3600 === 0) return `${seconds / 3600} h`;
   if (seconds % 60 === 0) return `${seconds / 60} min`;
   return `${seconds} s`;
+}
+
+function normalizeOperatingTimeframe(value = '') {
+  return clean(value).toUpperCase() === 'M1' ? 'M1' : 'M5';
+}
+function requiredExpirationForTimeframe(value = '') {
+  return normalizeOperatingTimeframe(value) === 'M1' ? '60s' : '300s';
+}
+function contextTimeframeFor(value = '') {
+  return normalizeOperatingTimeframe(value) === 'M1' ? 'M5' : 'M15';
+}
+function finalWindowForTimeframe(value = '') {
+  return normalizeOperatingTimeframe(value) === 'M1' ? 10 : 20;
+}
+function selectedOperatingTimeframe(state = {}) {
+  return normalizeOperatingTimeframe(
+    state.analystPreferences?.operatingTimeframe
+    || prefs.operatingTimeframe
+    || DEFAULT_PREFS.operatingTimeframe
+  );
 }
 function fmtPrice(value) {
   const n = num(value);
@@ -225,6 +246,21 @@ function decisionModel(state = {}) {
   if (pending) return { uiState: 'ANALYZING_MARKET', title: 'ATUALIZANDO ATIVO', text: `ATUALIZANDO PARA ${pending}`, sub: 'Limpando dados anteriores e confirmando o novo gráfico.', tone: 'waiting', reason: 'Troca de ativo em validação.', score: 0, actionable: false };
   if (!marketDataReady(state) || !focusReady(state)) return { uiState: 'ANALYZING_MARKET', title: 'AGUARDAR', text: 'AGUARDAR', sub: 'Confirmando ativo, preço e velas reais.', tone: 'waiting', reason: 'Identificando o gráfico atual da CasaTrade.', score: 0, actionable: false };
 
+  const desiredTf = selectedOperatingTimeframe(state);
+  const actualTf = normTf(state.diagnostics?.marketClock?.timeframe || state.analysisTimeframe || state.timeframe);
+  if (actualTf && desiredTf !== actualTf) {
+    return {
+      uiState: 'WAIT',
+      title: `AJUSTE PARA ${desiredTf}`,
+      text: `AJUSTE O GRÁFICO PARA ${desiredTf}`,
+      sub: `Modo selecionado: ${desiredTf}. Expiração recomendada: ${expLabel(requiredExpirationForTimeframe(desiredTf))}.`,
+      tone: 'waiting',
+      reason: `A extensão está configurada para ${desiredTf}, mas a CasaTrade está em ${actualTf}.`,
+      score: 0,
+      actionable: false
+    };
+  }
+
   const advice = activeEntryAdvice(state);
   if (advice) {
     const direction = String(advice.direction || '').toUpperCase();
@@ -252,8 +288,8 @@ function decisionModel(state = {}) {
   // The orchestrator signal is the only decision authority rendered by the UI.
   if (ui === 'ENTER_BUY') return { uiState: ui, title: 'ENTRADA', text: 'ENTRAR: COMPRA', sub: 'Entrada manual agora.', tone: 'buy', reason, score, actionable: true, direction: 'BUY' };
   if (ui === 'ENTER_SELL') return { uiState: ui, title: 'ENTRADA', text: 'ENTRAR: VENDA', sub: 'Entrada manual agora.', tone: 'sell', reason, score, actionable: true, direction: 'SELL' };
-  if (ui === 'POSSIBLE_BUY') return { uiState: ui, title: 'POSSÍVEL COMPRA', text: 'POSSÍVEL COMPRA', sub: 'Candidato mantido nesta vela; aguardando confirmação final perto de 10s.', tone: 'possible', reason, score, actionable: false, direction: 'BUY' };
-  if (ui === 'POSSIBLE_SELL') return { uiState: ui, title: 'POSSÍVEL VENDA', text: 'POSSÍVEL VENDA', sub: 'Candidato mantido nesta vela; aguardando confirmação final perto de 10s.', tone: 'possible', reason, score, actionable: false, direction: 'SELL' };
+  if (ui === 'POSSIBLE_BUY') return { uiState: ui, title: 'POSSÍVEL COMPRA', text: 'POSSÍVEL COMPRA', sub: 'Candidato mantido nesta vela; aguardando confirmação final perto da janela operacional.', tone: 'possible', reason, score, actionable: false, direction: 'BUY' };
+  if (ui === 'POSSIBLE_SELL') return { uiState: ui, title: 'POSSÍVEL VENDA', text: 'POSSÍVEL VENDA', sub: 'Candidato mantido nesta vela; aguardando confirmação final perto da janela operacional.', tone: 'possible', reason, score, actionable: false, direction: 'SELL' };
   if (ui === 'ANALYZING_MARKET') return { uiState: ui, title: 'ANALISANDO MERCADO', text: 'ANALISANDO MERCADO', sub: reason, tone: 'waiting', reason, score, actionable: false };
   if (ui === 'BUILDING_PATTERN' || ui === 'DECIDING') return { uiState: ui, title: 'ANALISANDO', text: 'ANALISANDO', sub: reason, tone: 'waiting', reason, score, actionable: false };
   return { uiState: 'WAIT', title: 'AGUARDAR', text: 'AGUARDAR', sub: 'Sem padrão técnico suficiente agora.', tone: 'no-trade', reason: reason.startsWith('AGUARDAR') ? reason : `AGUARDAR — ${reason}`, score, actionable: false };
@@ -325,24 +361,29 @@ let lastRenderedState = {};
 let countdownUi = { value: null, at: 0, cycle: '' };
 
 function projectedRemaining(state = {}) {
+  const tf = normTf(state.diagnostics?.marketClock?.timeframe || state.analysisTimeframe || state.timeframe || state.signal?.timeframe);
+  const duration = timeframeSeconds(tf) || timeframeSeconds(selectedOperatingTimeframe(state)) || 60;
   const sources = [
     num(state.professionalDecision?.secondsRemaining),
     num(state.diagnostics?.marketClock?.secondsRemaining),
     num(state.signal?.secondsRemaining)
   ];
-  const direct = sources.find(value => value != null && value >= 0 && value <= 62);
+  const direct = sources.find(value => value != null && value >= 0 && value <= duration + 2);
   if (direct != null) return Math.max(0, direct);
 
-  const tf = normTf(state.analysisTimeframe || state.timeframe || state.signal?.timeframe);
-  if (tf === 'M1') {
-    const row = state.currentCandle || state.signal?.currentCandle || (Array.isArray(state.candles) ? state.candles.at(-1) : null);
+  const candidates = [
+    state.currentCandle,
+    state.signal?.currentCandle,
+    Array.isArray(state.candles) ? state.candles.at(-1) : null
+  ].filter(Boolean);
+  for (const row of candidates) {
     let openAt = num(row?.time ?? row?.timestamp);
     if (openAt != null && openAt > 0 && openAt < 1e12) openAt *= 1000;
-    if (Number.isFinite(openAt)) {
-      const now = Date.now();
-      const closeAt = openAt + 60_000;
-      if (now >= openAt - 1500 && now <= closeAt + 1500) return Math.max(0, Math.min(60, Math.ceil((closeAt - now) / 1000)));
-    }
+    if (!Number.isFinite(openAt)) continue;
+    const closeAt = openAt + duration * 1000;
+    const now = Date.now();
+    if (now < openAt - 1500 || now > closeAt + 1500) continue;
+    return Math.max(0, Math.min(duration, Math.ceil((closeAt - now) / 1000)));
   }
   return null;
 }
@@ -366,6 +407,10 @@ function render(state = {}) {
 
   const remaining = smoothedRemaining(state);
   const actualTf = normTf(clock.timeframe || state.platformControls?.observed?.timeframe || state.analysisTimeframe || state.timeframe);
+  const desiredTf = selectedOperatingTimeframe(state);
+  const requiredExp = requiredExpirationForTimeframe(desiredTf);
+  const contextTf = contextTimeframeFor(desiredTf);
+  const finalWindow = finalWindowForTimeframe(desiredTf);
   const expirationObs = expirationObservation(state);
   const actualExp = expirationObs.value;
   const pending = transitionAsset(state);
@@ -376,6 +421,13 @@ function render(state = {}) {
   setText('asset', visibleAsset || (pending ? `Atualizando para ${pending}…` : '—'));
   setText('timeframe', freshMarket || pending ? (actualTf || '—') : '—');
   setText('price', freshMarket ? fmtPrice(state.price) : '—');
+  setText('scannerModeTitle', `A+ ${desiredTf} AO VIVO`);
+  setText('heroExpirationPlan', expLabel(requiredExp));
+  setText('strategyTf', desiredTf);
+  setText('strategyContext', contextTf);
+  setText('strategyExpiration', expLabel(requiredExp));
+  setText('strategyEntryWindow', `~${finalWindow} s`);
+  setText('strategyNote', `${desiredTf} operacional + contexto ${contextTf}. A entrada é na próxima vela de ${desiredTf === 'M1' ? '1' : '5'} minuto(s), com expiração manual de ${expLabel(requiredExp)}.`);
 
   if (freshMarket) setSourceState('assetSource', 'REAL', 'real', 'Ativo confirmado pelo gráfico + feed da CasaTrade.');
   else if (pending) setSourceState('assetSource', 'ATUALIZANDO', 'estimated', 'Troca detectada; preço e velas anteriores já foram descartados.');
@@ -426,10 +478,19 @@ function render(state = {}) {
     } else if (model.actionable) {
       actionStatus.textContent = `ENTRADA AGORA: ${model.direction === 'BUY' ? 'COMPRA' : 'VENDA'}.`;
     } else if (model.uiState.startsWith('POSSIBLE_')) {
-      actionStatus.textContent = 'Sinal possível detectado. Aguardando confirmação final perto de 10s.';
+      actionStatus.textContent = `Sinal possível detectado. Aguardando confirmação final perto de ${finalWindow}s.`;
     } else {
       actionStatus.textContent = 'Aguardando um sinal técnico válido.';
     }
+  }
+
+  const tfWarning = $('timeframeModeWarning');
+  if (tfWarning) {
+    const mismatch = !!actualTf && actualTf !== desiredTf;
+    tfWarning.hidden = !mismatch;
+    tfWarning.textContent = mismatch
+      ? `Scanner em ${desiredTf}, mas a CasaTrade está em ${actualTf}. Troque o período da vela para ${desiredTf} antes de operar. Expiração: ${expLabel(requiredExp)}.`
+      : '';
   }
 
   const expected = marketId(prefs.expectedAsset || '');
@@ -497,6 +558,7 @@ function syncSettingsUi() {
   if ($('overlayToggle')) $('overlayToggle').checked = !!prefs.overlayEnabled;
   if ($('geminiToggle')) $('geminiToggle').checked = prefs.geminiEnabled !== false;
   if ($('analystMode')) $('analystMode').value = prefs.analystMode === 'A_PLUS' ? 'A_PLUS' : 'NORMAL';
+  if ($('operatingTimeframe')) $('operatingTimeframe').value = normalizeOperatingTimeframe(prefs.operatingTimeframe);
   if ($('notificationToggle')) $('notificationToggle').checked = prefs.notificationsEnabled !== false;
   if ($('alertLevel')) $('alertLevel').value = ['off','discrete','strong'].includes(prefs.alertLevel) ? prefs.alertLevel : DEFAULT_PREFS.alertLevel;
   if ($('holdSeconds')) $('holdSeconds').value = String(Math.max(3, Math.min(5, Number(prefs.holdSeconds) || 3)));
@@ -510,9 +572,10 @@ async function pushAnalystPreferences() {
   await chrome.runtime.sendMessage({
     type: 'ATS_SET_ANALYST_PREFERENCES',
     mode: 'A_PLUS',
+    operatingTimeframe: normalizeOperatingTimeframe(prefs.operatingTimeframe),
     geminiEnabled: prefs.geminiEnabled,
     holdSeconds: 3,
-    preferredExpiration: null
+    preferredExpiration: requiredExpirationForTimeframe(prefs.operatingTimeframe)
   }).catch(() => null);
 }
 
@@ -542,6 +605,7 @@ async function loadPrefs() {
     notificationsEnabled: raw.notificationsEnabled !== false,
     alertLevel: ['off','discrete','strong'].includes(migratedAlert) ? migratedAlert : DEFAULT_PREFS.alertLevel,
     analystMode: 'A_PLUS',
+    operatingTimeframe: normalizeOperatingTimeframe(raw.operatingTimeframe || DEFAULT_PREFS.operatingTimeframe),
     geminiEnabled: raw.geminiEnabled !== false,
     holdSeconds: 3,
     expectedAsset: clean(raw.expectedAsset || '')
@@ -554,6 +618,7 @@ $('overlayToggle')?.addEventListener('change', event => setPref('overlayEnabled'
 $('geminiToggle')?.addEventListener('change', event => setPref('geminiEnabled', !!event.currentTarget.checked));
 $('notificationToggle')?.addEventListener('change', event => setPref('notificationsEnabled', !!event.currentTarget.checked));
 $('analystMode')?.addEventListener('change', event => setPref('analystMode', event.currentTarget.value === 'A_PLUS' ? 'A_PLUS' : 'NORMAL'));
+$('operatingTimeframe')?.addEventListener('change', event => setPref('operatingTimeframe', normalizeOperatingTimeframe(event.currentTarget.value)));
 $('alertLevel')?.addEventListener('change', event => setPref('alertLevel', event.currentTarget.value));
 $('holdSeconds')?.addEventListener('change', event => setPref('holdSeconds', Math.max(3, Math.min(5, Number(event.currentTarget.value) || 3))));
 $('possibleSoundToggle')?.addEventListener('change', event => setPref('possibleSoundEnabled', !!event.currentTarget.checked));
