@@ -526,7 +526,7 @@ export async function applyFocus(message = {}, sender = {}) {
           ? { asset, at: userSelected ? (interactionAt || now) : now, source: chartHeaderAuthoritative ? 'visible-chart-header' : 'user-selection' }
           : (next.diagnostics?.visualSelectionLock || null),
         focusedAsset: {
-          asset, at: now, stableSince: changed ? now : previousStableSince,
+          asset, at: now, stableSince: assetChanged ? now : previousStableSince,
           score: Number(message.score || 0), samples: Number(message.samples || 0), reliable: true,
           visual: message.visual !== false, explicit: message.explicit === true, chartScoped: true,
           interactionHint: userSelected,
