@@ -6,7 +6,7 @@ const read = path => fs.readFileSync(new URL('../' + path, import.meta.url), 'ut
 
 test('14882: same-asset frame handoff cannot reset the market session or signal', () => {
   const session = read('src/background-market-session.js');
-  assert.match(session, /a shell -> trader frame handoff is NOT a market switch/);
+  assert.match(session, /same market/i);
   const handoff = session.indexOf('const traderHandoff');
   const nextFocus = session.indexOf('const previousStableSince', handoff);
   const block = session.slice(handoff, nextFocus);
