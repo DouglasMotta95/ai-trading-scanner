@@ -4,15 +4,13 @@ import fs from 'node:fs';
 
 const read = p => fs.readFileSync(new URL('../' + p, import.meta.url), 'utf8');
 
-test('sidepanel loads customer account connector and uses refresh backoff', () => {
+test('sidepanel loads customer account connector and current live scanner runtime', () => {
   const html = read('src/sidepanel/index.html');
-  const app = read('src/sidepanel/app.js');
+  const app = read('src/sidepanel/app-v2.js');
   const bg = read('src/background.js');
   assert.match(html, /account-login\.js/);
-  assert.match(app, /accountManaged/);
-  assert.match(app, /RECONNECT_DELAYS_MS/);
-  assert.match(app, /ATS_REFRESH_MARKET/);
-  assert.match(bg, /message\?\.type === 'ATS_REFRESH_MARKET'/);
+  assert.match(app, /ATS_READ_SCANNER_STATE/);
+  assert.match(bg, /Single owner of technical analysis/);
 });
 
 test('extension settings expose the real 44 and 58 thresholds instead of fake profiles', () => {
