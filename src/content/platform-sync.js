@@ -177,6 +177,32 @@
 
   const localCount = observed => Number(!!observed?.detected?.amount) + Number(!!observed?.detected?.timeframe) + Number(!!observed?.detected?.expiration);
 
+  let lastPublishedControlKey = '';
+  let lastPublishedControlAt = 0;
+  async function publishVisibleControls(force = false) {
+    const observed = readDom();
+    if (!observed?.expiration && !observed?.timeframe) return false;
+    const snapshot = {
+      amount: null,
+      expiration: observed.expiration || null,
+      timeframe: observed.timeframe || null,
+      confidence: {
+        amount: 0,
+        expiration: Number(observed.confidence?.expiration || 0),
+        timeframe: Number(observed.confidence?.timeframe || 0)
+      },
+      source: 'casatrade-platform-sync-live',
+      observedAt: Number(observed.at || Date.now())
+    };
+    const key = JSON.stringify([snapshot.expiration, snapshot.timeframe]);
+    const now = Date.now();
+    if (!force && key === lastPublishedControlKey && now - lastPublishedControlAt < 900) return true;
+    lastPublishedControlKey = key;
+    lastPublishedControlAt = now;
+    await sendMessage({ type: 'ATS_PLATFORM_CONTROLS_OBSERVED', snapshot });
+    return true;
+  }
+
   async function read(seed = null) {
     const observed = seed || readDom();
     const state = await sendMessage({ type: 'ATS_GET_STATE' });
@@ -271,6 +297,13 @@
     };
     return { ok: !!(matched.amount && matched.timeframe && matched.expiration), desired, before, after, attempted, applied, matched };
   }
+
+  const controlsObserver = new MutationObserver(() => {
+    publishVisibleControls(false).catch(() => {});
+  });
+  try { controlsObserver.observe(document.documentElement, { subtree: true, childList: true, characterData: true, attributes: true }); } catch {}
+  setInterval(() => publishVisibleControls(true).catch(() => {}), 900);
+  setTimeout(() => publishVisibleControls(true).catch(() => {}), 250);
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type === 'ATS_PLATFORM_READ') {
