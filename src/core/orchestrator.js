@@ -98,6 +98,7 @@ function decisionQuality(signal = {}, direction = null) {
     : regime === 'downtrend'
       ? direction === 'BUY'
       : false;
+  const trendCompatible = regime === 'unknown' || trendAligned;
 
   const strongBreakout = analytics.strongBreakout === true
     && String(analytics.breakoutDirection || '').toUpperCase() === direction;
@@ -131,19 +132,19 @@ function decisionQuality(signal = {}, direction = null) {
         { name: 'rejeição', ok: power >= 48 && rejection },
         {
           name: 'continuação com tendência',
-          ok: !counterTrend && trendAligned && power >= 50 && continuation
+          ok: !counterTrend && trendCompatible && power >= 50 && continuation
         },
         {
           name: 'momentum com tendência',
-          ok: !counterTrend && trendAligned && power >= 50 && strongCandle && momentum
+          ok: !counterTrend && trendCompatible && power >= 50 && strongCandle && momentum
         },
         {
           name: 'rompimento com tendência',
-          ok: !counterTrend && trendAligned && power >= 50 && strongBreakout && breakoutMargin >= .18
+          ok: !counterTrend && trendCompatible && power >= 50 && strongBreakout && breakoutMargin >= .18
         },
         {
           name: 'confluência forte',
-          ok: !counterTrend && trendAligned && power >= 48 && score >= 68 && momentum && (strongCandle || continuation || strongBreakout)
+          ok: !counterTrend && trendCompatible && power >= 48 && score >= 68 && momentum && (strongCandle || continuation || strongBreakout)
         }
       ];
 
