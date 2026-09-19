@@ -95,3 +95,12 @@ test('reconnecting the same CasaTrade tab preserves a previously confirmed expir
   assert.match(control, /platformControls: current\.platformControls/);
   assert.match(control, /targetExpiration: confirmedExpiration/);
 });
+
+
+test('mobile expiration dropdown keeps context so a bare 1 min option can confirm 60s', () => {
+  const probe = read('src/content/casatrade-expiration-probe.js');
+  assert.match(probe, /expirationInteractionWindowUntil/);
+  assert.match(probe, /expirationInteractionWindowUntil = now \+ 5000/);
+  assert.match(probe, /expirationFromInteraction\(event, insideOpenExpiration\)/);
+  assert.match(probe, /if \(allowUnscoped\) return value/);
+});
