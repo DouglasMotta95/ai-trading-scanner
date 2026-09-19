@@ -114,17 +114,16 @@ function pivots(rows = [], radius = 2) {
 function nearestLevels(rows = [], price, atrValue) {
   const sample = rows.slice(-30);
   const { highs, lows } = pivots(sample, 2);
-  const fallbackHighs = sample.slice(-12).map(row => row.high);
-  const fallbackLows = sample.slice(-12).map(row => row.low);
-  const highPool = highs.length ? highs : fallbackHighs;
-  const lowPool = lows.length ? lows : fallbackLows;
-  const resistanceCandidates = highPool.filter(level => level > price).sort((a,b)=>a-b);
-  const supportCandidates = lowPool.filter(level => level < price).sort((a,b)=>b-a);
-  const fallbackResistance = Math.max(...fallbackHighs);
-  const fallbackSupport = Math.min(...fallbackLows);
-  const resistance = resistanceCandidates[0] ?? (fallbackResistance > price ? fallbackResistance : null);
-  const support = supportCandidates[0] ?? (fallbackSupport < price ? fallbackSupport : null);
   const safeAtr = Math.max(1e-12, Number(atrValue) || median(sample.map(row=>Math.abs(row.high-row.low))) || 1);
+
+  // Only structural pivot levels count as S/R. A random previous candle high/low
+  // is not automatically resistance/support; treating it that way over-blocks
+  // clean trends.
+  const resistanceCandidates = highs.filter(level => level > price).sort((a,b)=>a-b);
+  const supportCandidates = lows.filter(level => level < price).sort((a,b)=>b-a);
+  const resistance = resistanceCandidates[0] ?? null;
+  const support = supportCandidates[0] ?? null;
+
   return {
     support,
     resistance,
