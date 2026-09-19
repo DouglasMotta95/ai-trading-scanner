@@ -145,9 +145,12 @@ function clockMatchesFocus(state = {}, info = null) {
   if (clean(clock.role) !== 'candle-close' || clock.available === false) return null;
   if (Date.now() - Number(clock.at || 0) > CLOCK_FRESH_MS) return null;
   if (!sameMarket(clock.asset, focus.asset)) return null;
-  if (Number(clock.frameId) !== Number(focus.frameId)) return null;
+  // Frame id is a transport detail. On Android/tablet the focused chart,
+  // structured feed and candle clock can live in sibling frames on the same
+  // trusted CasaTrade host. Market identity is asset + host + timeframe, not
+  // physical frame id.
   if (clean(clock.frameHost).toLowerCase() !== clean(focus.frameHost).toLowerCase()) return null;
-  if (info && (Number(info.frameId) !== Number(focus.frameId) || info.frameHost !== clean(focus.frameHost).toLowerCase())) return null;
+  if (info && info.frameHost !== clean(focus.frameHost).toLowerCase()) return null;
   const remaining = num(clock.secondsRemaining);
   const duration = timeframeSeconds(clock.timeframe || state.analysisTimeframe || state.timeframe);
   if (remaining == null || remaining < 0 || (duration && remaining > duration + 2)) return null;
@@ -555,7 +558,8 @@ export async function applyClock(message = {}, sender = {}) {
   return updateScannerState(state => {
     if (!licenseActive(state)) return;
     const focus = state.diagnostics?.focusedAsset || null;
-    if (!focus?.asset || !sameMarket(focus.asset, asset) || Number(focus.frameId) !== Number(info.frameId) || clean(focus.frameHost).toLowerCase() !== info.frameHost) return;
+    if (!focus?.asset || !sameMarket(focus.asset, asset) || clean(focus.frameHost).toLowerCase() !== info.frameHost) return;
+    if (state.targetTabId && Number(state.targetTabId) !== Number(info.tabId)) return;
 
     // A fallback may keep the analyst moving, but it must never replace a fresh
     // exact CasaTrade clock that is already authoritative for this same frame.
@@ -581,8 +585,8 @@ export async function applyClock(message = {}, sender = {}) {
     }
 
     const session = state.diagnostics?.marketSession || {};
-    const sessionChanged = !sameMarket(session.asset, asset) || clean(session.timeframe).toUpperCase() !== clean(timeframe).toUpperCase()
-      || Number(session.frameId) !== Number(info.frameId) || clean(session.frameHost).toLowerCase() !== info.frameHost;
+    const sessionChanged = !sameMarket(session.asset, asset)
+      || clean(session.timeframe).toUpperCase() !== clean(timeframe).toUpperCase();
     let next = state;
     if (sessionChanged) {
       next = resetForSession(state, {
@@ -606,7 +610,11 @@ export async function applyClock(message = {}, sender = {}) {
         marketClock: record,
         marketSession: {
           ...(next.diagnostics?.marketSession || {}), asset, timeframe,
-          frameId: info.frameId, frameHost: info.frameHost, dataMode: next.price != null ? 'live' : 'syncing'
+          // Preserve the market/session owner frame. The clock may legitimately
+          // arrive from a sibling frame on the same trusted host.
+          frameId: next.diagnostics?.marketSession?.frameId ?? focus.frameId ?? info.frameId,
+          frameHost: next.diagnostics?.marketSession?.frameHost || focus.frameHost || info.frameHost,
+          dataMode: next.price != null ? 'live' : 'syncing'
         },
         acquisition: {
           ...(next.diagnostics?.acquisition || {}),
@@ -630,7 +638,8 @@ export async function applyFeed(payload = {}, sender = {}) {
     if (!licenseActive(state)) return;
     if (state.targetTabId && state.targetTabId !== info.tabId) return;
     const focus = state.diagnostics?.focusedAsset || null;
-    if (!focus?.asset || Number(focus.frameId) !== Number(info.frameId) || clean(focus.frameHost).toLowerCase() !== info.frameHost) return;
+    if (!focus?.asset || clean(focus.frameHost).toLowerCase() !== info.frameHost) return;
+    if (state.targetTabId && Number(state.targetTabId) !== Number(info.tabId)) return;
     const asset = normAsset(focus.asset);
     const candidate = bestForFocus(payload, asset);
     if (!candidate) return;
