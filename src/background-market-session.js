@@ -325,7 +325,7 @@ export async function applyFocus(message = {}, sender = {}) {
     const assetChanged = !!old?.asset && !sameMarket(old.asset, asset);
     const frameChanged = !!old && (Number(old.frameId) !== Number(info.frameId) || clean(old.frameHost).toLowerCase() !== info.frameHost);
     const interactionAt = Number(message.interactionAt || message.at || 0);
-    const userSelected = message.interactionHint === true && interactionAt > 0 && now - interactionAt < 3500;
+    const userSelected = message.interactionHint === true && interactionAt > 0 && now - interactionAt < 8000;
     const oldFresh = Number(old?.at || 0) > 0 && now - Number(old.at) < 2600;
     const oldEmbeddedTrader = old?.embeddedTrader === true;
     const incomingExplicit = message.explicit === true;
@@ -452,7 +452,17 @@ export async function applyFocus(message = {}, sender = {}) {
     const traderHandoff = !assetChanged && frameChanged && !oldEmbeddedTrader && incomingEmbeddedTrader;
     const changed = assetChanged || traderHandoff || (!old && frameChanged);
     let next = state;
-    if (changed || (state.asset && !sameMarket(state.asset, asset))) {
+
+    // A direct user market selection is the highest visual authority. Clear
+    // stale market identity immediately so the sidepanel cannot continue
+    // displaying the previous instrument while the new feed synchronizes.
+    if (assetChanged && userSelected) {
+      next = resetForSession(state, {
+        asset, info, source: clean(message.source || 'user-selected-transition'),
+        reason: `Ativo ${asset} selecionado na CasaTrade. Limpando a sessão anterior e sincronizando dados do novo ativo.`
+      });
+    }
+    if (!(assetChanged && userSelected) && (changed || (state.asset && !sameMarket(state.asset, asset)))) {
       next = resetForSession(state, {
         asset, info, source: clean(message.source || 'visible-chart'),
         reason: assetChanged
