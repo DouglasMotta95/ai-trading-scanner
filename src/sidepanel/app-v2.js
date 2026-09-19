@@ -53,8 +53,8 @@ function marketDataReady(state = {}) {
 function expirationObservation(state = {}) {
   const controls = state.platformControls || {};
   const at = Number(controls.expirationCheckedAt || controls.observed?.observedAt?.expiration || 0);
-  const fresh = at > 0 && Date.now() - at < 7000;
-  const value = fresh ? normExp(controls.observed?.expiration) : null;
+  const value = normExp(controls.observed?.expiration);
+  const fresh = at > 0 && !!value;
   return { value, fresh, at, ageMs: at > 0 ? Date.now() - at : Infinity };
 }
 function sessionAgeMs(state = {}) {
