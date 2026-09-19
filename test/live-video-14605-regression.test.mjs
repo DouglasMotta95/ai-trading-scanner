@@ -28,7 +28,9 @@ test('CasaTrade clock keeps expiration separate and market session rejects unsta
   const clock = read('src/content/market-cycle-clock-v4.js');
   const market = read('src/background-market-session.js');
   assert.match(clock, /if \(expirySemantic && !candleSemantic\) continue/);
-  assert.match(clock, /structured-candle-boundary-fallback/);
+  assert.match(clock, /clockSource: 'casatrade-clock-pending'/);
+  assert.doesNotMatch(clock, /structured-candle-boundary-fallback/);
+  assert.doesNotMatch(clock, /clockSource: 'platform-cycle-derived'/);
   assert.match(market, /passive-asset-change-not-stable/);
   assert.doesNotMatch(market, /casatrade-clock-frame/);
 });
