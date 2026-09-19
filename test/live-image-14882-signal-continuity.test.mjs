@@ -10,9 +10,11 @@ test('14882: same-asset frame handoff cannot reset the market session or signal'
   const handoff = session.indexOf('const traderHandoff');
   const nextFocus = session.indexOf('const previousStableSince', handoff);
   const block = session.slice(handoff, nextFocus);
-  assert.match(block, /else if \(traderHandoff\)/);
-  assert.doesNotMatch(block, /traderHandoff[\s\S]{0,260}resetForSession/);
-  assert.match(block, /source: 'same-market-trader-handoff'/);
+  const branchStart = block.indexOf('else if (traderHandoff)');
+  const handoffBranch = block.slice(branchStart);
+  assert.ok(branchStart >= 0);
+  assert.doesNotMatch(handoffBranch, /resetForSession\(/);
+  assert.match(handoffBranch, /source: 'same-market-trader-handoff'/);
 });
 
 test('14882: central orchestrator reset key ignores frame id and frame host', () => {
@@ -59,7 +61,7 @@ test('14882: named OTC assets such as Vaulta are valid only from trusted visual 
   assert.match(focused, /AMBIGUOUS_NAMED/);
   assert.match(focused, /assetsIn\(value\)\[0\] \|\| namedChartAsset\(value\)/);
   assert.match(session, /named OTC instruments/);
-  assert.match(session, /if \(otc && \^\[A-Z0-9\]/);
+  assert.match(session, /if \(otc && \/\^\[A-Z0-9\]/);
 });
 
 test('14882: asset/session reset explicitly clears old entry advice', () => {
