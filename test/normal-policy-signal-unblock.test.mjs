@@ -2,17 +2,24 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
-const source = fs.readFileSync(new URL('../src/background-decision-policy.js', import.meta.url), 'utf8');
+const read = path => fs.readFileSync(new URL('../' + path, import.meta.url), 'utf8');
 
-test('NORMAL trusts a technical candidate instead of applying a second confluence veto', () => {
-  assert.match(source, /const additionalConfluenceReady = pref\.mode !== 'A_PLUS' \|\| factors\.count >= requiredFactors/);
-  assert.match(source, /score < possibleScore \|\| !additionalConfluenceReady/);
-  assert.match(source, /technicalFinal && score >= finalScore && additionalConfluenceReady/);
-  assert.doesNotMatch(source, /score < possibleScore \|\| factors\.count < requiredFactors/);
-  assert.doesNotMatch(source, /technicalFinal && score >= finalScore && factors\.count >= requiredFactors/);
+test('professional decision policy mirrors the central orchestrator signal instead of applying a second score gate', () => {
+  const source = read('src/background-decision-policy.js');
+  const start = source.indexOf('function baseDecision');
+  const end = source.indexOf('\nfunction signature', start);
+  const block = source.slice(start, end);
+  assert.match(block, /Single authority rule/);
+  assert.match(block, /const ui = text\(signal\.uiState\)\.toUpperCase\(\)/);
+  assert.doesNotMatch(block, /technicalCandidate|possibleScore|additionalConfluenceReady|requiredFactors/);
 });
 
-test('A+ keeps its explicit extra three-factor gate', () => {
-  assert.match(source, /const requiredFactors = pref\.mode === 'A_PLUS' \? 3 : 2/);
-  assert.match(source, /pref\.mode !== 'A_PLUS' \|\| factors\.count >= requiredFactors/);
+test('A+ high-confidence gating lives in the orchestrator before professionalDecision mirrors it', () => {
+  const orchestrator = read('src/core/orchestrator.js');
+  const engine = read('src/core/high-confidence.js');
+  assert.match(orchestrator, /stableAPlusCandidateAllowed/);
+  assert.match(orchestrator, /aPlus\.finalAllowed/);
+  assert.match(engine, /candidateAllowed/);
+  assert.match(engine, /finalAllowed/);
+  assert.match(engine, /enterScore/);
 });

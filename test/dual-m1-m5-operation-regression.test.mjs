@@ -47,7 +47,8 @@ test('M5 clock boundary aggregates the whole 5-minute bucket instead of last raw
   const clock = read('src/content/market-cycle-clock-v4.js');
   assert.match(clock, /const currentBucket = Math\.floor\(now \/ durationMs\) \* durationMs/);
   assert.match(clock, /const bucketRows = normalized\.filter/);
-  assert.match(clock, /aggregatedSamples: bucketRows\.length/);
+  assert.match(clock, /const openAt = currentBucket/);
+  assert.match(clock, /openAt \+ durationMs - now/);
 });
 
 test('A+ profile maps M5 operation to M15 context and 5-minute expiration', () => {

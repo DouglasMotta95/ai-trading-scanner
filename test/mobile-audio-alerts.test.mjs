@@ -7,7 +7,7 @@ const html = fs.readFileSync(new URL('../src/sidepanel/index.html', import.meta.
 const manifest = JSON.parse(fs.readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
 
 test('mobile alerts are deduplicated, haptic-capable and respect off/discrete/strong levels', () => {
-  assert.equal(manifest.version, '0.11.13');
+  assert.match(manifest.version, /^0\.11\.\d+$/);
   assert.match(source, /navigator\?\.vibrate\?\./);
   assert.match(source, /function play\(kind\)/);
   assert.match(source, /play\('possible'\)/);

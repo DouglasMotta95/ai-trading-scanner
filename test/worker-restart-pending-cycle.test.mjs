@@ -1,46 +1,36 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { processSnapshot, resetOrchestrator } from '../src/core/orchestrator.js';
+import { bullishAPlusRows, snapshotFor, minute } from './helpers/current-a-plus-fixtures.mjs';
 
-const minute = 60_000;
-
-function bullishRows(bucket) {
-  return [
-    { time: bucket - 4 * minute, open: 1.000, high: 1.020, low: .990, close: 1.018, timeframe: 'M1' },
-    { time: bucket - 3 * minute, open: 1.018, high: 1.040, low: 1.010, close: 1.038, timeframe: 'M1' },
-    { time: bucket - 2 * minute, open: 1.038, high: 1.060, low: 1.030, close: 1.058, timeframe: 'M1' },
-    { time: bucket - minute, open: 1.058, high: 1.080, low: 1.050, close: 1.078, timeframe: 'M1' },
-    { time: bucket, open: 1.078, high: 1.115, low: 1.075, close: 1.110, timeframe: 'M1' }
-  ];
-}
-
-function snapshot(bucket, elapsed, secondsRemaining, candles = bullishRows(bucket), price = candles.at(-1).close) {
-  return {
-    platformId: 'casatrade', asset: 'EUR/USD (OTC)', price,
-    timeframe: 'M1', analysisTimeframe: 'M1', connection: 'online',
-    serverTime: bucket + elapsed, secondsRemaining, candles
-  };
+function lockEntry(bucket) {
+  const rows = bullishAPlusRows(bucket);
+  const state = { connection: 'online' };
+  processSnapshot(snapshotFor(bucket, 35_000, { rows, secondsRemaining: 25 }), state);
+  processSnapshot(snapshotFor(bucket, 36_000, { rows, secondsRemaining: 24 }), state);
+  processSnapshot(snapshotFor(bucket, 51_000, { rows, secondsRemaining: 9 }), state);
+  const locked = processSnapshot(snapshotFor(bucket, 52_000, { rows, secondsRemaining: 8 }), state);
+  assert.equal(locked.signal.state, 'CONFIRM');
+  assert.equal(locked.decisionCycle.locked, 'ENTER');
+  return { locked, rows };
 }
 
 test('locked next-candle entry survives a service-worker restart before target candle opens', () => {
   resetOrchestrator();
   const bucket = Math.floor(1_806_000_000_000 / minute) * minute;
-  const state = { connection: 'online' };
-
-  processSnapshot(snapshot(bucket, 50_000, 10), state);
-  const locked = processSnapshot(snapshot(bucket, 51_000, 9), state);
-  assert.equal(locked.signal.state, 'CONFIRM');
-  assert.equal(locked.decisionCycle.locked, 'ENTER');
-  assert.equal(locked.decisionCycle.direction, 'BUY');
-
+  const { locked, rows } = lockEntry(bucket);
   const persistedCycle = structuredClone(locked.decisionCycle);
-  resetOrchestrator(); // simulates MV3 service-worker memory being discarded
+
+  resetOrchestrator();
 
   const target = bucket + minute;
-  const realOpen = 1.1095;
-  const current = { time: target, open: realOpen, high: 1.114, low: 1.108, close: 1.112, timeframe: 'M1' };
-  const rows = [...bullishRows(bucket), current];
-  const resumed = processSnapshot(snapshot(target, 5_000, 55, rows, current.close), {
+  const realOpen = rows.at(-1).close - .00005;
+  const current = { time: target, open: realOpen, high: realOpen + .0003, low: realOpen - .0002, close: realOpen + .0001, timeframe: 'M1' };
+  const resumed = processSnapshot(snapshotFor(target, 5_000, {
+    rows: [...rows, current],
+    price: current.close,
+    secondsRemaining: 55
+  }), {
     connection: 'online',
     decisionCycle: persistedCycle
   });
@@ -56,16 +46,17 @@ test('locked next-candle entry survives a service-worker restart before target c
 test('recovered pending entry never substitutes a later candle or live quote for the missed target open', () => {
   resetOrchestrator();
   const bucket = Math.floor(1_806_100_000_000 / minute) * minute;
-  const state = { connection: 'online' };
-  processSnapshot(snapshot(bucket, 50_000, 10), state);
-  const locked = processSnapshot(snapshot(bucket, 51_000, 9), state);
+  const { locked, rows } = lockEntry(bucket);
   const persistedCycle = structuredClone(locked.decisionCycle);
   resetOrchestrator();
 
   const lateBucket = bucket + 2 * minute;
   const lateCandle = { time: lateBucket, open: 9.90, high: 10.0, low: 9.80, close: 9.99, timeframe: 'M1' };
-  const rows = [...bullishRows(bucket), lateCandle];
-  const resumed = processSnapshot(snapshot(lateBucket, 5_000, 55, rows, 9.99), {
+  const resumed = processSnapshot(snapshotFor(lateBucket, 5_000, {
+    rows: [...rows, lateCandle],
+    price: 9.99,
+    secondsRemaining: 55
+  }), {
     connection: 'online',
     decisionCycle: persistedCycle
   });

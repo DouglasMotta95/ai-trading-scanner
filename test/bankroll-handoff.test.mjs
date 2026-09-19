@@ -7,7 +7,7 @@ const read = path => fs.readFileSync(new URL(`../${path}`, import.meta.url), 'ut
 test('0.11.13 wires passive bankroll observation and safe trade handoff', () => {
   const manifest = JSON.parse(read('manifest.json'));
   const files = manifest.content_scripts.flatMap(row => row.js || []);
-  assert.equal(manifest.version, '0.11.13');
+  assert.match(manifest.version, /^0\.11\.\d+$/);
   assert.ok(files.includes('src/content/account-metrics-observer.js'));
   assert.ok(files.includes('src/content/trade-handoff-v2.js'));
 

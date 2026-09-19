@@ -86,7 +86,7 @@ test('MACD against the price-action direction subtracts exactly 10', () => {
   assert.equal(result.score, 42);
 });
 
-test('orchestrator uses extended history for indicators while price action remains the latest 10 candles', () => {
+test('orchestrator uses extended history for indicators while A+ independently gates the entry', () => {
   resetOrchestrator();
   const minute = 60_000;
   const bucket = Math.floor(1_701_000_000_000 / minute) * minute;
@@ -108,10 +108,9 @@ test('orchestrator uses extended history for indicators while price action remai
   assert.notEqual(first.signal.state, 'WATCH');
 
   const out = processSnapshot(snapshot(bucket + 36_000), { connection: 'online' });
-  assert.equal(out.signal.phase, 'POSSIBLE');
-  assert.equal(out.signal.state, 'WATCH');
-  assert.equal(out.signal.direction, 'BUY');
-  assert.equal(out.signal.score, 62);
-  assert.equal(out.signal.secondsRemaining, 24);
+  assert.equal(out.signal.analysisScore, 62);
   assert.equal(out.candles.length, 39);
+  assert.equal(out.signal.aPlus?.candidateAllowed, false);
+  assert.ok(Array.isArray(out.signal.aPlus?.hardVetoes));
+  assert.ok(out.signal.aPlus.hardVetoes.length > 0);
 });

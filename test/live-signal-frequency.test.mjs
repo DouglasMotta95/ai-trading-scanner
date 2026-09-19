@@ -3,19 +3,13 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { marketRegime } from '../src/core/market-regime.js';
 import { processSnapshot, resetOrchestrator } from '../src/core/orchestrator.js';
-
-const minute = 60_000;
+import { bullishAPlusRows, minute } from './helpers/current-a-plus-fixtures.mjs';
 const read = path => fs.readFileSync(new URL('../' + path, import.meta.url), 'utf8');
 
 function bullish(bucket) {
-  return [
-    { time: bucket - 4 * minute, open: 1.000, high: 1.020, low: .990, close: 1.018, timeframe: 'M1' },
-    { time: bucket - 3 * minute, open: 1.018, high: 1.040, low: 1.010, close: 1.038, timeframe: 'M1' },
-    { time: bucket - 2 * minute, open: 1.038, high: 1.060, low: 1.030, close: 1.058, timeframe: 'M1' },
-    { time: bucket - minute, open: 1.058, high: 1.080, low: 1.050, close: 1.078, timeframe: 'M1' },
-    { time: bucket, open: 1.078, high: 1.115, low: 1.075, close: 1.110, timeframe: 'M1' }
-  ];
+  return bullishAPlusRows(bucket);
 }
+
 function snapshot(bucket, offset, candles = bullish(bucket)) {
   return {
     platformId: 'casatrade', asset: 'EUR/USD', price: candles.at(-1).close,
@@ -24,13 +18,14 @@ function snapshot(bucket, offset, candles = bullish(bucket)) {
   };
 }
 
-test('stable setup stays in pattern-building before the 30-second preparation window', () => {
+test('stable A+ setup can stay visible as POSSIBLE before the final window without becoming actionable', () => {
   resetOrchestrator();
   const bucket = Math.floor(1_800_300_000_000 / minute) * minute;
   const first = processSnapshot(snapshot(bucket, 10_000), { connection: 'online' });
   const second = processSnapshot(snapshot(bucket, 11_000), { connection: 'online' });
-  assert.notEqual(first.signal.uiState, 'POSSIBLE_BUY');
-  assert.equal(second.signal.uiState, 'BUILDING_PATTERN');
+  assert.notEqual(first.signal.state, 'CONFIRM');
+  assert.equal(second.signal.uiState, 'POSSIBLE_BUY');
+  assert.notEqual(second.signal.state, 'CONFIRM');
   assert.ok(second.signal.secondsRemaining > 30);
 });
 
