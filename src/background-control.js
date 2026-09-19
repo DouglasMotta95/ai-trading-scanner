@@ -224,6 +224,13 @@ async function directExpirationProbe(tabId) {
           if (m) return /^(m|min|minuto|minutos)$/.test(m[2]) ? `${Number(m[1]) * 60}s` : `${Number(m[1])}s`;
           m = s.match(/^(\d{1,4})\s*(s|seg|segundo|segundos|m|min|minuto|minutos)$/);
           if (m) return /^(m|min|minuto|minutos)$/.test(m[2]) ? `${Number(m[1]) * 60}s` : `${Number(m[1])}s`;
+          // Compact CasaTrade controls can prefix the selected value with an
+          // icon/glyph (for example "⚑ 1 min"). When this short token is being
+          // inspected next to the Expiração label, accept the duration inside it.
+          if (s.length <= 48) {
+            m = s.match(/(?:^|[^0-9])(\d{1,4})\s*(s|seg|segundo|segundos|m|min|minuto|minutos)\b/);
+            if (m) return /^(m|min|minuto|minutos)$/.test(m[2]) ? `${Number(m[1]) * 60}s` : `${Number(m[1])}s`;
+          }
           m = s.match(/^(\d{1,3}):([0-5]\d)$/);
           return m ? `${Number(m[1]) * 60 + Number(m[2])}s` : null;
         };
@@ -312,12 +319,15 @@ async function directExpirationProbe(tabId) {
         // CasaTrade classes, ids or component structure. On responsive/mobile
         // layouts the selector can be rendered by a custom component while the
         // visible text still contains "Expiração" followed by "1 min".
-        const bodyTextRaw = clean(document.body?.innerText || '');
+        // Preserve real line breaks. Calling clean() here would collapse the
+        // exact mobile layout we need to read: "Expiração" on one line and
+        // "1 min" (often prefixed by an icon) on the next.
+        const bodyTextRaw = String(document.body?.innerText || '').normalize('NFKC');
         const bodyText = fold(bodyTextRaw);
         const lines = bodyTextRaw.split(/\r?\n/).map(clean).filter(Boolean);
         for (let i = 0; i < lines.length; i += 1) {
           const label = fold(lines[i]);
-          if (!/^(?:expiracao|expiry|expiration|tempo de expiracao|expiration time)$/.test(label)) continue;
+          if (!/^(?:expiracao|expiry|expiration|tempo de expiracao|expiration time)\b/.test(label) || label.length > 48) continue;
           for (let j = i + 1; j <= Math.min(lines.length - 1, i + 4); j += 1) {
             const value = parse(lines[j]);
             if (value) {
