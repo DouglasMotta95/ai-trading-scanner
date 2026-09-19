@@ -21,12 +21,14 @@
 
   const stats = {
     messages: { ws: 0, fetch: 0, xhr: 0 },
+    outbound: { ws: 0, fetch: 0, xhr: 0 },
     connections: { ws: 0 },
     endpoints: new Set(),
     keys: new Set(),
     assets: new Map(),
     candles: new Map(),
     controlExpiration: null,
+    expirationTrace: [],
     parse: { frames: 0, decoded: 0, candidates: 0, candles: 0, binary: 0 }
   };
 
@@ -89,6 +91,37 @@
     if (n != null && n > 0 && n <= 3600) return n < 60 ? `${n}s` : n === 60 ? '60s' : n % 60 === 0 ? `${n / 60}m` : `${n}s`;
     return null;
   };
+  const safeTraceValue = value => {
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string') {
+      const s = value.trim();
+      return s && s.length <= 40 && !SENSITIVE.test(s) ? s : null;
+    }
+    return null;
+  };
+  const pushExpirationTrace = (entry = {}) => {
+    const row = {
+      at: now(),
+      direction: entry.direction === 'out' ? 'out' : 'in',
+      transport: String(entry.transport || '').slice(0, 16),
+      endpoint: String(entry.endpoint || '').slice(0, 240),
+      sourceKey: String(entry.sourceKey || '').slice(0, 80),
+      parentKey: String(entry.parentKey || '').slice(0, 80),
+      shape: String(entry.shape || 'object-key').slice(0, 80),
+      expiration: String(entry.expiration || '').slice(0, 24),
+      rawValue: safeTraceValue(entry.rawValue)
+    };
+    const previous = stats.expirationTrace.at(-1);
+    const same = previous
+      && previous.direction === row.direction
+      && previous.transport === row.transport
+      && previous.endpoint === row.endpoint
+      && previous.sourceKey === row.sourceKey
+      && previous.expiration === row.expiration
+      && previous.rawValue === row.rawValue;
+    if (!same || row.at - Number(previous?.at || 0) > 350) stats.expirationTrace.push(row);
+    stats.expirationTrace = stats.expirationTrace.slice(-40);
+  };
   const recordControlExpiration = (key, value, meta = {}) => {
     const expiration = normalizeExp(value);
     if (!expiration) return;
@@ -99,8 +132,21 @@
       && /trade|option|operation|deal|expiry|expiration/i.test(`${parentKey} ${objectKeys}`);
     if (!CONTROL_EXP_KEY.test(semanticKey) && !genericAllowed) return;
     const confidence = CONTROL_EXP_KEY.test(semanticKey) && !GENERIC_DURATION_KEY.test(semanticKey) ? 97 : 84;
-    const current = stats.controlExpiration;
     const observedAt = now();
+    pushExpirationTrace({
+      direction: meta.direction,
+      transport: meta.transport,
+      endpoint: meta.endpoint,
+      sourceKey: semanticKey,
+      parentKey,
+      shape: meta.shape || 'object-key',
+      expiration,
+      rawValue: value
+    });
+    // Investigation only: outbound evidence is traced but must not change the
+    // authoritative runtime expiration state.
+    if (meta.direction === 'out') return;
+    const current = stats.controlExpiration;
     if (!current || confidence > Number(current.confidence || 0) || observedAt - Number(current.observedAt || 0) > 2500) {
       stats.controlExpiration = {
         expiration,
@@ -280,6 +326,27 @@
         if (CANDLE_CONTAINER.test(key)) {
           const candle = arrayCandle(v, node.asset, node.tf); if (candle) recordCandle(candle);
         }
+        if (v.length <= 24) {
+          for (let i = 0; i < v.length; i++) {
+            const label = typeof v[i] === 'string' ? String(v[i]) : '';
+            if (!/(?:expir|expiry|trade.?duration|operation.?duration|deal.?duration|option.?duration)/i.test(label)) continue;
+            for (const candidate of [v[i + 1], v[i - 1]]) {
+              if (candidate == null || typeof candidate === 'object') continue;
+              const expiration = normalizeExp(candidate);
+              if (!expiration) continue;
+              pushExpirationTrace({
+                direction: meta.direction,
+                transport: meta.transport,
+                endpoint: meta.endpoint,
+                sourceKey: label,
+                parentKey: key,
+                shape: 'array-event',
+                expiration,
+                rawValue: candidate
+              });
+            }
+          }
+        }
         for (let i = Math.min(v.length, 350) - 1; i >= 0; i--) stack.push({ v: v[i], d: d + 1, asset: node.asset, key, tf: node.tf });
         continue;
       }
@@ -308,7 +375,8 @@
           parentKey: key,
           objectKeys: Object.keys(v).slice(0, 40),
           transport: meta.transport,
-          endpoint: meta.endpoint
+          endpoint: meta.endpoint,
+          direction: meta.direction
         });
         let childAsset = ownAsset;
         if (!childAsset && QUOTE_CONTAINER.test(key || k)) childAsset = canonicalAsset(k) || assetFromText(k);
@@ -359,13 +427,14 @@
         source: 'ATS_NETWORK_PROBE',
         type: 'summary',
         payload: {
-          messages: { ...stats.messages }, connections: { ...stats.connections }, endpoints: [...stats.endpoints].slice(-24),
+          messages: { ...stats.messages }, outbound: { ...stats.outbound }, connections: { ...stats.connections }, endpoints: [...stats.endpoints].slice(-24),
           keys: [...stats.keys].slice(0, 160), candidates, candidateCount: candidates.length, recentCandles,
+          expirationTrace: stats.expirationTrace.slice(-24),
           controls: stats.controlExpiration && t - Number(stats.controlExpiration.observedAt || 0) < 7000
             ? { expiration: stats.controlExpiration.expiration, confidence: stats.controlExpiration.confidence, sourceKey: stats.controlExpiration.sourceKey, observedAt: stats.controlExpiration.observedAt }
             : null,
           feedQuality: feedQuality(), parser: { ...stats.parse }, primaryTransport: stats.connections.ws > 0 ? 'ws' : 'http',
-          privacy: 'Somente respostas de mercado recebidas pela página são observadas. Cookies, headers, corpos de requisição, tokens e campos de autenticação não são coletados.'
+          privacy: 'Diagnóstico temporário: payloads de rede são inspecionados localmente apenas para localizar campos/eventos de expiração. O relatório exporta somente direção, transporte, endpoint sem query, nome do campo/evento e valor de duração; tokens, headers, cookies e credenciais não são exportados.'
         }
       }, '*');
     }, 220);
@@ -375,12 +444,52 @@
     if (stats.messages[transport] != null) stats.messages[transport]++;
     const endpoint = safeUrl(url); if (endpoint) stats.endpoints.add(`${transport}:${endpoint}`);
     trimSet(stats.endpoints, 120);
-    scan(data, { transport, endpoint });
+    scan(data, { transport, endpoint, direction: 'in' });
     flushTimer();
+  };
+  const recordOutbound = (transport, url, data) => {
+    if (stats.outbound[transport] != null) stats.outbound[transport]++;
+    const endpoint = safeUrl(url); if (endpoint) stats.endpoints.add(`${transport}:${endpoint}`);
+    trimSet(stats.endpoints, 120);
+    scan(data, { transport, endpoint, direction: 'out' });
+    flushTimer();
+  };
+  const inspectOutboundBody = (transport, url, body) => {
+    if (body == null) return;
+    if (typeof body === 'string') {
+      if (body.length <= 1048576) recordOutbound(transport, url, body);
+      return;
+    }
+    if (body instanceof URLSearchParams) {
+      const obj = {};
+      for (const [key, value] of body.entries()) if (!SENSITIVE.test(key)) obj[key] = value;
+      recordOutbound(transport, url, obj);
+      return;
+    }
+    if (body instanceof FormData) {
+      const obj = {};
+      for (const [key, value] of body.entries()) {
+        if (SENSITIVE.test(key) || typeof value !== 'string') continue;
+        obj[key] = value;
+      }
+      recordOutbound(transport, url, obj);
+      return;
+    }
+    if (body instanceof Blob || body instanceof ArrayBuffer || ArrayBuffer.isView(body)) {
+      toText(body).then(text => { if (text) recordOutbound(transport, url, text); }).catch(() => {});
+    }
   };
 
   if (window.WebSocket) {
     const Native = window.WebSocket;
+    const nativeSend = Native.prototype.send;
+    Native.prototype.send = function(data) {
+      try {
+        if (typeof data === 'string') recordOutbound('ws', this.url, data);
+        else toText(data).then(text => { if (text) recordOutbound('ws', this.url, text); }).catch(() => {});
+      } catch {}
+      return nativeSend.call(this, data);
+    };
     const Wrapped = function(url, protocols) {
       const ws = protocols === undefined ? new Native(url) : new Native(url, protocols);
       stats.connections.ws++;
@@ -402,9 +511,17 @@
   if (window.fetch) {
     const nativeFetch = window.fetch;
     window.fetch = async function(...args) {
+      const url = args[0] instanceof Request ? args[0].url : args[0];
+      try {
+        if (args[0] instanceof Request && !args[1]?.body) {
+          const clone = args[0].clone();
+          clone.text().then(text => { if (text && text.length <= 1048576) recordOutbound('fetch', url, text); }).catch(() => {});
+        } else {
+          inspectOutboundBody('fetch', url, args[1]?.body);
+        }
+      } catch {}
       const r = await nativeFetch.apply(this, args);
       try {
-        const url = args[0] instanceof Request ? args[0].url : args[0];
         const ct = r.headers.get('content-type') || '';
         if (/json|text|javascript|event-stream/i.test(ct)) {
           const clone = r.clone();
@@ -419,6 +536,7 @@
     const X = window.XMLHttpRequest, open = X.prototype.open, send = X.prototype.send;
     X.prototype.open = function(method, url, ...rest) { this.__atsUrl = url; return open.call(this, method, url, ...rest); };
     X.prototype.send = function(...args) {
+      try { inspectOutboundBody('xhr', this.__atsUrl, args[0]); } catch {}
       this.addEventListener('load', () => {
         try {
           const ct = this.getResponseHeader('content-type') || '';
