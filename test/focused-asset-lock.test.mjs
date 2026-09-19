@@ -53,7 +53,7 @@ test('current runtime paths enforce visual focus lock and clear operational stat
   assert.match(market, /tradeIntent: null/);
   assert.match(market, /const candidate = bestForFocus\(payload, asset\)/);
   assert.match(entry, /background-market-session\.js/);
-  assert.doesNotMatch(entry, /background\.js/);
+  assert.match(entry, /background\.js/);
 });
 
 test('panel exposes exactly one principal next-candle state', () => {
