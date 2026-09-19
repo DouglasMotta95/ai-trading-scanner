@@ -2,7 +2,7 @@ import { atr } from './indicators.js';
 
 export const A_PLUS_THRESHOLDS = Object.freeze({
   minimumM1Closed: 20,
-  minimumM5Bars: 4,
+  minimumM5Bars: 6,
   possibleScore: 62,
   enterScore: 78,
   opposingLevelAtr: .35,
@@ -42,7 +42,8 @@ function rowsOf(candles = []) {
       open: num(row?.open),
       high: num(row?.high),
       low: num(row?.low),
-      close: num(row?.close)
+      close: num(row?.close),
+      timeframe: clean(row?.timeframe).toUpperCase()
     }))
     .filter(row => row.time != null && [row.open,row.high,row.low,row.close].every(Number.isFinite))
     .sort((a,b) => a.time - b.time);
@@ -170,7 +171,7 @@ export function assessHighConfidence({
   now = Date.now()
 } = {}) {
   const dir = ['BUY','SELL'].includes(direction) ? direction : null;
-  const allRows = rowsOf(candles);
+  const allRows = rowsOf(candles).filter(row => !row.timeframe || row.timeframe === 'M1');
   const currentTime = normalizeTime(currentCandle?.time ?? currentCandle?.timestamp);
   const currentBucket = currentTime == null ? null : Math.floor(currentTime / 60000) * 60000;
   const closed = currentBucket == null
@@ -209,8 +210,8 @@ export function assessHighConfidence({
 
     if (m1Aligned && m5Aligned) factors.structure = 25;
     else if (m5Aligned && !m1Opposite) factors.structure = 20;
-    else if (m1Aligned && !structureM5.direction) factors.structure = 13;
-    else if (!m1Opposite && !m5Opposite) factors.structure = 8;
+    else if (m1Aligned && !structureM5.direction) factors.structure = 10;
+    else if (!m1Opposite && !m5Opposite) factors.structure = 5;
 
     if (m5Opposite) hardVetoes.push('m5-contra-direção');
     if (m1Opposite && m5Opposite) hardVetoes.push('estrutura-m1-m5-contra');
