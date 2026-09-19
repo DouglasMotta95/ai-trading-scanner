@@ -374,6 +374,16 @@ async function commitDirectExpiration(tabId, evidence = null) {
       },
       diagnostics: {
         ...(state.diagnostics || {}),
+        directExpirationProbe: {
+          found: true,
+          expiration,
+          evidence: clean(evidence?.evidence || ''),
+          frameId: Number(evidence?.frameId ?? -1),
+          host: clean(evidence?.host || ''),
+          score: Number(evidence?.score || 0),
+          tabId: Number(tabId || 0),
+          at: now
+        },
         expirationGuard: {
           ...(state.diagnostics?.expirationGuard || {}),
           required: '60s',
