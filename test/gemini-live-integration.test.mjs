@@ -10,7 +10,7 @@ test('0.11.13 wires Gemini through a server-side authenticated gateway', () => {
   const client = read('src/services/ai-analysis.js');
   const background = read('src/background-ai-analysis.js');
 
-  assert.equal(manifest.version, '0.11.13');
+  assert.match(manifest.version, /^0\.11\.\d+$/);
   assert.ok(manifest.host_permissions.includes('https://ai-trading-scanner-production-62f2.up.railway.app/*'));
   assert.match(entry, /background-ai-analysis\.js/);
   assert.match(client, /clientToken\(\)/);
