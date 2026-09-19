@@ -223,6 +223,7 @@ export function clearMarketAuthorityState(state = {}, extra = {}) {
     professionalDecision: null,
     aiAudit: null,
     tradeIntent: null,
+    entryAdvice: null,
     lastConfirmed: null,
     lastSeen: null,
     platformControls: null,
@@ -269,6 +270,7 @@ export function resetForSession(state = {}, { asset, timeframe = null, info, rea
     aiAudit: null,
     lastConfirmed: null,
     tradeIntent: null,
+    entryAdvice: null,
     lastSeen: null,
     platformControls: state.platformControls || null,
     diagnostics: {
@@ -455,27 +457,45 @@ export async function applyFocus(message = {}, sender = {}) {
     }
 
     // Prefer the embedded trader as the long-lived authority for the same asset.
-    // This is a one-way handoff (shell -> trader), avoiding frame ping-pong.
+    // IMPORTANT: a shell -> trader frame handoff is NOT a market switch. It must
+    // never call resetForSession(), because doing so clears the current candle
+    // candidate and can flip POSSÍVEL VENDA -> POSSÍVEL COMPRA within seconds.
     const traderHandoff = !assetChanged && frameChanged && !oldEmbeddedTrader && incomingEmbeddedTrader;
-    const changed = assetChanged || traderHandoff || (!old && frameChanged);
     let next = state;
 
-    // A direct user market selection is the highest visual authority. Clear
-    // stale market identity immediately so the sidepanel cannot continue
-    // displaying the previous instrument while the new feed synchronizes.
-    if (assetChanged && authoritativeVisual) {
+    // Only a REAL asset change may reset market/session analysis state.
+    if (assetChanged) {
       next = resetForSession(state, {
-        asset, info, source: clean(message.source || 'user-selected-transition'),
-        reason: `Ativo ${asset} selecionado na CasaTrade. Limpando a sessão anterior e sincronizando dados do novo ativo.`
+        asset, info, source: clean(message.source || (authoritativeVisual ? 'user-selected-transition' : 'visible-chart')),
+        reason: authoritativeVisual
+          ? `Ativo ${asset} selecionado na CasaTrade. Limpando a sessão anterior e sincronizando dados do novo ativo.`
+          : `Ativo ${asset} confirmado no gráfico. Sincronizando a sessão ao vivo.`
       });
-    }
-    if (!(assetChanged && authoritativeVisual) && (changed || (state.asset && !sameMarket(state.asset, asset)))) {
-      next = resetForSession(state, {
-        asset, info, source: clean(message.source || 'visible-chart'),
-        reason: assetChanged
-          ? `Ativo ${asset} confirmado no gráfico. Sincronizando a sessão ao vivo.`
-          : `Gráfico ${asset} vinculado ao frame de mercado ativo.`
-      });
+    } else if (traderHandoff) {
+      const previousSession = state.diagnostics?.marketSession || {};
+      next = {
+        ...state,
+        diagnostics: {
+          ...(state.diagnostics || {}),
+          // Keep the same epoch and all analysis/signal state. Only move the
+          // frame ownership to the embedded trader.
+          marketClock: null,
+          marketSession: {
+            ...previousSession,
+            asset: normAsset(previousSession.asset || asset) || asset,
+            confirmedAsset: normAsset(previousSession.confirmedAsset || state.asset || asset) || asset,
+            frameId: info.frameId,
+            frameHost: info.frameHost,
+            source: 'same-market-trader-handoff'
+          },
+          acquisition: {
+            ...(state.diagnostics?.acquisition || {}),
+            stage: 'syncing_clock_owner',
+            reason: `Mesmo ativo ${asset}; transferindo apenas a autoridade do frame sem reiniciar o sinal.`,
+            at: now
+          }
+        }
+      };
     }
 
     const previousStableSince = sameMarket(old?.asset, asset)
