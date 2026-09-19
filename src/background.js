@@ -129,7 +129,8 @@ function consolidatedSnapshot(state = {}) {
   if (!clock || clock.available === false || (!clock.verified && clock.operational !== true)) return null;
   if (!ALLOWED_CLOCK_SOURCES.has(clean(clock.source))) return null;
   if (!sameMarket(clock.asset, asset)) return null;
-  if (Number(clock.frameId) !== Number(focus.frameId)) return null;
+  // Clock/feed may originate from a sibling frame on the same trusted
+  // CasaTrade host. Do not stall analysis on frame-id equality.
   if (clean(clock.frameHost).toLowerCase() !== clean(focus.frameHost).toLowerCase()) return null;
   if (Number(clock.at || 0) <= 0 || Date.now() - Number(clock.at) > CLOCK_FRESH_MS) return null;
 
