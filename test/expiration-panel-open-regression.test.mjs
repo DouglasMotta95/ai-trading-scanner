@@ -11,8 +11,10 @@ test('expiration probe reads custom-control attributes and 00:01:00 format', () 
   assert.match(probe, /\[data-value\]/);
   assert.match(probe, /aria-valuetext/);
   assert.match(probe, /Number\(m\[1\]\) \* 3600 \+ Number\(m\[2\]\) \* 60 \+ Number\(m\[3\]\)/);
-  assert.match(probe, /expirationFromSemanticElement/);
-  assert.match(probe, /if \(seconds > 0 && seconds <= 3600\) return/);
+  assert.match(probe, /function rawValues\(el\)/);
+  assert.match(probe, /function parseExpiration\(raw = ''\)/);
+  assert.match(probe, /seconds > 0 && seconds <= 3600/);
+  assert.match(probe, /semantic-numeric-seconds/);
 });
 
 test('network probe exports a dedicated expiration control instead of hiding it inside market candidates', () => {
@@ -139,13 +141,13 @@ test('generic network duration requires trade expiration semantics and rejects g
 });
 
 
-test('video regression: compact CasaTrade trade ticket can expose unlabeled 5 seg or 1 min expiration', () => {
+test('video regression: CasaTrade Expiração card selects its visible value instead of another dropdown option', () => {
   const probe = read('src/content/casatrade-expiration-probe.js');
-  assert.match(probe, /function tradeControlExpiration\(all = \[\]\)/);
-  assert.match(probe, /comprar\|vender\|buy\|sell\|payout/);
-  assert.match(probe, /const tradeControl = tradeControlExpiration\(all\)/);
-  assert.match(probe, /if \(candleSemantic && !explicitExpiration\) continue/);
-  assert.match(probe, /depth < 5/);
+  assert.match(probe, /function expirationControlByLabel\(all = \[\]\)/);
+  assert.match(probe, /role === 'option' && !selectedLike\(el\)/);
+  assert.match(probe, /explicitlyUnselected/);
+  assert.match(probe, /sameContainer/);
+  assert.match(probe, /selectedLike\(el\)/);
 });
 
 test('video regression: confirmed structured M1 can bound a plain MM:SS countdown without becoming clock authority itself', () => {
@@ -188,10 +190,11 @@ test('video regression: sidepanel keeps CONNECTED stable while exact entry clock
   assert.match(shell, /if \(baseHandshake\(state\)\) return ''/);
 });
 
-test('video regression: recovered live feed clears stale connection timeout and countdown gets warmup window', () => {
+test('video regression: recovered live feed clears stale connection timeout but never invents a warmup countdown', () => {
   const session = read('src/background-market-session.js');
   const app = read('src/sidepanel/app-v2.js');
   assert.match(session, /delete diagnostics\.connectionError/);
-  assert.match(app, /SINCRONIZANDO COUNTDOWN DA CASATRADE…/);
-  assert.match(app, /sessionAgeMs\(state\) < 5000 \? 'waiting' : 'technical'/);
+  assert.match(app, /COUNTDOWN REAL PENDENTE/);
+  assert.doesNotMatch(app, /COUNTDOWN ESTIMADO/);
+  assert.match(app, /return exactClockReady\(state\)/);
 });
