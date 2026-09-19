@@ -51,3 +51,24 @@ test('expiration dirty detector no longer treats a broad ancestor containing Exp
   assert.match(block, /parentOwn.length <= 140/);
   assert.doesNotMatch(block, /semanticText\(node\)/);
 });
+
+
+test('expiration reader can anchor the selected duration to the trade panel below Valor', () => {
+  const probe = read('src/content/casatrade-expiration-probe.js');
+  assert.match(probe, /function tradePanelExpirationByAmount\(all = \[\]\)/);
+  assert.match(probe, /function isAmountLabel\(el\)/);
+  assert.match(probe, /trade-panel-below-amount/);
+  assert.match(probe, /periodo da vela\|periodo de vela/);
+  assert.match(probe, /countdown\|contagem\|fechamento da vela/);
+});
+
+test('timeframe reader requires candle-period semantics and rejects generic chart Período', () => {
+  const probe = read('src/content/casatrade-expiration-probe.js');
+  const start = probe.indexOf('function selectedTimeframe');
+  const end = probe.indexOf('\n  const EXPIRATION_TRANSIENT_CACHE_MS', start);
+  const block = probe.slice(start, end);
+  assert.match(block, /const candleSemantic/);
+  assert.match(block, /const chartRangeOnly/);
+  assert.match(block, /periodo da vela\|periodo de vela\|candle period\|candle interval/);
+  assert.match(block, /if \(!candleSemantic \|\| chartRangeOnly\) continue/);
+});
