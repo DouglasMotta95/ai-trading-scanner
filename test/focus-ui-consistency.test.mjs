@@ -2,4 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 const read=p=>fs.readFileSync(new URL('../'+p,import.meta.url),'utf8');
-test('focus-ui-consistency.test.mjs: market-session is current focus authority',()=>{const s=read('src/background-market-session.js'),e=read('src/background-entry.js');assert.match(s,/clearMarketAuthorityState/);assert.match(s,/focusedAsset/);assert.match(e,/background-market-session\.js/);assert.doesNotMatch(e,/background-fast-decision\.js/);});
+
+test('UI asset is sourced from current scanner state and market session',()=>{
+  const a=read('src/sidepanel/app-v2.js');
+  assert.match(a,/sessionInfo/);
+  assert.match(a,/marketDataReady/);
+  assert.match(a,/sameMarket/);
+});
+
+test('focus readiness requires trusted chart frame',()=>{
+  const a=read('src/sidepanel/app-v2.js');
+  assert.match(a,/trustedChartFrame === true/);
+  assert.match(a,/chartScoped === true/);
+});
