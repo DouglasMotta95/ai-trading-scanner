@@ -10,7 +10,8 @@ const ALLOWED_TYPES = new Set([
   'ATS_EMBEDDED_FEED',
   'ATS_CHART_FRAME_MARKET',
   'ATS_DATA_INSPECTOR',
-  'ATS_ACCOUNT_METRICS'
+  'ATS_ACCOUNT_METRICS',
+  'ATS_PLATFORM_CONTROLS_OBSERVED'
 ]);
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
