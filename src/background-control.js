@@ -166,6 +166,41 @@ async function injectModern(tabId) {
   return inject(tabId).catch(() => false);
 }
 
+function reloadTabCompat(tabId) {
+  return new Promise(resolve => {
+    let settled = false;
+    const finish = ok => { if (settled) return; settled = true; resolve(ok); };
+    try {
+      const returned = chrome.tabs.reload(tabId, {}, () => {
+        let error = null; try { error = chrome.runtime?.lastError || null; } catch {}
+        finish(!error);
+      });
+      if (returned && typeof returned.then === 'function') returned.then(() => finish(true)).catch(() => finish(false));
+    } catch { finish(false); }
+  });
+}
+
+async function ensureFreshPageAfterBuild(tabId, state = {}) {
+  const version = chrome.runtime.getManifest().version;
+  const build = state.diagnostics?.build || null;
+  if (!build || build.version !== version || !build.previousVersion || build.pageReloadedVersion === version) return state;
+
+  const reloaded = await reloadTabCompat(tabId);
+  if (reloaded) await new Promise(resolve => setTimeout(resolve, 1400));
+  return updateScannerState(current => ({
+    ...current,
+    diagnostics: {
+      ...(current.diagnostics || {}),
+      build: {
+        ...(current.diagnostics?.build || build),
+        pageReloadedVersion: version,
+        pageReloadedAt: Date.now(),
+        pageReloadOk: reloaded
+      }
+    }
+  }));
+}
+
 async function refreshTargetTab() {
   const state = await readScannerState();
   if (!activeLicense(state.license)) return { ok: false, error: 'license_required', state };
@@ -195,6 +230,8 @@ async function connectActiveTab() {
     }));
     return { ok: false, error: 'platform_not_registered', state: next };
   }
+
+  state = await ensureFreshPageAfterBuild(tab.id, state).catch(() => state);
 
   const next = await updateScannerState(current => {
     const sameTab = Number(current.targetTabId) === Number(tab.id);
