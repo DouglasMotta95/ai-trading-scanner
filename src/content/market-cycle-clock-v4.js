@@ -183,28 +183,62 @@
   function verifiedDomCountdown(cycleTf) {
     const candidate = exactDomCountdown(cycleTf);
     if (!candidate) {
-      // CasaTrade can briefly destroy/recreate the countdown node exactly at
-      // candle rollover. Keep the last 0-2s observation long enough for the
-      // new 60..52s token to prove the rollover instead of dropping to an
-      // estimated clock for several seconds.
-      if (!domProbe || Date.now() - Number(domProbe.at || 0) >= 9000) domProbe = null;
+      // CasaTrade can briefly destroy/recreate the countdown node. Keep the
+      // progression reference, but never refresh authority without a new real
+      // countdown sample.
+      if (!domProbe || Date.now() - Number(domProbe.observedAt || domProbe.at || 0) >= 9000) domProbe = null;
       return null;
     }
+
     const duration = secondsFor(cycleTf);
     const now = Date.now();
     const previous = domProbe;
     const sameTf = previous?.timeframe === cycleTf;
-    const delta = sameTf ? now - Number(previous.at || 0) : 0;
-    const drop = sameTf ? Number(previous.seconds) - Number(candidate.seconds) : 0;
-    const progressed = !!previous && sameTf && delta > 200 && delta < 4500 && drop > 0 && drop <= Math.max(4, Math.ceil(delta / 1000) + 2);
-    const rolled = !!previous && sameTf
-      && delta > 200 && delta < 9000
+
+    if (!previous || !sameTf) {
+      domProbe = {
+        timeframe: cycleTf,
+        seconds: candidate.seconds,
+        changedAt: now,
+        observedAt: now,
+        text: candidate.text
+      };
+      return null;
+    }
+
+    if (Number(previous.seconds) === Number(candidate.seconds)) {
+      domProbe = {
+        ...previous,
+        observedAt: now,
+        text: candidate.text
+      };
+      return now - domVerifiedAt < 3000 ? candidate : null;
+    }
+
+    // Measure progression from the last DISTINCT second, not from the last
+    // polling tick. This survives CasaTrade render gaps without treating a
+    // delayed multi-second drop as a false clock.
+    const delta = now - Number(previous.changedAt || previous.observedAt || previous.at || 0);
+    const drop = Number(previous.seconds) - Number(candidate.seconds);
+    const progressed = delta > 200
+      && delta < 6500
+      && drop > 0
+      && drop <= Math.max(7, Math.ceil(delta / 1000) + 2);
+    const rolled = delta > 200
+      && delta < 9000
       && Number(previous.seconds) <= 2
       && Number(candidate.seconds) >= duration - 8
       && (candidate.chartScoped === true || candidate.colonOnly === true);
-    domProbe = { timeframe: cycleTf, seconds: candidate.seconds, at: now, text: candidate.text };
+
+    domProbe = {
+      timeframe: cycleTf,
+      seconds: candidate.seconds,
+      changedAt: now,
+      observedAt: now,
+      text: candidate.text
+    };
     if (progressed || rolled) domVerifiedAt = now;
-    return Date.now() - domVerifiedAt < 2600 ? candidate : null;
+    return now - domVerifiedAt < 3000 ? candidate : null;
   }
 
   function freshExactClock(state = {}, focus = null, cycleTf = null) {
@@ -216,7 +250,7 @@
     if (tf(clock.timeframe) && cycleTf && tf(clock.timeframe) !== tf(cycleTf)) return null;
     if (Number(clock.frameId) !== Number(focus.frameId)) return null;
     if (String(clock.frameHost || '').toLowerCase() !== host) return null;
-    if (Date.now() - Number(clock.at || 0) >= 2300) return null;
+    if (Date.now() - Number(clock.at || 0) >= 3000) return null;
     return clock;
   }
 
@@ -339,7 +373,7 @@
       const domClock = verifiedDomCountdown(cycleTf);
 
       if (!domClock && freshExactClock(state, focus, cycleTf)) return;
-      if (!domClock && Date.now() - canvasVerifiedAt < 2300) return;
+      if (!domClock && Date.now() - canvasVerifiedAt < 3000) return;
 
       // Never synthesize an operational countdown from candle timestamps.
       // If CasaTrade's real countdown is not currently verified, publish only
