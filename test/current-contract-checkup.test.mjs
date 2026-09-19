@@ -44,7 +44,7 @@ function snap(bucket, seconds, rows, extra = {}) {
 
 test('current manifest is the v0.11.48 live-asset recovery build', () => {
   assert.equal(manifest.version, '0.11.48');
-  assert.equal(manifest.version_name, '0.11.48-live-asset-reconnect-recovery');
+  assert.equal(manifest.version_name, '0.11.48-full-checkup-green-suite');
   assert.equal(manifest.manifest_version, 3);
 });
 
