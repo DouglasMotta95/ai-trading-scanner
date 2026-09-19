@@ -28,13 +28,13 @@ test('owner dev guard keeps unpacked diagnostic sessions active without weakenin
   assert.match(source, /chrome\.storage\?\.onChanged/);
 });
 
-test('exact clock projector counts down from the real close boundary instead of a free-running timer', () => {
+test('local clock projector is disabled so only CasaTrade can authorize M1 timing', () => {
   const source = read('src/content/market-clock-projector.js');
-  assert.match(source, /closeAt: Number\(clock\.at\) \+ Math\.max\(0, seconds\) \* 1000/);
-  assert.match(source, /Math\.ceil\(\(anchor\.closeAt - Date\.now\(\)\) \/ 1000\)/);
-  assert.match(source, /clockMode: 'exact-local-projector'/);
-  assert.match(source, /verified: true/);
-  assert.doesNotMatch(source, /Date\.now\(\) %/);
+  assert.match(source, /enabled: false/);
+  assert.match(source, /authoritative-casatrade-clock-only/);
+  assert.doesNotMatch(source, /ATS_MARKET_CLOCK_V2/);
+  assert.doesNotMatch(source, /exact-local-projector/);
+  assert.doesNotMatch(source, /setInterval/);
 });
 
 test('live diagnostic reports overlay, Gemini/token state and platform timing without leaking token value', () => {
