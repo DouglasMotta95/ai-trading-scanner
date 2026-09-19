@@ -41,11 +41,12 @@ function timeframeMs(value = 'M1') {
 function decisionWindows(snapshot = {}, signal = {}) {
   const timeframe = clean(snapshot.analysisTimeframe || snapshot.timeframe || signal.timeframe || 'M1').toUpperCase();
   const duration = Math.max(2, Math.round(timeframeMs(timeframe) / 1000));
-  // M1 product contract: pre-signal at ~30s, final decision at ~10s,
-  // and settle as WAIT near the close if no setup confirms.
+  // Explicit product windows for the two supported operating modes.
+  // M1: final decision near 10s. M5: more time to act, final decision near 20s.
   if (timeframe === 'M1') return { pre: 30, decision: 10, skip: 4, duration, timeframe };
+  if (timeframe === 'M5') return { pre: 90, decision: 20, skip: 6, duration, timeframe };
 
-  // Longer/shorter candles keep proportional windows.
+  // Other timeframes keep proportional windows.
   const pre = Math.max(2, Math.min(duration - 1, 60, Math.round(duration * .50)));
   const decision = Math.max(1, Math.min(pre - 1, 30, Math.round(duration * .25)));
   const skip = Math.max(1, Math.min(decision, 8, Math.round(duration * .067)));
@@ -90,6 +91,7 @@ function aPlusAssessment(snapshot = {}, result = {}, signal = {}, direction = nu
     direction,
     cycle,
     journal: state.signalJournal || [],
+    operatingTimeframe: snapshot.analysisTimeframe || snapshot.timeframe || signal.timeframe || 'M1',
     now: at
   });
 }
@@ -97,10 +99,10 @@ function aPlusAssessment(snapshot = {}, result = {}, signal = {}, direction = nu
 function aPlusBlockText(aPlus = {}) {
   const labels = {
     'sem-direção': 'sem direção estável',
-    'histórico-m1-insuficiente': 'histórico M1 insuficiente',
-    'histórico-m5-insuficiente': 'confirmação M5 insuficiente',
-    'm5-contra-direção': 'M5 contra a direção',
-    'estrutura-m1-m5-contra': 'estrutura M1/M5 contrária',
+    'histórico-operacional-insuficiente': `histórico ${aPlus.operatingTimeframe || 'operacional'} insuficiente`,
+    'histórico-contexto-insuficiente': `confirmação ${aPlus.contextTimeframe || 'superior'} insuficiente`,
+    'contexto-contra-direção': `${aPlus.contextTimeframe || 'contexto maior'} contra a direção`,
+    'estrutura-operacional-contexto-contra': `estrutura ${aPlus.operatingTimeframe || ''}/${aPlus.contextTimeframe || ''} contrária`,
     'breakout-sem-confirmação': 'rompimento sem confirmação',
     'vela-estendida-exaustão': 'vela esticada/exaustão',
     'compra-direto-na-resistência': 'compra muito perto da resistência',
@@ -113,7 +115,8 @@ function aPlusBlockText(aPlus = {}) {
   };
   const veto = (aPlus.hardVetoes || [])[0];
   if (veto) return labels[veto] || veto;
-  if (Number(aPlus.score || 0) < A_PLUS_THRESHOLDS.possibleScore) return `score A+ ${Math.round(Number(aPlus.score || 0))}/100 abaixo de ${A_PLUS_THRESHOLDS.possibleScore}`;
+  const requiredPossible = Number(aPlus.thresholds?.possibleScore || A_PLUS_THRESHOLDS.possibleScore);
+  if (Number(aPlus.score || 0) < requiredPossible) return `score A+ ${Math.round(Number(aPlus.score || 0))}/100 abaixo de ${requiredPossible}`;
   return 'confluência A+ ainda incompleta';
 }
 
