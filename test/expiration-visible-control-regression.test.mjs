@@ -161,3 +161,22 @@ test('successful direct probe records the exact evidence in diagnostics', () => 
   assert.match(control, /evidence: clean\(evidence\?\.evidence/);
   assert.match(control, /frameId: Number\(evidence\?\.frameId/);
 });
+
+
+test('M1 clock can be verified from the current structured CasaTrade candle when visible countdown is absent', () => {
+  const clock = read('src/content/market-cycle-clock-v4.js');
+  assert.match(clock, /function currentStateBoundary\(state = \{\}, focus = null, cycleTf = null\)/);
+  assert.match(clock, /session\.dataReady !== true/);
+  assert.match(clock, /sameMarket\(session\.confirmedAsset \|\| session\.asset, focus\.asset\)/);
+  assert.match(clock, /const alignedToBoundary/);
+  assert.match(clock, /const boundaryClock = domClock \? null : currentStateBoundary/);
+  assert.match(clock, /clockSource: 'network-server-cycle'/);
+  assert.match(clock, /clockMode: 'structured-current-candle-boundary'/);
+  assert.match(clock, /confidence: 94/);
+});
+
+test('clock reader no longer expires a confirmed expiration after seven seconds', () => {
+  const clock = read('src/content/market-cycle-clock-v4.js');
+  assert.doesNotMatch(clock, /expirationAt > 0 && Date\.now\(\) - expirationAt < 7000/);
+  assert.match(clock, /expirationAt > 0 && !!clean\(state\.platformControls\?\.observed\?\.expiration/);
+});
