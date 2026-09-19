@@ -13,8 +13,10 @@ const DECISION_HIT_GAP_MS = 2500;
 const POSSIBLE_CONFIRM_HITS = 2;
 const POSSIBLE_HIT_GAP_MS = 3500;
 const OPPOSITE_SWITCH_HITS = 3;
+const OPPOSITE_MIN_HOLD_MS = 4000;
 const OPPOSITE_SCORE_MARGIN = 8;
 const OPPOSITE_STALE_MS = 5000;
+const FINAL_CANDIDATE_MIN_AGE_MS = 3000;
 const cycles = new Map();
 const wrapperCompletedDecisions = new Map();
 const WRAPPER_ROW_PREFIX = 'wrapper-cycle:';
@@ -209,6 +211,7 @@ function observeStablePossible(cycle, signal = {}, at = Date.now()) {
     cycle.setup = inferSetup(signal, rawDirection) || cycle.setup;
     cycle.oppositeDirection = null;
     cycle.oppositeHits = 0;
+    cycle.oppositeSince = null;
     cycle.lastOppositeAt = null;
     return cycle.possibleDirection;
   }
@@ -219,12 +222,18 @@ function observeStablePossible(cycle, signal = {}, at = Date.now()) {
       && at - Number(cycle.lastOppositeAt) <= POSSIBLE_HIT_GAP_MS;
     cycle.oppositeDirection = rawDirection;
     cycle.oppositeHits = sameOpposite ? Number(cycle.oppositeHits || 0) + 1 : 1;
+    cycle.oppositeSince = sameOpposite && Number(cycle.oppositeSince || 0) > 0
+      ? Number(cycle.oppositeSince)
+      : at;
     cycle.lastOppositeAt = at;
 
     const currentStaleFor = at - Number(cycle.lastPossibleStrongAt || cycle.possibleSince || at);
+    const oppositeHeldFor = at - Number(cycle.oppositeSince || at);
     const strongerByMargin = rawScore >= Math.max(ANALYST_THRESHOLDS.confirmScore, Number(cycle.possibleScore || 0) + OPPOSITE_SCORE_MARGIN);
     const replacesStaleCandidate = currentStaleFor >= OPPOSITE_STALE_MS && rawScore >= ANALYST_THRESHOLDS.confirmScore;
-    if (cycle.oppositeHits >= OPPOSITE_SWITCH_HITS && (strongerByMargin || replacesStaleCandidate)) {
+    if (cycle.oppositeHits >= OPPOSITE_SWITCH_HITS
+        && oppositeHeldFor >= OPPOSITE_MIN_HOLD_MS
+        && (strongerByMargin || replacesStaleCandidate)) {
       const from = cycle.possibleDirection;
       cycle.possibleDirection = rawDirection;
       cycle.possibleScore = rawScore;
@@ -237,6 +246,7 @@ function observeStablePossible(cycle, signal = {}, at = Date.now()) {
       cycle.lastCandidateAt = at;
       cycle.oppositeDirection = null;
       cycle.oppositeHits = 0;
+      cycle.oppositeSince = null;
       cycle.lastOppositeAt = null;
       cycle.confirmDirection = null;
       cycle.confirmHits = 0;
@@ -259,7 +269,7 @@ function seedCycle(key, snapshot, signal, state = {}) {
       key, targetStart: targetStartOf(snapshot, signal),
       candidateDirection: null, candidateHits: 0, lastCandidateAt: null,
       possibleDirection: null, possibleScore: 0, possibleSince: null, lastPossibleStrongAt: null,
-      oppositeDirection: null, oppositeHits: 0, lastOppositeAt: null,
+      oppositeDirection: null, oppositeHits: 0, oppositeSince: null, lastOppositeAt: null,
       directionTransition: null,
       confirmHits: 0, lastHitAt: null, locked: null, direction: null, score: 0,
       setup: null, reason: null, decidedAt: null, resolved: false
@@ -485,7 +495,13 @@ export function processSnapshot(snapshot = {}, state = {}) {
 
   if (stableDirection) {
     const quality = decisionQuality(signal, stableDirection);
-    const stableFinal = observeDecision(cycle, stableDirection, quality.qualifies, at);
+    const candidateAge = at - Number(cycle.possibleSince || at);
+    const stableFinal = observeDecision(
+      cycle,
+      stableDirection,
+      quality.qualifies && candidateAge >= FINAL_CANDIDATE_MIN_AGE_MS,
+      at
+    );
     if (quality.qualifies) cycle.setup = quality.setup || cycle.setup || inferSetup(signal, stableDirection);
     if (stableFinal) {
       cycle.locked = 'ENTER';
