@@ -332,6 +332,11 @@ export async function applyFocus(message = {}, sender = {}) {
     const incomingStable = Number(message.stableFor || 0) >= 220 || Number(message.samples || 0) >= 3;
     const session = state.diagnostics?.marketSession || {};
     const incomingProtocolOnly = message.visual === false || clean(message.source) === 'protocol-selected';
+    const freshVisualFocus = oldFresh
+      && old?.visual !== false
+      && old?.reliable === true
+      && old?.chartScoped === true
+      && old?.trustedChartFrame === true;
     const transitionProtectsCurrentFocus = session.transitioning === true
       && !!old?.asset
       && sameMarket(session.pendingAsset || session.asset, old.asset);
@@ -346,6 +351,25 @@ export async function applyFocus(message = {}, sender = {}) {
     const contradictsSelectionLock = selectionLockFresh
       && !sameMarket(asset, selectionLock.asset);
     const protocolContradictsSelectionLock = incomingProtocolOnly && contradictsSelectionLock;
+
+    // The visible chart is the long-lived market authority. Network/protocol
+    // selection is only a bootstrap fallback; it may confirm the same market
+    // but may never replace a fresh reliable visual focus with another asset.
+    // This also neutralizes stale content scripts that survived an unpacked
+    // extension reload and still announce an older/ambiguous market.
+    if (assetChanged && incomingProtocolOnly && freshVisualFocus) {
+      return {
+        ...state,
+        diagnostics: {
+          ...(state.diagnostics || {}),
+          focusRejected: {
+            asset, frameId: info.frameId, frameHost: info.frameHost,
+            reason: 'protocol-conflicts-fresh-visual-focus',
+            at: now
+          }
+        }
+      };
+    }
 
     // During a visible market switch, stale protocol/network state from the
     // previous instrument can continue to announce itself as selected for a
