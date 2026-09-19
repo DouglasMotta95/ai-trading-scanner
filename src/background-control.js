@@ -166,6 +166,41 @@ async function injectModern(tabId) {
   return inject(tabId).catch(() => false);
 }
 
+function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+
+async function forceLiveControlRead(tabId) {
+  if (!tabId || !chrome.scripting?.executeScript) return false;
+  try {
+    const result = chrome.scripting.executeScript({
+      target: { tabId, allFrames: true },
+      world: 'ISOLATED',
+      func: () => {
+        let expiration = false;
+        let asset = false;
+        try {
+          if (typeof globalThis.__ATS_FORCE_EXPIRATION_SCAN__ === 'function') {
+            globalThis.__ATS_FORCE_EXPIRATION_SCAN__();
+            expiration = true;
+          }
+        } catch {}
+        try {
+          if (typeof globalThis.__ATS_FORCE_FOCUSED_ASSET_SCAN__ === 'function') {
+            globalThis.__ATS_FORCE_FOCUSED_ASSET_SCAN__();
+            asset = true;
+          }
+        } catch {}
+        return { expiration, asset };
+      }
+    });
+    if (result && typeof result.then === 'function') await result.catch(() => []);
+    await sleep(320);
+    return true;
+  } catch {
+    await sleep(320);
+    return false;
+  }
+}
+
 async function refreshTargetTab() {
   const state = await readScannerState();
   if (!activeLicense(state.license)) return { ok: false, error: 'license_required', state };
@@ -173,6 +208,7 @@ async function refreshTargetTab() {
   if (!tabId) return { ok: false, error: 'target_tab_missing', state };
   const injected = await injectModern(tabId);
   if (!injected) return { ok: false, error: 'runtime_injection_failed', state: await readScannerState() };
+  await forceLiveControlRead(tabId);
   return { ok: true, tabId, state: await readScannerState() };
 }
 
