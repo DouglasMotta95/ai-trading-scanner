@@ -230,7 +230,28 @@
       dataInspector: {
         ageMs: age(inspector.at),
         transport: clean(inspector.transports?.primary || ''),
+        inboundMessages: {
+          ws: num(inspector.transports?.messages?.ws),
+          fetch: num(inspector.transports?.messages?.fetch),
+          xhr: num(inspector.transports?.messages?.xhr)
+        },
+        outboundMessages: {
+          ws: num(inspector.transports?.outbound?.ws),
+          fetch: num(inspector.transports?.outbound?.fetch),
+          xhr: num(inspector.transports?.outbound?.xhr)
+        },
         candidateCount: num(inspector.rawCandidateCount), candleCount: num(inspector.candleCount),
+        networkExpirationTrace: (Array.isArray(inspector.expirationTrace) ? inspector.expirationTrace : []).slice(-24).map(row => ({
+          ageMs: age(row?.at),
+          direction: clean(row?.direction, 8),
+          transport: clean(row?.transport, 16),
+          endpoint: clean(row?.endpoint, 240),
+          sourceKey: clean(row?.sourceKey, 80),
+          parentKey: clean(row?.parentKey, 80),
+          shape: clean(row?.shape, 80),
+          expiration: clean(row?.expiration, 24),
+          rawValue: typeof row?.rawValue === 'number' ? row.rawValue : clean(row?.rawValue, 40)
+        })),
         tradeEvidence: {
           detected: tradeEvidence.detected === true,
           keys: safeList(tradeEvidence.keys, 30, 64),
