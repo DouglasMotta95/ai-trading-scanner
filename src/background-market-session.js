@@ -326,6 +326,11 @@ export async function applyFocus(message = {}, sender = {}) {
     const frameChanged = !!old && (Number(old.frameId) !== Number(info.frameId) || clean(old.frameHost).toLowerCase() !== info.frameHost);
     const interactionAt = Number(message.interactionAt || message.at || 0);
     const userSelected = message.interactionHint === true && interactionAt > 0 && now - interactionAt < 8000;
+    const chartHeaderAuthoritative = clean(message.source) === 'visible-chart-header'
+      && message.visual !== false
+      && message.explicit === true
+      && message.chartScoped === true;
+    const authoritativeVisual = userSelected || chartHeaderAuthoritative;
     const oldFresh = Number(old?.at || 0) > 0 && now - Number(old.at) < 2600;
     const oldEmbeddedTrader = old?.embeddedTrader === true;
     const incomingExplicit = message.explicit === true;
@@ -378,7 +383,7 @@ export async function applyFocus(message = {}, sender = {}) {
     // few seconds. Never let that non-visual source roll the current visible
     // transition back to the old market. This is the guard against mixing
     // USO/USD price/history into a newly selected AUD/CAD session.
-    if (assetChanged && !userSelected && contradictsSelectionLock) {
+    if (assetChanged && !authoritativeVisual && contradictsSelectionLock) {
       return {
         ...state,
         diagnostics: {
@@ -414,7 +419,7 @@ export async function applyFocus(message = {}, sender = {}) {
 
     // A passive symbol change from the same frame must prove stability before it
     // can replace a fresh selected market. User interaction/explicit selection wins immediately.
-    if (assetChanged && oldFresh && !userSelected && !incomingExplicit && !incomingStable) {
+    if (assetChanged && oldFresh && !authoritativeVisual && !incomingExplicit && !incomingStable) {
       return {
         ...state,
         diagnostics: {
@@ -429,7 +434,7 @@ export async function applyFocus(message = {}, sender = {}) {
 
     // Hidden/inactive CasaTrade market frames can stay alive and keep publishing
     // their old symbol. They must never roll the visible user-selected chart back.
-    if (assetChanged && frameChanged && oldFresh && !userSelected && !incomingExplicit && !incomingStable) {
+    if (assetChanged && frameChanged && oldFresh && !authoritativeVisual && !incomingExplicit && !incomingStable) {
       return {
         ...state,
         diagnostics: {
@@ -445,7 +450,7 @@ export async function applyFocus(message = {}, sender = {}) {
     // The same asset is often visible in the CasaTrade shell and the embedded
     // trader frame at the same time. Once the embedded trader owns the live clock,
     // shell heartbeats must not keep resetting the market session.
-    if (!assetChanged && frameChanged && oldEmbeddedTrader && incomingCasaFrame && !userSelected) {
+    if (!assetChanged && frameChanged && oldEmbeddedTrader && incomingCasaFrame && !authoritativeVisual) {
       return state;
     }
 
@@ -458,13 +463,13 @@ export async function applyFocus(message = {}, sender = {}) {
     // A direct user market selection is the highest visual authority. Clear
     // stale market identity immediately so the sidepanel cannot continue
     // displaying the previous instrument while the new feed synchronizes.
-    if (assetChanged && userSelected) {
+    if (assetChanged && authoritativeVisual) {
       next = resetForSession(state, {
         asset, info, source: clean(message.source || 'user-selected-transition'),
         reason: `Ativo ${asset} selecionado na CasaTrade. Limpando a sessão anterior e sincronizando dados do novo ativo.`
       });
     }
-    if (!(assetChanged && userSelected) && (changed || (state.asset && !sameMarket(state.asset, asset)))) {
+    if (!(assetChanged && authoritativeVisual) && (changed || (state.asset && !sameMarket(state.asset, asset)))) {
       next = resetForSession(state, {
         asset, info, source: clean(message.source || 'visible-chart'),
         reason: assetChanged
@@ -482,8 +487,8 @@ export async function applyFocus(message = {}, sender = {}) {
       platformId: 'casatrade', platformName: 'CasaTrade', scanner: 'scanning',
       diagnostics: {
         ...(next.diagnostics || {}),
-        visualSelectionLock: userSelected
-          ? { asset, at: interactionAt || now }
+        visualSelectionLock: authoritativeVisual
+          ? { asset, at: userSelected ? (interactionAt || now) : now, source: chartHeaderAuthoritative ? 'visible-chart-header' : 'user-selection' }
           : (next.diagnostics?.visualSelectionLock || null),
         focusedAsset: {
           asset, at: now, stableSince: changed ? now : previousStableSince,
