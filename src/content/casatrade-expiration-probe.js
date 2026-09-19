@@ -469,6 +469,7 @@
   let lastConfirmedExpiration = null;
   let lastConfirmedAt = 0;
   let expirationControlDirtyAt = 0;
+  let expirationInteractionWindowUntil = 0;
 
   function expirationInteractionTarget(target) {
     let node = target instanceof Element ? target : null;
@@ -572,12 +573,13 @@
   const observer = new MutationObserver(() => schedule(false, 35));
   try { observer.observe(document.documentElement, { subtree: true, childList: true, characterData: true, attributes: true }); } catch {}
 
-  function expirationFromInteraction(event) {
+  function expirationFromInteraction(event, allowUnscoped = false) {
     const path = typeof event?.composedPath === 'function' ? event.composedPath() : [event?.target];
     for (const node of path.slice(0, 8)) {
       if (!(node instanceof Element) || !visible(node)) continue;
       const value = directDuration(node);
       if (!value) continue;
+      if (allowUnscoped) return value;
       const local = localSemanticText(node, 4);
       const parentText = fold(clean(node.parentElement?.innerText || node.parentElement?.textContent || ''));
       if (expirationSemantics.test(local) || expirationSemantics.test(parentText)) return value;
@@ -586,9 +588,15 @@
   }
 
   const markControlDirty = event => {
-    if (!expirationInteractionTarget(event?.target)) return;
-    expirationControlDirtyAt = Date.now();
-    const interactedValue = expirationFromInteraction(event);
+    const now = Date.now();
+    const directTarget = expirationInteractionTarget(event?.target);
+    const insideOpenExpiration = expirationInteractionWindowUntil > now;
+    const interactedValue = expirationFromInteraction(event, insideOpenExpiration);
+    if (!directTarget && !(insideOpenExpiration && interactedValue)) return;
+
+    expirationControlDirtyAt = now;
+    if (directTarget && !interactedValue) expirationInteractionWindowUntil = now + 5000;
+    if (interactedValue) expirationInteractionWindowUntil = 0;
     if (interactedValue) {
       lastConfirmedExpiration = interactedValue;
       lastConfirmedAt = expirationControlDirtyAt;
