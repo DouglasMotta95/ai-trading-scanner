@@ -7,14 +7,15 @@ function snap(bucket, elapsed, secondsRemaining, rows = bullishAPlusRows(bucket)
   return processSnapshot(snapshotFor(bucket, elapsed, { rows, secondsRemaining }), { connection: 'online' });
 }
 
-test('POSSIBLE is preparation only and does not start more than 30 seconds before the next M1 candle', () => {
+test('POSSIBLE may appear early once A+ is stable but cannot become final outside the entry window', () => {
   resetOrchestrator();
   const bucket = Math.floor(1_701_000_000_000 / minute) * minute;
   const rows = bullishAPlusRows(bucket);
   snap(bucket, 19_000, 41, rows);
   const out = snap(bucket, 20_000, 40, rows);
-  assert.notEqual(out.signal.uiState, 'POSSIBLE_BUY');
-  assert.notEqual(out.signal.uiState, 'POSSIBLE_SELL');
+  assert.equal(out.signal.uiState, 'POSSIBLE_BUY');
+  assert.notEqual(out.signal.state, 'CONFIRM');
+  assert.ok(out.signal.secondsRemaining > 10);
 });
 
 test('stable A+ bullish bias becomes POSSIBLE after two observations and stays visible until final ENTER', () => {
@@ -36,9 +37,7 @@ test('stable A+ bullish bias becomes POSSIBLE after two observations and stays v
   const atTen = snap(bucket, 50_000, 10, rows);
   assert.notEqual(atTen.signal.state, 'CONFIRM');
 
-  const enter = snap(bucket, 51_000, 9, rows);
-  assert.equal(enter.signal.uiState, 'POSSIBLE_BUY');
-  const confirmed = snap(bucket, 52_000, 8, rows);
+  const confirmed = snap(bucket, 51_000, 9, rows);
   assert.equal(confirmed.signal.state, 'CONFIRM');
   assert.equal(confirmed.signal.uiState, 'ENTER_BUY');
   assert.equal(confirmed.decisionCycle.locked, 'ENTER');
