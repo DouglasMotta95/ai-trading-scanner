@@ -1,6 +1,23 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { processSnapshot, resetOrchestrator } from '../src/core/orchestrator.js';
+import { minute, m1Snapshot, lockedCycle } from './helpers/current-fixtures.mjs';
 const read=p=>fs.readFileSync(new URL('../'+p,import.meta.url),'utf8');
-test('final-stabilization-acceptance.test.mjs: current A+ stability contract',()=>{const s=read('src/core/orchestrator.js');assert.match(s,/POSSIBLE_HIT_GAP_MS = 8000/);assert.match(s,/observeStableAPlusCandidate/);assert.match(s,/aPlusWeakHits >= 2/);assert.match(s,/locked === 'ENTER'/);});
-test('final-stabilization-acceptance.test.mjs: current high-confidence engine remains active',()=>{const s=read('src/core/high-confidence.js');assert.match(s,/assessHighConfidence/);assert.match(s,/candidateAllowed/);assert.match(s,/finalAllowed/);});
+
+test('final ENTER is latched for the active decision cycle',()=>{
+  resetOrchestrator();
+  const bucket=Math.floor(1_814_000_000_000/minute)*minute;
+  const a=processSnapshot(m1Snapshot(bucket,54_000),{connection:'online',decisionCycle:lockedCycle(bucket)});
+  const b=processSnapshot(m1Snapshot(bucket,58_000),{connection:'online',decisionCycle:a.decisionCycle});
+  assert.equal(a.signal.uiState,'ENTER_BUY');
+  assert.equal(b.signal.uiState,'ENTER_BUY');
+});
+
+test('connection recovery and current A+ UI surfaces remain present',()=>{
+  const c=read('src/background-control.js');
+  const h=read('src/sidepanel/index.html');
+  assert.match(c,/handshakeReady/);
+  assert.match(c,/recoverFocusedAsset/);
+  assert.match(h,/ANÁLISE A\+ • ALTA CONFIANÇA/);
+});
