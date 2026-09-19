@@ -4,8 +4,9 @@
 
   const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
   const host = String(location.hostname || '').toLowerCase().replace(/\.$/, '');
+  const casaHost = value => value === 'casatrade.com' || value.endsWith('.casatrade.com') || value === 'casatrade.io' || value.endsWith('.casatrade.io');
   const traderHost = value => value === 'casatraders.online' || value.endsWith('.casatraders.online') || value === 'ivcasatraders.online' || value.endsWith('.ivcasatraders.online');
-  if (!traderHost(host)) return;
+  if (!casaHost(host) && !traderHost(host)) return;
 
   const quotes = new Set(['USDT','USDC','USD','EUR','GBP','JPY','AUD','CAD','CHF','NZD','BRL','BTC','ETH']);
   const SENSITIVE = /token|auth|cookie|session|password|secret|bearer|csrf|api[-_]?key|credential/i;
@@ -50,9 +51,25 @@
     const endpoints = (Array.isArray(payload.endpoints) ? payload.endpoints : []).map(safeEndpoint).filter(Boolean).slice(-12);
     const tradeKeys = keys.filter(key => TRADE_EVIDENCE.test(key)).slice(0, 30);
     const tradeEndpoints = endpoints.filter(endpoint => TRADE_EVIDENCE.test(endpoint)).slice(-12);
+    const expirationTrace = (Array.isArray(payload.expirationTrace) ? payload.expirationTrace : []).slice(-24).map(row => ({
+      at: Number(row?.at || 0),
+      direction: clean(row?.direction || '').slice(0, 8),
+      transport: clean(row?.transport || '').slice(0, 16),
+      endpoint: safeEndpoint(row?.endpoint || ''),
+      sourceKey: safeKey(row?.sourceKey || ''),
+      parentKey: safeKey(row?.parentKey || ''),
+      shape: clean(row?.shape || '').slice(0, 80),
+      expiration: clean(row?.expiration || '').slice(0, 24),
+      rawValue: typeof row?.rawValue === 'number'
+        ? row.rawValue
+        : typeof row?.rawValue === 'string' && row.rawValue.length <= 40 && !SENSITIVE.test(row.rawValue)
+          ? row.rawValue
+          : null
+    }));
     const snapshot = {
-      transports: { messages: payload.messages || {}, connections: payload.connections || {}, primary: payload.primaryTransport || null },
+      transports: { messages: payload.messages || {}, outbound: payload.outbound || {}, connections: payload.connections || {}, primary: payload.primaryTransport || null },
       endpoints,
+      expirationTrace,
       keys,
       tradeEvidence: {
         detected: tradeKeys.length > 0 || tradeEndpoints.length > 0,

@@ -10,7 +10,9 @@ function senderTrusted(sender = {}) {
   let frameHost = '', topHost = '';
   try { frameHost = host(new URL(sender.url || '').hostname); } catch {}
   try { topHost = host(new URL(sender.tab?.url || '').hostname); } catch {}
-  return !!sender.tab?.id && Number(sender.frameId) !== 0 && traderHost(frameHost) && (casaHost(topHost) || traderHost(topHost));
+  return !!sender.tab?.id
+    && (casaHost(frameHost) || traderHost(frameHost))
+    && (casaHost(topHost) || traderHost(topHost));
 }
 
 function safeStrings(rows, maxItems, maxLength) {
@@ -36,10 +38,28 @@ function safeSnapshot(raw = {}, sender = {}) {
       messages: raw.transports?.messages && typeof raw.transports.messages === 'object' ? {
         ws: Number(raw.transports.messages.ws || 0), fetch: Number(raw.transports.messages.fetch || 0), xhr: Number(raw.transports.messages.xhr || 0)
       } : {},
+      outbound: raw.transports?.outbound && typeof raw.transports.outbound === 'object' ? {
+        ws: Number(raw.transports.outbound.ws || 0), fetch: Number(raw.transports.outbound.fetch || 0), xhr: Number(raw.transports.outbound.xhr || 0)
+      } : {},
       connections: { ws: Number(raw.transports?.connections?.ws || 0) }
     },
     endpoints: safeStrings(raw.endpoints, 12, 240),
     keys: safeStrings(raw.keys, 80, 64),
+    expirationTrace: (Array.isArray(raw.expirationTrace) ? raw.expirationTrace : []).slice(-24).map(row => ({
+      at: Number(row?.at || 0),
+      direction: clean(row?.direction, 8),
+      transport: clean(row?.transport, 16),
+      endpoint: clean(row?.endpoint, 240),
+      sourceKey: clean(row?.sourceKey, 80),
+      parentKey: clean(row?.parentKey, 80),
+      shape: clean(row?.shape, 80),
+      expiration: clean(row?.expiration, 24),
+      rawValue: typeof row?.rawValue === 'number'
+        ? row.rawValue
+        : typeof row?.rawValue === 'string' && !SENSITIVE.test(row.rawValue)
+          ? clean(row.rawValue, 40)
+          : null
+    })),
     tradeEvidence: {
       detected: trade.detected === true,
       keys: safeStrings(trade.keys, 30, 64),
@@ -67,10 +87,31 @@ async function accept(message = {}, sender = {}) {
   const state = await readScannerState();
   if (Number(state.targetTabId || 0) && Number(state.targetTabId) !== Number(sender.tab?.id || 0)) return { ok: false, error: 'wrong_tab' };
   const snapshot = safeSnapshot(message.snapshot || {}, sender);
-  await updateScannerState(current => ({
-    ...current,
-    diagnostics: { ...(current.diagnostics || {}), dataInspector: snapshot }
-  }));
+  await updateScannerState(current => {
+    const previous = current.diagnostics?.dataInspector || {};
+    const combined = [
+      ...(Array.isArray(previous.expirationTrace) ? previous.expirationTrace : []),
+      ...(Array.isArray(snapshot.expirationTrace) ? snapshot.expirationTrace : [])
+    ].sort((a, b) => Number(a?.at || 0) - Number(b?.at || 0));
+    const seen = new Set();
+    const expirationTrace = combined.filter(row => {
+      const key = JSON.stringify([
+        Number(row?.at || 0), clean(row?.direction, 8), clean(row?.transport, 16),
+        clean(row?.endpoint, 240), clean(row?.sourceKey, 80), clean(row?.expiration, 24),
+        typeof row?.rawValue === 'number' ? row.rawValue : clean(row?.rawValue, 40)
+      ]);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    }).slice(-48);
+    return {
+      ...current,
+      diagnostics: {
+        ...(current.diagnostics || {}),
+        dataInspector: { ...snapshot, expirationTrace }
+      }
+    };
+  });
   return { ok: true };
 }
 
