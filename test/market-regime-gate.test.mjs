@@ -31,20 +31,25 @@ test('market regime classifies the fixture as range', () => {
   assert.equal(marketRegime(candles.slice(0, -1)).type, 'range');
 });
 
-test('range regime allows ENTER only when a decisive local setup overrides the broad range', () => {
+test('range regime is blocked unless the A+ edge/breakout requirements are truly satisfied', () => {
   resetOrchestrator();
   const bucket = Math.floor(1_800_110_000_000 / minute) * minute;
   const candles = rangeWithStrongCurrent(bucket);
   processSnapshot(snapshot(bucket, 35_000, candles), { connection: 'online' });
   processSnapshot(snapshot(bucket, 36_000, candles), { connection: 'online' });
   const firstFinal = processSnapshot(snapshot(bucket, 51_000, candles), { connection: 'online' });
-  const confirmed = processSnapshot(snapshot(bucket, 52_000, candles), { connection: 'online' });
-  assert.equal(confirmed.signal.regime?.type, 'range');
-  assert.ok(Number(confirmed.signal.analysisScore) >= 58, `expected score >= 58, got ${confirmed.signal.analysisScore}`);
-  assert.ok(['POSSIBLE_BUY','POSSIBLE_SELL','DECIDING','ENTER_BUY','ENTER_SELL','SKIP','WAIT'].includes(firstFinal.signal.uiState));
-  assert.ok(['ENTER_BUY','ENTER_SELL'].includes(confirmed.signal.uiState), `expected a final entry, got ${confirmed.signal.uiState}`);
-  assert.equal(confirmed.signal.state, 'CONFIRM');
-  assert.ok(['BUY','SELL'].includes(confirmed.signal.direction));
+  const final = processSnapshot(snapshot(bucket, 52_000, candles), { connection: 'online' });
+
+  assert.equal(final.signal.regime?.type, 'range');
+  assert.ok(Number(final.signal.analysisScore) >= 58);
+  assert.notEqual(final.signal.state, 'CONFIRM');
+  assert.ok(['BUILDING_PATTERN','DECIDING','WAIT'].includes(final.signal.uiState));
+  assert.ok(Array.isArray(final.signal.aPlus?.hardVetoes));
+  assert.ok(final.signal.aPlus.hardVetoes.some(veto =>
+    ['range-no-meio-sem-borda','breakout-sem-confirmação','vela-estendida-exaustão','histórico-contexto-insuficiente'].includes(veto)
+  ));
+  assert.notEqual(firstFinal.signal.uiState, 'ENTER_BUY');
+  assert.notEqual(firstFinal.signal.uiState, 'ENTER_SELL');
 });
 
 test('regime gate is additive and does not change approved thresholds', async () => {
