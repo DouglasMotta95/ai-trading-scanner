@@ -72,3 +72,26 @@ test('timeframe reader requires candle-period semantics and rejects generic char
   assert.match(block, /periodo da vela\|periodo de vela\|candle period\|candle interval/);
   assert.match(block, /if \(!candleSemantic \|\| chartRangeOnly\) continue/);
 });
+
+
+test('expiration dirty recheck never erases an already confirmed CasaTrade duration by itself', () => {
+  const background = read('src/background-platform-controls.js');
+  const probe = read('src/content/casatrade-expiration-probe.js');
+  const mergeStart = background.indexOf('function mergeObserved');
+  const mergeEnd = background.indexOf('\nfunction analystPrefs', mergeStart);
+  const merge = background.slice(mergeStart, mergeEnd);
+  assert.match(merge, /expirationRecheckPendingAt/);
+  assert.match(merge, /must not erase|Keep the last confirmed expiration/);
+  assert.doesNotMatch(merge, /incoming\.expirationDirty[^\n]*[\s\S]{0,220}next\.expiration\s*=\s*null/);
+  assert.match(probe, /function expirationFromInteraction\(event\)/);
+  assert.match(probe, /source: 'casatrade-expiration-interaction'/);
+  assert.match(probe, /expiration: interactedValue/);
+});
+
+test('reconnecting the same CasaTrade tab preserves a previously confirmed expiration', () => {
+  const control = read('src/background-control.js');
+  assert.match(control, /Reconnecting the same CasaTrade tab must not erase a platform control/);
+  assert.match(control, /sameTab && confirmedExpiration && confirmedExpirationAt > 0/);
+  assert.match(control, /platformControls: current\.platformControls/);
+  assert.match(control, /targetExpiration: confirmedExpiration/);
+});
