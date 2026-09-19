@@ -43,10 +43,10 @@ const normExp = value => {
 function preferences(state = {}) {
   const raw = state.analystPreferences || {};
   return {
-    mode: text(raw.mode).toUpperCase() === 'A_PLUS' ? 'A_PLUS' : 'NORMAL',
+    mode: 'NORMAL',
     geminiEnabled: raw.geminiEnabled !== false,
-    holdSeconds: clamp(raw.holdSeconds ?? DEFAULT_PREFS.holdSeconds, 3, 5),
-    preferredExpiration: normExp(raw.preferredExpiration || state.executionPreferences?.expiration || '')
+    holdSeconds: 3,
+    preferredExpiration: null
   };
 }
 
@@ -80,17 +80,30 @@ export function exactCasaTradeTime(state = {}) {
   const stateTf = normTf(state.analysisTimeframe || state.timeframe);
   const controlTf = normTf(state.platformControls?.observed?.timeframe);
   if (!liveTf) return { ready: false, reason: 'Timeframe real ainda não foi confirmado.' };
+  if (liveTf !== 'M1') return { ready: false, reason: 'Ajuste o timeframe da CasaTrade para M1.' };
   if (stateTf && liveTf !== stateTf) return { ready: false, reason: 'Timeframe interno divergiu do gráfico.' };
   if (controlTf && liveTf !== controlTf) return { ready: false, reason: 'Timeframe visível divergiu do clock da vela.' };
   return { ready: true, timeframe: liveTf, secondsRemaining: Number(clock.secondsRemaining), source: clock.source };
 }
 
-export function CasaTradeExpiration(state = {}) {
+export function CasaTradeExpiration(state = {}, timeframe = null) {
   const controls = state.platformControls || {};
-  const observed = normExp(controls.observed?.expiration);
-  const fresh = Number(controls.checkedAt || 0) > 0 && Date.now() - Number(controls.checkedAt) < 7000;
-  if (!observed || !fresh) return { ready: false, actual: observed, reason: 'Expiração real da CasaTrade ainda não foi confirmada.' };
-  return { ready: true, actual: observed, reason: 'Expiração lida diretamente da CasaTrade.' };
+  const expirationAt = Number(controls.expirationCheckedAt || controls.observed?.observedAt?.expiration || 0);
+  const fresh = expirationAt > 0 && Date.now() - expirationAt < 7000;
+  const observed = fresh ? normExp(controls.observed?.expiration) : null;
+  const startedAt = Number(state.diagnostics?.marketSession?.startedAt || state.diagnostics?.target?.connectedAt || 0);
+  const waiting = startedAt > 0 && Date.now() - startedAt < 5000;
+  if (!observed || !fresh) return {
+    ready: false,
+    actual: null,
+    reason: waiting
+      ? 'Lendo expiração real da CasaTrade'
+      : 'Não foi possível ler a expiração — verifique o seletor na CasaTrade'
+  };
+  if (normTf(timeframe || state.analysisTimeframe || state.timeframe) === 'M1' && observed !== '60s') {
+    return { ready: false, actual: observed, required: '60s', reason: 'Ajuste a expiração da CasaTrade para 1 minuto' };
+  }
+  return { ready: true, actual: observed, required: '60s', reason: 'Expiração de 1 minuto lida diretamente da CasaTrade.' };
 }
 
 function completeCandles(state = {}) {
@@ -143,16 +156,20 @@ function baseDecision(state = {}) {
   const signal = state.signal || {};
   const now = Date.now();
   const time = exactCasaTradeTime(state);
-  const expiration = CasaTradeExpiration(state);
+  const expiration = CasaTradeExpiration(state, time.timeframe || state.analysisTimeframe || state.timeframe);
   const rows = completeCandles(state);
   const direction = signalDirection(signal);
   const score = Number(signal.analysisScore ?? signal.score ?? 0) || 0;
   const ui = text(signal.uiState).toUpperCase();
   const cycle = cycleKey(state, signal);
   const factors = confluence(signal, direction);
-  const requiredFactors = pref.mode === 'A_PLUS' ? 3 : 2;
-  const possibleScore = pref.mode === 'A_PLUS' ? 52 : 44;
-  const finalScore = pref.mode === 'A_PLUS' ? 66 : 58;
+  // NORMAL already passed the technical engine's own quality gates. Requiring
+  // another independent confluence count here was suppressing valid POSSIBLE/
+  // ENTER decisions and leaving the product stuck on AGUARDAR. Only A+ applies
+  // this extra presentation-policy filter.
+  const additionalConfluenceReady = true;
+  const possibleScore = 44;
+  const finalScore = 58;
   const technicalCandidate = ['POSSIBLE_BUY', 'POSSIBLE_SELL', 'ENTER_BUY', 'ENTER_SELL'].includes(ui);
   const technicalFinal = ['ENTER_BUY', 'ENTER_SELL'].includes(ui);
 
@@ -181,12 +198,17 @@ function baseDecision(state = {}) {
   if (!time.ready) {
     return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: `AGUARDAR — ${time.reason}` };
   }
-  if (!expiration.ready) {
-    return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: `AGUARDAR — ${expiration.reason}` };
+
+  const seconds = Number(time.secondsRemaining);
+  if (!Number.isFinite(seconds) || seconds > 30) {
+    return { ...common, uiState: 'BUILDING_PATTERN', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: 'Analisando a vela M1 atual. O pré-sinal abre por volta de 30s restantes.' };
   }
-  if (!technicalCandidate || !direction || score < possibleScore || factors.count < requiredFactors) {
-    const modeText = pref.mode === 'A_PLUS' ? 'Só A+ exige 3 fatores alinhados.' : 'Padrão sem confluência suficiente.';
-    return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: `AGUARDAR — ${modeText}` };
+  if (seconds <= 0) {
+    return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: 'AGUARDAR — fechamento da vela em andamento.' };
+  }
+
+  if (!technicalCandidate || !direction || score < possibleScore || !additionalConfluenceReady) {
+    return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: 'AGUARDAR — motor técnico ainda não liberou um candidato.' };
   }
 
   const previous = state.professionalDecision || {};
@@ -194,10 +216,26 @@ function baseDecision(state = {}) {
   const possibleSince = sameCandidate && Number(previous.possibleSince || 0) > 0 ? Number(previous.possibleSince) : now;
   const holdMs = pref.holdSeconds * 1000;
   const heldFor = Math.max(0, now - possibleSince);
-  const finalQuality = technicalFinal && score >= finalScore && factors.count >= requiredFactors;
+  const finalQuality = technicalFinal && score >= finalScore && additionalConfluenceReady;
   const reason = shortReason(direction, factors.factors, signal.reason);
 
-  if (!finalQuality || heldFor < holdMs) {
+  // Expiration is an execution gate, not a technical-analysis gate. Keep the
+  // directional POSSIBLE state visible when the pattern exists, but never make
+  // it actionable until the real CasaTrade control confirms M1 + 60 seconds.
+  if (!expiration.ready) {
+    return {
+      ...common,
+      uiState: direction === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL',
+      direction,
+      actionable: false,
+      alert: 'silent',
+      possibleSince,
+      holdRemainingMs: Math.max(0, holdMs - heldFor),
+      reason: `${reason} BLOQUEADO — ${expiration.reason}.`
+    };
+  }
+
+  if (seconds > 10) {
     return {
       ...common,
       uiState: direction === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL',
@@ -207,6 +245,18 @@ function baseDecision(state = {}) {
       possibleSince,
       holdRemainingMs: Math.max(0, holdMs - heldFor),
       reason
+    };
+  }
+  if (!finalQuality || heldFor < holdMs) {
+    return {
+      ...common,
+      uiState: 'WAIT',
+      direction: null,
+      actionable: false,
+      alert: 'silent',
+      possibleSince,
+      holdRemainingMs: Math.max(0, holdMs - heldFor),
+      reason: `AGUARDAR — decisão final sem confirmação suficiente. ${reason}`
     };
   }
 

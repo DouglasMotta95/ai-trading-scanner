@@ -11,7 +11,7 @@ function senderTrusted(sender = {}) {
   let frameHost = '', topHost = '';
   try { frameHost = host(new URL(sender.url || '').hostname); } catch {}
   try { topHost = host(new URL(sender.tab?.url || '').hostname); } catch {}
-  return !!sender.tab?.id && casaHost(topHost) && (casaHost(frameHost) || traderHost(frameHost));
+  return !!sender.tab?.id && (casaHost(topHost) || traderHost(topHost)) && (casaHost(frameHost) || traderHost(frameHost));
 }
 
 function candidate(previous = {}, snapshot = {}, key, atKey, now) {

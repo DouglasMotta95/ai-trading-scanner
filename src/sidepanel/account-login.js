@@ -36,17 +36,20 @@ import { storageLocalGet, storageLocalSet, storageLocalRemove, runtimeSendMessag
   }
 
   async function saveSession(r) {
+    const previous = await storageLocalGet([LICENSE_KEY, LAST_VALID_LICENSE_KEY]);
+    const previousLicenseKey = String(previous[LICENSE_KEY] || previous[LAST_VALID_LICENSE_KEY]?.licenseKey || '').trim();
+    const resolvedLicenseKey = String(r.licenseKey || r.license?.key || previousLicenseKey || '').trim();
     const values = {
-      [LICENSE_KEY]: String(r.licenseKey || ''),
       [CLIENT_TOKEN_KEY]: String(r.clientToken || ''),
       [CLIENT_EXP_KEY]: Number(r.clientTokenExpiresAt) || 0,
       [ACCOUNT_TOKEN_KEY]: String(r.accountToken || ''),
       [ACCOUNT_EXP_KEY]: Number(r.accountTokenExpiresAt) || 0
     };
+    if (resolvedLicenseKey) values[LICENSE_KEY] = resolvedLicenseKey;
     if (r.license?.status === 'active') {
       values[LAST_VALID_LICENSE_KEY] = {
         license: { ...r.license, error: null, syncPending: false },
-        licenseKey: String(r.licenseKey || r.license?.key || ''),
+        licenseKey: resolvedLicenseKey,
         clientTokenExpiresAt: Number(r.clientTokenExpiresAt) || 0,
         validatedAt: Date.now()
       };

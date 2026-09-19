@@ -10,9 +10,11 @@ const num = value => value == null || value === '' ? null : Number.isFinite(Numb
 const effectiveDecision = state => state?.professionalDecision || state?.signal || {};
 
 function aiStage(state = {}) {
-  const ui = text(effectiveDecision(state)?.uiState).toUpperCase();
-  if (ui === 'POSSIBLE_BUY' || ui === 'POSSIBLE_SELL') return 'possible';
-  if (ui === 'ENTER_BUY' || ui === 'ENTER_SELL') return 'final';
+  const decision = effectiveDecision(state);
+  const ui = text(decision?.uiState).toUpperCase();
+  // Gemini is a second opinion only after the primary technical engine has
+  // confirmed a final entry. It never runs on POSSIBLE and never unlocks entry.
+  if ((ui === 'ENTER_BUY' || ui === 'ENTER_SELL') && decision?.actionable === true) return 'final';
   return null;
 }
 

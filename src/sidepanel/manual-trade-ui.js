@@ -1,3 +1,4 @@
+(() => {
 const $ = id => document.getElementById(id);
 const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
 const price = value => num(value) == null ? '—' : String(value);
@@ -97,3 +98,5 @@ ensureStyle();
 ensureCard();
 refresh().catch(() => {});
 setInterval(() => refresh().catch(() => {}), 4000);
+
+})();

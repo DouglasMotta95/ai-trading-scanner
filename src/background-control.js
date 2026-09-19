@@ -2,6 +2,7 @@ import { activateLicense, validateLicense, clearLicense, restoreCachedLicense } 
 import { readScannerState, updateScannerState } from './services/scanner-state-atomic.js';
 import { storageLocalGet, storageSessionGet, tabsQuery, sidePanelSetBehavior } from './services/chrome-compat.js';
 import { detectPlatform } from './platforms/registry.js';
+import { clearMarketAuthorityState } from './background-market-session.js';
 
 const DEFAULT_LICENSE = Object.freeze({
   status: 'unconfigured', plan: null, planLabel: null, dailyLimit: null, usedToday: 0,
@@ -10,30 +11,116 @@ const DEFAULT_LICENSE = Object.freeze({
 const SESSION_HISTORY_KEY = 'atsSessionSignalHistory';
 const SHADOW_KEY = 'atsShadowCalibrationV1';
 const EXACT_CLOCK_SOURCES = new Set(['trader-dom-countdown', 'network-server-cycle']);
+const CONNECT_TIMEOUT_MS = 7000;
 
-const activeLicense = license => ['active', 'valid'].includes(String(license?.status || '').toLowerCase());
 const clean = value => String(value ?? '').trim();
-const sameAsset = (a, b) => clean(a).toUpperCase().replace(/\s*\(\s*OTC\s*\)\s*$/i, '') === clean(b).toUpperCase().replace(/\s*\(\s*OTC\s*\)\s*$/i, '') && !!clean(a) && !!clean(b);
+const activeLicense = license => {
+  const status = clean(license?.status).toLowerCase();
+  return ['active', 'valid'].includes(status)
+    || license?.devMode === true
+    || clean(license?.plan).toUpperCase() === 'OWNER_DEV';
+};
+const marketId = value => {
+  const raw = clean(value).toUpperCase();
+  if (!raw) return '';
+  const otc = /(?:\(|\b|[_-])OTC(?:\)|\b)?/i.test(raw);
+  const pair = raw.match(/\b([A-Z0-9]{2,20})\s*[\/_-]\s*([A-Z0-9]{2,12})/i);
+  if (pair) return `${pair[1]}/${pair[2]}${otc ? ' (OTC)' : ''}`;
+  return raw.replace(/\s+/g, ' ');
+};
+const sameAsset = (a, b) => !!marketId(a) && marketId(a) === marketId(b);
+
+function marketDataConnected(state = {}) {
+  const focus = state.diagnostics?.focusedAsset || {};
+  return state.connection === 'online'
+    && !!state.asset
+    && Number.isFinite(Number(state.price))
+    && focus.reliable === true
+    && focus.chartScoped === true
+    && focus.trustedChartFrame === true
+    && sameAsset(focus.asset, state.asset)
+    && Number(state.lastSeen || 0) > 0
+    && Date.now() - Number(state.lastSeen) < 7000;
+}
+
+function handshakeReady(state = {}) {
+  const clock = state.diagnostics?.marketClock || {};
+  return marketDataConnected(state)
+    && clock.available !== false
+    && clock.role === 'candle-close'
+    && Number.isFinite(Number(clock.secondsRemaining))
+    && Number(clock.at || 0) > 0
+    && Date.now() - Number(clock.at) < 5000;
+}
+
+function scheduleConnectionTimeout(tabId, connectedAt) {
+  setTimeout(() => {
+    readScannerState().then(current => {
+      const sameTarget = Number(current.targetTabId) === Number(tabId)
+        && Number(current.diagnostics?.target?.connectedAt || 0) === Number(connectedAt);
+      if (!sameTarget || handshakeReady(current)) return null;
+      return updateScannerState(state => {
+        const stillSame = Number(state.targetTabId) === Number(tabId)
+          && Number(state.diagnostics?.target?.connectedAt || 0) === Number(connectedAt);
+        if (!stillSame || handshakeReady(state)) return state;
+        if (marketDataConnected(state)) {
+          const diagnostics = { ...(state.diagnostics || {}) };
+          delete diagnostics.connectionError;
+          return {
+            ...state,
+            scanner: 'scanning',
+            connection: 'online',
+            diagnostics: {
+              ...diagnostics,
+              acquisition: {
+                ...(state.diagnostics?.acquisition || {}),
+                stage: 'syncing_clock',
+                reason: 'CasaTrade conectada. Sincronizando o countdown real da vela.',
+                at: Date.now()
+              }
+            }
+          };
+        }
+        return {
+          ...state,
+          scanner: 'idle',
+          connection: 'offline',
+          diagnostics: {
+            ...(state.diagnostics || {}),
+            connectionError: {
+              code: 'handshake_timeout',
+              message: 'Falha ao conectar — tentar novamente.',
+              at: Date.now()
+            },
+            acquisition: {
+              ...(state.diagnostics?.acquisition || {}),
+              stage: 'connect_timeout',
+              reason: 'Falha ao conectar — tentar novamente.',
+              at: Date.now()
+            }
+          }
+        };
+      });
+    }).catch(() => {});
+  }, CONNECT_TIMEOUT_MS);
+}
 
 function platformFromUrl(url = '') {
   try { return detectPlatform(new URL(url).hostname); } catch { return null; }
 }
 
 function clearMarket(state = {}, extra = {}) {
-  return {
-    ...state,
-    scanner: 'idle',
-    connection: 'offline', platformId: null, platformName: null, targetTabId: null,
-    asset: null, price: null, timeframe: null, analysisTimeframe: null,
-    expiration: null, targetExpiration: null, serverTime: null,
-    candles: [], currentCandle: null, marketHistory: {}, signal: null,
-    professionalDecision: null, aiAudit: null,
-    tradeIntent: null, lastConfirmed: null, lastSeen: null,
-    platformControls: null,
-    diagnostics: { ...(extra.diagnostics || {}) },
+  return clearMarketAuthorityState(state, {
     ...extra,
+    scanner: 'idle',
+    connection: 'offline',
+    platformId: null,
+    platformName: null,
+    targetTabId: null,
+    diagnostics: { ...(extra.diagnostics || {}) },
+    marketSessionSource: 'background-control-clear',
     license: extra.license || state.license || DEFAULT_LICENSE
-  };
+  });
 }
 
 function licenseBlockedDiagnostics(license = {}) {
@@ -79,6 +166,16 @@ async function injectModern(tabId) {
   return inject(tabId).catch(() => false);
 }
 
+async function refreshTargetTab() {
+  const state = await readScannerState();
+  if (!activeLicense(state.license)) return { ok: false, error: 'license_required', state };
+  const tabId = Number(state.targetTabId || 0);
+  if (!tabId) return { ok: false, error: 'target_tab_missing', state };
+  const injected = await injectModern(tabId);
+  if (!injected) return { ok: false, error: 'runtime_injection_failed', state: await readScannerState() };
+  return { ok: true, tabId, state: await readScannerState() };
+}
+
 async function connectActiveTab() {
   let state = await readScannerState();
   const license = await recoverLicense(state);
@@ -106,13 +203,10 @@ async function connectActiveTab() {
     const dataFresh = Number(current.lastSeen || 0) > 0 && Date.now() - Number(current.lastSeen) < 2500;
     const preserveLive = sameTab && current.connection === 'online' && focusFresh && dataFresh
       && focus?.reliable === true && focus?.trustedChartFrame === true;
+
     const diagnostics = { ...(current.diagnostics || {}) };
-    if (!preserveLive) {
-      delete diagnostics.focusedAsset;
-      delete diagnostics.marketClock;
-      delete diagnostics.marketSession;
-    }
-    return {
+    delete diagnostics.connectionError;
+    const base = {
       ...current,
       license,
       platformId: platform.id,
@@ -120,12 +214,6 @@ async function connectActiveTab() {
       targetTabId: tab.id,
       scanner: 'scanning',
       connection: preserveLive ? 'online' : 'connecting',
-      ...(!preserveLive ? {
-        asset: null, price: null, timeframe: null, analysisTimeframe: null,
-        expiration: null, targetExpiration: null, candles: [], currentCandle: null, marketHistory: {},
-        signal: null, professionalDecision: null, aiAudit: null,
-        lastConfirmed: null, tradeIntent: null, lastSeen: null, platformControls: null
-      } : {}),
       diagnostics: {
         ...diagnostics,
         target: { host: new URL(tab.url).hostname, tabId: tab.id, connectedAt: Date.now(), pipeline: 'single-session' },
@@ -136,9 +224,39 @@ async function connectActiveTab() {
         }
       }
     };
+
+    if (preserveLive) return base;
+    return clearMarketAuthorityState(base, {
+      license,
+      platformId: platform.id,
+      platformName: platform.name,
+      targetTabId: tab.id,
+      scanner: 'scanning',
+      connection: 'connecting',
+      diagnostics: base.diagnostics,
+      marketSessionSource: 'connect-active-tab'
+    });
   });
 
-  await injectModern(tab.id);
+  const injected = await injectModern(tab.id);
+  if (!injected) {
+    const failed = await updateScannerState(current => ({
+      ...current,
+      connection: current.connection === 'online' ? 'online' : 'connecting',
+      diagnostics: {
+        ...(current.diagnostics || {}),
+        acquisition: {
+          ...(current.diagnostics?.acquisition || {}),
+          stage: 'runtime_injection_failed',
+          reason: 'A CasaTrade foi reconhecida, mas os leitores ao vivo não conseguiram ser injetados. Recarregue a aba da CasaTrade e conecte novamente.',
+          at: Date.now()
+        }
+      }
+    }));
+    return { ok: false, error: 'runtime_injection_failed', platform: { id: platform.id, name: platform.name }, tabId: tab.id, state: failed };
+  }
+  const connectedAt = Number(next.diagnostics?.target?.connectedAt || Date.now());
+  scheduleConnectionTimeout(tab.id, connectedAt);
   return { ok: true, platform: { id: platform.id, name: platform.name }, tabId: tab.id, state: await readScannerState() || next };
 }
 
@@ -196,8 +314,9 @@ function exactTradeReady(state = {}) {
   const clock = state.diagnostics?.marketClock || {};
   const focus = state.diagnostics?.focusedAsset || {};
   const professional = state.professionalDecision || {};
-  const actualExpiration = clean(state.platformControls?.observed?.expiration || '');
-  const controlsFresh = Number(state.platformControls?.checkedAt || 0) > 0 && Date.now() - Number(state.platformControls.checkedAt) < 7000;
+  const expirationAt = Number(state.platformControls?.expirationCheckedAt || state.platformControls?.observed?.observedAt?.expiration || 0);
+  const controlsFresh = expirationAt > 0 && Date.now() - expirationAt < 7000;
+  const actualExpiration = controlsFresh ? clean(state.platformControls?.observed?.expiration || '') : '';
   if (professional.timeReady !== true || professional.expirationReady !== true || professional.actionable !== true) return false;
   if (clock.verified !== true || clock.available === false || clock.role !== 'candle-close' || !EXACT_CLOCK_SOURCES.has(clean(clock.source))) return false;
   if (Date.now() - Number(clock.at || 0) >= 3000) return false;
@@ -259,6 +378,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (type === 'ATS_CONNECT_ACTIVE_TAB' || type === 'ATS_REFRESH_MARKET') {
     connectActiveTab().then(sendResponse).catch(error => sendResponse({ ok: false, error: String(error?.message || error) }));
+    return true;
+  }
+
+  if (type === 'ATS_REFRESH_TARGET_TAB') {
+    refreshTargetTab().then(sendResponse).catch(error => sendResponse({ ok: false, error: String(error?.message || error) }));
     return true;
   }
 

@@ -1,6 +1,6 @@
 const casaHost = value => {
   const host = String(value || '').toLowerCase().replace(/\.$/, '');
-  return host === 'casatrade.com' || host.endsWith('.casatrade.com') || host === 'casatrade.io' || host.endsWith('.casatrade.io');
+  return host === 'casatrade.com' || host.endsWith('.casatrade.com') || host === 'casatrade.io' || host.endsWith('.casatrade.io') || host === 'casatraders.online' || host.endsWith('.casatraders.online') || host === 'ivcasatraders.online' || host.endsWith('.ivcasatraders.online');
 };
 
 const opaqueUrl = value => /^(?:blob:|about:|data:)/i.test(String(value || ''));

@@ -61,7 +61,10 @@
   }
 
   async function syncPreference(value) {
-    preferred = String(value || '').toUpperCase() === 'AUTO' ? null : normExp(value);
+    const requested = String(value || '').toUpperCase() === 'AUTO' ? null : normExp(value);
+    // Legacy 30s/2m/5m preferences are invalid for the fixed M1 strategy.
+    // Migrate them to AUTO instead of showing a contradictory saved value.
+    preferred = requested === '60s' ? '60s' : null;
     select.value = preferred || 'AUTO';
     await storageSet({ [PREF_KEY]: { preferredExpiration: preferred } });
     await send({ type: 'ATS_SET_ANALYST_PREFERENCES', preferredExpiration: preferred });

@@ -58,19 +58,22 @@ test('stable bullish bias becomes POSSIBLE after two observations and stays visi
   assert.equal(finalCandidate.signal.phase, 'POSSIBLE');
   assert.equal(finalCandidate.signal.uiState, 'POSSIBLE_BUY');
 
-  const enter = snap(bucket, 46_000, 14);
+  const atTen = snap(bucket, 50_000, 10);
+  assert.notEqual(atTen.signal.state, 'CONFIRM');
+
+  const enter = snap(bucket, 51_000, 9);
   assert.equal(enter.signal.state, 'CONFIRM');
   assert.equal(enter.signal.uiState, 'ENTER_BUY');
   assert.equal(enter.signal.direction, 'BUY');
-  assert.equal(enter.signal.secondsRemaining, 14);
+  assert.equal(enter.signal.secondsRemaining, 9);
   assert.equal(enter.decisionCycle.locked, 'ENTER');
 });
 
 test('decision remains latched for the same target candle after entry is released', () => {
   resetOrchestrator();
   const bucket = Math.floor(1_701_200_000_000 / minute) * minute;
-  snap(bucket, 45_000, 15);
-  const enter = snap(bucket, 46_000, 14);
+  snap(bucket, 50_000, 10);
+  const enter = snap(bucket, 51_000, 9);
   assert.equal(enter.signal.state, 'CONFIRM');
 
   const later = snap(bucket, 52_000, 8, lateralRows(bucket), 1.001);

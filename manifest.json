@@ -1,43 +1,106 @@
 {
   "manifest_version": 3,
   "name": "AI Trading Scanner",
-  "version": "0.11.13",
+  "version": "0.11.27",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArDZEDqmjiphJQ4FBhEvxfVBwyAOVeme/dFP5Axh0OOB3KKFtubALdF4RqqnTfxUgGnW/6DhDGlc8asFHN0lRMDEkbv+RcqXIoeQb/EUwDG6QAzBSSxHZh8gCjITjU3Ba2YZ0tkM5aSamxSG7wZIqgQjz4qyc6xOlVNuMcHpz+ucQhapy1dn+0elnHwIjMISemIEEfWMBDkNxqES6XJEGA+MqQpB2+qQYQ0tLryWM7XGRBFabwfs8F6rLvtATf3Y8cgJzn6SL85i22qcy8zmhvWzlM0OC0/CfNULXuaoq1fBlihmicu/psTg/n4BBVSuCtsVb2XBKodgR7cxrFP4PawIDAQAB",
   "description": "Scanner de sinais para CasaTrade com leitura de mercado real, motor técnico e segunda leitura Gemini no servidor.",
-  "permissions": ["storage","activeTab","scripting","sidePanel"],
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting",
+    "sidePanel",
+    "notifications",
+    "offscreen"
+  ],
   "host_permissions": [
-    "https://casatrade.com/*","https://*.casatrade.com/*","https://casatrade.io/*","https://*.casatrade.io/*",
-    "https://casatraders.online/*","https://*.casatraders.online/*","https://ivcasatraders.online/*","https://*.ivcasatraders.online/*",
+    "https://casatrade.com/*",
+    "https://*.casatrade.com/*",
+    "https://casatrade.io/*",
+    "https://*.casatrade.io/*",
+    "https://casatraders.online/*",
+    "https://*.casatraders.online/*",
+    "https://ivcasatraders.online/*",
+    "https://*.ivcasatraders.online/*",
     "https://ats-control-center-v07-production.up.railway.app/*",
     "https://ai-trading-scanner-production-62f2.up.railway.app/*"
   ],
-  "background": { "service_worker": "src/background-entry.js", "type": "module" },
-  "action": { "default_title": "AI Trading Scanner" },
+  "background": {
+    "service_worker": "src/background-entry.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "AI Trading Scanner"
+  },
   "options_page": "src/admin/index.html",
-  "side_panel": { "default_path": "src/sidepanel/index.html" },
+  "side_panel": {
+    "default_path": "src/sidepanel/index.html"
+  },
   "content_scripts": [
     {
-      "matches": ["https://casatrade.com/*","https://*.casatrade.com/*","https://casatrade.io/*","https://*.casatrade.io/*"],
-      "js": ["src/content/runtime-message-compat.js","src/content/runtime-boot-probe.js","src/content/page-world-bootstrap.js","src/content/device-anchor.js","src/content/opaque-frame-top-bridge.js"],
+      "matches": [
+        "https://casatrade.com/*",
+        "https://*.casatrade.com/*",
+        "https://casatrade.io/*",
+        "https://*.casatrade.io/*",
+        "https://casatraders.online/*",
+        "https://*.casatraders.online/*",
+        "https://ivcasatraders.online/*",
+        "https://*.ivcasatraders.online/*"
+      ],
+      "js": [
+        "src/content/runtime-message-compat.js",
+        "src/content/runtime-boot-probe.js",
+        "src/content/page-world-bootstrap.js",
+        "src/content/device-anchor.js",
+        "src/content/opaque-frame-top-bridge.js"
+      ],
       "run_at": "document_start",
       "all_frames": false
     },
     {
       "matches": [
-        "https://casatrade.com/*","https://*.casatrade.com/*","https://casatrade.io/*","https://*.casatrade.io/*",
-        "https://casatraders.online/*","https://*.casatraders.online/*","https://ivcasatraders.online/*","https://*.ivcasatraders.online/*"
+        "https://casatrade.com/*",
+        "https://*.casatrade.com/*",
+        "https://casatrade.io/*",
+        "https://*.casatrade.io/*",
+        "https://casatraders.online/*",
+        "https://*.casatraders.online/*",
+        "https://ivcasatraders.online/*",
+        "https://*.ivcasatraders.online/*"
       ],
-      "js": ["src/content/runtime-message-compat.js","src/content/runtime-boot-probe.js","src/content/page-world-bootstrap.js","src/content/opaque-frame-recovery.js","src/content/focused-asset-alias-bridge.js","src/content/focused-asset-protocol.js","src/content/focused-asset-v2.js","src/content/chart-frame-market-reader.js"],
+      "js": [
+        "src/content/runtime-message-compat.js",
+        "src/content/runtime-boot-probe.js",
+        "src/content/page-world-bootstrap.js",
+        "src/content/opaque-frame-recovery.js",
+        "src/content/focused-asset-alias-bridge.js",
+        "src/content/focused-asset-protocol.js",
+        "src/content/focused-asset-v2.js",
+        "src/content/chart-frame-market-reader.js"
+      ],
       "run_at": "document_start",
       "all_frames": true,
       "match_origin_as_fallback": true
     },
     {
       "matches": [
-        "https://casatrade.com/*","https://*.casatrade.com/*","https://casatrade.io/*","https://*.casatrade.io/*",
-        "https://casatraders.online/*","https://*.casatraders.online/*","https://ivcasatraders.online/*","https://*.ivcasatraders.online/*"
+        "https://casatrade.com/*",
+        "https://*.casatrade.com/*",
+        "https://casatrade.io/*",
+        "https://*.casatrade.io/*",
+        "https://casatraders.online/*",
+        "https://*.casatraders.online/*",
+        "https://ivcasatraders.online/*",
+        "https://*.ivcasatraders.online/*"
       ],
-      "js": ["src/content/page-world-sentinel.js","src/content/canvas-countdown-probe.js","src/content/standalone-instrument-probe.js","src/content/worker-probe.js","src/content/canvas-probe.js","src/content/network-probe.js"],
+      "js": [
+        "src/content/page-world-sentinel.js",
+        "src/content/canvas-countdown-probe.js",
+        "src/content/standalone-instrument-probe.js",
+        "src/content/worker-probe.js",
+        "src/content/canvas-probe.js",
+        "src/content/network-probe.js"
+      ],
       "run_at": "document_start",
       "world": "MAIN",
       "all_frames": true,
@@ -45,14 +108,28 @@
     },
     {
       "matches": [
-        "https://casatrade.com/*","https://*.casatrade.com/*","https://casatrade.io/*","https://*.casatrade.io/*",
-        "https://casatraders.online/*","https://*.casatraders.online/*","https://ivcasatraders.online/*","https://*.ivcasatraders.online/*"
+        "https://casatrade.com/*",
+        "https://*.casatrade.com/*",
+        "https://casatrade.io/*",
+        "https://*.casatrade.io/*",
+        "https://casatraders.online/*",
+        "https://*.casatraders.online/*",
+        "https://ivcasatraders.online/*",
+        "https://*.ivcasatraders.online/*"
       ],
       "js": [
         "src/content/runtime-message-compat.js",
-        "src/content/embedded-feed-bridge.js","src/content/platform-sync.js","src/content/casatrade-ui-observer-v2.js","src/content/market-cycle-clock-v4.js","src/content/market-clock-projector.js","src/content/casatrade-expiration-probe.js",
-        "src/content/casatrade-data-inspector.js","src/content/analysis-visual-overlay-v2.js","src/content/manual-trade-observer.js",
-        "src/content/account-metrics-observer.js","src/content/trade-handoff-v2.js"
+        "src/content/embedded-feed-bridge.js",
+        "src/content/platform-sync.js",
+        "src/content/casatrade-ui-observer-v2.js",
+        "src/content/market-cycle-clock-v4.js",
+        "src/content/market-clock-projector.js",
+        "src/content/casatrade-expiration-probe.js",
+        "src/content/casatrade-data-inspector.js",
+        "src/content/analysis-visual-overlay-v2.js",
+        "src/content/manual-trade-observer.js",
+        "src/content/account-metrics-observer.js",
+        "src/content/trade-handoff-v2.js"
       ],
       "run_at": "document_start",
       "all_frames": true,
@@ -70,10 +147,19 @@
         "src/content/network-probe.js"
       ],
       "matches": [
-        "https://casatrade.com/*","https://*.casatrade.com/*","https://casatrade.io/*","https://*.casatrade.io/*",
-        "https://casatraders.online/*","https://*.casatraders.online/*","https://ivcasatraders.online/*","https://*.ivcasatraders.online/*"
+        "https://casatrade.com/*",
+        "https://*.casatrade.com/*",
+        "https://casatrade.io/*",
+        "https://*.casatrade.io/*",
+        "https://casatraders.online/*",
+        "https://*.casatraders.online/*",
+        "https://ivcasatraders.online/*",
+        "https://*.ivcasatraders.online/*"
       ]
     }
   ],
-  "version_name": "0.11.13-build5-live-pipeline"
+  "version_name": "0.11.27-live-market-switch-expiration-hotfix",
+  "icons": {
+    "128": "src/assets/icon128.png"
+  }
 }

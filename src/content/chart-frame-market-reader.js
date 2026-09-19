@@ -171,6 +171,6 @@
     }
   }
 
-  setInterval(tick, 750);
+  setInterval(tick, 400);
   tick();
 })();

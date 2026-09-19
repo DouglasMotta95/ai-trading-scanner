@@ -1,6 +1,6 @@
 {
   "name": "ai-trading-scanner",
-  "version": "0.10.2",
+  "version": "0.11.25",
   "private": true,
   "type": "module",
   "scripts": {

@@ -10,7 +10,7 @@ function senderTrusted(sender = {}) {
   let frameHost = '', topHost = '';
   try { frameHost = host(new URL(sender.url || '').hostname); } catch {}
   try { topHost = host(new URL(sender.tab?.url || '').hostname); } catch {}
-  return !!sender.tab?.id && Number(sender.frameId) !== 0 && traderHost(frameHost) && casaHost(topHost);
+  return !!sender.tab?.id && Number(sender.frameId) !== 0 && traderHost(frameHost) && (casaHost(topHost) || traderHost(topHost));
 }
 
 function safeStrings(rows, maxItems, maxLength) {

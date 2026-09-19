@@ -11,16 +11,16 @@ function base(overrides = {}) {
   };
 }
 
-test('shows POSSIBLE immediately instead of hiding in BUILDING_PATTERN', () => {
+test('shows POSSIBLE inside the 30 second preparation window', () => {
   resetFastLiveDecision();
-  const r = fastLiveDecision(base(), { asset: 'AUD/CAD (OTC)', timeframe: 'M1', serverTime: 100000 });
+  const r = fastLiveDecision(base({ secondsRemaining: 24 }), { asset: 'AUD/CAD (OTC)', timeframe: 'M1', serverTime: 100000 });
   assert.equal(r.uiState, 'POSSIBLE_SELL');
   assert.equal(r.direction, 'SELL');
 });
 
-test('confirms ENTER on two strong observations inside final 20 seconds', () => {
+test('confirms ENTER on two strong observations inside final 10 seconds', () => {
   resetFastLiveDecision();
-  const signal = base({ score: 64, analysisScore: 64, secondsRemaining: 18 });
+  const signal = base({ score: 64, analysisScore: 64, secondsRemaining: 9 });
   const first = fastLiveDecision(signal, { asset: 'AUD/CAD (OTC)', timeframe: 'M1', serverTime: 100000 });
   const second = fastLiveDecision(signal, { asset: 'AUD/CAD (OTC)', timeframe: 'M1', serverTime: 101000 });
   assert.equal(first.uiState, 'POSSIBLE_SELL');
@@ -28,9 +28,9 @@ test('confirms ENTER on two strong observations inside final 20 seconds', () => 
   assert.equal(second.state, 'CONFIRM');
 });
 
-test('finishes candle with SKIP when setup never confirms', () => {
+test('finishes candle with AGUARDAR when setup never confirms', () => {
   resetFastLiveDecision();
   const r = fastLiveDecision(base({ secondsRemaining: 3 }), { asset: 'AUD/CAD (OTC)', timeframe: 'M1', serverTime: 100000 });
-  assert.equal(r.uiState, 'SKIP');
+  assert.equal(r.uiState, 'WAIT');
   assert.equal(r.state, 'NO_TRADE');
 });

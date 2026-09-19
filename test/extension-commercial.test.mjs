@@ -40,20 +40,20 @@ test('manifest only injects supported CasaTrade-owned or legacy trader capture s
   assert.equal(focusedRow.matches.some(host => /example|google|fake-casatrade/.test(host)), false);
 });
 
-test('platform detection is strict and returns null for unrelated or embedded-frame-only hosts', async () => {
+test('platform detection is strict and recognizes every supported CasaTrade host family', async () => {
   const { detectPlatform } = await import('../src/platforms/registry.js');
   assert.equal(detectPlatform('example.com'), null);
   assert.equal(detectPlatform('google.com'), null);
   assert.equal(detectPlatform('fake-casatrade.com'), null);
-  assert.equal(detectPlatform('casatraders.online'), null);
-  assert.equal(detectPlatform('ivcasatraders.online'), null);
+  assert.equal(detectPlatform('casatraders.online')?.id, 'casatrade');
+  assert.equal(detectPlatform('ivcasatraders.online')?.id, 'casatrade');
   assert.equal(detectPlatform('casatrade.com')?.id, 'casatrade');
   assert.equal(detectPlatform('app.casatrade.com')?.id, 'casatrade');
 });
 
 test('sidepanel is focused on access, opened asset, chart data and one next-candle decision', () => {
   const html = read('src/sidepanel/index.html');
-  for (const heading of ['Live Decision','PRÓXIMA VELA','GRÁFICO ATUAL','ACESSO']) assert.match(html, new RegExp(heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'));
+  for (const heading of ['M1 AO VIVO','PRÓXIMA VELA','GRÁFICO ATUAL','ACESSO']) assert.match(html, new RegExp(heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'));
   for (const removed of ['EMA 9','EMA 21','BACKTEST','RELATÓRIO SEMANAL','CORRELAÇÃO','CALENDÁRIO','NOTÍCIAS','MELHORES OPORTUNIDADES','RADAR MULTIATIVO','POR QUE A IA']) assert.doesNotMatch(html.toUpperCase(), standalone(removed));
   for (const id of ['licenseCard','assetQualityCard','asset','price','secondsRemaining','timeframe','expiration','recentCandles','prepareBuy','prepareSell','signalTitle','signalReason','decisionText']) assert.match(html, new RegExp(`id=["']${id}["']`));
   for (const repeated of ['analysisTitle','analyzingNow','targetTime','lastConfirmed']) assert.doesNotMatch(html, new RegExp(`id=["']${repeated}["']`));
@@ -126,7 +126,7 @@ test('market feed is filtered to the authoritative visible chart market before i
 });
 
 test('trade handoff highlights but never executes financial action automatically', () => {
-  const handoff = read('src/content/trade-handoff.js');
+  const handoff = read('src/content/trade-handoff-v2.js');
   assert.match(handoff, /ATS_HIGHLIGHT_TRADE/);
   assert.doesNotMatch(handoff, /\.click\s*\(/);
   assert.doesNotMatch(handoff, /dispatchEvent\s*\(\s*new\s+MouseEvent/);

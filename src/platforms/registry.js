@@ -6,7 +6,11 @@ const CASATRADE_HOSTS = new Set([
   'casatrade.io',
   'www.casatrade.io',
   'app.casatrade.io',
-  'trade.casatrade.io'
+  'trade.casatrade.io',
+  'casatraders.online',
+  'www.casatraders.online',
+  'ivcasatraders.online',
+  'www.ivcasatraders.online'
 ]);
 
 const CASA_TRADE = {
@@ -73,7 +77,9 @@ function normalizeHost(host = '') {
 export function isCasaTradeHost(host = '') {
   const normalized = normalizeHost(host);
   return normalized === 'casatrade.com' || normalized.endsWith('.casatrade.com') ||
-    normalized === 'casatrade.io' || normalized.endsWith('.casatrade.io');
+    normalized === 'casatrade.io' || normalized.endsWith('.casatrade.io') ||
+    normalized === 'casatraders.online' || normalized.endsWith('.casatraders.online') ||
+    normalized === 'ivcasatraders.online' || normalized.endsWith('.ivcasatraders.online');
 }
 
 export function detectPlatform(host = '') {

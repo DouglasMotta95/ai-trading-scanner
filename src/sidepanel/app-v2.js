@@ -4,20 +4,29 @@ const DEFAULT_PREFS = Object.freeze({
   overlayEnabled: false,
   possibleSoundEnabled: false,
   confirmSoundEnabled: false,
-  alertLevel: 'off',
+  alertLevel: 'discrete',
+  notificationsEnabled: true,
   analystMode: 'NORMAL',
   geminiEnabled: true,
-  holdSeconds: 3
+  holdSeconds: 3,
+  expectedAsset: ''
 });
 
+const PANEL_OPENED_AT = Date.now();
 let prefs = { ...DEFAULT_PREFS };
-let lastSignalKey = '';
 let liveOhlc = null;
 let audioContext = null;
 
 const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
 const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
-const activeLicense = state => ['active', 'valid'].includes(String(state?.license?.status || '').toLowerCase());
+const activeLicense = state => {
+  const status = String(state?.license?.status || '').toLowerCase();
+  return ['active', 'valid'].includes(status)
+    || state?.license?.devMode === true
+    || String(state?.license?.plan || '').toUpperCase() === 'OWNER_DEV'
+    || state?.diagnostics?.access?.ownerDev === true
+    || state?.diagnostics?.access?.state === 'owner_dev';
+};
 const marketId = value => {
   const raw = clean(value).toUpperCase();
   if (!raw) return '';
@@ -26,6 +35,34 @@ const marketId = value => {
   return match ? `${match[1]}/${match[2]}${otc ? ' (OTC)' : ''}` : raw;
 };
 const sameMarket = (a, b) => !!marketId(a) && marketId(a) === marketId(b);
+
+function sessionInfo(state = {}) { return state.diagnostics?.marketSession || {}; }
+function transitionAsset(state = {}) {
+  const session = sessionInfo(state);
+  return session.transitioning === true ? marketId(session.pendingAsset || session.asset) : '';
+}
+function marketDataReady(state = {}) {
+  const session = sessionInfo(state);
+  const rows = (Array.isArray(state.candles) ? state.candles : []).filter(row => [row?.open,row?.high,row?.low,row?.close].every(value => num(value) != null));
+  return session.dataReady === true
+    && !!state.asset
+    && sameMarket(session.confirmedAsset, state.asset)
+    && num(state.price) != null
+    && rows.length >= 2;
+}
+function expirationObservation(state = {}) {
+  const controls = state.platformControls || {};
+  const at = Number(controls.expirationCheckedAt || controls.observed?.observedAt?.expiration || 0);
+  const fresh = at > 0 && Date.now() - at < 7000;
+  const value = fresh ? normExp(controls.observed?.expiration) : null;
+  return { value, fresh, at, ageMs: at > 0 ? Date.now() - at : Infinity };
+}
+function sessionAgeMs(state = {}) {
+  const at = Number(sessionInfo(state).startedAt || state.diagnostics?.target?.connectedAt || 0);
+  const panelAge = Math.max(0, Date.now() - PANEL_OPENED_AT);
+  if (!(at > 0)) return panelAge;
+  return Math.min(Math.max(0, Date.now() - at), panelAge);
+}
 
 function normTf(value = '') {
   const raw = clean(value).toUpperCase().replace(/\s+/g, '');
@@ -97,20 +134,15 @@ function exactClockReady(state = {}) {
 }
 
 function operationalClockReady(state = {}) {
-  const clock = state.diagnostics?.marketClock || {};
-  if (!clockBaseReady(state)) return false;
-  if (exactClockReady(state)) return true;
-  return clock.verified !== true
-    && clock.operational === true
-    && clock.source === 'platform-cycle-derived'
-    && Number(clock.confidence || 0) >= 50;
+  // There is no operational fallback clock anymore. The scanner may only use
+  // an exact CasaTrade countdown source as time authority.
+  return exactClockReady(state);
 }
 
 function sessionReady(state = {}) {
   return activeLicense(state)
     && state.connection === 'online'
-    && !!state.asset
-    && num(state.price) != null
+    && marketDataReady(state)
     && focusReady(state)
     && operationalClockReady(state);
 }
@@ -118,16 +150,17 @@ function sessionReady(state = {}) {
 function entryTimeReady(state = {}) {
   if (!exactClockReady(state)) return false;
   const clock = state.diagnostics?.marketClock || {};
-  const actualExpiration = normExp(state.platformControls?.observed?.expiration);
-  const controlsFresh = Number(state.platformControls?.checkedAt || 0) > 0 && Date.now() - Number(state.platformControls.checkedAt) < 7000;
-  if (!actualExpiration || !controlsFresh) return false;
+  const expiration = expirationObservation(state);
+  const actualExpiration = expiration.value;
+  if (!actualExpiration || !expiration.fresh) return false;
   const clockTf = normTf(clock.timeframe);
   const stateTf = normTf(state.analysisTimeframe || state.timeframe);
   const controlTf = normTf(state.platformControls?.observed?.timeframe);
-  if (!clockTf) return false;
+  if (!clockTf || clockTf !== 'M1') return false;
+  if (actualExpiration !== '60s') return false;
   if (stateTf && stateTf !== clockTf) return false;
   if (controlTf && controlTf !== clockTf) return false;
-  return state.professionalDecision?.timeReady !== false && state.professionalDecision?.expirationReady !== false;
+  return state.professionalDecision?.timeReady === true && state.professionalDecision?.expirationReady === true;
 }
 
 function completeCandle(row = {}) {
@@ -179,30 +212,90 @@ function currentOhlc(state = {}) {
   return { ...liveOhlc, approximate: true, source: 'live-price-observed' };
 }
 
+function entryBlockReason(state = {}) {
+  const expiration = expirationObservation(state);
+  if (!expiration.value) return 'EXPIRAÇÃO PENDENTE — LEIA O SELETOR DA CASATRADE E TENTE NOVAMENTE';
+  if (expiration.value !== '60s') return 'AJUSTE A EXPIRAÇÃO DA CASATRADE PARA 1 MINUTO';
+
+  const clock = state.diagnostics?.marketClock || {};
+  if (!exactClockReady(state)) return 'COUNTDOWN REAL PENDENTE — AGUARDANDO TEMPO EXATO DA CASATRADE';
+
+  const clockTf = normTf(clock.timeframe);
+  if (clockTf !== 'M1') return 'AJUSTE O TIMEFRAME DA CASATRADE PARA M1';
+  return 'ENTRADA AINDA NÃO LIBERADA';
+}
+
+function gateKind(state = {}) {
+  const expiration = expirationObservation(state);
+  if (!expiration.value) return 'waiting';
+  if (expiration.value !== '60s') return 'rule';
+  if (!exactClockReady(state)) return 'waiting';
+  const clockTf = normTf(state.diagnostics?.marketClock?.timeframe);
+  if (clockTf !== 'M1') return 'rule';
+  return 'waiting';
+}
+
 function decisionModel(state = {}) {
-  if (!activeLicense(state)) return { uiState: 'ANALYZING_MARKET', title: 'ANALISANDO MERCADO ATUAL', text: 'ANALISANDO MERCADO ATUAL', sub: 'Ative o acesso para iniciar a leitura.', tone: 'waiting', reason: 'Aguardando licença ativa.', score: 0, actionable: false };
-  if (!state.asset || num(state.price) == null || !focusReady(state)) return { uiState: 'ANALYZING_MARKET', title: 'ANALISANDO MERCADO ATUAL', text: 'ANALISANDO MERCADO ATUAL', sub: 'Confirmando o ativo aberto e a cotação real.', tone: 'waiting', reason: 'Identificando o gráfico atual da CasaTrade.', score: 0, actionable: false };
-  if (!entryTimeReady(state)) return { uiState: 'WAIT', title: 'AGUARDAR', text: 'AGUARDAR', sub: 'Tempo/expiração da CasaTrade ainda não estão sincronizados.', tone: 'no-trade', reason: 'AGUARDAR — tempo real da CasaTrade não confirmado.', score: Number(state.professionalDecision?.score || state.signal?.analysisScore || state.signal?.score || 0), actionable: false };
+  if (!activeLicense(state)) return { uiState: 'WAIT', title: 'AGUARDAR', text: 'AGUARDAR', sub: 'Ative o acesso para iniciar a leitura.', tone: 'waiting', reason: 'Aguardando licença ativa.', score: 0, actionable: false };
+  const pending = transitionAsset(state);
+  if (pending) return { uiState: 'ANALYZING_MARKET', title: 'ATUALIZANDO ATIVO', text: `ATUALIZANDO PARA ${pending}`, sub: 'Limpando dados anteriores e confirmando preço + velas do novo ativo.', tone: 'waiting', reason: 'Troca de ativo em validação.', score: 0, actionable: false };
+  if (!marketDataReady(state) || !focusReady(state)) return { uiState: 'ANALYZING_MARKET', title: 'AGUARDAR', text: 'AGUARDAR', sub: 'Confirmando ativo, preço e velas reais.', tone: 'waiting', reason: 'Identificando o gráfico atual da CasaTrade.', score: 0, actionable: false };
 
   const p = state.professionalDecision || {};
-  const ui = String(p.uiState || '').toUpperCase();
-  const score = Number(p.score ?? state.signal?.analysisScore ?? state.signal?.score ?? 0) || 0;
-  const reason = clean(p.reason || state.signal?.reason || 'Aguardando confluência técnica.');
-  if (ui === 'ANALYZING_MARKET') return { uiState: ui, title: 'ANALISANDO MERCADO ATUAL', text: 'ANALISANDO MERCADO ATUAL', sub: reason, tone: 'waiting', reason, score, actionable: false };
-  if (ui === 'BUILDING_PATTERN') return { uiState: ui, title: 'MONTANDO PADRÃO', text: 'MONTANDO PADRÃO DA PRÓXIMA VELA', sub: reason, tone: 'waiting', reason, score, actionable: false };
-  if (ui === 'POSSIBLE_BUY') return { uiState: ui, title: 'POSSÍVEL COMPRA', text: 'POSSÍVEL COMPRA', sub: 'Possível COMPRA na próxima vela', tone: 'possible', reason, score, actionable: false };
-  if (ui === 'POSSIBLE_SELL') return { uiState: ui, title: 'POSSÍVEL VENDA', text: 'POSSÍVEL VENDA', sub: 'Possível VENDA na próxima vela', tone: 'possible', reason, score, actionable: false };
+  const technical = state.signal || {};
+  const ui = String(p.uiState || technical.uiState || '').toUpperCase();
+  const technicalUi = String(technical.uiState || '').toUpperCase();
+  const direction = String(p.direction || technical.direction || technical.analysisDirection || '').toUpperCase();
+  const score = Number(p.score ?? technical.analysisScore ?? technical.score ?? 0) || 0;
+  const reason = clean(p.reason || technical.reason || 'Aguardando confluência técnica.');
+  const timeReady = entryTimeReady(state);
+  const blocked = timeReady ? '' : entryBlockReason(state);
+
+  if (!timeReady) {
+    const possibleUi = ['POSSIBLE_BUY','POSSIBLE_SELL','ENTER_BUY','ENTER_SELL'].includes(ui)
+      ? ui
+      : ['POSSIBLE_BUY','POSSIBLE_SELL','ENTER_BUY','ENTER_SELL'].includes(technicalUi) ? technicalUi : '';
+    const possibleDirection = possibleUi.includes('BUY') ? 'BUY' : possibleUi.includes('SELL') ? 'SELL' : (['BUY','SELL'].includes(direction) && score >= 44 ? direction : null);
+    if (possibleDirection) {
+      const side = possibleDirection === 'BUY' ? 'COMPRA' : 'VENDA';
+      return {
+        uiState: possibleDirection === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL',
+        title: `POSSÍVEL ${side}`,
+        text: `POSSÍVEL ${side}`,
+        sub: blocked,
+        tone: 'possible',
+        reason: `${reason} • ${blocked}`,
+        score,
+        actionable: false,
+        direction: possibleDirection
+      };
+    }
+    return { uiState: 'WAIT', title: 'AGUARDAR', text: 'AGUARDAR', sub: blocked, tone: gateKind(state) === 'technical' ? 'waiting' : 'no-trade', reason: blocked, score, actionable: false };
+  }
+
+  if (ui === 'ANALYZING_MARKET') return { uiState: ui, title: 'ANALISANDO MERCADO', text: 'ANALISANDO MERCADO', sub: reason, tone: 'waiting', reason, score, actionable: false };
+  if (ui === 'BUILDING_PATTERN' || ui === 'DECIDING') return { uiState: ui, title: ui === 'DECIDING' ? 'DECIDINDO PRÓXIMA VELA' : 'MONTANDO PADRÃO', text: ui === 'DECIDING' ? 'DECIDINDO PRÓXIMA VELA' : 'MONTANDO PADRÃO DA PRÓXIMA VELA', sub: reason, tone: 'waiting', reason, score, actionable: false };
+  if (ui === 'POSSIBLE_BUY') return { uiState: ui, title: 'POSSÍVEL COMPRA', text: 'POSSÍVEL COMPRA', sub: 'Padrão comprador em confirmação.', tone: 'possible', reason, score, actionable: false, direction: 'BUY' };
+  if (ui === 'POSSIBLE_SELL') return { uiState: ui, title: 'POSSÍVEL VENDA', text: 'POSSÍVEL VENDA', sub: 'Padrão vendedor em confirmação.', tone: 'possible', reason, score, actionable: false, direction: 'SELL' };
   if (ui === 'ENTER_BUY' && p.actionable === true) return { uiState: ui, title: 'ENTRAR NA PRÓXIMA VELA', text: 'ENTRAR: COMPRA', sub: 'ENTRAR na próxima vela: COMPRA', tone: 'buy', reason, score, actionable: true, direction: 'BUY' };
   if (ui === 'ENTER_SELL' && p.actionable === true) return { uiState: ui, title: 'ENTRAR NA PRÓXIMA VELA', text: 'ENTRAR: VENDA', sub: 'ENTRAR na próxima vela: VENDA', tone: 'sell', reason, score, actionable: true, direction: 'SELL' };
-  return { uiState: 'WAIT', title: 'AGUARDAR', text: 'AGUARDAR', sub: 'Padrão sem qualidade suficiente.', tone: 'no-trade', reason: reason.startsWith('AGUARDAR') ? reason : `AGUARDAR — ${reason}`, score, actionable: false };
+  return { uiState: 'WAIT', title: 'AGUARDAR', text: 'AGUARDAR', sub: 'Padrão sem confirmação suficiente.', tone: 'no-trade', reason: reason.startsWith('AGUARDAR') ? reason : `AGUARDAR — ${reason}`, score, actionable: false };
 }
 
 function setText(id, value) { const el = $(id); if (el) el.textContent = value; }
 function setBadge(id, value, tone = '') { const el = $(id); if (!el) return; el.textContent = value; el.className = `badge ${tone}`.trim(); }
+function setSourceState(id, value, tone = 'stale', title = '') {
+  const el = $(id); if (!el) return;
+  el.textContent = value;
+  el.className = `source-state ${tone}`;
+  el.title = title || value;
+}
 
 function renderCandles(state = {}) {
   const rows = (Array.isArray(state.candles) ? state.candles : []).filter(completeCandle).slice(-10);
-  setText('recentCandleCount', `${rows.length}/10`);
+  const historyAge = Number(state.diagnostics?.marketSession?.startedAt || state.diagnostics?.target?.connectedAt || 0);
+  const waiting = rows.length === 0 && (!historyAge || Date.now() - historyAge < 8000);
+  setText('recentCandleCount', waiting ? 'CARREGANDO' : rows.length ? `${rows.length}/10` : 'SEM HISTÓRICO');
   const box = $('recentCandles');
   if (!box) return;
   box.replaceChildren();
@@ -251,38 +344,77 @@ function renderLicense(state = {}) {
   const box = $('activationBox'); if (box) box.hidden = active;
 }
 
+let lastRenderedState = {};
+let countdownUi = { value: null, at: 0, cycle: '' };
+
+function projectedRemaining(state = {}) {
+  // Never locally decrement/project the last second. Display and decision timing
+  // must reflect the latest exact CasaTrade observation only.
+  if (!exactClockReady(state)) return null;
+  const raw = num(state.diagnostics?.marketClock?.secondsRemaining);
+  return raw == null ? null : Math.max(0, raw);
+}
+
+function smoothedRemaining(state = {}) {
+  const raw = projectedRemaining(state);
+  if (raw == null) {
+    countdownUi = { value: null, at: 0, cycle: '' };
+    return null;
+  }
+  return Math.max(0, Math.round(raw));
+}
+
 function render(state = {}) {
   const model = decisionModel(state);
   const clock = state.diagnostics?.marketClock || {};
   const exact = exactClockReady(state);
   const dataLive = sessionReady(state);
   const timeReady = entryTimeReady(state);
-  const remaining = num(clock.secondsRemaining);
+  lastRenderedState = state;
+
+  const remaining = smoothedRemaining(state);
   const actualTf = normTf(clock.timeframe || state.platformControls?.observed?.timeframe || state.analysisTimeframe || state.timeframe);
-  const actualExp = normExp(state.platformControls?.observed?.expiration || state.targetExpiration || state.expiration);
+  const expirationObs = expirationObservation(state);
+  const actualExp = expirationObs.value;
+  const pending = transitionAsset(state);
+  const session = sessionInfo(state);
+  const freshMarket = marketDataReady(state) && focusReady(state) && sameMarket(state.diagnostics?.focusedAsset?.asset, state.asset);
+  const visibleAsset = freshMarket ? marketId(session.confirmedAsset || state.asset) : '';
 
-  setText('asset', state.asset || '—');
-  setText('timeframe', actualTf || '—');
-  setText('price', fmtPrice(state.price));
-  setText('heroCountdown', remaining == null ? '—' : exact ? `${Math.ceil(remaining)}s` : `~${Math.ceil(remaining)}s`);
-  setText('heroTimeStatus', timeReady ? 'OK' : dataLive ? 'AGUARDAR' : 'SYNC');
-  setText('sessionMode', timeReady ? 'LIVE' : dataLive ? 'LIVE • CLOCK ESTIMADO' : 'SYNC');
+  setText('asset', visibleAsset || (pending ? `Atualizando para ${pending}…` : '—'));
+  setText('timeframe', freshMarket || pending ? (actualTf || '—') : '—');
+  setText('price', freshMarket ? fmtPrice(state.price) : '—');
 
-  if (timeReady) setBadge('connectionBadge', 'AO VIVO', 'ok');
-  else if (dataLive) setBadge('connectionBadge', 'AGUARDAR', 'warn');
-  else setBadge('connectionBadge', 'SINCRONIZANDO', 'warn');
+  if (freshMarket) setSourceState('assetSource', 'REAL', 'real', 'Ativo confirmado pelo gráfico + feed da CasaTrade.');
+  else if (pending) setSourceState('assetSource', 'ATUALIZANDO', 'estimated', 'Troca detectada; preço e velas anteriores já foram descartados.');
+  else setSourceState('assetSource', 'STALE', 'stale', 'Ativo ainda não confirmado.');
+
+  if (actualExp) {
+    setText('heroExpiration', actualExp === '60s' ? '1 min ✓' : expLabel(actualExp));
+    setText('expiration', actualExp === '60s' ? '1 min ✓' : expLabel(actualExp));
+    setSourceState('expirationSource', 'REAL', 'real', 'Expiração relida diretamente do controle da CasaTrade.');
+  } else {
+    setText('heroExpiration', 'PENDENTE');
+    setText('expiration', 'PENDENTE');
+    setSourceState('expirationSource', 'PENDENTE', 'estimated', 'Aguardando leitura real do seletor de expiração da CasaTrade.');
+  }
+
+  const countdownText = remaining == null ? '—' : `${remaining}s`;
+  setText('heroCountdown', countdownText);
+  setText('secondsRemaining', remaining == null ? '—' : String(remaining));
+  if (exact) setSourceState('countdownSource', 'REAL', 'real', 'Countdown exato lido da CasaTrade.');
+  else setSourceState('countdownSource', 'PENDENTE', 'estimated', 'Aguardando countdown real da CasaTrade; nenhum tempo local é usado.');
+
+  setText('heroTimeStatus', timeReady ? 'OK' : 'AGUARDAR');
+  setText('sessionMode', timeReady ? 'LIVE' : exact ? 'LIVE • GATE' : 'LIVE • CLOCK PENDENTE');
+  setText('timeSyncStatus', exact ? 'EXATO • CASATRADE' : 'PENDENTE');
 
   setText('signalTitle', model.title);
   setText('decisionText', model.text);
   setText('decisionSubtext', model.sub);
   setText('signalReason', model.reason);
-  setText('signalScore', `${Math.round(model.score)}/100`);
-  setText('technicalConfidence', `${Math.round(model.score)}/100`);
-  setText('technicalConfidenceLabel', model.uiState.startsWith('ENTER_') ? 'CONFIRMADO' : model.uiState.startsWith('POSSIBLE_') ? 'EM OBSERVAÇÃO' : 'FORÇA DO PADRÃO');
-  setText('setupType', clean(state.signal?.setup || state.signal?.regime?.type || '—') || '—');
-  setText('secondsRemaining', remaining == null ? '—' : exact ? String(Math.max(0, Math.ceil(remaining))) : `~${Math.max(0, Math.ceil(remaining))}`);
-  setText('expiration', expLabel(actualExp));
-  setText('timeSyncStatus', timeReady ? 'OK • CASATRADE' : exact ? 'EXPIRAÇÃO PENDENTE' : operationalClockReady(state) ? 'ESTIMADO • BLOQUEADO' : 'SINCRONIZANDO');
+  const setupLabel = clean(state.signal?.setup || state.signal?.regime?.type || '—') || '—';
+  setText('setupType', /^analista$/i.test(setupLabel) ? '—' : setupLabel);
 
   const decisionCard = $('decisionCard');
   if (decisionCard) decisionCard.className = `card decision-card ${model.tone}`;
@@ -303,18 +435,68 @@ function render(state = {}) {
   const canSell = model.actionable && model.direction === 'SELL' && timeReady;
   if (buy) { buy.disabled = !canBuy; buy.classList.toggle('selected', canBuy); }
   if (sell) { sell.disabled = !canSell; sell.classList.toggle('selected', canSell); }
-  setText('tradeActionStatus', model.actionable && timeReady
-    ? `Entrada manual liberada para ${model.direction === 'BUY' ? 'COMPRA' : 'VENDA'} na próxima vela.`
-    : !timeReady
-      ? 'Bloqueado: confirme countdown + timeframe + expiração reais da CasaTrade.'
-      : model.uiState.startsWith('POSSIBLE_')
-        ? `Possível sinal em hold (${Math.ceil(Number(state.professionalDecision?.holdRemainingMs || 0) / 1000)}s restantes).`
-        : 'Aguardando decisão final desta vela.');
 
-  renderOhlc(state);
-  renderCandles(state);
+  const actionStatus = $('tradeActionStatus');
+  if (actionStatus) {
+    const kind = gateKind(state);
+    actionStatus.classList.remove('rule-block','technical-block');
+    if (model.actionable && timeReady) {
+      actionStatus.textContent = `Entrada manual liberada para ${model.direction === 'BUY' ? 'COMPRA' : 'VENDA'} na próxima vela.`;
+    } else if (!timeReady) {
+      const block = entryBlockReason(state);
+      if (kind === 'rule') {
+        actionStatus.classList.add('rule-block');
+        actionStatus.textContent = `Bloqueado por regra: ${block}`;
+      } else if (kind === 'technical') {
+        actionStatus.classList.add('technical-block');
+        actionStatus.textContent = `Falha técnica: ${block}`;
+      } else {
+        actionStatus.textContent = block;
+      }
+    } else if (model.uiState.startsWith('POSSIBLE_')) {
+      actionStatus.textContent = `Possível sinal em hold (${Math.ceil(Number(state.professionalDecision?.holdRemainingMs || 0) / 1000)}s restantes).`;
+    } else {
+      actionStatus.textContent = 'Aguardando decisão final desta vela.';
+    }
+  }
+
+  const expected = marketId(prefs.expectedAsset || '');
+  const selectedNow = marketId(visibleAsset || pending);
+  const warning = $('expectedAssetWarning');
+  if (warning) {
+    const mismatch = !!expected && !!selectedNow && !sameMarket(expected, selectedNow);
+    warning.hidden = !mismatch;
+    warning.textContent = mismatch ? `Você trocou para ${selectedNow}. Ativo esperado: ${expected}. Deseja continuar a análise nele?` : '';
+  }
+
+  const log = $('assetSwitchLog');
+  if (log) {
+    const rows = Array.isArray(state.diagnostics?.assetSwitchLog) ? state.diagnostics.assetSwitchLog.slice(-6).reverse() : [];
+    log.replaceChildren();
+    if (!rows.length) {
+      const empty = document.createElement('span'); empty.textContent = 'Nenhuma troca registrada.'; log.append(empty);
+    } else {
+      for (const row of rows) {
+        const item = document.createElement('span');
+        item.className = row.cleanupOk ? 'ok' : '';
+        const when = new Date(Number(row.at || 0)).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+        item.textContent = `${when} • ${row.from || '—'} → ${row.to || '—'} • limpeza ${row.cleanupOk ? 'OK' : 'PENDENTE'}`;
+        log.append(item);
+      }
+    }
+  }
+
+  const retry = $('retryLiveRead');
+  if (retry) {
+    const expirationTimedOut = dataLive && !actualExp && sessionAgeMs(state) >= 5000;
+    const marketTimedOut = !!pending && sessionAgeMs(state) >= 8000;
+    retry.hidden = !(expirationTimedOut || marketTimedOut);
+  }
+
+  renderOhlc(freshMarket ? state : {});
+  renderCandles(freshMarket ? state : {});
   renderLicense(state);
-  maybeSound(state, model);
+  globalThis.__ATS_MARK_UI_READY__?.();
 }
 
 function tone(frequency, delay, duration, gain = .12) {
@@ -340,37 +522,26 @@ function play(kind) {
   tone(760,0,.18,.17); tone(940,.17,.19,.19); tone(1120,.31,.22,.22);
   try { navigator?.vibrate?.([110,55,150,55,210]); } catch {}
 }
-function maybeSound(state = {}, model = {}) {
-  const ui = String(model.uiState || '');
-  const cycle = clean(state.professionalDecision?.cycleKey || state.signal?.targetStart || '');
-  const key = `${cycle}|${ui}`;
-  if (key === lastSignalKey) return;
-  lastSignalKey = key;
-  if (prefs.alertLevel === 'off') return;
-  if (ui === 'POSSIBLE_BUY' || ui === 'POSSIBLE_SELL') play('possible');
-  if ((ui === 'ENTER_BUY' || ui === 'ENTER_SELL') && entryTimeReady(state)) {
-    if (prefs.alertLevel === 'strong') play('confirm');
-    else play('possible');
-  }
-}
-
 function syncSettingsUi() {
   if ($('overlayToggle')) $('overlayToggle').checked = !!prefs.overlayEnabled;
   if ($('geminiToggle')) $('geminiToggle').checked = prefs.geminiEnabled !== false;
   if ($('analystMode')) $('analystMode').value = prefs.analystMode === 'A_PLUS' ? 'A_PLUS' : 'NORMAL';
-  if ($('alertLevel')) $('alertLevel').value = ['off','discrete','strong'].includes(prefs.alertLevel) ? prefs.alertLevel : 'off';
+  if ($('notificationToggle')) $('notificationToggle').checked = prefs.notificationsEnabled !== false;
+  if ($('alertLevel')) $('alertLevel').value = ['off','discrete','strong'].includes(prefs.alertLevel) ? prefs.alertLevel : DEFAULT_PREFS.alertLevel;
   if ($('holdSeconds')) $('holdSeconds').value = String(Math.max(3, Math.min(5, Number(prefs.holdSeconds) || 3)));
   if ($('possibleSoundToggle')) $('possibleSoundToggle').checked = prefs.alertLevel === 'discrete' || prefs.alertLevel === 'strong';
   if ($('confirmSoundToggle')) $('confirmSoundToggle').checked = prefs.alertLevel === 'strong';
+  if ($('expectedAsset')) $('expectedAsset').value = clean(prefs.expectedAsset || '');
   document.querySelectorAll('.toggle-row').forEach(row => row.classList.toggle('active', !!row.querySelector('input[type=checkbox]')?.checked));
 }
 
 async function pushAnalystPreferences() {
   await chrome.runtime.sendMessage({
     type: 'ATS_SET_ANALYST_PREFERENCES',
-    mode: prefs.analystMode,
+    mode: 'NORMAL',
     geminiEnabled: prefs.geminiEnabled,
-    holdSeconds: prefs.holdSeconds
+    holdSeconds: 3,
+    preferredExpiration: null
   }).catch(() => null);
 }
 
@@ -392,14 +563,17 @@ async function setPref(key, value) {
 async function loadPrefs() {
   const stored = await chrome.storage.local.get(PREF_KEY).catch(() => ({}));
   const raw = stored?.[PREF_KEY] || {};
-  const migratedAlert = raw.alertLevel || (raw.confirmSoundEnabled ? 'strong' : raw.possibleSoundEnabled ? 'discrete' : 'off');
+  const migratedAlert = raw.alertLevel || (raw.confirmSoundEnabled ? 'strong' : raw.possibleSoundEnabled ? 'discrete' : DEFAULT_PREFS.alertLevel);
   prefs = {
     ...DEFAULT_PREFS,
     ...raw,
-    alertLevel: ['off','discrete','strong'].includes(migratedAlert) ? migratedAlert : 'off',
-    analystMode: String(raw.analystMode || 'NORMAL').toUpperCase() === 'A_PLUS' ? 'A_PLUS' : 'NORMAL',
+    overlayEnabled: false,
+    notificationsEnabled: raw.notificationsEnabled !== false,
+    alertLevel: ['off','discrete','strong'].includes(migratedAlert) ? migratedAlert : DEFAULT_PREFS.alertLevel,
+    analystMode: 'NORMAL',
     geminiEnabled: raw.geminiEnabled !== false,
-    holdSeconds: Math.max(3, Math.min(5, Number(raw.holdSeconds) || 3))
+    holdSeconds: 3,
+    expectedAsset: clean(raw.expectedAsset || '')
   };
   syncSettingsUi();
   await pushAnalystPreferences();
@@ -407,11 +581,13 @@ async function loadPrefs() {
 
 $('overlayToggle')?.addEventListener('change', event => setPref('overlayEnabled', !!event.currentTarget.checked));
 $('geminiToggle')?.addEventListener('change', event => setPref('geminiEnabled', !!event.currentTarget.checked));
+$('notificationToggle')?.addEventListener('change', event => setPref('notificationsEnabled', !!event.currentTarget.checked));
 $('analystMode')?.addEventListener('change', event => setPref('analystMode', event.currentTarget.value === 'A_PLUS' ? 'A_PLUS' : 'NORMAL'));
 $('alertLevel')?.addEventListener('change', event => setPref('alertLevel', event.currentTarget.value));
 $('holdSeconds')?.addEventListener('change', event => setPref('holdSeconds', Math.max(3, Math.min(5, Number(event.currentTarget.value) || 3))));
 $('possibleSoundToggle')?.addEventListener('change', event => setPref('possibleSoundEnabled', !!event.currentTarget.checked));
 $('confirmSoundToggle')?.addEventListener('change', event => setPref('confirmSoundEnabled', !!event.currentTarget.checked));
+$('expectedAsset')?.addEventListener('change', event => setPref('expectedAsset', clean(event.currentTarget.value || '')));
 
 $('activateLicense')?.addEventListener('click', async () => {
   const key = clean($('licenseKey')?.value || '');
@@ -419,6 +595,21 @@ $('activateLicense')?.addEventListener('click', async () => {
   const response = await chrome.runtime.sendMessage({ type: 'ATS_ACTIVATE_LICENSE', key }).catch(() => null);
   if (response?.state) render(response.state);
 });
+
+setInterval(() => {
+  if (!lastRenderedState || !Object.keys(lastRenderedState).length) return;
+  const remaining = smoothedRemaining(lastRenderedState);
+  const exact = exactClockReady(lastRenderedState);
+  const actualTf = normTf(lastRenderedState.diagnostics?.marketClock?.timeframe || lastRenderedState.analysisTimeframe || lastRenderedState.timeframe);
+  setText('heroCountdown', remaining == null ? '—' : exact ? `${Math.ceil(remaining)}s` : `~${Math.ceil(remaining)}s`);
+  setText('secondsRemaining', remaining == null ? '—' : exact ? String(Math.max(0, Math.ceil(remaining))) : `~${Math.max(0, Math.ceil(remaining))}`);
+  const duration = timeframeSeconds(actualTf);
+  const progress = $('candleProgress');
+  if (progress) {
+    const pct = duration && remaining != null ? Math.max(0, Math.min(100, ((duration - remaining) / duration) * 100)) : 0;
+    progress.style.width = `${pct}%`;
+  }
+}, 250);
 
 chrome.storage.onChanged.addListener(changes => {
   if (changes.scannerState?.newValue) render(changes.scannerState.newValue || {});

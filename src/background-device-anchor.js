@@ -4,7 +4,7 @@ import { storageLocalGet, storageLocalSet } from './services/chrome-compat.js';
 const INSTALL_KEY = 'atsInstallationId';
 const LAST_VALID_LICENSE_KEY = 'atsLastValidLicense';
 const validAnchor = value => /^ats-install-[0-9a-f-]{20,80}$/i.test(String(value || '').trim());
-const casaHost = value => value === 'casatrade.com' || value.endsWith('.casatrade.com') || value === 'casatrade.io' || value.endsWith('.casatrade.io');
+const casaHost = value => value === 'casatrade.com' || value.endsWith('.casatrade.com') || value === 'casatrade.io' || value.endsWith('.casatrade.io') || value === 'casatraders.online' || value.endsWith('.casatraders.online') || value === 'ivcasatraders.online' || value.endsWith('.ivcasatraders.online');
 
 function trustedTopFrame(sender = {}) {
   if (!sender?.tab?.id || sender.frameId !== 0) return false;

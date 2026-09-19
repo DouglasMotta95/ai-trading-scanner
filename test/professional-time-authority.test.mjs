@@ -11,7 +11,7 @@ test('CasaTrade time is the only authority for a user-facing entry', () => {
   const panel = read('src/sidepanel/app-v2.js');
 
   assert.doesNotMatch(clock, /\|\|\s*'M1'/);
-  assert.match(clock, /if \(expirySemantic && !candleSemantic && !chartScoped\) continue/);
+  assert.match(clock, /if \(expirySemantic && !candleSemantic\) continue/);
   assert.match(clock, /clockSource: 'platform-cycle-derived'/);
   assert.match(clock, /verified: false, operational: true/);
   assert.match(policy, /EXACT_CLOCK_SOURCES = new Set\(\['trader-dom-countdown', 'network-server-cycle'\]\)/);
@@ -24,9 +24,9 @@ test('CasaTrade time is the only authority for a user-facing entry', () => {
   assert.match(panel, /model\.actionable && model\.direction === 'SELL' && timeReady/);
 });
 
-test('live CasaTrade controls override preferences and timeframe changes reset the market cycle', () => {
+test('live CasaTrade controls are authoritative and timeframe changes reset the market cycle', () => {
   const controls = read('src/background-platform-controls.js');
-  const guard = read('src/sidepanel/expiration-guard-ui.js');
+  const html = read('src/sidepanel/index.html');
 
   assert.match(controls, /liveAuthority: true/);
   assert.match(controls, /actualExpiration/);
@@ -34,23 +34,24 @@ test('live CasaTrade controls override preferences and timeframe changes reset t
   assert.match(controls, /professionalDecision: null/);
   assert.match(controls, /aiAudit: null/);
   assert.match(controls, /O tempo ao vivo da CasaTrade prevalece/);
-  assert.match(guard, /seguindo a plataforma automaticamente/);
-  assert.match(guard, /O tempo ao vivo prevalece/);
-  assert.doesNotMatch(guard, /prepareBuy.*disabled/);
-  assert.doesNotMatch(guard, /prepareSell.*disabled/);
+  assert.doesNotMatch(html, /expiration-guard-ui\.js/);
+  assert.doesNotMatch(html, /id="desiredExpiration"/);
 });
 
-test('professional policy provides Normal and A+ confluence plus stable 3-5 second hold', () => {
+test('professional policy uses one fixed Normal profile with a stable 3 second hold', () => {
   const policy = read('src/background-decision-policy.js');
-  assert.match(policy, /pref\.mode === 'A_PLUS' \? 3 : 2/);
-  assert.match(policy, /pref\.mode === 'A_PLUS' \? 52 : 44/);
-  assert.match(policy, /pref\.mode === 'A_PLUS' \? 66 : 58/);
-  assert.match(policy, /holdSeconds: clamp\(raw\.holdSeconds/);
+  const controls = read('src/background-platform-controls.js');
+  assert.match(policy, /mode: 'NORMAL'/);
+  assert.match(policy, /holdSeconds: 3/);
+  assert.match(policy, /const possibleScore = 44/);
+  assert.match(policy, /const finalScore = 58/);
+  assert.doesNotMatch(policy, /pref\.mode === 'A_PLUS'/);
+  assert.match(controls, /mode: 'NORMAL'/);
+  assert.match(controls, /holdSeconds: 3/);
+  assert.match(controls, /preferredExpiration: null/);
   assert.match(policy, /Math\.max\(0, holdMs - heldFor\)/);
   assert.match(policy, /POSSIBLE_BUY/);
-  assert.match(policy, /POSSIBLE_SELL/);
   assert.match(policy, /ENTER_BUY/);
-  assert.match(policy, /ENTER_SELL/);
 });
 
 test('Gemini is a second reading only after the professional possible/final stage', () => {
@@ -64,13 +65,14 @@ test('Gemini is a second reading only after the professional possible/final stag
   assert.doesNotMatch(snapshot, /GEMINI_API_KEY/);
 });
 
-test('sidepanel exposes the professional preferences and accessible time status', () => {
+test('sidepanel exposes only essential live settings and accessible time status', () => {
   const html = read('src/sidepanel/index.html');
-  for (const id of ['analystMode','alertLevel','holdSeconds','desiredExpiration','overlayToggle','geminiToggle','heroCountdown','heroTimeStatus','timeSyncStatus']) {
+  for (const id of ['alertLevel','notificationToggle','geminiToggle','heroCountdown','timeSyncStatus','prepareBuy','prepareSell']) {
     assert.match(html, new RegExp(`id="${id}"`));
   }
-  assert.match(html, /Só A\+/);
-  assert.match(html, /Automático \/ seguir CasaTrade/);
+  for (const id of ['analystMode','holdSeconds','desiredExpiration','overlayToggle']) {
+    assert.doesNotMatch(html, new RegExp(`id="${id}"`));
+  }
   assert.match(html, /aria-live="assertive"/);
-  assert.match(html, /professional\.css/);
+  assert.match(html, /compact-live\.css/);
 });

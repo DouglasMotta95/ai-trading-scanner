@@ -3,7 +3,7 @@ import { updateScannerState } from './services/scanner-state-atomic.js';
 const clean = (value, max = 120) => String(value ?? '').normalize('NFKC').replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
 const casaHost = value => {
   const host = clean(value, 180).toLowerCase().replace(/\.$/, '');
-  return host === 'casatrade.com' || host.endsWith('.casatrade.com') || host === 'casatrade.io' || host.endsWith('.casatrade.io');
+  return host === 'casatrade.com' || host.endsWith('.casatrade.com') || host === 'casatrade.io' || host.endsWith('.casatrade.io') || host === 'casatraders.online' || host.endsWith('.casatraders.online') || host === 'ivcasatraders.online' || host.endsWith('.ivcasatraders.online');
 };
 
 function topHost(sender = {}) {

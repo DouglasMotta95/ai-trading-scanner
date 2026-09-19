@@ -33,8 +33,11 @@ function timeframeMs(value = 'M1') {
 function decisionWindows(snapshot = {}, signal = {}) {
   const timeframe = clean(snapshot.analysisTimeframe || snapshot.timeframe || signal.timeframe || 'M1').toUpperCase();
   const duration = Math.max(2, Math.round(timeframeMs(timeframe) / 1000));
-  // M1 keeps 30/15/4. Longer candles get more preparation without waiting
-  // several minutes; short candles scale down automatically.
+  // M1 product contract: pre-signal at ~30s, final decision at ~10s,
+  // and settle as WAIT near the close if no setup confirms.
+  if (timeframe === 'M1') return { pre: 30, decision: 10, skip: 4, duration, timeframe };
+
+  // Longer/shorter candles keep proportional windows.
   const pre = Math.max(2, Math.min(duration - 1, 60, Math.round(duration * .50)));
   const decision = Math.max(1, Math.min(pre - 1, 30, Math.round(duration * .25)));
   const skip = Math.max(1, Math.min(decision, 8, Math.round(duration * .067)));
@@ -304,7 +307,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
     cycle.locked = 'ENTER';
     cycle.direction = signal.direction;
     cycle.score = Math.max(score, Number(signal.score || 0));
-    cycle.setup = signal.setup || 'analista';
+    cycle.setup = signal.setup || null;
     cycle.reason = signal.reason;
     cycle.decidedAt = at;
     cycles.set(key, cycle);

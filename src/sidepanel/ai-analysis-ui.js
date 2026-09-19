@@ -80,7 +80,7 @@ function render(state = {}) {
     setText(title, 'AGUARDANDO O SCANNER');
     setText(badge, 'EM ESPERA');
     if (badge) badge.className = 'badge';
-    setText(summary, 'A Gemini só entra depois de um possível sinal técnico com tempo CasaTrade sincronizado.');
+    setText(summary, 'A Gemini só entra depois de ENTRAR ser confirmado pelo motor técnico primário.');
     setText(direction, '—');
     setText(alignment, '—');
     setText(impact, '—');

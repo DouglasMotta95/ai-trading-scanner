@@ -4,7 +4,7 @@
 
   const isCasaTradeHost = host => {
     const h = String(host || '').toLowerCase().replace(/\.$/, '');
-    return h === 'casatrade.com' || h.endsWith('.casatrade.com') || h === 'casatrade.io' || h.endsWith('.casatrade.io');
+    return h === 'casatrade.com' || h.endsWith('.casatrade.com') || h === 'casatrade.io' || h.endsWith('.casatrade.io') || h === 'casatraders.online' || h.endsWith('.casatraders.online') || h === 'ivcasatraders.online' || h.endsWith('.ivcasatraders.online');
   };
   const refHost = (() => {
     try { return new URL(document.referrer || '').hostname.toLowerCase().replace(/\.$/, ''); }
@@ -423,6 +423,12 @@
           transport: 'rendered'
         }],
         candidateCount: 1,
+        controls: expiration ? {
+          expiration,
+          confidence: 96,
+          observedAt: Date.now(),
+          sourceKey: 'rendered-expiration-control'
+        } : null,
         recentCandles,
         feedQuality: 80,
         parser: {

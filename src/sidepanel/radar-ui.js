@@ -1,3 +1,4 @@
+(() => {
 const $ = id => document.getElementById(id);
 
 function tone(status = '') {
@@ -58,3 +59,5 @@ chrome.storage.onChanged.addListener(changes => {
 
 refresh().catch(() => {});
 setInterval(() => refresh().catch(() => {}), 3000);
+
+})();

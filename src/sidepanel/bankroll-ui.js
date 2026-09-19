@@ -1,4 +1,6 @@
 const atsBankrollNum = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
+const ATS_BANKROLL_READ_GRACE_MS = 6000;
+const atsBankrollStartedAt = Date.now();
 
 function atsBankrollStyle() {
   if (document.querySelector('link[data-ats-bankroll-style]')) return;
@@ -20,7 +22,7 @@ function atsBankrollCard() {
   card.innerHTML = `
     <div class="section-head">
       <div><span class="eyebrow">BANCA / CONTROLE</span><h2 id="bankrollTitle">Lendo conta da CasaTrade</h2></div>
-      <span id="bankrollBadge" class="badge warn">OBSERVANDO</span>
+      <span id="bankrollBadge" class="badge warn">LENDO</span>
     </div>
     <div class="bankroll-grid">
       <div><span>SALDO</span><b id="bankrollBalance">—</b></div>
@@ -64,31 +66,40 @@ async function atsBankrollRender(state = {}) {
   const now = Date.now();
   const balanceFresh = atsBankrollNum(data.balance) != null && now - Number(data.balanceAt || data.observedAt || 0) < 12000;
   const stakeFresh = atsBankrollNum(data.stake) != null && now - Number(data.stakeAt || data.observedAt || 0) < 12000;
+  const payoutFresh = atsBankrollNum(data.payoutPct) != null && now - Number(data.payoutAt || data.observedAt || 0) < 12000;
   const anyFresh = balanceFresh || stakeFresh;
+  const readFinished = anyFresh || now - atsBankrollStartedAt >= ATS_BANKROLL_READ_GRACE_MS;
+  const unavailable = !anyFresh && readFinished;
   const ledger = await chrome.runtime.sendMessage({ type: 'ATS_GET_MANUAL_TRADE_LEDGER' }).catch(() => null);
   const rows = ledger?.ok ? ledger.rows || [] : [];
 
-  card.className = `card bankroll-card ${anyFresh ? 'live' : 'waiting'}`;
+  card.className = `card bankroll-card ${anyFresh ? 'live' : unavailable ? 'unavailable' : 'waiting'}`;
   const badge = document.getElementById('bankrollBadge');
-  if (badge) { badge.textContent = anyFresh ? 'AO VIVO' : 'PROCURANDO'; badge.className = `badge ${anyFresh ? 'ok' : 'warn'}`; }
+  if (badge) {
+    badge.textContent = anyFresh ? 'AO VIVO' : unavailable ? 'NÃO DISPONÍVEL' : 'LENDO';
+    badge.className = `badge ${anyFresh ? 'ok' : 'warn'}`;
+  }
   const title = document.getElementById('bankrollTitle');
-  if (title) title.textContent = anyFresh ? 'Controle da sessão' : 'Lendo conta da CasaTrade';
-  const balance = document.getElementById('bankrollBalance'); if (balance) balance.textContent = balanceFresh ? atsFormatMoney(data.balance, data.currency) : '—';
-  const stake = document.getElementById('bankrollStake'); if (stake) stake.textContent = stakeFresh ? atsFormatMoney(data.stake, data.currency) : '—';
-  const risk = document.getElementById('bankrollRisk'); if (risk) risk.textContent = balanceFresh && stakeFresh && atsBankrollNum(data.riskPct) != null ? `${Number(data.riskPct).toFixed(2)}%` : '—';
+  if (title) title.textContent = anyFresh ? 'Controle da sessão' : unavailable ? 'Dados bancários não disponíveis' : 'Lendo conta da CasaTrade';
+  const missing = unavailable ? 'NÃO DISPONÍVEL' : '—';
+  const balance = document.getElementById('bankrollBalance'); if (balance) balance.textContent = balanceFresh ? atsFormatMoney(data.balance, data.currency) : missing;
+  const stake = document.getElementById('bankrollStake'); if (stake) stake.textContent = stakeFresh ? atsFormatMoney(data.stake, data.currency) : missing;
+  const risk = document.getElementById('bankrollRisk'); if (risk) risk.textContent = balanceFresh && stakeFresh && atsBankrollNum(data.riskPct) != null ? `${Number(data.riskPct).toFixed(2)}%` : missing;
   const delta = document.getElementById('bankrollDelta');
   if (delta) {
     const value = balanceFresh ? atsBankrollNum(data.sessionDelta) : null;
-    delta.textContent = value == null ? '—' : `${value > 0 ? '+' : ''}${atsFormatMoney(value, data.currency)}`;
+    delta.textContent = value == null ? missing : `${value > 0 ? '+' : ''}${atsFormatMoney(value, data.currency)}`;
     delta.classList.toggle('positive', value != null && value > 0);
     delta.classList.toggle('negative', value != null && value < 0);
   }
-  const payout = document.getElementById('bankrollPayout'); if (payout) payout.textContent = atsBankrollNum(data.payoutPct) == null ? '—' : `${Number(data.payoutPct).toFixed(1)}%`;
+  const payout = document.getElementById('bankrollPayout'); if (payout) payout.textContent = payoutFresh ? `${Number(data.payoutPct).toFixed(1)}%` : missing;
   const streak = document.getElementById('bankrollStreak'); if (streak) streak.textContent = atsStreak(rows);
   const note = document.getElementById('bankrollNote');
   if (note) note.textContent = anyFresh
     ? 'Saldo e valor vêm da interface da CasaTrade; entrada/banca é apenas a relação matemática entre os dois. A extensão não altera esses valores.'
-    : 'Ainda não localizei saldo/valor com segurança. Eles ficam vazios até a CasaTrade expor um rótulo reconhecível.';
+    : unavailable
+      ? 'A CasaTrade não expôs saldo/valor com segurança nesta leitura. Estado encerrado como NÃO DISPONÍVEL; a extensão não fica em busca infinita.'
+      : 'Tentando localizar saldo e valor apenas por rótulos confiáveis da CasaTrade.';
 }
 
 async function atsBankrollRefresh() {

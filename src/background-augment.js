@@ -1,6 +1,6 @@
-import { processSnapshot, resetOrchestrator } from './core/orchestrator.js';
 import { isCasaTradeHost } from './platforms/registry.js';
 import { updateScannerState } from './services/scanner-state-atomic.js';
+import { applyFocus as reportMarketFocus, applyFeed as reportMarketFeed } from './background-market-session.js';
 import { storageLocalGet } from './services/chrome-compat.js';
 
 const allowedTransports = new Set(['ws', 'fetch', 'xhr', 'rendered', 'worker', 'sharedworker', 'broadcast', 'serviceworker', 'window']);
@@ -191,7 +191,6 @@ async function keepRealFeedContext(payload = {}, sender = {}) {
 
     return {
       ...scannerState,
-      marketHistory: mergedHistory,
       diagnostics: {
         ...(scannerState.diagnostics || {}),
         network: {
@@ -243,51 +242,21 @@ async function setFocusedAsset(message = {}, sender = {}) {
 
   focusedAssets.set(tabId, { asset: focused, score, samples, reliable, visual, source, explicit, frameId: sender.frameId, at: Date.now() });
 
-  return updateScannerState(scannerState => {
-    if (!licenseActive(scannerState)) return;
-    if (scannerState.targetTabId && scannerState.targetTabId !== tabId) return;
-
-    const previousStored = scannerState.diagnostics?.focusedAsset || null;
-    const sameStoredFocus = sameAsset(previousStored?.asset, focused);
-    const storedUserSelection = previousStored?.source === 'user-selection';
-    if (previousStored?.asset && !sameStoredFocus) {
-      if (storedUserSelection && !incomingUserSelection) return;
-      if (!reliable) return;
-    }
-
-    const changed = (!!previousFocus?.asset && !sameAsset(previousFocus.asset, focused)) || (!!previousStored?.asset && !sameStoredFocus);
-    const stateAssetMismatch = scannerState.asset && !sameAsset(scannerState.asset, focused);
-    const mustResetMarket = (changed || stateAssetMismatch) && reliable;
-    const stableSince = sameStoredFocus ? Number(previousStored?.stableSince || previousStored?.at || Date.now()) : Date.now();
-    if (mustResetMarket) resetOrchestrator();
-
-    return {
-      ...scannerState,
-      targetTabId: tabId,
-      ...(mustResetMarket ? {
-        connection: 'connecting', asset: focused, price: null, candles: [], currentCandle: null,
-        signal: null, lastConfirmed: null, tradeIntent: null, lastSeen: null,
-        timeframe: null, analysisTimeframe: null, expiration: null, targetExpiration: null,
-        platformControls: null
-      } : {}),
-      diagnostics: {
-        ...(scannerState.diagnostics || {}),
-        focusedAsset: {
-          asset: focused, at: Date.now(), stableSince,
-          changedAt: mustResetMarket ? Date.now() : Number(previousStored?.changedAt || stableSince),
-          score, samples, reliable, visual, source, explicit, frameId: sender.frameId
-        },
-        ...(mustResetMarket ? {
-          acquisition: {
-            stage: 'reading_price',
-            reason: `Ativo ${focused} confirmado na tela. Aguardando preço real do mesmo ativo.`,
-            assetSource: source === 'user-selection' ? 'focused-user-selection' : 'focused-screen',
-            priceSource: null, candleCount: 0, requiredCandles: 2, at: Date.now()
-          }
-        } : {})
-      }
-    };
-  });
+  // Legacy observer only reports what it saw. background-market-session.js is
+  // the sole owner allowed to reset/publish focusedAsset or market fields.
+  return reportMarketFocus({
+    ...message,
+    type: 'ATS_VISUAL_FOCUS_V2',
+    asset: focused,
+    score,
+    samples,
+    source,
+    explicit,
+    visual,
+    reliable,
+    chartScoped: true,
+    frameRole: trustedEmbeddedVisual ? 'trader-frame' : 'casa-chart-frame'
+  }, sender);
 }
 
 async function applyEmbeddedFeed(payload = {}, sender = {}) {
@@ -301,109 +270,9 @@ async function applyEmbeddedFeed(payload = {}, sender = {}) {
   const { settings = {} } = await storageLocalGet('settings');
   if (settings.runtimePaused) return;
 
-  return updateScannerState(scannerState => {
-    if (!licenseActive(scannerState)) return;
-    if (scannerState.targetTabId && scannerState.targetTabId !== sender.tab.id) return;
-
-    const focusMeta = scannerState.diagnostics?.focusedAsset || null;
-    const focus = focusedAssetFor(sender.tab.id, scannerState);
-    const frameMatchesFocus = !!focus
-      && focusMeta?.reliable === true
-      && focusMeta?.chartScoped === true
-      && focusMeta?.embeddedTrader === true
-      && Number(focusMeta?.frameId) === Number(sender.frameId)
-      && clean(focusMeta?.frameHost).toLowerCase() === frameHost;
-    if (!frameMatchesFocus) return;
-
-    const stableSince = Number(focusMeta?.stableSince || focusMeta?.at || 0);
-    const focusStable = Number.isFinite(stableSince) && stableSince > 0 && Date.now() - stableSince >= FOCUS_STABLE_MS;
-    const candidate = chooseCandidate(payload, focus);
-    if (!candidate || !sameAsset(candidate.asset, focus)) return;
-
-    const asset = focus;
-    const currentHistory = sanitizeRecentCandles(payload.recentCandles || {});
-    const historyKey = Object.keys(currentHistory).find(k => sameAsset(k, asset));
-    const payloadCandles = historyKey ? currentHistory[historyKey] : [];
-    const candles = mergeHistory(historyForState(scannerState, asset), payloadCandles);
-    const clock = authoritativeClock(scannerState, asset, sender);
-    const timeframe = normTf(clock?.timeframe) || normTf(candidate.timeframe) || candles.at(-1)?.timeframe || scannerState.analysisTimeframe || scannerState.timeframe || 'M1';
-    const expiration = normExp(clock?.expiration) || normExp(candidate.expiration) || scannerState.targetExpiration || scannerState.expiration || null;
-    const secondsRemaining = clock ? Number(clock.secondsRemaining) : null;
-    const switchedAsset = !!scannerState.asset && !sameAsset(scannerState.asset, asset);
-    if (switchedAsset) resetOrchestrator();
-
-    const snapshot = {
-      platformId: 'casatrade', platformName: 'CasaTrade', connection: 'online', asset,
-      price: Number(candidate.price), timeframe, analysisTimeframe: timeframe, expiration,
-      targetExpiration: expiration, secondsRemaining, clockVerified: !!clock,
-      serverTime: clock ? Date.now() : null, candles,
-      capabilities: { structuredQuotes: true, candles: candles.length >= 2, expiration: !!expiration, multiAsset: false }
-    };
-
-    const stage = candles.length < 2 ? 'reading_history' : !clock ? 'syncing_clock' : 'diagnosing_next_candle';
-    const reason = stage === 'reading_history'
-      ? `Analisando mercado atual • ${candles.length}/2 velas fechadas.`
-      : stage === 'syncing_clock'
-        ? 'Preço e histórico prontos. Sincronizando o fechamento real da vela do gráfico.'
-        : 'Ativo, preço, histórico e relógio da vela sincronizados. Diagnosticando a próxima vela.';
-
-    const base = {
-      ...scannerState, ...snapshot, targetTabId: sender.tab.id, scanner: 'scanning', connection: 'online',
-      signal: clock ? scannerState.signal : null,
-      lastConfirmed: switchedAsset ? null : (scannerState.lastConfirmed || null),
-      tradeIntent: switchedAsset ? null : (scannerState.tradeIntent || null),
-      lastSeen: Date.now(),
-      platformControls: {
-        ...(scannerState.platformControls || {}),
-        observed: { ...(scannerState.platformControls?.observed || {}), timeframe, expiration,
-          detected: { timeframe: !!timeframe, expiration: !!expiration }, at: Date.now() }
-      },
-      diagnostics: {
-        ...(scannerState.diagnostics || {}),
-        focusGate: {
-          state: 'ready', focusedAsset: focus, receivedAsset: normAsset(candidate.asset),
-          resolvedAsset: asset, assetSource: focusStable ? 'focused-stable' : 'focused-screen',
-          stable: focusStable, reliable: true, reason: null, at: Date.now()
-        },
-        acquisition: {
-          stage, reason,
-          assetSource: focusStable ? 'focused-stable' : 'focused-screen',
-          priceSource: `network:${candidate.transport || payload.primaryTransport || 'market'}`,
-          candleCount: candles.length, requiredCandles: 2, at: Date.now()
-        },
-        embeddedFeed: {
-          frameHost, transport: candidate.transport || payload.primaryTransport || null,
-          candidateCount: normalizedCandidates(payload).length, filteredTo: asset,
-          candleCount: candles.length, clockAuthoritative: !!clock, at: Date.now()
-        }
-      }
-    };
-
-    // Market data may update many times per second. Only the verified candle-close
-    // clock from this exact trader frame is allowed to drive a next-candle decision.
-    if (!clock) return base;
-
-    const processed = processSnapshot(snapshot, base);
-    const processedCount = Number(processed.signal?.candleCount ?? candles.length ?? 0);
-    const processedStage = processedCount < 2 || processed.signal?.state === 'SEARCHING'
-      ? 'reading_history'
-      : processed.signal?.currentCandle ? 'diagnosing_next_candle' : 'analyzing_current';
-    return {
-      ...base, ...processed, license: scannerState.license,
-      diagnostics: {
-        ...base.diagnostics,
-        acquisition: {
-          ...base.diagnostics.acquisition, stage: processedStage,
-          reason: processedStage === 'reading_history'
-            ? `Analisando mercado atual • ${processedCount}/2 velas fechadas.`
-            : processedStage === 'analyzing_current'
-              ? 'Analisando a vela atual.'
-              : (processed.signal?.reason || 'Montando padrão da próxima vela.'),
-          candleCount: processedCount, requiredCandles: 2, at: Date.now()
-        }
-      }
-    };
-  });
+  // Feed validation, epoch checks and publication of asset/price/candles live
+  // exclusively in background-market-session.js.
+  return reportMarketFeed(payload, sender);
 }
 
 chrome.runtime.onMessage.addListener((message, sender) => {

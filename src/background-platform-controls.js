@@ -8,8 +8,15 @@ const traderHost = value => value === 'casatraders.online' || value.endsWith('.c
 function trusted(sender = {}) {
   let frameHost = '', topHost = '';
   try { frameHost = new URL(sender.url || '').hostname.toLowerCase(); } catch {}
+  if (!frameHost) { try { frameHost = new URL(sender.origin || '').hostname.toLowerCase(); } catch {} }
   try { topHost = new URL(sender.tab?.url || '').hostname.toLowerCase(); } catch {}
-  return !!sender.tab?.id && casaHost(topHost) && (casaHost(frameHost) || traderHost(frameHost));
+  const tabOwned = !!sender.tab?.id && (casaHost(topHost) || traderHost(topHost));
+  const knownFrame = casaHost(frameHost) || traderHost(frameHost);
+  const opaqueChild = tabOwned && Number(sender.frameId) > 0 && (!frameHost || frameHost === 'null');
+  // match_origin_as_fallback can inject our own content script into an opaque
+  // CasaTrade child frame. That trusted extension sender is allowed to report
+  // only platform controls; ordinary web pages still cannot call this handler.
+  return tabOwned && (knownFrame || opaqueChild);
 }
 
 function normExp(value = '') {
@@ -30,11 +37,19 @@ function normTf(value = '') {
 
 function safeObserved(snapshot = {}) {
   const amount = num(snapshot.amount);
+  const observedAt = Number(snapshot.observedAt || Date.now());
+  const expiration = normExp(snapshot.expiration);
+  const timeframe = normTf(snapshot.timeframe);
   return {
     amount: amount != null && amount > 0 ? amount : null,
-    expiration: normExp(snapshot.expiration),
-    timeframe: normTf(snapshot.timeframe),
+    expiration,
+    timeframe,
     source: clean(snapshot.source || 'casatrade-ui-v2').slice(0, 64),
+    observedAt: {
+      amount: amount != null && amount > 0 ? observedAt : 0,
+      expiration: expiration ? observedAt : 0,
+      timeframe: timeframe ? observedAt : 0
+    },
     confidence: {
       amount: Math.max(0, num(snapshot.confidence?.amount) || 0),
       expiration: Math.max(0, num(snapshot.confidence?.expiration) || 0),
@@ -50,15 +65,22 @@ function mergeObserved(previous = {}, incoming = {}) {
     expiration: previous.expiration ?? null,
     timeframe: previous.timeframe ?? null,
     source: incoming.source || previous.source || 'casatrade-ui-v2',
+    observedAt: { ...(previous.observedAt || {}) },
     confidence: { ...oldConfidence }
   };
   for (const field of ['amount', 'expiration', 'timeframe']) {
     const value = incoming[field];
     const score = Number(incoming.confidence?.[field] || 0);
     const oldScore = Number(oldConfidence[field] || 0);
-    if (value != null && (next[field] == null || score >= oldScore - 2)) {
+    const incomingAt = Number(incoming.observedAt?.[field] || 0);
+    const previousAt = Number(previous.observedAt?.[field] || 0);
+    const previousStale = !previousAt || Date.now() - previousAt >= 7000;
+    const newer = incomingAt > previousAt;
+    const notOlder = incomingAt >= previousAt;
+    if (value != null && (next[field] == null || previousStale || (newer && score >= Math.max(55, oldScore - 15)) || (notOlder && score >= oldScore - 2))) {
       next[field] = value;
       next.confidence[field] = score;
+      next.observedAt[field] = incomingAt || Date.now();
     }
   }
   return next;
@@ -66,17 +88,12 @@ function mergeObserved(previous = {}, incoming = {}) {
 
 function analystPrefs(state = {}, message = {}) {
   const current = state.analystPreferences || {};
-  const mode = String(message.mode ?? current.mode ?? 'NORMAL').toUpperCase() === 'A_PLUS' ? 'A_PLUS' : 'NORMAL';
-  const holdSeconds = Math.max(3, Math.min(5, Number(message.holdSeconds ?? current.holdSeconds ?? 3) || 3));
-  const preferredExpiration = message.preferredExpiration === null || String(message.preferredExpiration || '').toUpperCase() === 'AUTO'
-    ? null
-    : normExp(message.preferredExpiration ?? current.preferredExpiration ?? state.executionPreferences?.expiration ?? '');
   return {
     ...current,
-    mode,
-    holdSeconds,
+    mode: 'NORMAL',
+    holdSeconds: 3,
     geminiEnabled: message.geminiEnabled == null ? current.geminiEnabled !== false : message.geminiEnabled !== false,
-    preferredExpiration,
+    preferredExpiration: null,
     updatedAt: Date.now()
   };
 }
@@ -90,8 +107,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type === 'ATS_SET_EXECUTION_PREFERENCES') {
-    // Backwards-compatible preference channel. It is deliberately NOT a live-time
-    // authority: CasaTrade's observed expiration always remains authoritative.
     const preferredExpiration = normExp(message.expiration || '');
     updateScannerState(state => ({
       ...state,
@@ -112,8 +127,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (Number(state.targetTabId || 0) && Number(state.targetTabId) !== tabId) return state;
     const previous = state.platformControls?.observed || {};
     const observed = mergeObserved(previous, incoming);
-    const actualExpiration = observed.expiration || null;
-    const actualTimeframe = observed.timeframe || null;
+    const expirationAt = Number(observed.observedAt?.expiration || 0);
+    const timeframeAt = Number(observed.observedAt?.timeframe || 0);
+    const expirationFresh = expirationAt > 0 && Date.now() - expirationAt < 7000;
+    const timeframeFresh = timeframeAt > 0 && Date.now() - timeframeAt < 7000;
+    const actualExpiration = expirationFresh ? observed.expiration || null : null;
+    const actualTimeframe = timeframeFresh ? observed.timeframe || null : null;
     const preferred = normExp(state.analystPreferences?.preferredExpiration || state.executionPreferences?.expiration || '');
     const oldTf = normTf(state.analysisTimeframe || state.timeframe);
     const reliableTf = actualTimeframe && Number(observed.confidence?.timeframe || 0) >= 18 ? actualTimeframe : null;
@@ -124,23 +143,30 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       delete diagnostics.marketClock;
       delete diagnostics.marketSession;
     }
+    const effectiveTf = reliableTf || oldTf || null;
+    const m1Ready = effectiveTf === 'M1';
+    const expirationValid = actualExpiration === '60s';
     diagnostics.expirationGuard = {
       preferred,
+      required: '60s',
       actual: actualExpiration,
-      ready: !!actualExpiration,
+      ready: !!actualExpiration && m1Ready && expirationValid,
+      validForM1: m1Ready && expirationValid,
       matchesPreference: !preferred || !actualExpiration || preferred === actualExpiration,
-      reason: !actualExpiration
-        ? 'Expiração real da CasaTrade ainda não confirmada.'
-        : preferred && preferred !== actualExpiration
-          ? `CasaTrade em ${actualExpiration}; preferência salva ${preferred}. O tempo ao vivo da CasaTrade prevalece.`
-          : 'Expiração ao vivo confirmada pela CasaTrade.',
+      reason: !m1Ready
+        ? 'Ajuste o timeframe da CasaTrade para M1.'
+        : !actualExpiration
+          ? 'Expiração real da CasaTrade ainda não confirmada.'
+          : !expirationValid
+            ? 'Ajuste a expiração da CasaTrade para 1 minuto'
+            : 'Expiração ao vivo de 1 minuto confirmada pela CasaTrade.',
       at: Date.now()
     };
     diagnostics.platformTime = {
-      timeframe: reliableTf || oldTf || null,
+      timeframe: effectiveTf,
       expiration: actualExpiration,
       source: observed.source,
-      ready: !!(reliableTf || oldTf) && !!actualExpiration,
+      ready: m1Ready && expirationValid,
       at: Date.now()
     };
 
@@ -162,9 +188,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       platformControls: {
         observed,
         checkedAt: Date.now(),
+        expirationCheckedAt: expirationAt,
+        timeframeCheckedAt: timeframeAt,
         frameId: Number(sender.frameId || 0),
         source: observed.source,
-        aligned: !!(reliableTf || oldTf) && !!actualExpiration,
+        aligned: (reliableTf || oldTf) === 'M1' && actualExpiration === '60s',
         liveAuthority: true
       },
       diagnostics

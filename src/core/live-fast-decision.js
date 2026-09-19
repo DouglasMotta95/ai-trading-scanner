@@ -4,13 +4,17 @@ const num = value => value == null || value === '' ? null : Number.isFinite(Numb
 export const FAST_DECISION = Object.freeze({
   possibleScore: 44,
   confirmScore: 58,
-  enterWindowSeconds: 20,
-  skipWindowSeconds: 4,
+  preSignalWindowSeconds: 30,
+  finalWindowSeconds: 10,
   confirmHits: 2,
   maxHitGapMs: 5000
 });
 
 const trackers = new Map();
+const directionTrackers = new Map();
+const DIRECTION_FLIP_HITS = 2;
+const DIRECTION_FLIP_MIN_MS = 600;
+const DIRECTION_FLIP_WINDOW_MS = 2600;
 
 function directionOf(signal = {}) {
   const analysis = clean(signal.analysisDirection).toUpperCase();
@@ -43,10 +47,35 @@ function quality(signal = {}, direction = null) {
 function cycleKey(context = {}, signal = {}) {
   const asset = clean(context.asset || signal.asset || 'unknown').toUpperCase();
   const timeframe = clean(context.timeframe || signal.timeframe || 'M1').toUpperCase();
-  const seconds = Math.max(0, Number(signal.secondsRemaining ?? context.secondsRemaining ?? 0));
+  const seconds = Math.max(0, Number(context.secondsRemaining ?? signal.secondsRemaining ?? 0));
   const now = Number(context.serverTime || Date.now());
-  const target = num(signal.targetStart) ?? now + seconds * 1000;
+  const target = num(context.targetStart) ?? num(signal.targetStart) ?? now + seconds * 1000;
   return `${asset}|${timeframe}|${Math.round(target / 5000) * 5000}`;
+}
+
+function stabilizeDirection(key, rawDirection, at, score) {
+  if (!rawDirection) return { direction: null, transitioning: false };
+  const old = directionTrackers.get(key);
+  if (!old) {
+    directionTrackers.set(key, { stable: rawDirection, stableScore: score, pending: null, pendingHits: 0, pendingSince: 0, at });
+    return { direction: rawDirection, transitioning: false };
+  }
+  if (old.stable === rawDirection) {
+    directionTrackers.set(key, { ...old, stableScore: score, pending: null, pendingHits: 0, pendingSince: 0, at });
+    return { direction: rawDirection, transitioning: false };
+  }
+  const samePending = old.pending === rawDirection && at - Number(old.at || 0) <= DIRECTION_FLIP_WINDOW_MS;
+  const pendingHits = samePending ? Number(old.pendingHits || 0) + 1 : 1;
+  const pendingSince = samePending ? Number(old.pendingSince || at) : at;
+  const next = { ...old, pending: rawDirection, pendingHits, pendingSince, at };
+  const sustained = pendingHits >= DIRECTION_FLIP_HITS && at - pendingSince >= DIRECTION_FLIP_MIN_MS;
+  const materiallyStronger = pendingHits >= DIRECTION_FLIP_HITS && Number(score || 0) >= Number(old.stableScore || 0) + 18;
+  if (sustained || materiallyStronger) {
+    directionTrackers.set(key, { stable: rawDirection, stableScore: score, pending: null, pendingHits: 0, pendingSince: 0, at });
+    return { direction: rawDirection, transitioning: false, changed: true, from: old.stable };
+  }
+  directionTrackers.set(key, next);
+  return { direction: old.stable, transitioning: true, from: old.stable, to: rawDirection, hits: pendingHits };
 }
 
 function observe(key, direction, strong, at) {
@@ -85,11 +114,11 @@ function enter(signal, direction, score, seconds, q) {
   };
 }
 
-function skip(signal, score, reason = '') {
-  const text = `PULAR ESTA VELA — ${reason || `setup não confirmou (score ${Math.round(score)}/100)`}.`;
+function waitFinal(signal, score, reason = '') {
+  const text = `AGUARDAR — ${reason || `setup não confirmou (score ${Math.round(score)}/100)`}.`;
   return {
     ...signal,
-    state: 'NO_TRADE', direction: null, diagnosis: 'WAIT', uiState: 'SKIP',
+    state: 'NO_TRADE', direction: null, diagnosis: 'WAIT', uiState: 'WAIT',
     provisional: false, phase: 'FINAL', score, analysisScore: score,
     reason: text, hint: text, fastDecision: true
   };
@@ -100,24 +129,55 @@ export function fastLiveDecision(signal = {}, context = {}) {
   if (signal.uiState === 'ENTER_BUY' || signal.uiState === 'ENTER_SELL' || signal.state === 'CONFIRM') return signal;
 
   const score = Number(signal.analysisScore ?? signal.score ?? 0);
-  const seconds = Math.max(0, Math.ceil(Number(signal.secondsRemaining ?? context.secondsRemaining ?? 0)));
-  const direction = directionOf(signal);
-  const q = quality(signal, direction);
+  const seconds = Math.max(0, Math.ceil(Number(context.secondsRemaining ?? signal.secondsRemaining ?? 0)));
+  const rawDirection = directionOf(signal);
   const key = cycleKey(context, signal);
   const at = Number(context.serverTime || Date.now());
 
-  if (seconds <= FAST_DECISION.skipWindowSeconds) {
+  if (seconds <= 0) {
     trackers.delete(key);
-    return skip(signal, score, direction ? `faltou confirmação para ${direction === 'BUY' ? 'COMPRA' : 'VENDA'}` : 'sem direção confiável');
+    directionTrackers.delete(key);
+    return waitFinal(signal, score, 'fechamento da vela em andamento');
   }
 
-  if (!direction || score < FAST_DECISION.possibleScore) {
+  if (seconds > FAST_DECISION.preSignalWindowSeconds) {
+    trackers.delete(key);
+    directionTrackers.delete(key);
+    const text = `ANALISANDO VELA M1 • ${seconds}s — pré-sinal abre por volta de 30s.`;
+    return { ...signal, state: 'WAIT', direction: null, diagnosis: 'WAIT', uiState: 'BUILDING_PATTERN', provisional: true, phase: 'BUILDING', reason: text, hint: text, fastDecision: true };
+  }
+
+  if (!rawDirection || score < FAST_DECISION.possibleScore) {
     trackers.delete(key);
     const text = `AGUARDAR • ${seconds}s — leitura ainda fraca (${Math.round(score)}/${FAST_DECISION.possibleScore}).`;
-    return { ...signal, state: 'WAIT', direction: null, diagnosis: 'WAIT', uiState: 'WAIT', provisional: true, phase: 'LIVE', reason: text, hint: text, fastDecision: true };
+    return { ...signal, state: 'WAIT', direction: null, diagnosis: 'WAIT', uiState: 'WAIT', provisional: true, phase: seconds <= FAST_DECISION.finalWindowSeconds ? 'FINAL' : 'LIVE', reason: text, hint: text, fastDecision: true };
   }
 
-  if (seconds > FAST_DECISION.enterWindowSeconds) {
+  const stabilized = stabilizeDirection(key, rawDirection, at, score);
+  if (stabilized.transitioning) {
+    const from = stabilized.from === 'BUY' ? 'COMPRA' : 'VENDA';
+    const to = stabilized.to === 'BUY' ? 'COMPRA' : 'VENDA';
+    const reason = `PADRÃO MUDANDO DE DIREÇÃO — REAVALIANDO ${from} → ${to} (${stabilized.hits}/${DIRECTION_FLIP_HITS}).`;
+    return {
+      ...signal,
+      state: 'WATCH',
+      direction: stabilized.direction,
+      diagnosis: stabilized.direction,
+      uiState: 'DECIDING',
+      provisional: true,
+      phase: 'REASSESSING',
+      analysisScore: score,
+      score,
+      directionTransition: { from: stabilized.from, to: stabilized.to, hits: stabilized.hits, required: DIRECTION_FLIP_HITS, at },
+      reason,
+      hint: reason,
+      fastDecision: true
+    };
+  }
+  const direction = stabilized.direction;
+  const q = quality(signal, direction);
+
+  if (seconds > FAST_DECISION.finalWindowSeconds) {
     observe(key, direction, false, at);
     return possible(signal, direction, score, seconds, q);
   }
@@ -126,9 +186,16 @@ export function fastLiveDecision(signal = {}, context = {}) {
   const hits = observe(key, direction, strong, at);
   if (strong && hits >= FAST_DECISION.confirmHits) return enter(signal, direction, score, seconds, q);
 
-  return possible(signal, direction, score, seconds, q);
+  // The first valid final-window hit stays visible as POSSÍVEL. Only the second
+  // hit inside the confirmation gap upgrades it to ENTRAR.
+  if (strong && hits > 0) return possible(signal, direction, score, seconds, q);
+
+  return waitFinal(signal, score, direction
+    ? `decisão final sem confirmação suficiente para ${direction === 'BUY' ? 'COMPRA' : 'VENDA'}`
+    : 'sem direção confiável');
 }
 
 export function resetFastLiveDecision() {
   trackers.clear();
+  directionTrackers.clear();
 }

@@ -3,7 +3,7 @@
   globalThis.__ATS_PLATFORM_SYNC__ = true;
 
   const host = String(location.hostname || '').toLowerCase().replace(/\.$/, '');
-  const isCasaTradeHost = value => value === 'casatrade.com' || value.endsWith('.casatrade.com') || value === 'casatrade.io' || value.endsWith('.casatrade.io');
+  const isCasaTradeHost = value => value === 'casatrade.com' || value.endsWith('.casatrade.com') || value === 'casatrade.io' || value.endsWith('.casatrade.io') || value === 'casatraders.online' || value.endsWith('.casatraders.online') || value === 'ivcasatraders.online' || value.endsWith('.ivcasatraders.online');
   if (!isCasaTradeHost(host)) return;
   const sendMessage = globalThis.__ATS_SEND_MESSAGE__;
   if (typeof sendMessage !== 'function') return;

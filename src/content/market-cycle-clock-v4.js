@@ -121,9 +121,6 @@
     return cx >= chart.left - padX && cx <= chart.right + padX && cy >= chart.top - padY && cy <= chart.bottom + padY;
   }
 
-  // A countdown is only a candle-close candidate when it is chart-scoped or
-  // explicitly candle/close semantic. A pure expiry timer must never become the
-  // candle clock just because it also counts down.
   function exactDomCountdown(cycleTf) {
     const limit = secondsFor(cycleTf);
     if (!limit) return null;
@@ -143,8 +140,15 @@
       const chartScoped = inOrNearChart(rect, chart);
       const candleSemantic = /vela|candle|remaining|restante|countdown|timer|fechamento|close/.test(context);
       const expirySemantic = /expira|expiry|expiration/.test(context);
-      if (expirySemantic && !candleSemantic && !chartScoped) continue;
-      if (!candleSemantic && !chartScoped) continue;
+      const colonOnly = /^\d{1,3}:[0-5]\d$/.test(own);
+      // Expiration is a different control. Never let "5 seg" / "1 min"
+      // from the expiration selector become the candle countdown.
+      if (expirySemantic && !candleSemantic) continue;
+      // On compact/tablet CasaTrade layouts the visible candle clock can be a
+      // plain DOM token such as "00:51" without useful chart classes. Keep it
+      // as a low-confidence candidate; verifiedDomCountdown still requires
+      // real second-by-second progression before it becomes authoritative.
+      if (!candleSemantic && !chartScoped && !colonOnly) continue;
       for (const value of values) {
         if (value.seconds < 0 || value.seconds > limit + 2) continue;
         let score = chartScoped ? 230 : 0;
@@ -152,9 +156,23 @@
         if (/vela|candle|fechamento|close/.test(context)) score += 100;
         if (/remaining|restante|countdown|timer/.test(context)) score += 55;
         if (expirySemantic) score -= 45;
-        if (/^\d{1,3}:[0-5]\d$/.test(own)) score += 35;
-        rows.push({ ...value, text: own, score, chartScoped, expirySemantic });
+        if (colonOnly) score += chartScoped || candleSemantic ? 35 : 90;
+        rows.push({ ...value, text: own, score, chartScoped, expirySemantic, colonOnly });
       }
+    }
+    const now = Date.now();
+    const previousSeconds = Number(domProbe?.seconds);
+    const previousAt = Number(domProbe?.at || 0);
+    const rolloverWindow = Number.isFinite(previousSeconds)
+      && previousSeconds <= 2
+      && previousAt > 0
+      && now - previousAt > 180
+      && now - previousAt < 4500;
+    if (rolloverWindow) {
+      const rolled = rows
+        .filter(row => row.seconds >= limit - 2 && row.seconds <= limit + 1)
+        .sort((a, b) => b.score - a.score)[0];
+      if (rolled) return rolled;
     }
     rows.sort((a, b) => b.score - a.score || a.seconds - b.seconds);
     return rows[0] || null;
@@ -164,7 +182,14 @@
   let domVerifiedAt = 0;
   function verifiedDomCountdown(cycleTf) {
     const candidate = exactDomCountdown(cycleTf);
-    if (!candidate) { domProbe = null; return null; }
+    if (!candidate) {
+      // CasaTrade can briefly destroy/recreate the countdown node exactly at
+      // candle rollover. Keep the last 0-2s observation long enough for the
+      // new 60..52s token to prove the rollover instead of dropping to an
+      // estimated clock for several seconds.
+      if (!domProbe || Date.now() - Number(domProbe.at || 0) >= 9000) domProbe = null;
+      return null;
+    }
     const duration = secondsFor(cycleTf);
     const now = Date.now();
     const previous = domProbe;
@@ -172,21 +197,14 @@
     const delta = sameTf ? now - Number(previous.at || 0) : 0;
     const drop = sameTf ? Number(previous.seconds) - Number(candidate.seconds) : 0;
     const progressed = !!previous && sameTf && delta > 200 && delta < 4500 && drop > 0 && drop <= Math.max(4, Math.ceil(delta / 1000) + 2);
-    const rolled = !!previous && sameTf && delta > 200 && delta < 4500 && Number(previous.seconds) <= 2 && Number(candidate.seconds) >= duration - 2;
+    const rolled = !!previous && sameTf
+      && delta > 200 && delta < 9000
+      && Number(previous.seconds) <= 2
+      && Number(candidate.seconds) >= duration - 8
+      && (candidate.chartScoped === true || candidate.colonOnly === true);
     domProbe = { timeframe: cycleTf, seconds: candidate.seconds, at: now, text: candidate.text };
     if (progressed || rolled) domVerifiedAt = now;
     return Date.now() - domVerifiedAt < 2600 ? candidate : null;
-  }
-
-  function derivedCountdown(cycleTf) {
-    const duration = secondsFor(cycleTf);
-    if (!duration) return null;
-    const now = Date.now();
-    const durationMs = duration * 1000;
-    const elapsed = ((now % durationMs) + durationMs) % durationMs;
-    let seconds = Math.ceil((durationMs - elapsed) / 1000);
-    if (!Number.isFinite(seconds) || seconds <= 0 || seconds > duration) seconds = duration;
-    return seconds;
   }
 
   function freshExactClock(state = {}, focus = null, cycleTf = null) {
@@ -210,6 +228,14 @@
     const platformDiag = state.diagnostics?.platformTime || {};
     const platformTf = Number(platformDiag.at || 0) > 0 && Date.now() - Number(platformDiag.at) < 7000 ? tf(platformDiag.timeframe) : null;
     return controlTf || chartTf || exactTf || platformTf || null;
+  }
+
+  function structuredFeedTf(state = {}, focus = null) {
+    const session = state.diagnostics?.marketSession || {};
+    if (session.dataReady !== true || !focus?.asset) return null;
+    if (!sameMarket(session.confirmedAsset || session.asset, focus.asset)) return null;
+    if (!sameMarket(state.asset, focus.asset)) return null;
+    return tf(state.analysisTimeframe || state.timeframe);
   }
 
   let stateBoundaryProbe = null;
@@ -259,18 +285,23 @@
       if (String(focus.frameHost || '').toLowerCase() !== host) return;
       if (lastCanvasAsset && lastCanvasAsset !== focus.asset) { lastCanvas = null; canvasVerifiedAt = 0; }
       lastCanvasAsset = focus.asset;
+      const expirationAt = Number(state.platformControls?.expirationCheckedAt || state.platformControls?.observed?.observedAt?.expiration || 0);
+      const expirationFresh = expirationAt > 0 && Date.now() - expirationAt < 7000;
       const controlsFresh = Number(state.platformControls?.checkedAt || 0) > 0 && Date.now() - Number(state.platformControls.checkedAt) < 5000;
-      const cycleTf = liveCycleTf(state, controlsFresh);
+      const cycleTf = liveCycleTf(state, controlsFresh) || structuredFeedTf(state, focus);
       const duration = secondsFor(cycleTf);
       if (!cycleTf || !duration || seconds > duration + 2) return;
       const previous = lastCanvas;
       const localDelta = previous ? observedAt - previous.at : 0;
       const drop = previous ? previous.seconds - seconds : 0;
       const progressed = !!previous && previous.cycleTf === cycleTf && localDelta > 150 && localDelta < 4500 && drop > 0 && drop <= Math.max(4, Math.ceil(localDelta / 1000) + 2);
-      const rolled = !!previous && previous.cycleTf === cycleTf && localDelta > 150 && localDelta < 4500 && previous.seconds <= 2 && seconds >= duration - 2 && seconds <= duration + 1;
+      const rolled = !!previous && previous.cycleTf === cycleTf
+        && localDelta > 150 && localDelta < 9000
+        && previous.seconds <= 2
+        && seconds >= duration - 8 && seconds <= duration + 1;
       lastCanvas = { seconds, at: observedAt, cycleTf };
       if (!progressed && !rolled) return;
-      const expiration = controlsFresh ? clean(state.platformControls?.observed?.expiration || '') || null : null;
+      const expiration = expirationFresh ? clean(state.platformControls?.observed?.expiration || '') || null : null;
       canvasVerifiedAt = Date.now();
       await sendMessage({
         type: 'ATS_MARKET_CLOCK_V2', asset: focus.asset, timeframe: cycleTf,
@@ -299,38 +330,33 @@
       if (!focus?.asset || focus.reliable !== true || focus.chartScoped !== true || focus.trustedChartFrame !== true) return;
       if (String(focus.frameHost || '').toLowerCase() !== host) return;
 
+      const expirationAt = Number(state.platformControls?.expirationCheckedAt || state.platformControls?.observed?.observedAt?.expiration || 0);
+      const expirationFresh = expirationAt > 0 && Date.now() - expirationAt < 7000;
       const controlsFresh = Number(state.platformControls?.checkedAt || 0) > 0 && Date.now() - Number(state.platformControls.checkedAt) < 5000;
-      const cycleTf = liveCycleTf(state, controlsFresh);
-      if (!cycleTf) return; // never invent M1 when CasaTrade has not exposed a cycle yet
-      const expiration = controlsFresh ? clean(state.platformControls?.observed?.expiration || '') || null : null;
+      const cycleTf = liveCycleTf(state, controlsFresh) || structuredFeedTf(state, focus);
+      if (!cycleTf) return;
+      const expiration = expirationFresh ? clean(state.platformControls?.observed?.expiration || '') || null : null;
       const domClock = verifiedDomCountdown(cycleTf);
 
-      // Never let the diagnostic/fallback writer clobber an exact clock that was
-      // just published by the network bridge or the visible CasaTrade countdown.
       if (!domClock && freshExactClock(state, focus, cycleTf)) return;
       if (!domClock && Date.now() - canvasVerifiedAt < 2300) return;
 
-      const boundary = !domClock ? currentStateBoundary(state, focus, cycleTf) : null;
-      const diagnostic = derivedCountdown(cycleTf);
-      if (diagnostic == null) return;
+      // Never synthesize an operational countdown from candle timestamps.
+      // If CasaTrade's real countdown is not currently verified, publish only
+      // a pending state. The 30s/10s decision gate therefore cannot consume a
+      // local/derived clock as authority.
       const payload = domClock ? {
         type: 'ATS_MARKET_CLOCK_V2', asset: focus.asset, timeframe: cycleTf,
         secondsRemaining: domClock.seconds, expiration, available: true, verified: true, operational: true,
         clockRole: 'candle-close', clockSource: 'trader-dom-countdown',
         clockMode: domClock.chartScoped ? 'chart-geometry-exact' : 'dom-exact',
         clockText: domClock.text, clockToken: domClock.token, confidence: 99, frameHost: host, at: Date.now()
-      } : boundary ? {
-        type: 'ATS_MARKET_CLOCK_V2', asset: focus.asset, timeframe: cycleTf,
-        secondsRemaining: boundary.seconds, expiration, available: true, verified: true, operational: true,
-        clockRole: 'candle-close', clockSource: 'network-server-cycle', clockMode: 'state-current-candle-boundary',
-        clockText: 'Fechamento confirmado pela vela atual recebida da CasaTrade', clockToken: `${boundary.seconds}s`,
-        confidence: 92, frameHost: host, at: Date.now()
       } : {
         type: 'ATS_MARKET_CLOCK_V2', asset: focus.asset, timeframe: cycleTf,
-        secondsRemaining: diagnostic, expiration, available: true, verified: false, operational: true,
-        clockRole: 'candle-close', clockSource: 'platform-cycle-derived', clockMode: 'bounded-local-fallback',
-        clockText: `Estimativa temporária ${diagnostic}s — aguardando o countdown real da CasaTrade`, clockToken: `~${diagnostic}s`,
-        confidence: 55, frameHost: host, at: Date.now()
+        secondsRemaining: null, expiration, available: false, verified: false, operational: false,
+        clockRole: 'candle-close', clockSource: 'casatrade-clock-pending', clockMode: 'waiting-authoritative-clock',
+        clockText: 'Aguardando countdown real da CasaTrade', clockToken: '',
+        confidence: 0, frameHost: host, at: Date.now()
       };
       const key = `${payload.asset}|${cycleTf}|${payload.secondsRemaining}|${payload.available}|${payload.verified}|${payload.clockMode}`;
       if (key === lastKey && Date.now() - lastAt < 700) return;
