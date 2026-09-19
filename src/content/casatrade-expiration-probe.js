@@ -307,13 +307,41 @@
     return rows[0] || null;
   }
 
+  const EXPIRATION_TRANSIENT_CACHE_MS = 12000;
+  let lastConfirmedExpiration = null;
+  let lastConfirmedAt = 0;
+  let expirationControlDirtyAt = 0;
+
+  function expirationInteractionTarget(target) {
+    let node = target instanceof Element ? target : null;
+    for (let depth = 0; node && depth < 5; depth += 1, node = node.parentElement) {
+      const meta = semanticText(node);
+      if (expirationSemantics.test(meta)) return true;
+      const parentText = fold(node.parentElement?.innerText || node.parentElement?.textContent || '');
+      if (directDuration(node) && expirationSemantics.test(parentText)) return true;
+    }
+    return false;
+  }
+
   function scan() {
     const all = elements();
     const strong = expirationControlByLabel(all);
     const semantic = strong || semanticControlExpiration(all);
     const body = semantic || bodyExpiration();
-    const exp = strong || semantic || body;
+    let exp = strong || semantic || body;
     const tf = selectedTimeframe(all);
+    const now = Date.now();
+
+    if (exp?.value) {
+      lastConfirmedExpiration = exp.value;
+      lastConfirmedAt = now;
+    } else if (
+      lastConfirmedExpiration
+      && lastConfirmedAt > expirationControlDirtyAt
+      && now - lastConfirmedAt < EXPIRATION_TRANSIENT_CACHE_MS
+    ) {
+      exp = { value: lastConfirmedExpiration, score: 110, reason: 'stable-control-cache' };
+    }
 
     if (!exp && !tf) return null;
     return {
@@ -363,22 +391,36 @@
   const observer = new MutationObserver(() => schedule(false, 35));
   try { observer.observe(document.documentElement, { subtree: true, childList: true, characterData: true, attributes: true }); } catch {}
 
-  const clickHandler = () => {
+  const markControlDirty = event => {
+    if (!expirationInteractionTarget(event?.target)) return;
+    expirationControlDirtyAt = Date.now();
+  };
+  const clickHandler = event => {
+    markControlDirty(event);
     schedule(true, 45);
     setTimeout(() => publish(true).catch(() => {}), 220);
   };
+  const controlChangeHandler = event => {
+    markControlDirty(event);
+    schedule(true, 25);
+    setTimeout(() => publish(true).catch(() => {}), 140);
+  };
   document.addEventListener('click', clickHandler, true);
+  document.addEventListener('input', controlChangeHandler, true);
+  document.addEventListener('change', controlChangeHandler, true);
 
   const intervalId = setInterval(() => publish(true).catch(() => {}), 650);
   globalThis.__ATS_FORCE_EXPIRATION_SCAN__ = () => publish(true);
   globalThis.__ATS_EXPIRATION_PROBE_RUNTIME__ = {
-    version: 'expiration-real-v3',
+    version: 'expiration-real-v4',
     scan,
     parseExpiration,
     teardown() {
       stopped = true;
       try { observer.disconnect(); } catch {}
       try { document.removeEventListener('click', clickHandler, true); } catch {}
+      try { document.removeEventListener('input', controlChangeHandler, true); } catch {}
+      try { document.removeEventListener('change', controlChangeHandler, true); } catch {}
       try { clearInterval(intervalId); } catch {}
       if (scheduled) { try { clearTimeout(scheduled); } catch {} }
     }
