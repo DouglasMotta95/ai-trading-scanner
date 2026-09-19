@@ -102,3 +102,20 @@ test('asset readers use build markers so a new unpacked build can enter an alrea
   assert.match(protocol, /PROTOCOL_FOCUS_BUILD/);
   assert.match(protocol, /__ATS_PROTOCOL_FOCUS_BUILD__/);
 });
+
+
+test('explicit asset selection remains authoritative until the next explicit user switch', () => {
+  const market = read('src/background-market-session.js');
+  assert.match(market, /const selectionLockActive = !!selectionLock\?\.asset/);
+  assert.match(market, /The lock changes only on the next explicit user selection/);
+  assert.doesNotMatch(market, /selectionLockFresh[\s\S]{0,160}< 8000/);
+  assert.match(market, /assetChanged && !userSelected && contradictsSelectionLock/);
+});
+
+test('alias bridge cannot passively resurrect EURO or another stale alias after a switch', () => {
+  const alias = read('src/content/focused-asset-alias-bridge.js');
+  assert.match(alias, /Alias-only labels such as "Euro" or "NZD" are too ambiguous/);
+  assert.match(alias, /if \(!asset \|\| Date\.now\(\) - Number\(recentInteraction\.at \|\| 0\) >= 3500\) return/);
+  assert.match(alias, /interaction-only-v2/);
+  assert.doesNotMatch(alias, /source: interacted \? 'user-selected-alias' : isSelected/);
+});
