@@ -47,7 +47,7 @@
     return `${upper} (OTC)`;
   }
 
-  const canonicalAsset = value => assetsIn(value)[0] || '';
+  const canonicalAsset = value => assetsIn(value)[0] || namedChartAsset(value) || '';
   const identity = value => canonicalAsset(value);
   const sameAsset = (a, b) => !!identity(a) && identity(a) === identity(b);
   const visible = el => {
@@ -177,7 +177,7 @@
         asset: assets[0] || named,
         score,
         explicit: true,
-        interaction: interactionFresh(assets[0]),
+        interaction: interactionFresh(assets[0] || named),
         chartScoped: true,
         chartHits: 3,
         hits: 1,
