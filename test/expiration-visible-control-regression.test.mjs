@@ -180,3 +180,27 @@ test('clock reader no longer expires a confirmed expiration after seven seconds'
   assert.doesNotMatch(clock, /expirationAt > 0 && Date\.now\(\) - expirationAt < 7000/);
   assert.match(clock, /expirationAt > 0 && !!clean\(state\.platformControls\?\.observed\?\.expiration/);
 });
+
+
+test('Android/tablet expiration retry uses callback-compatible scripting API', () => {
+  const control = read('src/background-control.js');
+  assert.match(control, /function executeScriptCompat\(details\)/);
+  const start = control.indexOf('async function directExpirationProbe');
+  const end = control.indexOf('\nasync function commitDirectExpiration', start);
+  const block = control.slice(start, end);
+  assert.match(block, /await executeScriptCompat\(\{/);
+  assert.doesNotMatch(block, /await chrome\.scripting\.executeScript\(/);
+});
+
+test('retry reads expiration before full reinjection when clock and market are already alive', () => {
+  const control = read('src/background-control.js');
+  const start = control.indexOf('async function refreshTargetTab');
+  const end = control.indexOf('\nasync function connectActiveTab', start);
+  const block = control.slice(start, end);
+  const direct = block.indexOf('readAndCommitDirectExpiration(tabId)');
+  const inject = block.indexOf('injectModern(tabId)');
+  assert.ok(direct >= 0);
+  assert.ok(inject >= 0);
+  assert.ok(direct < inject);
+  assert.match(block, /if \(directExpiration\) \{/);
+});
