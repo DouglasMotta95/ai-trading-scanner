@@ -69,3 +69,19 @@ test('v0.11.30 passive visual scans cannot starve a new protocol-selected asset 
   assert.match(protocol, /Date\.now\(\) - interactionAt < 3500/);
   assert.match(protocol, /return false;/);
 });
+
+
+test('protocol focus rejects ambiguous bare asset labels such as EURO so they cannot overwrite USO/USD', () => {
+  const protocol = read('src/content/focused-asset-protocol.js');
+  assert.match(protocol, /Protocol\/network focus must carry a real market identity/);
+  assert.doesNotMatch(protocol, /\['EURO',\s*'EUR\/USD'\]/);
+  assert.doesNotMatch(protocol, /aliases\.get\(bare\)/);
+  assert.match(protocol, /return '';/);
+});
+
+test('focused asset reader exposes a forced rescan for retry without accepting stale protocol rollback', () => {
+  const focused = read('src/content/focused-asset-v2.js');
+  assert.match(focused, /__ATS_FORCE_FOCUSED_ASSET_SCAN__/);
+  assert.match(focused, /schedulePublish\(0, true\)/);
+  assert.match(focused, /protocol-rollback-visual-selection-lock/);
+});
