@@ -2,6 +2,7 @@ import { activateLicense, validateLicense, clearLicense, restoreCachedLicense } 
 import { readScannerState, updateScannerState } from './services/scanner-state-atomic.js';
 import { storageLocalGet, storageSessionGet, tabsQuery, sidePanelSetBehavior } from './services/chrome-compat.js';
 import { detectPlatform } from './platforms/registry.js';
+import { clearMarketAuthorityState } from './background-market-session.js';
 
 const DEFAULT_LICENSE = Object.freeze({
   status: 'unconfigured', plan: null, planLabel: null, dailyLimit: null, usedToday: 0,
@@ -109,20 +110,17 @@ function platformFromUrl(url = '') {
 }
 
 function clearMarket(state = {}, extra = {}) {
-  return {
-    ...state,
-    scanner: 'idle',
-    connection: 'offline', platformId: null, platformName: null, targetTabId: null,
-    asset: null, price: null, timeframe: null, analysisTimeframe: null,
-    expiration: null, targetExpiration: null, serverTime: null,
-    candles: [], currentCandle: null, marketHistory: {}, signal: null,
-    professionalDecision: null, aiAudit: null,
-    tradeIntent: null, lastConfirmed: null, lastSeen: null,
-    platformControls: null,
-    diagnostics: { ...(extra.diagnostics || {}) },
+  return clearMarketAuthorityState(state, {
     ...extra,
+    scanner: 'idle',
+    connection: 'offline',
+    platformId: null,
+    platformName: null,
+    targetTabId: null,
+    diagnostics: { ...(extra.diagnostics || {}) },
+    marketSessionSource: 'background-control-clear',
     license: extra.license || state.license || DEFAULT_LICENSE
-  };
+  });
 }
 
 function licenseBlockedDiagnostics(license = {}) {
@@ -205,14 +203,10 @@ async function connectActiveTab() {
     const dataFresh = Number(current.lastSeen || 0) > 0 && Date.now() - Number(current.lastSeen) < 2500;
     const preserveLive = sameTab && current.connection === 'online' && focusFresh && dataFresh
       && focus?.reliable === true && focus?.trustedChartFrame === true;
+
     const diagnostics = { ...(current.diagnostics || {}) };
     delete diagnostics.connectionError;
-    if (!preserveLive) {
-      delete diagnostics.focusedAsset;
-      delete diagnostics.marketClock;
-      delete diagnostics.marketSession;
-    }
-    return {
+    const base = {
       ...current,
       license,
       platformId: platform.id,
@@ -220,12 +214,6 @@ async function connectActiveTab() {
       targetTabId: tab.id,
       scanner: 'scanning',
       connection: preserveLive ? 'online' : 'connecting',
-      ...(!preserveLive ? {
-        asset: null, price: null, timeframe: null, analysisTimeframe: null,
-        expiration: null, targetExpiration: null, candles: [], currentCandle: null, marketHistory: {},
-        signal: null, professionalDecision: null, aiAudit: null,
-        lastConfirmed: null, tradeIntent: null, lastSeen: null, platformControls: null
-      } : {}),
       diagnostics: {
         ...diagnostics,
         target: { host: new URL(tab.url).hostname, tabId: tab.id, connectedAt: Date.now(), pipeline: 'single-session' },
@@ -236,6 +224,18 @@ async function connectActiveTab() {
         }
       }
     };
+
+    if (preserveLive) return base;
+    return clearMarketAuthorityState(base, {
+      license,
+      platformId: platform.id,
+      platformName: platform.name,
+      targetTabId: tab.id,
+      scanner: 'scanning',
+      connection: 'connecting',
+      diagnostics: base.diagnostics,
+      marketSessionSource: 'connect-active-tab'
+    });
   });
 
   const injected = await injectModern(tab.id);
