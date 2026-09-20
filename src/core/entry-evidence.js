@@ -37,6 +37,12 @@ export function assessEntryEvidence(signal = {}, direction = null) {
   if (exhaustionRisk && !rejection) {
     return { qualifies: false, setup: null, factors: [], blocker: 'exhaustion-risk' };
   }
+  // Range is intentionally stricter: continuation/momentum in the middle of a
+  // range is noise. A range entry needs either a real rejection or a confirmed
+  // breakout; the A+ layer separately verifies that the location is at the edge.
+  if (regime === 'range' && !rejection && !breakout) {
+    return { qualifies: false, setup: null, factors: [], blocker: 'range-needs-rejection-or-breakout' };
+  }
 
   const factors = [];
   if (power >= 48) factors.push('poder direcional');
@@ -53,8 +59,8 @@ export function assessEntryEvidence(signal = {}, direction = null) {
   const qualifies = directionalTrigger && supportingEvidence && factors.length >= 2;
 
   let setup = null;
-  if (rejection) setup = 'rejeição';
-  else if (breakout) setup = 'rompimento';
+  if (rejection) setup = regime === 'range' ? 'rejeição no range' : 'rejeição';
+  else if (breakout) setup = regime === 'range' ? 'rompimento confirmado no range' : 'rompimento';
   else if (continuation) setup = 'continuação';
   else if (momentum && strongCandle) setup = 'momentum';
   else if (power >= 48 && strongCandle) setup = 'força direcional';
