@@ -119,7 +119,38 @@
     return rows[0] || null;
   }
 
+  function visibleLineExpiration() {
+    const raw = String(document.body?.innerText || document.body?.textContent || '').normalize('NFKC');
+    const lines = raw.split(/\r?\n/).map(clean).filter(Boolean);
+    const duration = value => {
+      const m = clean(value).match(/(?:^|[^0-9])(\d{1,4})\s*(s|seg|segundo|segundos|m|min|minuto|minutos)\b/i);
+      if (!m) return null;
+      const n = Number(m[1]);
+      if (!(n > 0)) return null;
+      return /^(m|min|minuto|minutos)$/i.test(m[2]) ? `${n * 60}s` : `${n}s`;
+    };
+    for (let i = 0; i < lines.length; i += 1) {
+      const label = fold(lines[i]);
+      if (!/^(?:expiracao|expiry|expiration)(?:\s*:)?$/.test(label)) continue;
+      const direct = duration(lines[i]);
+      if (direct) return { expiration: direct, score: 80, source: 'visible-expiration-line' };
+      for (let j = i + 1; j <= Math.min(lines.length - 1, i + 3); j += 1) {
+        const value = duration(lines[j]);
+        if (value) return { expiration: value, score: 78 - (j - i), source: 'visible-expiration-next-line' };
+      }
+    }
+    // Compact card sometimes renders label and value on one visual line.
+    const joined = lines.join(' | ');
+    const m = joined.match(/(?:EXPIRA(?:ÇÃO|CAO)|EXPIRY|EXPIRATION)\s*[:| -]*\s*(\d{1,4})\s*(S|SEG|SEGUNDO|SEGUNDOS|M|MIN|MINUTO|MINUTOS)\b/i);
+    if (!m) return null;
+    const n = Number(m[1]);
+    const expiration = /^(M|MIN|MINUTO|MINUTOS)$/i.test(m[2]) ? `${n * 60}s` : `${n}s`;
+    return { expiration, score: 76, source: 'visible-expiration-inline' };
+  }
+
   function expirationCandidate() {
+    const visibleLine = visibleLineExpiration();
+    if (visibleLine) return visibleLine;
     const rows = [];
     for (const el of nodes()) {
       if (!visible(el)) continue;
