@@ -321,24 +321,35 @@
     const labeled = labeledQuote(text);
     const precise = labeled ? null : highPrecisionPrice(canvasText || text);
 
-    const asset = app?.asset || assetRow?.asset || null;
-    const quote = app?.price != null
-      ? { price: app.price, buy: app.buy, sell: app.sell, score: 110 }
-      : (labeled || precise);
+    // React/app state can lag behind the chart after a market-tab switch.
+    // A market rendered repeatedly in the visible page (active tab + chart
+    // title, score >=34) is stronger than a conflicting stale app-selected row.
+    const renderedContradictsApp = !!assetRow?.asset
+      && !!app?.asset
+      && assetRow.asset !== app.asset
+      && Number(assetRow.score || 0) >= 34;
+    const asset = renderedContradictsApp ? assetRow.asset : (app?.asset || assetRow?.asset || null);
+    const quote = renderedContradictsApp
+      ? (labeled || precise || (app?.price != null ? { price: app.price, buy: app.buy, sell: app.sell, score: 65 } : null))
+      : app?.price != null
+        ? { price: app.price, buy: app.buy, sell: app.sell, score: 110 }
+        : (labeled || precise);
+    const visibleExpiration = expirationFrom(text);
 
     return {
       frameId,
       at: Date.now(),
       href: location.href,
       asset,
-      assetScore: Number(app?.selected ? 160 : app?.score || assetRow?.score || 0),
-      selected: app?.selected === true,
+      assetScore: Number(renderedContradictsApp ? assetRow?.score || 0 : app?.selected ? 160 : app?.score || assetRow?.score || 0),
+      selected: renderedContradictsApp ? true : app?.selected === true,
       price: num(quote?.price),
       buy: num(quote?.buy),
       sell: num(quote?.sell),
       priceScore: Number(quote?.score || 0),
-      timeframe: app?.timeframe || timeframeFrom(text),
-      expiration: app?.expiration || expirationFrom(text),
+      timeframe: timeframeFrom(text) || app?.timeframe || null,
+      // The visible Expiração card wins over lagging React state.
+      expiration: visibleExpiration || app?.expiration || null,
       canvasTexts: recentCanvasText.length
     };
   }
