@@ -41,6 +41,10 @@ function transitionAsset(state = {}) {
   const session = sessionInfo(state);
   return session.transitioning === true ? marketId(session.pendingAsset || session.asset) : '';
 }
+function operationTimeSync(state = {}) {
+  return globalThis.__ATS_OPERATION_TIME_SYNC__?.read?.(state, Date.now()) || null;
+}
+
 function marketDataReady(state = {}) {
   const session = sessionInfo(state);
   const rows = (Array.isArray(state.candles) ? state.candles : []).filter(row => [row?.open,row?.high,row?.low,row?.close].every(value => num(value) != null));
@@ -216,6 +220,20 @@ function decisionModel(state = {}) {
   if (pending) return { uiState: 'ANALYZING_MARKET', title: 'ATUALIZANDO ATIVO', text: `ATUALIZANDO PARA ${pending}`, sub: 'Limpando dados anteriores e confirmando o novo gráfico.', tone: 'waiting', reason: 'Troca de ativo em validação.', score: 0, actionable: false };
   if (!marketDataReady(state) || !focusReady(state)) return { uiState: 'ANALYZING_MARKET', title: 'AGUARDAR', text: 'AGUARDAR', sub: 'Confirmando ativo, preço e velas reais.', tone: 'waiting', reason: 'Identificando o gráfico atual da CasaTrade.', score: 0, actionable: false };
 
+  const operationSync = operationTimeSync(state);
+  if (!operationSync?.ready) {
+    return {
+      uiState: 'ANALYZING_MARKET',
+      title: 'SINCRONIZANDO',
+      text: 'SINCRONIZANDO TEMPOS',
+      sub: operationSync?.reason || 'Confirmando período da vela, expiração e fechamento.',
+      tone: 'waiting',
+      reason: operationSync?.reason || 'Sincronizando os tempos reais da CasaTrade.',
+      score: 0,
+      actionable: false
+    };
+  }
+
   const desiredTf = selectedOperatingTimeframe(state);
   const actualTf = normTf(state.diagnostics?.marketClock?.timeframe || state.analysisTimeframe || state.timeframe);
   if (actualTf && desiredTf !== actualTf) {
@@ -372,7 +390,7 @@ function render(state = {}) {
   setText('timeframe', freshMarket || pending ? (actualTf || '—') : '—');
   setText('price', freshMarket ? fmtPrice(state.price) : '—');
   setText('scannerModeTitle', `A+ ${desiredTf} AO VIVO`);
-  setText('heroExpirationPlan', expLabel(requiredExp));
+  setText('heroExpirationPlan', actualExp ? expLabel(actualExp) : '—');
   setText('strategyTf', desiredTf);
   setText('strategyContext', contextTf);
   setText('strategyExpiration', expLabel(requiredExp));
@@ -437,10 +455,11 @@ function render(state = {}) {
 
   const tfWarning = $('timeframeModeWarning');
   if (tfWarning) {
-    const mismatch = !!actualTf && actualTf !== desiredTf;
+    const operationSync = operationTimeSync(state);
+    const mismatch = freshMarket && operationSync?.ready !== true;
     tfWarning.hidden = !mismatch;
     tfWarning.textContent = mismatch
-      ? `Scanner em ${desiredTf}, mas a CasaTrade está em ${actualTf}. Troque o período da vela para ${desiredTf} antes de operar. Expiração: ${expLabel(requiredExp)}.`
+      ? operationSync?.reason || `Sincronize período da vela ${desiredTf}, expiração ${expLabel(requiredExp)} e fechamento real.`
       : '';
   }
 
