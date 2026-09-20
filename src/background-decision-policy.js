@@ -1,4 +1,6 @@
 import { readScannerState, updateScannerState } from './services/scanner-state-atomic.js';
+import './core/countdown-authority.js';
+import './core/operation-time-sync.js';
 
 // Product policy layer. The technical engine can keep collecting evidence with an
 // estimated clock, but the user-facing decision is never promoted while CasaTrade
@@ -6,7 +8,7 @@ import { readScannerState, updateScannerState } from './services/scanner-state-a
 const EXACT_CLOCK_SOURCES = new Set(['trader-dom-countdown', 'network-server-cycle']);
 const CLOCK_FRESH_MS = 3000;
 const FOCUS_FRESH_MS = 5500;
-const DEFAULT_PREFS = Object.freeze({ mode: 'A_PLUS', operatingTimeframe: 'M5', geminiEnabled: true, holdSeconds: 3, preferredExpiration: '300s' });
+const DEFAULT_PREFS = Object.freeze({ mode: 'A_PLUS', operatingTimeframe: 'M1', geminiEnabled: true, holdSeconds: 3, preferredExpiration: '60s' });
 
 const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
 const text = value => String(value ?? '').trim();
@@ -42,7 +44,7 @@ const normExp = value => {
 
 function preferences(state = {}) {
   const raw = state.analystPreferences || {};
-  const operatingTimeframe = normTf(raw.operatingTimeframe) === 'M1' ? 'M1' : 'M5';
+  const operatingTimeframe = normTf(raw.operatingTimeframe) === 'M5' ? 'M5' : 'M1';
   return {
     mode: 'A_PLUS',
     operatingTimeframe,
@@ -73,8 +75,6 @@ export function exactCasaTradeTime(state = {}) {
   }
   if (!EXACT_CLOCK_SOURCES.has(text(clock.source))) return { ready: false, reason: 'Fonte de tempo não autoritativa.' };
   if (!sameMarket(clock.asset, state.asset)) return { ready: false, reason: 'Relógio pertence a outro ativo.' };
-  if (Number(clock.frameId) !== Number(focus.frameId)) return { ready: false, reason: 'Relógio pertence a outro gráfico.' };
-  if (text(clock.frameHost).toLowerCase() !== text(focus.frameHost).toLowerCase()) return { ready: false, reason: 'Relógio pertence a outro frame.' };
   if (Date.now() - Number(clock.at || 0) >= CLOCK_FRESH_MS) return { ready: false, reason: 'Relógio da CasaTrade ficou desatualizado.' };
   if (num(clock.secondsRemaining) == null) return { ready: false, reason: 'Countdown da CasaTrade indisponível.' };
 
@@ -157,52 +157,19 @@ function cycleKey(state = {}, signal = {}) {
 }
 
 function simpleEntryTiming(state = {}, signal = {}) {
-  const now = Date.now();
-  const clock = state.diagnostics?.marketClock || {};
-  const timeframe = normTf(clock.timeframe || state.analysisTimeframe || state.timeframe || signal.timeframe)
-    || preferences(state).operatingTimeframe;
-  const durationSeconds = timeframe === 'M5' ? 300 : 60;
-  const clockSeconds = num(clock.secondsRemaining);
-  const clockFresh = clockSeconds != null
-    && clockSeconds >= 0
-    && clockSeconds <= durationSeconds + 2
-    && Number(clock.at || 0) > 0
-    && now - Number(clock.at) < 6000;
-  if (clockFresh) {
-    return {
-      ready: true,
-      secondsRemaining: clockSeconds,
-      source: text(clock.source || 'market-clock'),
-      timeframe
-    };
-  }
-
-  const signalSeconds = num(signal.secondsRemaining);
-  if (signalSeconds != null && signalSeconds >= 0 && signalSeconds <= durationSeconds + 2) {
-    return {
-      ready: true,
-      secondsRemaining: signalSeconds,
-      source: 'technical-signal-clock',
-      timeframe
-    };
-  }
-
-  const candidates = [
-    state.currentCandle,
-    signal.currentCandle,
-    Array.isArray(state.candles) ? state.candles.at(-1) : null
-  ].filter(Boolean);
-  for (const row of candidates) {
-    let openAt = num(row?.time ?? row?.timestamp);
-    if (openAt != null && openAt > 0 && openAt < 1e12) openAt *= 1000;
-    if (!Number.isFinite(openAt)) continue;
-    const closeAt = openAt + durationSeconds * 1000;
-    if (now < openAt - 1500 || now > closeAt + 1500) continue;
-    const secondsRemaining = Math.max(0, Math.min(durationSeconds, Math.ceil((closeAt - now) / 1000)));
-    return { ready: true, secondsRemaining, source: 'current-candle-boundary', timeframe };
-  }
-
-  return { ready: false, secondsRemaining: null, source: null, timeframe };
+  const authority = globalThis.__ATS_COUNTDOWN_AUTHORITY__;
+  const timing = authority?.readAuthoritativeCountdown?.(state, Date.now()) || {
+    ready: false,
+    secondsRemaining: null,
+    timeframe: normTf(state.analysisTimeframe || state.timeframe || signal.timeframe) || preferences(state).operatingTimeframe,
+    source: null
+  };
+  return {
+    ready: timing.ready === true,
+    secondsRemaining: timing.ready === true ? Number(timing.secondsRemaining) : null,
+    source: timing.ready === true ? text(timing.source || '') : null,
+    timeframe: normTf(timing.timeframe) || preferences(state).operatingTimeframe
+  };
 }
 
 function baseDecision(state = {}) {
@@ -222,6 +189,7 @@ function baseDecision(state = {}) {
     ? Number(previous.possibleSince)
     : now;
 
+  const operationSync = globalThis.__ATS_OPERATION_TIME_SYNC__?.read?.(state, now) || null;
   const common = {
     profile: pref.mode,
     holdSeconds: pref.holdSeconds,
@@ -229,9 +197,9 @@ function baseDecision(state = {}) {
     score,
     confluence: factors.count,
     factors: factors.factors,
-    timeReady: timing.ready,
-    expirationReady: true,
-    actualExpiration: null,
+    timeReady: operationSync?.clockReady === true,
+    expirationReady: operationSync?.expirationReady === true,
+    actualExpiration: operationSync?.expiration || null,
     timeSource: timing.source,
     timeframe: timing.timeframe || normTf(state.analysisTimeframe || state.timeframe) || 'M1',
     secondsRemaining: timing.secondsRemaining,
@@ -261,6 +229,18 @@ function baseDecision(state = {}) {
       alert: 'silent',
       possibleSince: null,
       reason: 'Montando o padrão com as velas reais da CasaTrade.'
+    };
+  }
+
+  if (!operationSync?.ready) {
+    return {
+      ...common,
+      uiState: 'ANALYZING_MARKET',
+      direction: null,
+      actionable: false,
+      alert: 'silent',
+      possibleSince: null,
+      reason: operationSync?.reason || 'Sincronizando período da vela, expiração e fechamento real.'
     };
   }
 

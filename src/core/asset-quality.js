@@ -44,7 +44,7 @@ export function assessAssetQuality(state = {}) {
   if (!asset || rows.length < 3) {
     return {
       status: 'LOADING', tone: 'waiting', label: 'AVALIANDO ATIVO', action: 'SINCRONIZANDO',
-      score: null, asset, context: 'AGUARDANDO HISTÓRICO', bias: '—', tradable: false,
+      score: null, asset, context: 'AGUARDANDO HISTÓRICO', bias: '—', tradable: false, blocking: true,
       reason: 'Lendo as velas reais deste ativo antes de dizer se está bom para operar agora.'
     };
   }
@@ -126,7 +126,7 @@ export function assessAssetQuality(state = {}) {
   if (weakeningStretch) {
     return {
       status: 'WATCH', tone: 'warn', label: `ATENÇÃO: ${directionText} ESTICADA`, action: 'AGUARDAR GATILHO',
-      score, asset, context: `${streak.count} VELAS SEGUIDAS • PERDENDO FORÇA`, bias: biasText, tradable: false,
+      score, asset, context: `${streak.count} VELAS SEGUIDAS • PERDENDO FORÇA`, bias: biasText, tradable: true, blocking: false,
       reason: 'O movimento está esticado e começou a perder força. Não inverter só porque subiu/caiu muito; espere rejeição, pullback ou rompimento confirmar a próxima vela.'
     };
   }
@@ -138,7 +138,7 @@ export function assessAssetQuality(state = {}) {
       status: hasLocalSetup ? 'WATCH' : 'POOR', tone: hasLocalSetup ? 'warn' : 'bad',
       label: hasLocalSetup ? 'ATIVO EM OBSERVAÇÃO' : 'ATIVO RUIM PARA OPERAR',
       action: hasLocalSetup ? 'AGUARDAR GATILHO' : 'PROCURE OUTRO ATIVO',
-      score, asset, context, bias: biasText, tradable: false,
+      score, asset, context, bias: biasText, tradable: true, blocking: false,
       reason: hasLocalSetup
         ? 'O ativo está lateral/comprimido, mas existe um setup local em formação. Só opere se o gatilho da próxima vela confirmar.'
         : 'Pouca direção e pouca vantagem no movimento atual. Vale trocar de ativo e comparar outro gráfico.'
@@ -149,7 +149,7 @@ export function assessAssetQuality(state = {}) {
     return {
       status: 'GOOD', tone: 'good', label: 'ATIVO BOM PARA OPERAR', action: 'PROCURAR ENTRADA',
       score, asset, context: setupContext,
-      bias: biasText, tradable: true,
+      bias: biasText, tradable: true, blocking: false,
       reason: 'Movimento relativamente limpo, direção clara e força suficiente para procurar uma entrada na próxima vela. A entrada ainda depende do gatilho e da confirmação final.'
     };
   }
@@ -158,14 +158,14 @@ export function assessAssetQuality(state = {}) {
     return {
       status: 'WATCH', tone: 'warn', label: 'ATIVO EM OBSERVAÇÃO', action: 'AGUARDAR GATILHO',
       score, asset, context: signalBias ? setupContext : 'MOVIMENTO MISTO',
-      bias: biasText, tradable: false,
+      bias: biasText, tradable: true, blocking: false,
       reason: 'Existe movimento, mas a vantagem ainda não está limpa. Aguarde o gatilho de POSSÍVEL COMPRA/VENDA ou a confirmação final da próxima vela.'
     };
   }
 
   return {
     status: 'POOR', tone: 'bad', label: 'ATIVO RUIM PARA OPERAR', action: 'PROCURE OUTRO ATIVO',
-    score, asset, context: 'SEM QUALIDADE SUFICIENTE', bias: biasText, tradable: false,
+    score, asset, context: 'SEM QUALIDADE SUFICIENTE', bias: biasText, tradable: true, blocking: false,
     reason: 'O gráfico está sem direção ou força suficiente agora. Trocar de ativo pode ser melhor do que ficar esperando este mercado melhorar.'
   };
 }

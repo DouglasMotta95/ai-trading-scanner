@@ -4,7 +4,7 @@
 
   const host = String(location.hostname || '').toLowerCase().replace(/\.$/, '');
   const allowed = value => value === 'casatrade.com' || value.endsWith('.casatrade.com') || value === 'casatrade.io' || value.endsWith('.casatrade.io') || value === 'casatraders.online' || value.endsWith('.casatraders.online') || value === 'ivcasatraders.online' || value.endsWith('.ivcasatraders.online');
-  if (!allowed(host) || window !== window.top) return;
+  if (!allowed(host)) return;
   const sendMessage = globalThis.__ATS_SEND_MESSAGE__;
   if (typeof sendMessage !== 'function') return;
 
@@ -119,7 +119,38 @@
     return rows[0] || null;
   }
 
+  function visibleLineExpiration() {
+    const raw = String(document.body?.innerText || document.body?.textContent || '').normalize('NFKC');
+    const lines = raw.split(/\r?\n/).map(clean).filter(Boolean);
+    const duration = value => {
+      const m = clean(value).match(/(?:^|[^0-9])(\d{1,4})\s*(s|seg|segundo|segundos|m|min|minuto|minutos)\b/i);
+      if (!m) return null;
+      const n = Number(m[1]);
+      if (!(n > 0)) return null;
+      return /^(m|min|minuto|minutos)$/i.test(m[2]) ? `${n * 60}s` : `${n}s`;
+    };
+    for (let i = 0; i < lines.length; i += 1) {
+      const label = fold(lines[i]);
+      if (!/^(?:expiracao|expiry|expiration)(?:\s*:)?$/.test(label)) continue;
+      const direct = duration(lines[i]);
+      if (direct) return { expiration: direct, score: 80, source: 'visible-expiration-line' };
+      for (let j = i + 1; j <= Math.min(lines.length - 1, i + 3); j += 1) {
+        const value = duration(lines[j]);
+        if (value) return { expiration: value, score: 78 - (j - i), source: 'visible-expiration-next-line' };
+      }
+    }
+    // Compact card sometimes renders label and value on one visual line.
+    const joined = lines.join(' | ');
+    const m = joined.match(/(?:EXPIRA(?:ÇÃO|CAO)|EXPIRY|EXPIRATION)\s*[:| -]*\s*(\d{1,4})\s*(S|SEG|SEGUNDO|SEGUNDOS|M|MIN|MINUTO|MINUTOS)\b/i);
+    if (!m) return null;
+    const n = Number(m[1]);
+    const expiration = /^(M|MIN|MINUTO|MINUTOS)$/i.test(m[2]) ? `${n * 60}s` : `${n}s`;
+    return { expiration, score: 76, source: 'visible-expiration-inline' };
+  }
+
   function expirationCandidate() {
+    const visibleLine = visibleLineExpiration();
+    if (visibleLine) return visibleLine;
     const rows = [];
     for (const el of nodes()) {
       if (!visible(el)) continue;
@@ -146,7 +177,11 @@
       const m = own.match(/^M(\d{1,3})$/i) || own.match(/^(\d{1,3})\s*m$/i);
       if (!m || Number(m[1]) <= 0) continue;
       const flags = `${el.className || ''} ${el.getAttribute?.('aria-selected') || ''} ${el.getAttribute?.('aria-current') || ''} ${el.getAttribute?.('data-state') || ''}`;
+      const ctx = fold(neighborhood(el, 2));
+      if (/chart range|range do grafico|range do gráfico|faixa do grafico|faixa do gráfico|visualizacao|visualização|view range|visible range|zoom|history range|historico visivel|histórico visível/.test(ctx)) continue;
       let score = /true|active|selected|current|checked/i.test(flags) ? 20 : 5;
+      if (/periodo da vela|período da vela|candle period|candle interval|timeframe/.test(ctx)) score += 18;
+      if (/expira|expiry|expiration|duration/.test(ctx)) score -= 25;
       if (el.getBoundingClientRect().left < innerWidth * .28) score += 3;
       rows.push({ timeframe: `M${Number(m[1])}`, score });
     }

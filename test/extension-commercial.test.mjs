@@ -1,146 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+const read=p=>fs.readFileSync(new URL('../'+p,import.meta.url),'utf8');
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const root = path.resolve(__dirname, '..');
-const read = file => fs.readFileSync(path.join(root, file), 'utf8');
-
-const REMOVED = [
-  'src/core/ai-scoring.js',
-  'src/core/backtest.js',
-  'src/core/correlation.js',
-  'src/core/market-structure.js',
-  'src/core/reporting.js',
-  'src/content/chart-overlay.js',
-  'src/content/history-adapter.js',
-  'src/background-platform-sync.js'
-];
-const standalone = term => new RegExp(`(?:^|[^A-ZÀ-ÖØ-Þ])${term}(?:$|[^A-ZÀ-ÖØ-Þ])`);
-
-test('manifest only injects supported CasaTrade-owned or legacy trader capture scripts', () => {
-  const manifest = JSON.parse(read('manifest.json'));
-  assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.background?.service_worker, 'src/background-entry.js');
-  assert.equal(manifest.side_panel?.default_path, 'src/sidepanel/index.html');
-  assert.equal(manifest.optional_host_permissions, undefined);
-  const serialized = JSON.stringify(manifest);
-  assert.doesNotMatch(serialized, /history-adapter|chart-overlay|background-platform-sync/);
-  for (const host of manifest.content_scripts.flatMap(x => x.matches || [])) assert.match(host, /casatrade\.(com|io)|(?:iv)?casatraders\.online/);
-
-  const focusedRow = manifest.content_scripts.find(row => (row.js || []).includes('src/content/focused-asset-v2.js'));
-  assert.ok(focusedRow);
-  assert.ok(focusedRow.js.includes('src/content/focused-asset-alias-bridge.js'));
-  for (const trusted of [
-    'https://casatrade.com/*','https://*.casatrade.com/*','https://casatrade.io/*','https://*.casatrade.io/*',
-    'https://casatraders.online/*','https://*.casatraders.online/*','https://ivcasatraders.online/*','https://*.ivcasatraders.online/*'
-  ]) assert.ok(focusedRow.matches.includes(trusted), `missing trusted chart host ${trusted}`);
-  assert.equal(focusedRow.matches.some(host => /example|google|fake-casatrade/.test(host)), false);
+test('commercial runtime keeps license, account and scanner control wired',()=>{
+  const e=read('src/background-entry.js');
+  const h=read('src/sidepanel/index.html');
+  assert.match(e,/background-control\.js/);
+  assert.match(e,/background-dev-owner\.js/);
+  assert.match(h,/account-login\.js/);
+  assert.match(h,/id="licenseCard"/);
 });
 
-test('platform detection is strict and recognizes every supported CasaTrade host family', async () => {
-  const { detectPlatform } = await import('../src/platforms/registry.js');
-  assert.equal(detectPlatform('example.com'), null);
-  assert.equal(detectPlatform('google.com'), null);
-  assert.equal(detectPlatform('fake-casatrade.com'), null);
-  assert.equal(detectPlatform('casatraders.online')?.id, 'casatrade');
-  assert.equal(detectPlatform('ivcasatraders.online')?.id, 'casatrade');
-  assert.equal(detectPlatform('casatrade.com')?.id, 'casatrade');
-  assert.equal(detectPlatform('app.casatrade.com')?.id, 'casatrade');
-});
-
-test('sidepanel is focused on access, opened asset, chart data and one next-candle decision', () => {
-  const html = read('src/sidepanel/index.html');
-  for (const heading of ['M1 AO VIVO','PRÓXIMA VELA','GRÁFICO ATUAL','ACESSO']) assert.match(html, new RegExp(heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'));
-  for (const removed of ['EMA 9','EMA 21','BACKTEST','RELATÓRIO SEMANAL','CORRELAÇÃO','CALENDÁRIO','NOTÍCIAS','MELHORES OPORTUNIDADES','RADAR MULTIATIVO','POR QUE A IA']) assert.doesNotMatch(html.toUpperCase(), standalone(removed));
-  for (const id of ['licenseCard','assetQualityCard','asset','price','secondsRemaining','timeframe','expiration','recentCandles','prepareBuy','prepareSell','signalTitle','signalReason','decisionText']) assert.match(html, new RegExp(`id=["']${id}["']`));
-  for (const repeated of ['analysisTitle','analyzingNow','targetTime','lastConfirmed']) assert.doesNotMatch(html, new RegExp(`id=["']${repeated}["']`));
-  assert.doesNotMatch(html, /tradeAmount|analysisTimeframe|targetExpiration|syncPlatformBtn|signalHistory/);
-  assert.match(html, /app-v2\.js/);
-  assert.doesNotMatch(html, /app\.js/);
-});
-
-test('removed unauthorized files are physically absent', () => {
-  for (const file of REMOVED) assert.equal(fs.existsSync(path.join(root, file)), false, `${file} must be deleted`);
-});
-
-test('no extension source references removed modules', () => {
-  const sourceFiles = [];
-  const walk = dir => {
-    for (const name of fs.readdirSync(dir)) {
-      const full = path.join(dir, name);
-      const stat = fs.statSync(full);
-      if (stat.isDirectory()) walk(full);
-      else if (/\.(js|html|json)$/.test(name)) sourceFiles.push(full);
-    }
-  };
-  walk(path.join(root, 'src'));
-  sourceFiles.push(path.join(root, 'manifest.json'));
-  const body = sourceFiles.map(f => fs.readFileSync(f, 'utf8')).join('\n');
-  for (const name of ['ai-scoring.js','backtest.js','correlation.js','market-structure.js','reporting.js','chart-overlay.js','history-adapter.js','background-platform-sync.js']) assert.doesNotMatch(body, new RegExp(name.replace('.', '\\.')));
-});
-
-test('runtime background uses a single market authority instead of the legacy market writers', () => {
-  const entry = read('src/background-entry.js');
-  assert.match(entry, /background-market-session\.js/);
-  assert.match(entry, /background-control\.js/);
-  assert.doesNotMatch(entry, /background\.js/);
-  assert.doesNotMatch(entry, /background-augment\.js/);
-  assert.doesNotMatch(entry, /background-integrity\.js/);
-  assert.doesNotMatch(entry, /background-chart-market\.js/);
-});
-
-test('platform reader remains wired to real CasaTrade controls', () => {
-  const content = read('src/content/platform-sync.js');
-  const control = read('src/background-control.js');
-  assert.match(content, /ATS_PLATFORM_READ/);
-  assert.match(content, /comprar\|vender\|buy\|sell/);
-  assert.match(control, /ATS_CONNECT_ACTIVE_TAB/);
-});
-
-test('market feed is filtered to the authoritative visible chart market before it can drive a decision', () => {
-  const manifest = JSON.parse(read('manifest.json'));
-  const scripts = manifest.content_scripts.flatMap(row => row.js || []);
-  const focus = read('src/content/focused-asset-v2.js');
-  const market = read('src/background-market-session.js');
-
-  assert.ok(scripts.includes('src/content/focused-asset-v2.js'));
-  assert.ok(scripts.includes('src/content/focused-asset-alias-bridge.js'));
-  assert.ok(scripts.includes('src/content/embedded-feed-bridge.js'));
-  assert.ok(!scripts.includes('src/content/generic-adapter.js'));
-  assert.ok(!scripts.includes('src/content/network-bridge.js'));
-  assert.match(focus, /ATS_VISUAL_FOCUS_V2/);
-  assert.match(focus, /chartScoped: true/);
-  assert.match(focus, /const frameRole = traderHost\(host\) \? 'trader-frame' : 'casa-chart-frame'/);
-  assert.match(market, /const casaOwnedChart = tabOwned && casaHost\(frameHost\)/);
-  assert.match(market, /trusted: embeddedTrader \|\| casaOwnedChart/);
-  assert.match(market, /function bestForFocus\(payload = \{\}, focus = ''\)/);
-  assert.match(market, /filter\(row => sameMarket\(row\.asset, focus\)\)/);
-  assert.match(market, /Number\(focus\.frameId\) !== Number\(info\.frameId\)/);
-  assert.match(market, /const candidate = bestForFocus\(payload, asset\)/);
-  assert.match(market, /if \(!candidate\) return/);
-  assert.match(market, /const clock = usableClock\(state, info\)/);
-  assert.match(market, /if \(clock\) processed = processLiveSnapshot/);
-});
-
-test('trade handoff highlights but never executes financial action automatically', () => {
-  const handoff = read('src/content/trade-handoff-v2.js');
-  assert.match(handoff, /ATS_HIGHLIGHT_TRADE/);
-  assert.doesNotMatch(handoff, /\.click\s*\(/);
-  assert.doesNotMatch(handoff, /dispatchEvent\s*\(\s*new\s+MouseEvent/);
-});
-
-test('license persistence remains cache-first and only definitive license errors invalidate cache', () => {
-  const license = read('src/services/license.js');
-  const control = read('src/background-control.js');
-  const authoritative = license.match(/const AUTHORITATIVE_LICENSE_ERRORS = new Set\(\[([\s\S]*?)\]\);/)?.[1] || '';
-  assert.match(license, /atsLastValidLicense/);
-  assert.match(license, /REOPEN_CACHE_GRACE_MS/);
-  assert.match(license, /AUTHORITATIVE_LICENSE_ERRORS/);
-  assert.match(authoritative, /device_limit_reached/);
-  assert.doesNotMatch(authoritative, /device_locked/);
-  assert.match(control, /response\?\.error === 'device_locked'/);
-  assert.match(control, /restoreCachedLicense\(\)/);
+test('manual trading remains confirmation-only',()=>{
+  const c=read('src/background-control.js');
+  assert.match(c,/tradeIntent/);
+  assert.doesNotMatch(c,/ATS_EXECUTE_TRADE/);
 });

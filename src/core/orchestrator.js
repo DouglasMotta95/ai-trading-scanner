@@ -6,6 +6,7 @@ import {
 } from './orchestrator-legacy.js';
 import { ANALYST_THRESHOLDS } from './analysis.js';
 import { assessHighConfidence, A_PLUS_THRESHOLDS } from './high-confidence.js';
+import { assessEntryEvidence } from './entry-evidence.js';
 
 // Price action/indicators remain in the legacy analyst. This wrapper owns exactly
 // one bounded decision for each target candle: ENTER BUY, ENTER SELL or WAIT.
@@ -125,83 +126,11 @@ function withAPlus(signal = {}, aPlus = null) {
 }
 
 function decisionQuality(signal = {}, direction = null) {
-  if (!direction) return { qualifies: false, setup: null };
-  const score = Number(signal.analysisScore ?? signal.score ?? 0);
-  if (score < ANALYST_THRESHOLDS.confirmScore) return { qualifies: false, setup: null };
-
-  const analytics = signal.analytics || {};
-  const power = Number(direction === 'BUY' ? analytics.buyPower : analytics.sellPower) || 0;
-  const currentStrength = Number(analytics.currentStrength || 0);
-  const rejectionStrength = Number(analytics.rejectionStrength || 0);
-  const directionalRejection = analytics.rejectionDirection === direction
-    || Number(direction === 'BUY' ? analytics.rejectionBuy : analytics.rejectionSell) >= ANALYST_THRESHOLDS.rejectionStrength;
-  const continuation = analytics.continuationDirection === direction && Number(analytics.continuationScore || 0) >= 55;
-  const momentum = analytics.momentumDirection === direction && Number(analytics.momentumScore || 0) >= 40;
-  const strongCandle = currentStrength >= ANALYST_THRESHOLDS.candleStrength;
-  const rejection = directionalRejection && rejectionStrength >= ANALYST_THRESHOLDS.rejectionStrength;
-  const regime = String(signal.regime?.type || '').toLowerCase();
-  const trendAligned = regime === 'uptrend'
-    ? direction === 'BUY'
-    : regime === 'downtrend'
-      ? direction === 'SELL'
-      : false;
-  const counterTrend = regime === 'uptrend'
-    ? direction === 'SELL'
-    : regime === 'downtrend'
-      ? direction === 'BUY'
-      : false;
-  const trendCompatible = regime === 'unknown' || trendAligned;
-
-  const strongBreakout = analytics.strongBreakout === true
-    && String(analytics.breakoutDirection || '').toUpperCase() === direction;
-  const breakoutMargin = Number(analytics.breakoutDistanceRatio || 0);
-  const rangeMultiple = Number(analytics.currentRangeMultiple || 0);
-  const exhaustionRisk = analytics.exhaustionRisk === true || analytics.overextendedImpulse === true;
-
-  // A large final impulse can be exhaustion, not continuation. Continuation
-  // entries are blocked when the current candle is stretched, unless a genuine
-  // rejection setup is present. This prevents chasing the just-finished candle.
-  if (exhaustionRisk && !rejection) {
-    return { qualifies: false, setup: null, blocker: 'exhaustion-risk' };
-  }
-
-  const setups = regime === 'range'
-    ? [
-        { name: 'rejeição no range', ok: power >= 52 && rejection },
-        {
-          name: 'rompimento confirmado no range',
-          ok: power >= 55
-            && score >= 64
-            && continuation
-            && momentum
-            && strongBreakout
-            && breakoutMargin >= .18
-            && rangeMultiple > 0
-            && rangeMultiple <= 1.45
-        }
-      ]
-    : [
-        { name: 'rejeição', ok: power >= 48 && rejection },
-        {
-          name: 'continuação com tendência',
-          ok: !counterTrend && trendCompatible && power >= 50 && continuation
-        },
-        {
-          name: 'momentum com tendência',
-          ok: !counterTrend && trendCompatible && power >= 50 && strongCandle && momentum
-        },
-        {
-          name: 'rompimento com tendência',
-          ok: !counterTrend && trendCompatible && power >= 50 && strongBreakout && breakoutMargin >= .18
-        },
-        {
-          name: 'confluência forte',
-          ok: !counterTrend && trendCompatible && power >= 48 && score >= 68 && momentum && (strongCandle || continuation || strongBreakout)
-        }
-      ];
-
-  const matched = setups.find(item => item.ok) || null;
-  return { qualifies: !!matched, setup: matched?.name || null, blocker: matched ? null : counterTrend ? 'counter-trend' : null };
+  // A+ already owns the final score, higher-timeframe context, S/R, volatility,
+  // anti-chase and historical vetoes. This second gate must confirm directional
+  // evidence, not demand another independent score threshold that can suppress
+  // an otherwise approved A+ entry.
+  return assessEntryEvidence(signal, direction);
 }
 
 function inferSetup(signal = {}, direction = null) {
@@ -321,6 +250,7 @@ function seedCycle(key, snapshot, signal, state = {}) {
       directionTransition: null,
       aPlusCandidateAllowed: false, aPlusWeakHits: 0, lastAPlusWeakAt: null,
       confirmHits: 0, lastHitAt: null, locked: null, direction: null, score: 0,
+      evidenceFactors: [],
       setup: null, reason: null, decidedAt: null, resolved: false
     };
   }
@@ -380,6 +310,7 @@ function enterSignal(signal, cycle, direction, score, reason = null, aPlus = nul
     reason: reason || `ENTRAR NA PRÓXIMA VELA: ${direction === 'BUY' ? 'COMPRA' : 'VENDA'} — padrão confirmado para a próxima abertura.`,
     hint: reason || `ENTRAR NA PRÓXIMA VELA: ${direction === 'BUY' ? 'COMPRA' : 'VENDA'}.`,
     targetStart: cycle.targetStart,
+    entryEvidence: Array.isArray(cycle.evidenceFactors) ? [...cycle.evidenceFactors] : [],
     ...(aPlus ? { aPlus, qualityScore: Number(aPlus.score || 0), qualityMode: 'A_PLUS' } : {})
   };
 }
@@ -511,7 +442,16 @@ function latestWrapperCompleted(snapshot = {}) {
 function newerDecision(a, b) {
   if (!a) return b || null;
   if (!b) return a;
-  return Number(b.targetStart || b.time || 0) > Number(a.targetStart || a.time || 0) ? b : a;
+  const aTime = Number(a.targetStart || a.time || 0);
+  const bTime = Number(b.targetStart || b.time || 0);
+  if (bTime > aTime) return b;
+  if (bTime < aTime) return a;
+  // The A+ wrapper is the current decision authority. If the legacy engine
+  // rolls a NO_TRADE for the same target candle while the wrapper already
+  // confirmed ENTER, the confirmed decision must win the tie.
+  if (b.state === 'CONFIRM' && a.state !== 'CONFIRM') return b;
+  if (a.state === 'CONFIRM' && b.state !== 'CONFIRM') return a;
+  return b;
 }
 
 function resolveWrapperDecision(snapshot = {}, result = {}, currentKey = '', state = {}) {
@@ -552,6 +492,9 @@ export function processSnapshot(snapshot = {}, state = {}) {
   const stableDirection = observeStablePossible(cycle, signal, at);
   const recovered = resolveWrapperDecision(snapshot, result, key, state);
   const rolledLastConfirmed = newerDecision(newerDecision(result.lastConfirmed, latestWrapperCompleted(snapshot)), recovered);
+  if (rolledLastConfirmed?.state === 'CONFIRM' && rolledLastConfirmed?.entryConfirmed === true) {
+    rememberWrapperCompleted(rolledLastConfirmed);
+  }
   const stableAPlus = stableDirection
     ? aPlusAssessment(snapshot, result, signal, stableDirection, cycle, state, at)
     : aPlusAssessment(snapshot, result, signal, directionOf(signal), cycle, state, at);
@@ -601,9 +544,11 @@ export function processSnapshot(snapshot = {}, state = {}) {
       cycle.locked = 'ENTER';
       cycle.direction = signal.direction;
       cycle.score = Math.max(score, Number(signal.score || 0), Number(cycle.possibleScore || 0));
-      cycle.setup = signal.setup || cycle.setup || inferSetup(signal, cycle.direction);
+      cycle.setup = quality.setup || signal.setup || cycle.setup || inferSetup(signal, cycle.direction);
+      cycle.evidenceFactors = Array.isArray(quality.factors) ? [...quality.factors] : [];
       cycle.aPlus = aPlus;
-      cycle.reason = `ENTRAR NA PRÓXIMA VELA: ${signal.direction === 'BUY' ? 'COMPRA' : 'VENDA'} — A+ ${Math.round(aPlus.score)}/100, ${cycle.setup || 'setup'} confirmado.`;
+      const evidence = cycle.evidenceFactors.slice(0, 3).join(' + ');
+      cycle.reason = `ENTRAR NA PRÓXIMA VELA: ${signal.direction === 'BUY' ? 'COMPRA' : 'VENDA'} — A+ ${Math.round(aPlus.score)}/100, ${cycle.setup || 'setup'} confirmado${evidence ? ` • ${evidence}` : ''}.`;
       cycle.decidedAt = at;
       cycles.set(key, cycle);
       const trace = appendTrace(state, { key, targetStart: cycle.targetStart, decision: 'ENTER', direction: cycle.direction, score: cycle.score, qualityScore: aPlus.score, setup: cycle.setup, reason: cycle.reason, decidedAt: at });
@@ -622,13 +567,17 @@ export function processSnapshot(snapshot = {}, state = {}) {
         && candidateAge >= FINAL_CANDIDATE_MIN_AGE_MS,
       at
     );
-    if (quality.qualifies) cycle.setup = quality.setup || cycle.setup || inferSetup(signal, stableDirection);
+    if (quality.qualifies) {
+      cycle.setup = quality.setup || cycle.setup || inferSetup(signal, stableDirection);
+      cycle.evidenceFactors = Array.isArray(quality.factors) ? [...quality.factors] : [];
+    }
     cycle.aPlus = aPlus;
     if (stableFinal) {
       cycle.locked = 'ENTER';
       cycle.direction = stableDirection;
       cycle.score = Math.max(score, Number(cycle.possibleScore || 0));
-      cycle.reason = `ENTRAR NA PRÓXIMA VELA: ${stableDirection === 'BUY' ? 'COMPRA' : 'VENDA'} — A+ ${Math.round(aPlus.score)}/100, ${cycle.setup || 'setup'} confirmado.`;
+      const evidence = cycle.evidenceFactors.slice(0, 3).join(' + ');
+      cycle.reason = `ENTRAR NA PRÓXIMA VELA: ${stableDirection === 'BUY' ? 'COMPRA' : 'VENDA'} — A+ ${Math.round(aPlus.score)}/100, ${cycle.setup || 'setup'} confirmado${evidence ? ` • ${evidence}` : ''}.`;
       cycle.decidedAt = at;
       cycles.set(key, cycle);
       const trace = appendTrace(state, { key, targetStart: cycle.targetStart, decision: 'ENTER', direction: stableDirection, score: cycle.score, qualityScore: aPlus.score, setup: cycle.setup, reason: cycle.reason, decidedAt: at });
@@ -668,9 +617,23 @@ export function resetOrchestrator() {
 
 export function serializeCompletedDecisions() {
   const legacyRows = legacySerializeCompletedDecisions();
-  const legacyKeys = new Set(legacyRows.map(row => wrapperCompletionKey(row?.decision || {})).filter(key => key && !key.endsWith('|0')));
-  const wrapperRows = [...wrapperCompletedDecisions.entries()].filter(([key]) => !legacyKeys.has(key)).slice(-50).map(([key, decision]) => ({ key: `${WRAPPER_ROW_PREFIX}${key}`, decision: { ...decision } }));
-  return [...legacyRows, ...wrapperRows].slice(-50);
+  const wrapperRows = [...wrapperCompletedDecisions.entries()]
+    .slice(-50)
+    .map(([key, decision]) => ({ key: `${WRAPPER_ROW_PREFIX}${key}`, decision: { ...decision } }));
+
+  // Wrapper/A+ is the current decision authority. If legacy serialized a row
+  // for the same asset+timeframe+target candle, keep the wrapper version so a
+  // confirmed entry (and its real target-candle price) cannot be discarded by
+  // an older NO_TRADE/legacy completion with the same key.
+  const wrapperKeys = new Set(
+    wrapperRows
+      .map(row => wrapperCompletionKey(row?.decision || {}))
+      .filter(key => key && !key.endsWith('|0'))
+  );
+  const filteredLegacy = legacyRows.filter(
+    row => !wrapperKeys.has(wrapperCompletionKey(row?.decision || {}))
+  );
+  return [...filteredLegacy, ...wrapperRows].slice(-50);
 }
 
 export function restoreCompletedDecisions(rows = []) {

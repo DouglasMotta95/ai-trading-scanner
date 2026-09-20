@@ -53,6 +53,9 @@
 
   let lastAsset = '';
   let lastAt = 0;
+  let candidateAsset = '';
+  let candidateSince = 0;
+  let candidateSamples = 0;
   window.addEventListener('message', event => {
     const data = event.data;
     if (!data || data.source !== 'ATS_NETWORK_PROBE' || data.type !== 'summary') return;
@@ -67,16 +70,28 @@
     // the same asset, but it must not roll an explicit user selection back.
     if (visualBlocksProtocolRollback(winner.asset)) return;
     const now = Date.now();
+    if (same(candidateAsset, winner.asset)) candidateSamples += 1;
+    else {
+      candidateAsset = winner.asset;
+      candidateSince = now;
+      candidateSamples = 1;
+    }
+    const stableFor = Math.max(0, now - Number(candidateSince || now));
+    // Do not let a single transient network "selected" flag steal focus. Two
+    // consecutive observations + >=220ms stability are enough to remain well
+    // inside the <=1.5s market-switch target on Android/tablet.
+    if (candidateSamples < 2 || stableFor < 220) return;
     if (identity(lastAsset) === identity(winner.asset) && now - lastAt < 700) return;
     lastAsset = winner.asset; lastAt = now;
     globalThis.__ATS_FOCUSED_ASSET_VALUE__ = winner.asset;
     globalThis.__ATS_FOCUSED_ASSET_META__ = {
       asset: winner.asset, reliable: true, explicit: true, chartScoped: true,
+      samples: candidateSamples, stableFor,
       frameHost: host, frameRole, source: 'protocol-selected', at: now
     };
     sendMessage({
       type: 'ATS_VISUAL_FOCUS_V2', asset: winner.asset,
-      score: Math.max(1000, Number(winner.confidence || 0) * 10), samples: 3,
+      score: Math.max(1000, Number(winner.confidence || 0) * 10), samples: candidateSamples, stableFor,
       reliable: true, visual: false, explicit: true, chartScoped: true, chartFound: true,
       frameHost: host, frameRole, source: 'protocol-selected', at: now
     }).catch(() => {});

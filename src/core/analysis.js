@@ -17,8 +17,8 @@ export const ANALYST_THRESHOLDS = Object.freeze({
   minimumClosedCandles: 2,
   preferredClosedCandles: 3,
   minimumPatternRows: 3,
-  possibleScore: 44,
-  confirmScore: 58,
+  possibleScore: 38,
+  confirmScore: 52,
   candleStrength: 62,
   rejectionStrength: 50
 });
@@ -301,8 +301,8 @@ export function recentPriceAction(candles = []) {
   const strongBreakout = !!breakout
     && breakoutDistanceRatio >= .18
     && last.bodyRatio >= .52
-    && currentRangeMultiple <= 1.55;
-  const overextendedImpulse = currentRangeMultiple >= 1.55 && last.bodyRatio >= .58;
+    && currentRangeMultiple <= 1.75;
+  const overextendedImpulse = currentRangeMultiple >= 1.75 && last.bodyRatio >= .58;
   const exhaustionRisk = overextendedImpulse && !strongBreakout;
   const rejection = last.lowerRatio >= ANALYST_THRESHOLDS.rejectionStrength / 100 && last.close > last.open
     ? 'BUY'

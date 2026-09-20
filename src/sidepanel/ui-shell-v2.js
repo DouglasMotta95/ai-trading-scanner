@@ -2,7 +2,7 @@
 const $ = id => document.getElementById(id);
 const PREF_KEY = 'atsScannerUiPreferences';
 const EXACT_CLOCK_SOURCES = new Set(['trader-dom-countdown','network-server-cycle']);
-const CLOCK_FRESH_MS = 3200;
+const CLOCK_FRESH_MS = 8000;
 const CONTROLS_FRESH_MS = 7000;
 const PANEL_OPENED_AT = Date.now();
 
@@ -41,15 +41,12 @@ function baseHandshake(state = {}) {
 
 function exactClockReady(state = {}) {
   if (!baseHandshake(state)) return false;
-  const focus = state.diagnostics?.focusedAsset || null;
   const clock = state.diagnostics?.marketClock || null;
   return clock?.verified === true
     && clock?.available !== false
     && clock?.role === 'candle-close'
     && EXACT_CLOCK_SOURCES.has(clean(clock?.source))
     && sameMarket(clock?.asset, state.asset)
-    && Number(clock?.frameId) === Number(focus?.frameId)
-    && clean(clock?.frameHost).toLowerCase() === clean(focus?.frameHost).toLowerCase()
     && Number(clock?.at || 0) > 0
     && Date.now() - Number(clock.at) < CLOCK_FRESH_MS
     && Number.isFinite(Number(clock?.secondsRemaining));
@@ -113,6 +110,8 @@ function renderShell(state = {}) {
   const dataConnected = baseHandshake(state);
   const connected = dataConnected || switching;
   const platformLinked = connected;
+  const operationSync = globalThis.__ATS_OPERATION_TIME_SYNC__?.read?.(state, Date.now()) || null;
+  const synchronized = dataConnected && operationSync?.ready === true;
   const failure = connectionFailure(state);
   const connecting = !platformLinked && !failure && activeLicense(state)
     && (state.connection === 'connecting' || state.scanner === 'scanning');
@@ -126,7 +125,7 @@ function renderShell(state = {}) {
       : failure
         ? 'FALHA AO CONECTAR'
         : connected
-          ? 'CONECTADO — ANALISANDO SINAL'
+          ? (synchronized ? 'CONECTADO — ANALISANDO SINAL' : 'CONECTADO — SINCRONIZANDO')
           : connecting
             ? 'CONECTANDO À CASATRADE'
             : activeLicense(state)
@@ -140,7 +139,9 @@ function renderShell(state = {}) {
       ? 'Limpando o ativo anterior e confirmando o gráfico que está aberto agora.'
       : failure
         || (connected
-          ? `${state.asset || pendingAsset || 'CasaTrade'} conectado. Procurando POSSÍVEL COMPRA/VENDA; entrada final perto dos ${finalWindowSeconds(state)}s.`
+          ? synchronized
+            ? `${state.asset || pendingAsset || 'CasaTrade'} conectado. Procurando POSSÍVEL COMPRA/VENDA; entrada final perto dos ${finalWindowSeconds(state)}s.`
+            : clean(operationSync?.reason || state.diagnostics?.acquisition?.reason || 'Sincronizando período da vela, expiração e countdown real.')
           : connecting
             ? clean(acquisition.reason || 'Identificando ativo, preço e velas do gráfico atual.')
             : activeLicense(state)

@@ -4,15 +4,47 @@ import fs from 'node:fs';
 
 const read = path => fs.readFileSync(new URL('../' + path, import.meta.url), 'utf8');
 
-test('simple flow no longer blocks decisions on expiration', () => {
-  const policy = read('src/background-decision-policy.js');
-  const start = policy.indexOf('function baseDecision');
-  const end = policy.indexOf('\nfunction signature', start);
-  const block = policy.slice(start, end);
-  assert.doesNotMatch(block, /CasaTradeExpiration\(/);
-  assert.match(block, /expirationReady: true/);
-  assert.match(block, /Single authority rule/);
-  assert.doesNotMatch(block, /score >= possibleScore/);
+test('operation timing blocks M5 until the real 5 minute expiration is aligned', async () => {
+  await import('../src/core/operation-time-sync.js');
+  const sync = globalThis.__ATS_OPERATION_TIME_SYNC__;
+  const now = Date.UTC(2026, 8, 20, 16, 40, 0);
+  const base = {
+    asset: 'EUR/USD (OTC)',
+    analystPreferences: { operatingTimeframe: 'M5' },
+    platformControls: {
+      observed: {
+        timeframe: 'M5',
+        expiration: '60s',
+        observedAt: { timeframe: now, expiration: now }
+      }
+    },
+    diagnostics: {
+      focusedAsset: {
+        asset: 'EUR/USD (OTC)',
+        reliable: true,
+        chartScoped: true,
+        trustedChartFrame: true
+      },
+      marketClock: {
+        asset: 'EUR/USD (OTC)',
+        timeframe: 'M5',
+        secondsRemaining: 180,
+        available: true,
+        verified: true,
+        role: 'candle-close',
+        source: 'trader-dom-countdown',
+        at: now
+      }
+    }
+  };
+  const blocked = sync.read(base, now + 300);
+  assert.equal(blocked.ready, false);
+  assert.equal(blocked.expirationReady, false);
+
+  base.platformControls.observed.expiration = '300s';
+  const ready = sync.read(base, now + 300);
+  assert.equal(ready.ready, true);
+  assert.equal(ready.expirationReady, true);
 });
 
 test('orchestrator latches POSSÍVEL for the candle instead of dropping to AGUARDAR on weak ticks', () => {
@@ -42,15 +74,14 @@ test('final entry windows are calibrated separately for M1 and M5', () => {
   assert.match(orchestrator, /secondsRemaining > windows\.decision/);
 });
 
-test('sidepanel shows expiration as operation plan without restoring old expiration gate', () => {
+test('sidepanel exposes the M1/M5 plan while policy requires synchronized operation time', () => {
   const html = read('src/sidepanel/index.html');
   const policy = read('src/background-decision-policy.js');
   assert.match(html, /id="operatingTimeframe"/);
   assert.match(html, /id="heroExpirationPlan"/);
   assert.match(html, /M5 • expiração 5 min/);
-  const start = policy.indexOf('function baseDecision');
-  const end = policy.indexOf('\nfunction signature', start);
-  assert.doesNotMatch(policy.slice(start, end), /CasaTradeExpiration\(/);
+  assert.match(policy, /__ATS_OPERATION_TIME_SYNC__/);
+  assert.match(policy, /operationSync\?\.ready/);
 });
 
 test('connection shell never falls back to EXPIRAÇÃO PENDENTE', () => {

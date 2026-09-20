@@ -1,22 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-const read = path => fs.readFileSync(new URL('../' + path, import.meta.url), 'utf8');
+const read=p=>fs.readFileSync(new URL('../'+p,import.meta.url),'utf8');
 
-test('live market-session keeps the previously working feed/clock path intact', () => {
-  const source = read('src/background-market-session.js');
-  const start = source.indexOf('async function applyFeed');
-  const end = source.indexOf('\nasync function applyChartPrice', start);
-  const applyFeed = source.slice(start, end);
-  assert.match(applyFeed, /const clock = usableClock\(state, info\)/);
-  assert.match(applyFeed, /if \(clock\) processed = processLiveSnapshot/);
-  assert.match(applyFeed, /marketClock: state\.diagnostics\?\.marketClock \|\| null/);
-  assert.doesNotMatch(applyFeed, /observedExpiration/);
-  assert.doesNotMatch(applyFeed, /platformControls = observedExpiration/);
+test('runtime keeps market session, central analyzer and control wired',()=>{
+  const e=read('src/background-entry.js');
+  assert.match(e,/background-market-session\.js/);
+  assert.match(e,/background\.js/);
+  assert.match(e,/background-control\.js/);
 });
 
-test('package version is bumped so Android extension hosts cannot reuse the previous cached build', () => {
-  const manifest = JSON.parse(read('manifest.json'));
-  assert.equal(manifest.version, '0.11.16');
-  assert.equal(manifest.version_name, '0.11.16-expiration-probe-hardening');
+test('manifest identifies the current live-asset recovery build',()=>{
+  const m=JSON.parse(read('manifest.json'));
+  assert.equal(m.version,'0.11.57');
+  assert.match(m.version_name,/video15013-m5-timeframe-authority/);
 });

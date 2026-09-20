@@ -163,9 +163,15 @@
       if (rect.left > headerRight || rect.right < chart.left - 120) continue;
 
       const context = contextOf(el);
-      // The open-market tab strip can show several symbols at once. It is not
-      // allowed to own focus. The title physically attached to the chart is.
-      if (/watchlist|asset-list|instrument-list|listbox|search|history|portfolio|ranking|modal|drawer|dropdown|menu|tablist|asset-tab|instrument-tab|(?:^|[\s_-])tabs?(?:$|[\s_-])/.test(context)) continue;
+      // The open-market tab strip can show several symbols at once. However,
+      // responsive CasaTrade layouts can wrap the actual chart title in a
+      // container whose class also contains "tab". Geometry decides: a symbol
+      // physically attached to the chart header is still allowed to own focus.
+      const tabLike = /watchlist|asset-list|instrument-list|listbox|search|history|portfolio|ranking|modal|drawer|dropdown|menu|tablist|asset-tab|instrument-tab|(?:^|[\s_-])tabs?(?:$|[\s_-])/.test(context);
+      const physicallyInChartHeader = rect.top >= chart.top - 35
+        && rect.top <= chart.top + Math.min(170, chart.height * .28)
+        && rect.left <= chart.left + chart.width * .58;
+      if (tabLike && !physicallyInChartHeader) continue;
 
       const selection = selectionEvidence(el);
       if (selection.rejected) continue;
@@ -429,6 +435,16 @@
     invalidateElements();
     schedulePublish(0, true);
   };
+
+  chrome.runtime?.onMessage?.addListener?.(message => {
+    if (message?.type !== 'ATS_FORCE_MARKET_RESYNC') return false;
+    invalidateElements();
+    schedulePublish(0, true);
+    try { globalThis.__ATS_FORCE_CHART_MARKET_SCAN__?.(); } catch {}
+    try { globalThis.__ATS_FORCE_MARKET_CLOCK_SCAN__?.(); } catch {}
+    try { globalThis.__ATS_FORCE_EMBEDDED_FEED_REPLAY__?.(); } catch {}
+    return false;
+  });
   setInterval(() => schedulePublish(0, false), 600);
   setTimeout(() => { invalidateElements(); publish(true); }, 250);
 })();

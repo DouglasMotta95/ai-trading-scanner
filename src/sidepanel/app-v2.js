@@ -7,7 +7,7 @@ const DEFAULT_PREFS = Object.freeze({
   alertLevel: 'discrete',
   notificationsEnabled: true,
   analystMode: 'A_PLUS',
-  operatingTimeframe: 'M5',
+  operatingTimeframe: 'M1',
   geminiEnabled: true,
   holdSeconds: 3,
   expectedAsset: ''
@@ -15,7 +15,6 @@ const DEFAULT_PREFS = Object.freeze({
 
 const PANEL_OPENED_AT = Date.now();
 let prefs = { ...DEFAULT_PREFS };
-let liveOhlc = null;
 let audioContext = null;
 
 const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
@@ -42,6 +41,10 @@ function transitionAsset(state = {}) {
   const session = sessionInfo(state);
   return session.transitioning === true ? marketId(session.pendingAsset || session.asset) : '';
 }
+function operationTimeSync(state = {}) {
+  return globalThis.__ATS_OPERATION_TIME_SYNC__?.read?.(state, Date.now()) || null;
+}
+
 function marketDataReady(state = {}) {
   const session = sessionInfo(state);
   const rows = (Array.isArray(state.candles) ? state.candles : []).filter(row => [row?.open,row?.high,row?.low,row?.close].every(value => num(value) != null));
@@ -52,11 +55,11 @@ function marketDataReady(state = {}) {
     && rows.length >= 2;
 }
 function expirationObservation(state = {}) {
-  const controls = state.platformControls || {};
-  const at = Number(controls.expirationCheckedAt || controls.observed?.observedAt?.expiration || 0);
-  const value = normExp(controls.observed?.expiration);
+  const authority = globalThis.__ATS_OPERATION_TIME_SYNC__?.authoritativeExpiration?.(state) || null;
+  const value = normExp(authority?.value);
+  const at = Number(authority?.at || 0);
   const fresh = at > 0 && !!value;
-  return { value, fresh, at, ageMs: at > 0 ? Date.now() - at : Infinity };
+  return { value, fresh, at, source: authority?.source || null, ageMs: at > 0 ? Date.now() - at : Infinity };
 }
 function sessionAgeMs(state = {}) {
   const at = Number(sessionInfo(state).startedAt || state.diagnostics?.target?.connectedAt || 0);
@@ -97,7 +100,7 @@ function expLabel(value = '') {
 }
 
 function normalizeOperatingTimeframe(value = '') {
-  return clean(value).toUpperCase() === 'M1' ? 'M1' : 'M5';
+  return clean(value).toUpperCase() === 'M5' ? 'M5' : 'M1';
 }
 function requiredExpirationForTimeframe(value = '') {
   return normalizeOperatingTimeframe(value) === 'M1' ? '60s' : '300s';
@@ -141,8 +144,6 @@ function clockBaseReady(state = {}) {
     && clock.available !== false
     && clock.role === 'candle-close'
     && sameMarket(clock.asset, state.asset)
-    && Number(clock.frameId) === Number(focus.frameId)
-    && clean(clock.frameHost).toLowerCase() === clean(focus.frameHost).toLowerCase()
     && Number(clock.at || 0) > 0
     && Date.now() - Number(clock.at) < 3000
     && num(clock.secondsRemaining) != null;
@@ -189,36 +190,9 @@ function liveCycleKey(state = {}) {
 }
 
 function currentOhlc(state = {}) {
-  const direct = state.signal?.currentCandle || state.currentCandle || null;
-  if (direct && completeCandle(direct)) {
-    return {
-      open: num(direct.open), high: num(direct.high), low: num(direct.low), close: num(direct.close),
-      approximate: direct.partial === true || direct.openReliable === false || direct.rangeReliable === false,
-      source: direct.source || 'casatrade'
-    };
-  }
-
-  const tf = normTf(state.analysisTimeframe || state.timeframe);
-  const durationMs = (timeframeSeconds(tf) || 0) * 1000;
-  const now = Date.now();
-  const rows = (Array.isArray(state.candles) ? state.candles : []).filter(completeCandle);
-  const matching = rows.map(row => {
-    let time = num(row.time ?? row.timestamp);
-    if (time != null && time > 0 && time < 1e11) time *= 1000;
-    return { row, time };
-  }).filter(item => item.time && durationMs && now >= item.time - 1500 && now < item.time + durationMs + 1500).sort((a, b) => b.time - a.time)[0];
-  if (matching) {
-    return { open: num(matching.row.open), high: num(matching.row.high), low: num(matching.row.low), close: num(matching.row.close), approximate: false, source: 'structured-casatrade' };
-  }
-
-  const price = num(state.price);
-  const key = liveCycleKey(state);
-  if (price == null || !key) return { open: null, high: null, low: null, close: price, approximate: true, source: 'unavailable' };
-  if (!liveOhlc || liveOhlc.key !== key) liveOhlc = { key, open: price, high: price, low: price, close: price };
-  liveOhlc.high = Math.max(liveOhlc.high, price);
-  liveOhlc.low = Math.min(liveOhlc.low, price);
-  liveOhlc.close = price;
-  return { ...liveOhlc, approximate: true, source: 'live-price-observed' };
+  const selector = globalThis.__ATS_OHLC_DISPLAY__?.selectDisplayOhlc;
+  if (typeof selector === 'function') return selector(state, Date.now());
+  return { open: null, high: null, low: null, close: num(state.price), approximate: false, source: 'live-price-only' };
 }
 
 function entryBlockReason() {
@@ -245,6 +219,26 @@ function decisionModel(state = {}) {
   const pending = transitionAsset(state);
   if (pending) return { uiState: 'ANALYZING_MARKET', title: 'ATUALIZANDO ATIVO', text: `ATUALIZANDO PARA ${pending}`, sub: 'Limpando dados anteriores e confirmando o novo gráfico.', tone: 'waiting', reason: 'Troca de ativo em validação.', score: 0, actionable: false };
   if (!marketDataReady(state) || !focusReady(state)) return { uiState: 'ANALYZING_MARKET', title: 'AGUARDAR', text: 'AGUARDAR', sub: 'Confirmando ativo, preço e velas reais.', tone: 'waiting', reason: 'Identificando o gráfico atual da CasaTrade.', score: 0, actionable: false };
+
+  const operationSync = operationTimeSync(state);
+  if (!operationSync?.ready) {
+    const flags = [
+      `ATIVO ${operationSync?.focusReady ? 'OK' : '…'}`,
+      `VELA ${operationSync?.timeframeReady ? 'OK' : '…'}`,
+      `EXP ${operationSync?.expirationReady ? 'OK' : '…'}`,
+      `CLOCK ${operationSync?.clockReady ? 'OK' : '…'}`
+    ].join(' • ');
+    return {
+      uiState: 'ANALYZING_MARKET',
+      title: 'SINCRONIZANDO',
+      text: 'SINCRONIZANDO TEMPOS',
+      sub: `${flags} — ${operationSync?.reason || 'Confirmando período da vela, expiração e fechamento.'}`,
+      tone: 'waiting',
+      reason: operationSync?.reason || 'Sincronizando os tempos reais da CasaTrade.',
+      score: 0,
+      actionable: false
+    };
+  }
 
   const desiredTf = selectedOperatingTimeframe(state);
   const actualTf = normTf(state.diagnostics?.marketClock?.timeframe || state.analysisTimeframe || state.timeframe);
@@ -341,9 +335,11 @@ function renderOhlc(state = {}) {
   setText('currentClose', row.close == null ? '—' : fmtPrice(row.close));
   setText('ohlcQuality', row.source === 'structured-casatrade'
     ? 'OHLC estruturado recebido da CasaTrade.'
-    : row.open != null
-      ? '≈ OHLC parcial montado apenas com preços reais observados nesta vela.'
-      : 'Aguardando abertura/range confiáveis da vela atual.');
+    : row.source === 'live-price-only'
+      ? 'Cotação atual real. Aguardando OHLC estruturado da CasaTrade.'
+      : row.open != null
+        ? 'OHLC real recebido da CasaTrade.'
+        : 'Aguardando OHLC estruturado da vela atual.');
 }
 
 function renderLicense(state = {}) {
@@ -361,31 +357,9 @@ let lastRenderedState = {};
 let countdownUi = { value: null, at: 0, cycle: '' };
 
 function projectedRemaining(state = {}) {
-  const tf = normTf(state.diagnostics?.marketClock?.timeframe || state.analysisTimeframe || state.timeframe || state.signal?.timeframe);
-  const duration = timeframeSeconds(tf) || timeframeSeconds(selectedOperatingTimeframe(state)) || 60;
-  const sources = [
-    num(state.professionalDecision?.secondsRemaining),
-    num(state.diagnostics?.marketClock?.secondsRemaining),
-    num(state.signal?.secondsRemaining)
-  ];
-  const direct = sources.find(value => value != null && value >= 0 && value <= duration + 2);
-  if (direct != null) return Math.max(0, direct);
-
-  const candidates = [
-    state.currentCandle,
-    state.signal?.currentCandle,
-    Array.isArray(state.candles) ? state.candles.at(-1) : null
-  ].filter(Boolean);
-  for (const row of candidates) {
-    let openAt = num(row?.time ?? row?.timestamp);
-    if (openAt != null && openAt > 0 && openAt < 1e12) openAt *= 1000;
-    if (!Number.isFinite(openAt)) continue;
-    const closeAt = openAt + duration * 1000;
-    const now = Date.now();
-    if (now < openAt - 1500 || now > closeAt + 1500) continue;
-    return Math.max(0, Math.min(duration, Math.ceil((closeAt - now) / 1000)));
-  }
-  return null;
+  const authority = globalThis.__ATS_COUNTDOWN_AUTHORITY__;
+  const timing = authority?.readAuthoritativeCountdown?.(state, Date.now()) || null;
+  return timing?.ready === true ? Number(timing.secondsRemaining) : null;
 }
 
 function smoothedRemaining(state = {}) {
@@ -422,11 +396,12 @@ function render(state = {}) {
   setText('timeframe', freshMarket || pending ? (actualTf || '—') : '—');
   setText('price', freshMarket ? fmtPrice(state.price) : '—');
   setText('scannerModeTitle', `A+ ${desiredTf} AO VIVO`);
-  setText('heroExpirationPlan', expLabel(requiredExp));
+  setText('heroExpirationPlan', actualExp ? expLabel(actualExp) : '—');
   setText('strategyTf', desiredTf);
   setText('strategyContext', contextTf);
   setText('strategyExpiration', expLabel(requiredExp));
   setText('strategyEntryWindow', `~${finalWindow} s`);
+  setText('analysisEntryWindow', `~${finalWindow}s`);
   setText('strategyNote', `${desiredTf} operacional + contexto ${contextTf}. A entrada é na próxima vela de ${desiredTf === 'M1' ? '1' : '5'} minuto(s), com expiração manual de ${expLabel(requiredExp)}.`);
 
   if (freshMarket) setSourceState('assetSource', 'REAL', 'real', 'Ativo confirmado pelo gráfico + feed da CasaTrade.');
@@ -486,10 +461,11 @@ function render(state = {}) {
 
   const tfWarning = $('timeframeModeWarning');
   if (tfWarning) {
-    const mismatch = !!actualTf && actualTf !== desiredTf;
+    const operationSync = operationTimeSync(state);
+    const mismatch = freshMarket && operationSync?.ready !== true;
     tfWarning.hidden = !mismatch;
     tfWarning.textContent = mismatch
-      ? `Scanner em ${desiredTf}, mas a CasaTrade está em ${actualTf}. Troque o período da vela para ${desiredTf} antes de operar. Expiração: ${expLabel(requiredExp)}.`
+      ? operationSync?.reason || `Sincronize período da vela ${desiredTf}, expiração ${expLabel(requiredExp)} e fechamento real.`
       : '';
   }
 

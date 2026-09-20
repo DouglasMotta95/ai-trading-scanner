@@ -17,10 +17,10 @@ export const A_PLUS_PROFILES = Object.freeze({
     operatingMs: 60_000,
     contextMs: 300_000,
     requiredExpiration: '60s',
-    minimumOperatingBars: 20,
-    minimumContextBars: 6,
-    possibleScore: 62,
-    enterScore: 78,
+    minimumOperatingBars: 8,
+    minimumContextBars: 1,
+    possibleScore: 38,
+    enterScore: 52,
     preferredStableMs: 5000
   }),
   M5: Object.freeze({
@@ -29,20 +29,20 @@ export const A_PLUS_PROFILES = Object.freeze({
     operatingMs: 300_000,
     contextMs: 900_000,
     requiredExpiration: '300s',
-    minimumOperatingBars: 20,
-    minimumContextBars: 6,
-    possibleScore: 64,
-    enterScore: 80,
+    minimumOperatingBars: 8,
+    minimumContextBars: 1,
+    possibleScore: 38,
+    enterScore: 52,
     preferredStableMs: 7000
   })
 });
 
 export const A_PLUS_THRESHOLDS = Object.freeze({
-  possibleScore: 62,
-  enterScore: 78,
+  possibleScore: 38,
+  enterScore: 52,
   opposingLevelAtr: .35,
   breakoutMarginAtr: .18,
-  maxImpulseRangeMultiple: 1.45,
+  maxImpulseRangeMultiple: 1.75,
   minStableMs: 3000,
   preferredStableMs: 5000,
   adaptiveMinSamples: 20,
@@ -208,7 +208,7 @@ function volatilityContext(rows = [], currentRangeMultiple = 0) {
   const slow = Math.max(1e-12, avg(ranges.slice(-15,-5)) || median(ranges));
   const ratio = fast / slow;
   const dead = ratio < .48;
-  const explosive = ratio > 1.9 || Number(currentRangeMultiple || 0) > 1.6;
+  const explosive = ratio > 1.9 || Number(currentRangeMultiple || 0) > 1.75;
   const quality = dead || explosive ? 0 : ratio >= .65 && ratio <= 1.55 ? 10 : 5;
   return { quality, ratio, dead, explosive };
 }

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { assessHighConfidence, A_PLUS_THRESHOLDS, A_PLUS_WEIGHTS, A_PLUS_PROFILES } from '../src/core/high-confidence.js';
+import { updateSignalJournal } from '../src/core/signal-journal.js';
 
 const read = path => fs.readFileSync(new URL('../' + path, import.meta.url), 'utf8');
 
@@ -60,10 +61,10 @@ test('profiles map M1->M5/1min and M5->M15/5min', () => {
 });
 
 test('A+ refuses candidate without enough operational/context history', () => {
-  const candles = trendCandles({ count: 10 });
+  const candles = trendCandles({ count: 4 });
   const result = assessHighConfidence({
     candles,
-    currentCandle: { ...candles.at(-1), time: BASE + 10 * 60_000 },
+    currentCandle: { ...candles.at(-1), time: BASE + 4 * 60_000 },
     signal: signal('BUY'),
     direction: 'BUY',
     operatingTimeframe: 'M1',
@@ -151,11 +152,40 @@ test('orchestrator uses A+ candidate/final gates and passes operating timeframe'
   assert.match(orchestrator, /aPlus.finalAllowed/);
 });
 
-test('background journals signals with timeframe and resolves target duration', () => {
-  const background = read('src/background.js');
-  assert.match(background, /timeframe: snapshot.analysisTimeframe/);
-  assert.match(background, /targetRows = candles/);
-  assert.match(background, /signalJournal = resolveSignalJournal/);
+test('background journals next-candle entry quote and resolves target duration', () => {
+  const start = BASE + 50 * 60_000;
+  const issued = {
+    asset: 'EUR/USD (OTC)',
+    direction: 'BUY',
+    targetStart: start,
+    activeUntil: start + 60_000,
+    issuedAt: start - 5000,
+    timeframe: 'M1'
+  };
+  const active = updateSignalJournal({
+    previousRows: [],
+    snapshot: {
+      asset: 'EUR/USD (OTC)',
+      candles: [{ time: start, open: 1.2, high: 1.2004, low: 1.1998, close: 1.2002 }]
+    },
+    issued,
+    tfMs: 60_000,
+    now: start + 1000
+  });
+  assert.equal(active[0].entryPrice, 1.2);
+  assert.equal(active[0].status, 'ACTIVE');
+
+  const resolved = updateSignalJournal({
+    previousRows: active,
+    snapshot: {
+      asset: 'EUR/USD (OTC)',
+      candles: [{ time: start, open: 1.2, high: 1.2007, low: 1.1998, close: 1.2005 }]
+    },
+    tfMs: 60_000,
+    now: start + 60_100
+  });
+  assert.equal(resolved[0].exitPrice, 1.2005);
+  assert.equal(resolved[0].outcome, 'WIN');
 });
 
 test('aligned high-confidence M1 rejection can still authorize entry', () => {

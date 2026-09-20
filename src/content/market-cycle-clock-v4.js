@@ -31,7 +31,9 @@
     return time > 946684800000 ? time : null;
   };
 
+  const clockMath = globalThis.__ATS_MARKET_CLOCK_MATH__ || null;
   function tf(value) {
+    if (clockMath?.normalizeTimeframe) return clockMath.normalizeTimeframe(value);
     const s = fold(value).replace(/\s+/g, '');
     let m = s.match(/^s(\d{1,5})$/) || s.match(/^(\d{1,5})(?:s|seg|segundo|segundos)$/);
     if (m && Number(m[1]) > 0) return `S${Number(m[1])}`;
@@ -42,6 +44,8 @@
     return null;
   }
   function secondsFor(value) {
+    const durationMs = clockMath?.durationMsForTimeframe?.(value);
+    if (Number.isFinite(Number(durationMs)) && Number(durationMs) > 0) return Number(durationMs) / 1000;
     const x = tf(value);
     if (!x) return null;
     if (x[0] === 'S') return Number(x.slice(1));
@@ -97,6 +101,9 @@
   }
 
   function selectedChartTf() {
+    const explicit = globalThis.__ATS_EXPLICIT_CANDLE_TIMEFRAME__;
+    const explicitTf = tf(explicit?.value || '');
+    if (explicitTf) return explicitTf;
     const rows = [];
     for (const el of nodes(5000)) {
       if (!visible(el)) continue;
@@ -106,13 +113,17 @@
       if (!value) continue;
       const flags = `${el.className || ''} ${el.getAttribute?.('aria-selected') || ''} ${el.getAttribute?.('aria-current') || ''} ${el.getAttribute?.('data-state') || ''}`;
       const context = fold(`${flags} ${el.parentElement?.innerText || ''}`);
+      if (/chart range|range do grafico|faixa do grafico|visualizacao|view range|visible range|zoom|history range|historico visivel/.test(context)) continue;
       let score = /true|active|selected|current|checked/i.test(flags) ? 190 : 0;
-      if (/vela|candle|timeframe|periodo|period|grafico|gráfico/.test(context)) score += 90;
+      if (/periodo da vela|candle period|candle interval|timeframe/.test(context)) score += 130;
+      else if (/vela|candle|periodo|period/.test(context)) score += 55;
       if (/expira|expiry|expiration|duration|duracao|hora de compra|buy time|entry time/.test(context)) score -= 230;
       rows.push({ value, score });
     }
     rows.sort((a, b) => b.score - a.score);
-    return rows[0]?.score > 0 ? rows[0].value : null;
+    // Reject generic minute tokens; use only a selected/semantic candle-period
+    // control, otherwise platform controls/structured feed own the timeframe.
+    return rows[0]?.score >= 130 ? rows[0].value : null;
   }
 
   function inOrNearChart(rect, chart) {
@@ -215,7 +226,7 @@
         observedAt: now,
         text: candidate.text
       };
-      return now - domVerifiedAt < 3000 ? candidate : null;
+      return now - domVerifiedAt < 8000 ? candidate : null;
     }
 
     // Measure progression from the last DISTINCT second, not from the last
@@ -241,7 +252,7 @@
       text: candidate.text
     };
     if (progressed || rolled) domVerifiedAt = now;
-    return now - domVerifiedAt < 3000 ? candidate : null;
+    return now - domVerifiedAt < 8000 ? candidate : null;
   }
 
   function freshExactClock(state = {}, focus = null, cycleTf = null) {
@@ -251,9 +262,10 @@
     if (!['trader-dom-countdown', 'network-server-cycle'].includes(String(clock.source || ''))) return null;
     if (!sameMarket(clock.asset, focus.asset)) return null;
     if (tf(clock.timeframe) && cycleTf && tf(clock.timeframe) !== tf(cycleTf)) return null;
-    if (Number(clock.frameId) !== Number(focus.frameId)) return null;
-    if (String(clock.frameHost || '').toLowerCase() !== host) return null;
-    if (Date.now() - Number(clock.at || 0) >= 3000) return null;
+    // Focus/feed/countdown can live in trusted sibling CasaTrade frames on
+    // Android. Market identity + timeframe are authoritative; frame equality
+    // is only a transport detail.
+    if (Date.now() - Number(clock.at || 0) >= 8000) return null;
     return clock;
   }
 
@@ -264,7 +276,12 @@
     const exactTf = tf(freshExactClock(state, state.diagnostics?.focusedAsset || null, null)?.timeframe);
     const platformDiag = state.diagnostics?.platformTime || {};
     const platformTf = Number(platformDiag.at || 0) > 0 && Date.now() - Number(platformDiag.at) < 7000 ? tf(platformDiag.timeframe) : null;
-    return controlTf || chartTf || exactTf || platformTf || null;
+    return clockMath?.selectCycleTimeframe?.({
+      chartTimeframe: chartTf,
+      controlTimeframe: controlTf,
+      exactTimeframe: exactTf,
+      platformTimeframe: platformTf
+    }) || chartTf || controlTf || exactTf || platformTf || null;
   }
 
   function structuredFeedTf(state = {}, focus = null) {
@@ -283,7 +300,7 @@
     if (session.dataReady !== true) return null;
     if (!sameMarket(session.confirmedAsset || session.asset, focus.asset)) return null;
     if (!sameMarket(state.asset, focus.asset)) return null;
-    const durationMs = duration * 1000;
+    const durationMs = clockMath?.durationMsForTimeframe?.(cycleTf) || duration * 1000;
     const source = state.marketHistory || {};
     const key = Object.keys(source).find(value => sameMarket(value, focus?.asset));
     const rows = key && Array.isArray(source[key]) ? source[key] : Array.isArray(state.candles) && sameMarket(state.asset, focus?.asset) ? state.candles : [];
@@ -385,7 +402,7 @@
       const boundaryClock = domClock ? null : currentStateBoundary(state, focus, cycleTf);
 
       if (!domClock && !boundaryClock && freshExactClock(state, focus, cycleTf)) return;
-      if (!domClock && !boundaryClock && Date.now() - canvasVerifiedAt < 3000) return;
+      if (!domClock && !boundaryClock && Date.now() - canvasVerifiedAt < 8000) return;
 
       // Preferred authority remains CasaTrade's visible progressing countdown.
       // When that token is not exposed on compact/tablet layouts, the timestamp
@@ -420,6 +437,7 @@
     } finally { busy = false; }
   }
 
+  globalThis.__ATS_FORCE_MARKET_CLOCK_SCAN__ = () => tick().catch(() => {});
   setInterval(tick, 650);
   tick();
 })();

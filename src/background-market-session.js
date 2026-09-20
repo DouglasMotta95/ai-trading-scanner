@@ -1,5 +1,7 @@
 import { updateScannerState } from './services/scanner-state-atomic.js';
-import { validateMarketBundle } from './core/market-session-guard.js';
+import { shouldResetForFocusedAsset, validateMarketBundle } from './core/market-session-guard.js';
+import { strongSelectedMarketMismatch } from './core/feed-focus-guard.js';
+import { MARKET_SWITCH_TIMING, isWithinSwitchGuard, protocolTakeoverAllowed, realSelectionAgeMs, resyncSchedule, shouldRefreshVisualSelectionLock } from './core/market-switch-timing.js';
 
 const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
 const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
@@ -16,8 +18,46 @@ const licenseActive = state => {
 const CLOCK_FRESH_MS = 3000;
 const FOCUS_FRESH_MS = 5000;
 const EXACT_CLOCK_SOURCES = new Set(['trader-dom-countdown', 'network-server-cycle']);
-const FALLBACK_CLOCK_SOURCE = 'platform-cycle-derived';
-const FALLBACK_MIN_CONFIDENCE = 50;
+
+let lastResyncEpoch = -1;
+
+function forceMarketEpochResync(tabId, epoch, asset = '') {
+  const id = Number(tabId);
+  const sessionEpoch = Number(epoch);
+  if (!Number.isInteger(id) || id <= 0 || !Number.isFinite(sessionEpoch) || sessionEpoch <= 0) return;
+  if (lastResyncEpoch === sessionEpoch) return;
+  lastResyncEpoch = sessionEpoch;
+
+  for (const delay of resyncSchedule()) {
+    setTimeout(() => {
+      try {
+        chrome.tabs?.sendMessage?.(id, {
+          type: 'ATS_FORCE_MARKET_RESYNC',
+          epoch: sessionEpoch,
+          asset
+        }, () => void chrome.runtime?.lastError);
+      } catch {}
+      globalThis.__ATS_SCHEDULE_CENTRAL_ANALYSIS__?.(true);
+    }, delay);
+  }
+}
+
+function forceMarketObservationRescan(tabId, asset = '') {
+  const id = Number(tabId);
+  if (!Number.isInteger(id) || id <= 0) return;
+  for (const delay of resyncSchedule()) {
+    setTimeout(() => {
+      try {
+        chrome.tabs?.sendMessage?.(id, {
+          type: 'ATS_FORCE_MARKET_RESYNC',
+          asset,
+          reason: 'selected-feed-contradiction'
+        }, () => void chrome.runtime?.lastError);
+      } catch {}
+    }, delay);
+  }
+}
+
 
 function normAsset(value = '') {
   const raw = clean(value).toUpperCase();
@@ -145,9 +185,11 @@ function clockMatchesFocus(state = {}, info = null) {
   if (clean(clock.role) !== 'candle-close' || clock.available === false) return null;
   if (Date.now() - Number(clock.at || 0) > CLOCK_FRESH_MS) return null;
   if (!sameMarket(clock.asset, focus.asset)) return null;
-  if (Number(clock.frameId) !== Number(focus.frameId)) return null;
-  if (clean(clock.frameHost).toLowerCase() !== clean(focus.frameHost).toLowerCase()) return null;
-  if (info && (Number(info.frameId) !== Number(focus.frameId) || info.frameHost !== clean(focus.frameHost).toLowerCase())) return null;
+  // Frame id is a transport detail. On Android/tablet the focused chart,
+  // structured feed and candle clock can live in sibling frames on the same
+  // trusted CasaTrade host. Market identity is asset + host + timeframe, not
+  // physical frame id.
+  if (info && state.targetTabId && Number(info.tabId) !== Number(state.targetTabId)) return null;
   const remaining = num(clock.secondsRemaining);
   const duration = timeframeSeconds(clock.timeframe || state.analysisTimeframe || state.timeframe);
   if (remaining == null || remaining < 0 || (duration && remaining > duration + 2)) return null;
@@ -161,14 +203,7 @@ function exactClock(state = {}, info = null) {
 }
 
 function usableClock(state = {}, info = null) {
-  const clock = clockMatchesFocus(state, info);
-  if (!clock) return null;
-  if (clock.verified === true && EXACT_CLOCK_SOURCES.has(clean(clock.source))) return clock;
-  const fallback = clock.verified !== true
-    && clock.operational === true
-    && clean(clock.source) === FALLBACK_CLOCK_SOURCE
-    && Number(clock.confidence || 0) >= FALLBACK_MIN_CONFIDENCE;
-  return fallback ? clock : null;
+  return exactClock(state, info);
 }
 
 function nextEpoch(previous = {}) {
@@ -328,7 +363,7 @@ export async function applyFocus(message = {}, sender = {}) {
   if (!info.trusted || message.chartScoped !== true || message.reliable !== true || !['trader-frame', 'casa-chart-frame'].includes(role)) return null;
   const asset = normAsset(message.asset);
   if (!asset) return null;
-  return updateScannerState(state => {
+  const nextState = await updateScannerState(state => {
     if (!licenseActive(state)) return;
     if (state.targetTabId && state.targetTabId !== info.tabId) return;
 
@@ -337,6 +372,7 @@ export async function applyFocus(message = {}, sender = {}) {
     const incomingEmbeddedTrader = traderHost(info.frameHost);
     const incomingCasaFrame = casaHost(info.frameHost);
     const assetChanged = !!old?.asset && !sameMarket(old.asset, asset);
+    const confirmedAssetChanged = shouldResetForFocusedAsset(state, asset);
     const frameChanged = !!old && (Number(old.frameId) !== Number(info.frameId) || clean(old.frameHost).toLowerCase() !== info.frameHost);
     const interactionAt = Number(message.interactionAt || message.at || 0);
     const userSelected = message.interactionHint === true && interactionAt > 0 && now - interactionAt < 8000;
@@ -345,7 +381,7 @@ export async function applyFocus(message = {}, sender = {}) {
       && message.explicit === true
       && message.chartScoped === true;
     const authoritativeVisual = userSelected || chartHeaderAuthoritative;
-    const oldFresh = Number(old?.at || 0) > 0 && now - Number(old.at) < 2600;
+    const oldFresh = Number(old?.at || 0) > 0 && isWithinSwitchGuard(now - Number(old.at), MARKET_SWITCH_TIMING.staleFocusProtectionMs);
     const oldEmbeddedTrader = old?.embeddedTrader === true;
     const incomingExplicit = message.explicit === true;
     const incomingStable = Number(message.stableFor || 0) >= 220 || Number(message.samples || 0) >= 3;
@@ -362,7 +398,7 @@ export async function applyFocus(message = {}, sender = {}) {
     const recentVisualSelection = old?.visual !== false
       && old?.interactionHint === true
       && Number(old?.interactionAt || old?.at || 0) > 0
-      && now - Number(old.interactionAt || old.at) < 8000;
+      && isWithinSwitchGuard(now - Number(old.interactionAt || old.at), MARKET_SWITCH_TIMING.recentSelectionProtectionMs);
     const selectionLock = state.diagnostics?.visualSelectionLock || null;
     // Once the user explicitly selects a market, passive readers may confirm
     // that same market but may not replace it. The lock changes only on the
@@ -372,13 +408,25 @@ export async function applyFocus(message = {}, sender = {}) {
     const contradictsSelectionLock = selectionLockActive
       && !sameMarket(asset, selectionLock.asset);
     const protocolContradictsSelectionLock = incomingProtocolOnly && contradictsSelectionLock;
+    const recentSelectionAgeMs = realSelectionAgeMs({ now, focus: old, selectionLock });
+    // Passive visual/chart-header heartbeats are not a user lock. If they keep
+    // repainting stale text after a real CasaTrade switch, a stable explicit
+    // protocol selection must be able to take over instead of waiting forever
+    // for old.at to become stale (it is refreshed every ~600ms).
+    const oldFocusAgeMs = recentSelectionAgeMs;
+    const protocolCanTakeOver = incomingProtocolOnly && protocolTakeoverAllowed({
+      oldFocusAgeMs,
+      recentSelectionAgeMs,
+      incomingExplicit,
+      incomingStable
+    });
 
     // The visible chart is the long-lived market authority. Network/protocol
     // selection is only a bootstrap fallback; it may confirm the same market
     // but may never replace a fresh reliable visual focus with another asset.
     // This also neutralizes stale content scripts that survived an unpacked
     // extension reload and still announce an older/ambiguous market.
-    if (assetChanged && incomingProtocolOnly && freshVisualFocus) {
+    if (assetChanged && incomingProtocolOnly && freshVisualFocus && !protocolCanTakeOver) {
       return {
         ...state,
         diagnostics: {
@@ -397,7 +445,7 @@ export async function applyFocus(message = {}, sender = {}) {
     // few seconds. Never let that non-visual source roll the current visible
     // transition back to the old market. This is the guard against mixing
     // USO/USD price/history into a newly selected AUD/CAD session.
-    if (assetChanged && !authoritativeVisual && contradictsSelectionLock) {
+    if (assetChanged && !authoritativeVisual && contradictsSelectionLock && !protocolCanTakeOver) {
       return {
         ...state,
         diagnostics: {
@@ -413,7 +461,7 @@ export async function applyFocus(message = {}, sender = {}) {
       };
     }
 
-    if (assetChanged && incomingProtocolOnly && (transitionProtectsCurrentFocus || recentVisualSelection || protocolContradictsSelectionLock)) {
+    if (assetChanged && incomingProtocolOnly && !protocolCanTakeOver && (transitionProtectsCurrentFocus || recentVisualSelection || protocolContradictsSelectionLock)) {
       return {
         ...state,
         diagnostics: {
@@ -476,7 +524,7 @@ export async function applyFocus(message = {}, sender = {}) {
     let next = state;
 
     // Only a REAL asset change may reset market/session analysis state.
-    if (assetChanged) {
+    if (confirmedAssetChanged) {
       next = resetForSession(state, {
         asset, info, source: clean(message.source || (authoritativeVisual ? 'user-selected-transition' : 'visible-chart')),
         reason: authoritativeVisual
@@ -519,11 +567,16 @@ export async function applyFocus(message = {}, sender = {}) {
       platformId: 'casatrade', platformName: 'CasaTrade', scanner: 'scanning',
       diagnostics: {
         ...(next.diagnostics || {}),
-        visualSelectionLock: authoritativeVisual
-          ? { asset, at: userSelected ? (interactionAt || now) : now, source: chartHeaderAuthoritative ? 'visible-chart-header' : 'user-selection' }
-          : (next.diagnostics?.visualSelectionLock || null),
+        visualSelectionLock: shouldRefreshVisualSelectionLock({
+          userSelected,
+          source: clean(message.source)
+        })
+          ? { asset, at: interactionAt || now, source: 'user-selection' }
+          : protocolCanTakeOver
+            ? { asset, at: now, source: 'protocol-selected-fallback' }
+            : (next.diagnostics?.visualSelectionLock || null),
         focusedAsset: {
-          asset, at: now, stableSince: changed ? now : previousStableSince,
+          asset, at: now, stableSince: assetChanged ? now : previousStableSince,
           score: Number(message.score || 0), samples: Number(message.samples || 0), reliable: true,
           visual: message.visual !== false, explicit: message.explicit === true, chartScoped: true,
           interactionHint: userSelected,
@@ -535,6 +588,13 @@ export async function applyFocus(message = {}, sender = {}) {
       }
     };
   });
+  const session = nextState?.diagnostics?.marketSession || {};
+  if (session.transitioning === true
+      && sameMarket(session.pendingAsset || session.asset, asset)
+      && Number(session.epoch || 0) > 0) {
+    forceMarketEpochResync(info.tabId, session.epoch, asset);
+  }
+  return nextState;
 }
 
 export async function applyClock(message = {}, sender = {}) {
@@ -547,21 +607,15 @@ export async function applyClock(message = {}, sender = {}) {
   const source = clean(message.clockSource);
   const exact = message.verified === true && message.available !== false && clean(message.clockRole) === 'candle-close'
     && EXACT_CLOCK_SOURCES.has(source);
-  const fallback = message.verified !== true && message.available !== false && message.operational === true
-    && clean(message.clockRole) === 'candle-close' && source === FALLBACK_CLOCK_SOURCE
-    && Number(message.confidence || 0) >= FALLBACK_MIN_CONFIDENCE;
   const validRemaining = secondsRemaining != null && secondsRemaining >= 0 && (!duration || secondsRemaining <= duration + 2);
 
   return updateScannerState(state => {
     if (!licenseActive(state)) return;
     const focus = state.diagnostics?.focusedAsset || null;
-    if (!focus?.asset || !sameMarket(focus.asset, asset) || Number(focus.frameId) !== Number(info.frameId) || clean(focus.frameHost).toLowerCase() !== info.frameHost) return;
+    if (!focus?.asset || !sameMarket(focus.asset, asset)) return;
+    if (state.targetTabId && Number(state.targetTabId) !== Number(info.tabId)) return;
 
-    // A fallback may keep the analyst moving, but it must never replace a fresh
-    // exact CasaTrade clock that is already authoritative for this same frame.
-    if (fallback && exactClock(state, info)) return state;
-
-    if ((!exact && !fallback) || !validRemaining) {
+    if (!exact || !validRemaining) {
       // Do not let a transient "pending" sample erase an exact CasaTrade clock
       // that is still fresh for this same focused frame. The next exact sample
       // can refresh it; only a genuinely stale clock is allowed to become pending.
@@ -581,15 +635,13 @@ export async function applyClock(message = {}, sender = {}) {
     }
 
     const session = state.diagnostics?.marketSession || {};
-    const sessionChanged = !sameMarket(session.asset, asset) || clean(session.timeframe).toUpperCase() !== clean(timeframe).toUpperCase()
-      || Number(session.frameId) !== Number(info.frameId) || clean(session.frameHost).toLowerCase() !== info.frameHost;
+    const sessionChanged = !sameMarket(session.asset, asset)
+      || clean(session.timeframe).toUpperCase() !== clean(timeframe).toUpperCase();
     let next = state;
     if (sessionChanged) {
       next = resetForSession(state, {
-        asset, timeframe, info, source: exact ? 'exact-candle-clock' : 'fallback-candle-clock',
-        reason: exact
-          ? `Sessão ${asset} • ${timeframe || '—'} sincronizada ao fechamento real da vela.`
-          : `Sessão ${asset} • ${timeframe || '—'} em leitura ao vivo com clock temporário de contingência.`
+        asset, timeframe, info, source: 'exact-candle-clock',
+        reason: `Sessão ${asset} • ${timeframe || '—'} sincronizada ao fechamento real da vela.`
       });
     }
 
@@ -606,15 +658,17 @@ export async function applyClock(message = {}, sender = {}) {
         marketClock: record,
         marketSession: {
           ...(next.diagnostics?.marketSession || {}), asset, timeframe,
-          frameId: info.frameId, frameHost: info.frameHost, dataMode: next.price != null ? 'live' : 'syncing'
+          // Preserve the market/session owner frame. The clock may legitimately
+          // arrive from a sibling frame on the same trusted host.
+          frameId: next.diagnostics?.marketSession?.frameId ?? focus.frameId ?? info.frameId,
+          frameHost: next.diagnostics?.marketSession?.frameHost || focus.frameHost || info.frameHost,
+          dataMode: next.price != null ? 'live' : 'syncing'
         },
         acquisition: {
           ...(next.diagnostics?.acquisition || {}),
           stage: next.price != null ? 'diagnosing_next_candle' : 'syncing_price',
-          reason: exact
-            ? 'Relógio exato da vela sincronizado com a CasaTrade.'
-            : 'Relógio exato indisponível; análise ao vivo continua com clock temporário identificado como estimado.',
-          clockQuality: exact ? 'exact' : 'fallback', at: Date.now()
+          reason: 'Relógio exato da vela sincronizado com a CasaTrade.',
+          clockQuality: 'exact', at: Date.now()
         }
       }
     };
@@ -626,11 +680,75 @@ export async function applyClock(message = {}, sender = {}) {
 export async function applyFeed(payload = {}, sender = {}) {
   const info = senderMeta(sender);
   if (!info.trusted) return null;
-  return updateScannerState(state => {
+  const nextState = await updateScannerState(state => {
     if (!licenseActive(state)) return;
     if (state.targetTabId && state.targetTabId !== info.tabId) return;
     const focus = state.diagnostics?.focusedAsset || null;
-    if (!focus?.asset || Number(focus.frameId) !== Number(info.frameId) || clean(focus.frameHost).toLowerCase() !== info.frameHost) return;
+    if (!focus?.asset) return;
+    if (state.targetTabId && Number(state.targetTabId) !== Number(info.tabId)) return;
+
+    const mismatch = strongSelectedMarketMismatch({
+      candidates: candidates(payload),
+      focusAsset: focus.asset,
+      now: Date.now()
+    });
+    if (mismatch?.asset) {
+      const mismatchHistory = historyFor(payload, mismatch.asset);
+      const mismatchBundle = validateMarketBundle({
+        focusAsset: mismatch.asset,
+        candidateAsset: mismatch.asset,
+        price: mismatch.price,
+        candles: mismatchHistory,
+        // This path does not accept/promote the new market yet; it only
+        // quarantines stale old-market data. A strong fresh selected quote is
+        // sufficient to say the old price must no longer be shown.
+        requireCandles: false
+      });
+      if (mismatchBundle.ok) {
+        const session = state.diagnostics?.marketSession || {};
+        return {
+          ...state,
+          connection: 'connecting',
+          asset: null,
+          price: null,
+          candles: [],
+          currentCandle: null,
+          marketHistory: {},
+          signal: null,
+          professionalDecision: null,
+          aiAudit: null,
+          tradeIntent: null,
+          entryAdvice: null,
+          lastConfirmed: null,
+          lastSeen: null,
+          diagnostics: {
+            ...(state.diagnostics || {}),
+            marketClock: null,
+            feedFocusContradiction: {
+              from: normAsset(focus.asset),
+              to: normAsset(mismatch.asset),
+              confidence: Number(mismatch.confidence || 0),
+              observedAt: Number(mismatch.observedAt || 0),
+              at: Date.now()
+            },
+            marketSession: {
+              ...session,
+              pendingAsset: normAsset(mismatch.asset),
+              dataReady: false,
+              transitioning: true,
+              dataMode: 'syncing'
+            },
+            acquisition: {
+              ...(state.diagnostics?.acquisition || {}),
+              stage: 'confirming_asset_switch',
+              reason: `Feed selecionado mudou para ${normAsset(mismatch.asset)}. Descartando dados antigos e confirmando o gráfico visível.`,
+              at: Date.now()
+            }
+          }
+        };
+      }
+    }
+
     const asset = normAsset(focus.asset);
     const candidate = bestForFocus(payload, asset);
     if (!candidate) return;
@@ -719,6 +837,14 @@ export async function applyFeed(payload = {}, sender = {}) {
       }
     };
   });
+  if (nextState?.diagnostics?.feedFocusContradiction
+      && nextState?.diagnostics?.marketSession?.transitioning === true) {
+    forceMarketObservationRescan(info.tabId, nextState.diagnostics.feedFocusContradiction.to || '');
+  }
+  if (nextState?.diagnostics?.marketSession?.dataReady === true) {
+    globalThis.__ATS_SCHEDULE_CENTRAL_ANALYSIS__?.(true);
+  }
+  return nextState;
 }
 
 function observedCurrentCandle(state = {}, price, clock = null) {
@@ -746,7 +872,8 @@ export async function applyChartPrice(message = {}, sender = {}) {
   return updateScannerState(state => {
     if (!licenseActive(state)) return;
     const focus = state.diagnostics?.focusedAsset || null;
-    if (!focus?.asset || Number(focus.frameId) !== Number(info.frameId) || clean(focus.frameHost).toLowerCase() !== info.frameHost) return;
+    if (!focus?.asset) return;
+    if (state.targetTabId && Number(state.targetTabId) !== Number(info.tabId)) return;
     // Untagged quotes are unsafe during an asset switch: an old frame event can
     // otherwise repopulate the new session with the previous instrument's price.
     if (!message.asset || !sameMarket(message.asset, focus.asset)) return;

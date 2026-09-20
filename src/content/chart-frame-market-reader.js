@@ -171,6 +171,10 @@
     }
   }
 
+  globalThis.__ATS_FORCE_CHART_MARKET_SCAN__ = () => {
+    elementCacheAt = 0;
+    tick().catch(() => {});
+  };
   setInterval(tick, 400);
   tick();
 })();

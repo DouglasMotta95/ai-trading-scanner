@@ -1,5 +1,9 @@
 import { processSnapshot, resetOrchestrator } from './core/orchestrator.js';
 import { readScannerState, updateScannerState } from './services/scanner-state-atomic.js';
+import { operatingTimeframeFromPreferences } from './core/operation-mode.js';
+import './core/countdown-authority.js';
+import './core/operation-time-sync.js';
+import { updateSignalJournal } from './core/signal-journal.js';
 
 // Single owner of technical analysis.
 // All acquisition modules only update scannerState. This loop coalesces those
@@ -7,7 +11,7 @@ import { readScannerState, updateScannerState } from './services/scanner-state-a
 const ANALYSIS_CADENCE_MS = 650;
 const BURST_COALESCE_MS = 80;
 const CLOCK_FRESH_MS = 3200;
-const ALLOWED_CLOCK_SOURCES = new Set(['trader-dom-countdown', 'network-server-cycle', 'platform-cycle-derived']);
+const ALLOWED_CLOCK_SOURCES = new Set(['trader-dom-countdown', 'network-server-cycle']);
 
 const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
 const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
@@ -36,7 +40,7 @@ const activeAccess = state => {
     || state?.diagnostics?.access?.state === 'owner_dev';
 };
 
-const operatingTimeframe = state => normTf(state?.analystPreferences?.operatingTimeframe) === 'M1' ? 'M1' : 'M5';
+const operatingTimeframe = state => operatingTimeframeFromPreferences(state?.analystPreferences);
 const expirationForTimeframe = tf => tf === 'M1' ? '60s' : '300s';
 const finalWindowForTimeframe = tf => tf === 'M1' ? 10 : 20;
 
@@ -47,76 +51,6 @@ function historyFor(state = {}, asset = '') {
   return rows.filter(row => [row?.open, row?.high, row?.low, row?.close].every(value => num(value) != null)).slice(-180);
 }
 
-function candleTime(row = {}) {
-  let value = num(row?.time ?? row?.timestamp);
-  if (value != null && value > 0 && value < 1e12) value *= 1000;
-  return Number.isFinite(value) ? value : null;
-}
-
-function journalKey(row = {}) {
-  return `${marketId(row.asset)}|${Number(row.targetStart || 0)}|${String(row.direction || '').toUpperCase()}`;
-}
-
-function resolveSignalJournal(current = {}, snapshot = {}, issued = null, tfMs = 60000) {
-  const now = Date.now();
-  const rows = (Array.isArray(current.signalJournal) ? current.signalJournal : []).slice(-249).map(row => ({ ...row }));
-  const byKey = new Map(rows.map(row => [journalKey(row), row]));
-
-  if (issued?.direction && issued?.targetStart) {
-    const key = journalKey(issued);
-    if (!byKey.has(key)) {
-      byKey.set(key, {
-        key,
-        asset: marketId(issued.asset),
-        direction: issued.direction,
-        targetStart: Number(issued.targetStart),
-        activeUntil: Number(issued.activeUntil || Number(issued.targetStart) + tfMs),
-        issuedAt: Number(issued.issuedAt || now),
-        setup: clean(issued.setup || ''),
-        regime: clean(issued.regime || ''),
-        technicalScore: Number(issued.score || 0),
-        qualityScore: Number(issued.qualityScore || 0),
-        qualityFactors: issued.qualityFactors || null,
-        resolved: false,
-        outcome: null
-      });
-    }
-  }
-
-  const candles = Array.isArray(snapshot.candles) ? snapshot.candles : [];
-  for (const row of byKey.values()) {
-    if (row.resolved === true) continue;
-    if (!sameMarket(row.asset, snapshot.asset)) continue;
-    const targetStart = Number(row.targetStart || 0);
-    if (!targetStart || now < targetStart + tfMs) continue;
-    const targetBucket = Math.floor(targetStart / tfMs) * tfMs;
-    const targetRows = candles
-      .map(candle => ({ candle, time: candleTime(candle) }))
-      .filter(item => item.time != null && item.time >= targetBucket && item.time < targetBucket + tfMs)
-      .sort((a,b) => a.time - b.time);
-    if (!targetRows.length) continue;
-    const first = targetRows[0].candle;
-    const last = targetRows.at(-1).candle;
-    const open = num(first.open), close = num(last.close);
-    if (open == null || close == null) continue;
-    const direction = String(row.direction || '').toUpperCase();
-    const delta = close - open;
-    const outcome = delta === 0
-      ? 'DRAW'
-      : direction === 'BUY'
-        ? (delta > 0 ? 'WIN' : 'LOSS')
-        : (delta < 0 ? 'WIN' : 'LOSS');
-    row.resolved = true;
-    row.outcome = outcome;
-    row.open = open;
-    row.close = close;
-    row.resolvedAt = now;
-  }
-
-  return [...byKey.values()]
-    .sort((a,b) => Number(a.issuedAt || 0) - Number(b.issuedAt || 0))
-    .slice(-250);
-}
 
 function consolidatedSnapshot(state = {}) {
   if (!activeAccess(state) || state.scanner !== 'scanning' || state.connection !== 'online') return null;
@@ -126,19 +60,21 @@ function consolidatedSnapshot(state = {}) {
   const clock = state.diagnostics?.marketClock || null;
   if (!asset || price == null || !focus?.asset || !sameMarket(focus.asset, asset)) return null;
   if (focus.reliable !== true || focus.chartScoped !== true || focus.trustedChartFrame !== true) return null;
-  if (!clock || clock.available === false || (!clock.verified && clock.operational !== true)) return null;
+  if (!clock || clock.available === false || clock.verified !== true) return null;
   if (!ALLOWED_CLOCK_SOURCES.has(clean(clock.source))) return null;
   if (!sameMarket(clock.asset, asset)) return null;
-  if (Number(clock.frameId) !== Number(focus.frameId)) return null;
-  if (clean(clock.frameHost).toLowerCase() !== clean(focus.frameHost).toLowerCase()) return null;
+  // CasaTrade may split focus, feed and countdown across trusted sibling
+  // frames/hosts in the same tab. Asset identity + market-session epoch own
+  // the market; transport frame equality must not stall the central analysis.
   if (Number(clock.at || 0) <= 0 || Date.now() - Number(clock.at) > CLOCK_FRESH_MS) return null;
 
-  const secondsRemaining = num(clock.secondsRemaining);
-  if (secondsRemaining == null || secondsRemaining < 0) return null;
-  const timeframe = normTf(clock.timeframe || state.analysisTimeframe || state.timeframe);
+  const sync = globalThis.__ATS_OPERATION_TIME_SYNC__?.read?.(state, Date.now()) || null;
+  if (!sync?.ready) return null;
+  const secondsRemaining = num(sync.secondsRemaining);
+  const timeframe = normTf(sync.clockTimeframe);
   const desiredTimeframe = operatingTimeframe(state);
-  if (!timeframe || timeframe !== desiredTimeframe) return null;
-  const requiredExpiration = expirationForTimeframe(desiredTimeframe);
+  if (!timeframe || timeframe !== desiredTimeframe || sync.timeframeReady !== true) return null;
+  const requiredExpiration = sync.requiredExpiration || expirationForTimeframe(desiredTimeframe);
   const candles = historyFor(state, asset);
   if (candles.length < 2) return null;
 
@@ -169,7 +105,8 @@ function consolidatedSnapshot(state = {}) {
     },
     diagnostics: {
       capture: 'central-consolidated-state',
-      clockQuality: clock.verified === true ? 'exact' : 'fallback',
+      clockQuality: 'exact',
+      operationTimeSync: sync,
       feedQuality: Number(state.diagnostics?.acquisition?.feedQuality || 0)
     }
   };
@@ -281,7 +218,13 @@ async function runCentralAnalysis(force = false) {
         : existingAdviceActive
           ? existingAdvice
           : null;
-      const signalJournal = resolveSignalJournal(current, snapshot, entryAdvice, tfMs);
+      const signalJournal = updateSignalJournal({
+        previousRows: current.signalJournal,
+        snapshot,
+        issued: entryAdvice,
+        tfMs,
+        now: Date.now()
+      });
 
       const next = {
         ...current,
@@ -356,7 +299,9 @@ readScannerState().then(observeState).catch(() => {});
 const HEALTH_CHECK_MS = 1000;
 const RECOVERY_AFTER_MS = 4500;
 const RECOVERY_COOLDOWN_MS = 10000;
+const CONTROL_RECOVERY_COOLDOWN_MS = 1500;
 let lastRecoveryAt = 0;
+let lastControlRecoveryAt = 0;
 
 function acquisitionGaps(state = {}) {
   const gaps = [];
@@ -372,8 +317,11 @@ function acquisitionGaps(state = {}) {
     && Number(clock.at || 0) > 0
     && Date.now() - Number(clock.at) < CLOCK_FRESH_MS;
   if (!clockFresh) gaps.push('countdown');
-  // Expiration is no longer a product gate in the simplified signal flow.
-  return gaps;
+  const sync = globalThis.__ATS_OPERATION_TIME_SYNC__?.read?.(state, Date.now()) || null;
+  if (!sync?.timeframeReady) gaps.push('período da vela');
+  if (!sync?.expirationReady) gaps.push('expiração');
+  if (!sync?.clockReady && !gaps.includes('countdown')) gaps.push('countdown');
+  return [...new Set(gaps)];
 }
 
 async function recoverAcquisition() {
@@ -386,6 +334,15 @@ async function recoverAcquisition() {
 
   const gaps = acquisitionGaps(state);
   if (!gaps.length) return;
+
+  if ((gaps.includes('período da vela') || gaps.includes('expiração') || gaps.includes('countdown') || gaps.includes('ativo'))
+      && Date.now() - lastControlRecoveryAt >= CONTROL_RECOVERY_COOLDOWN_MS) {
+    const refreshControls = globalThis.__ATS_FORCE_LIVE_CONTROL_READ__;
+    if (typeof refreshControls === 'function') {
+      lastControlRecoveryAt = Date.now();
+      await refreshControls(Number(state.targetTabId)).catch(() => false);
+    }
+  }
 
   await updateScannerState(current => ({
     ...current,

@@ -1,3 +1,4 @@
+import './core/operation-time-sync.js';
 import { updateScannerState } from './services/scanner-state-atomic.js';
 
 const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
@@ -165,14 +166,8 @@ function mergeObserved(previous = {}, incoming = {}) {
 
 function analystPrefs(state = {}, message = {}) {
   const current = state.analystPreferences || {};
-  return {
-    ...current,
-    mode: 'NORMAL',
-    holdSeconds: 3,
-    geminiEnabled: message.geminiEnabled == null ? current.geminiEnabled !== false : message.geminiEnabled !== false,
-    preferredExpiration: null,
-    updatedAt: Date.now()
-  };
+  const mapped = globalThis.__ATS_OPERATION_TIME_SYNC__?.preferencesFromMessage?.(current, message) || current;
+  return { ...mapped, updatedAt: Date.now() };
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -237,29 +232,33 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       delete diagnostics.marketSession;
     }
     const effectiveTf = reliableTf || oldTf || null;
-    const m1Ready = effectiveTf === 'M1';
-    const expirationValid = actualExpiration === '60s';
+    const config = globalThis.__ATS_OPERATION_TIME_SYNC__?.configFor?.(
+      state.analystPreferences?.operatingTimeframe || effectiveTf || 'M1'
+    ) || { timeframe: 'M1', expiration: '60s' };
+    const timeframeReady = effectiveTf === config.timeframe;
+    const expirationValid = actualExpiration === config.expiration;
     diagnostics.expirationGuard = {
       preferred,
-      required: '60s',
+      required: config.expiration,
       actual: actualExpiration,
-      ready: !!actualExpiration && m1Ready && expirationValid,
-      validForM1: m1Ready && expirationValid,
+      ready: !!actualExpiration && timeframeReady && expirationValid,
+      validForM1: config.timeframe === 'M1' && timeframeReady && expirationValid,
+      validForM5: config.timeframe === 'M5' && timeframeReady && expirationValid,
       matchesPreference: !preferred || !actualExpiration || preferred === actualExpiration,
-      reason: !m1Ready
-        ? 'Ajuste o timeframe da CasaTrade para M1.'
+      reason: !timeframeReady
+        ? `Ajuste o período da vela da CasaTrade para ${config.timeframe}.`
         : !actualExpiration
           ? 'Expiração real da CasaTrade ainda não confirmada.'
           : !expirationValid
-            ? 'Ajuste a expiração da CasaTrade para 1 minuto'
-            : 'Expiração ao vivo de 1 minuto confirmada pela CasaTrade.',
+            ? `Ajuste a expiração da CasaTrade para ${config.timeframe === 'M5' ? '5 minutos' : '1 minuto'}.`
+            : `Expiração ao vivo de ${config.timeframe === 'M5' ? '5 minutos' : '1 minuto'} confirmada pela CasaTrade.`,
       at: Date.now()
     };
     diagnostics.platformTime = {
       timeframe: effectiveTf,
       expiration: actualExpiration,
       source: observed.source,
-      ready: m1Ready && expirationValid,
+      ready: timeframeReady && expirationValid,
       at: Date.now()
     };
 
@@ -285,7 +284,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         timeframeCheckedAt: timeframeAt,
         frameId: Number(sender.frameId || 0),
         source: observed.source,
-        aligned: (reliableTf || oldTf) === 'M1' && actualExpiration === '60s',
+        aligned: (reliableTf || oldTf) === config.timeframe && actualExpiration === config.expiration,
         liveAuthority: true
       },
       diagnostics
