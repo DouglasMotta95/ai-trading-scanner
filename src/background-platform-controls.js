@@ -250,6 +250,8 @@ function analystPrefs(state = {}, message = {}) {
     ...current,
     mode: 'NORMAL',
     operationMode: operationMode.timeframe,
+    operationExpiration: operationMode.expiration,
+    operationDurationSeconds: operationMode.durationSeconds,
     sensitivityProfile: thresholds.profile,
     sensitivityLabel: thresholds.label,
     holdSeconds: thresholds.holdSeconds,
