@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveSignalOutcome, resolveSignalHistory, signalPerformance } from '../src/core/signal-outcomes.js';
+import { captureSignalEntry, resolveSignalOutcome, resolveSignalHistory, signalPerformance } from '../src/core/signal-outcomes.js';
 
 const targetStart = 1_800_200_000_000;
 const candle = { time: targetStart, timeframe: 'M1', open: 1.1000, high: 1.1030, low: 1.0990, close: 1.1020 };
@@ -27,12 +27,36 @@ test('SELL outcome resolves correctly and a missing target candle is never repla
   assert.equal(missing, null);
 });
 
-test('history resolver scopes outcomes to the observed asset and performance ignores draws in directional win rate', () => {
+test('live target candle captures entry immediately but is graded only after candle close', () => {
+  const record = { id: 'live', asset: 'EUR/USD (OTC)', timeframe: 'M1', direction: 'BUY', targetStart, status: 'pending', result: null };
+  const captured = captureSignalEntry(record, [candle]);
+  assert.equal(captured.entryPrice, candle.open);
+  assert.equal(captured.status, 'pending');
+
+  const early = resolveSignalHistory([record], {
+    asset: 'EUR/USD (OTC)',
+    candles: [candle],
+    serverTime: targetStart + 30_000
+  });
+  assert.equal(early.rows[0].entryPrice, candle.open);
+  assert.equal(early.rows[0].result, null);
+  assert.equal(early.resolved.length, 0);
+
+  const closed = resolveSignalHistory(early.rows, {
+    asset: 'EUR/USD (OTC)',
+    candles: [candle],
+    serverTime: targetStart + 60_000
+  });
+  assert.equal(closed.rows[0].result, 'WIN');
+  assert.equal(closed.resolved.length, 1);
+});
+
+test('history resolver preserves OTC identity and performance ignores draws in directional win rate', () => {
   const rows = [
     { id: 'buy', asset: 'EUR/USD (OTC)', timeframe: 'M1', direction: 'BUY', targetStart, status: 'pending', result: null },
-    { id: 'other', asset: 'GBP/USD', timeframe: 'M1', direction: 'BUY', targetStart, status: 'pending', result: null }
+    { id: 'regular', asset: 'EUR/USD', timeframe: 'M1', direction: 'BUY', targetStart, status: 'pending', result: null }
   ];
-  const out = resolveSignalHistory(rows, { asset: 'EUR/USD', candles: [candle] });
+  const out = resolveSignalHistory(rows, { asset: 'EUR/USD (OTC)', candles: [candle] });
   assert.equal(out.resolved.length, 1);
   assert.equal(out.rows[0].result, 'WIN');
   assert.equal(out.rows[1].result, null);
