@@ -42,9 +42,9 @@ function snap(bucket, seconds, rows, extra = {}) {
   }, { connection: 'online' });
 }
 
-test('current manifest is the v0.11.48 live-asset recovery build', () => {
-  assert.equal(manifest.version, '0.11.48');
-  assert.equal(manifest.version_name, '0.11.48-full-checkup-green-suite');
+test('current manifest is the v0.11.49 live-entry asset-switch hotfix build', () => {
+  assert.equal(manifest.version, '0.11.49');
+  assert.equal(manifest.version_name, '0.11.49-live-entry-asset-switch-hotfix');
   assert.equal(manifest.manifest_version, 3);
 });
 
