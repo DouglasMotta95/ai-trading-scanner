@@ -346,6 +346,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
     ? Math.max(0, Math.min(tfMs, Math.round(clockRemaining * 1000)))
     : fallbackRemainingMs;
   const secondsRemaining = Math.max(0, Math.ceil(remainingMs / 1000));
+  const preSignalWindowSeconds = String(analysisTimeframe || '').toUpperCase() === 'M5' ? 90 : 30;
   const progress = Math.max(0, Math.min(100, Math.round(((tfMs - remainingMs) / tfMs) * 100)));
   const targetStart = clockRemaining != null ? sampleAt + remainingMs : currentBucket + tfMs;
   const direction = ['BUY', 'SELL'].includes(liveResult.direction) ? liveResult.direction : null;
@@ -536,7 +537,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
     };
   }
 
-  if (secondsRemaining <= 30) {
+  if (secondsRemaining <= preSignalWindowSeconds) {
     if (possibleDirection) {
       return {
         candles: closed,
