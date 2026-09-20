@@ -399,7 +399,10 @@
     const asset = assetRow?.asset || null;
     if (!asset) return;
 
-    const matchingRows = rows.filter(row => !row.asset || sameAsset(row.asset, asset));
+    const taggedMatchingRows = rows.filter(row => row.asset && sameAsset(row.asset, asset));
+    const matchingRows = taggedMatchingRows.length
+      ? taggedMatchingRows
+      : (preferenceFresh ? [] : rows.filter(row => !row.asset));
     const priceRow = matchingRows.filter(r => r.price != null)
       .sort((a, b) => Number(b.selected === true) - Number(a.selected === true) || b.priceScore - a.priceScore || b.at - a.at)[0] || null;
     // During the short explicit-switch guard never reuse a quote from the old
