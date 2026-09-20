@@ -361,6 +361,7 @@ function expirationDiagnosticText(response = {}) {
         if (!bridge) return `- frame=${frame.frameId ?? '—'} | snapshot indisponível | erro=${frame.embeddedFeedDiagnosticError || '—'}`;
         const clockDiag = bridge.maybePublishStructuredClock || {};
         const reasons = clockDiag.reasons || {};
+        const stateBoundary = bridge.stateCandleBoundary || {};
         const candidates = Array.isArray(bridge.lastSummaryCandidates) ? bridge.lastSummaryCandidates.slice(0, 5) : [];
         const candidateLines = candidates.length
           ? candidates.map((candidate, index) =>
@@ -373,6 +374,7 @@ function expirationDiagnosticText(response = {}) {
           '  candidates do último summary:',
           candidateLines,
           `  maybePublishStructuredClock: chamadas=${Number(clockDiag.calls || 0)} | retornos cedo=${Number(clockDiag.earlyReturns || 0)} | ATS_MARKET_CLOCK_V2 enviados=${Number(clockDiag.marketClockV2Sent || 0)}`,
+          `  state-candle-boundary: ciclos intervalo=${Number(stateBoundary.intervalCycles || 0)} | publicações enviadas=${Number(stateBoundary.publicationsSent || 0)} | último motivo de recusa=${clean(stateBoundary.lastRefusalReason || '—')} | último atraso=${stateBoundary.lastDelayMs == null ? '—' : Number(stateBoundary.lastDelayMs) + 'ms'}`,
           `  motivos: focus não confiável=${Number(reasons.focusNotReliable || 0)} | frameHost diferente=${Number(reasons.frameHostMismatch || 0)} | sem candidate=${Number(reasons.noCandidate || 0)} | sem serverTime=${Number(reasons.noServerTime || 0)} | |agora-serverTime|>7000=${Number(reasons.serverTimeDriftOver7000 || 0)} | confidence<55=${Number(reasons.confidenceUnder55 || 0)} | count<2=${Number(reasons.countUnder2 || 0)} | boundary nulo=${Number(reasons.boundaryNull || 0)}`
         ].join('\n');
       }).join('\n')
