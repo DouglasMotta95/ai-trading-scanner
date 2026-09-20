@@ -1,5 +1,6 @@
 import { readScannerState, updateScannerState } from './services/scanner-state-atomic.js';
 import './core/countdown-authority.js';
+import './core/operation-time-sync.js';
 
 // Product policy layer. The technical engine can keep collecting evidence with an
 // estimated clock, but the user-facing decision is never promoted while CasaTrade
@@ -188,6 +189,7 @@ function baseDecision(state = {}) {
     ? Number(previous.possibleSince)
     : now;
 
+  const operationSync = globalThis.__ATS_OPERATION_TIME_SYNC__?.read?.(state, now) || null;
   const common = {
     profile: pref.mode,
     holdSeconds: pref.holdSeconds,
@@ -195,9 +197,9 @@ function baseDecision(state = {}) {
     score,
     confluence: factors.count,
     factors: factors.factors,
-    timeReady: timing.ready,
-    expirationReady: true,
-    actualExpiration: null,
+    timeReady: operationSync?.clockReady === true,
+    expirationReady: operationSync?.expirationReady === true,
+    actualExpiration: operationSync?.expiration || null,
     timeSource: timing.source,
     timeframe: timing.timeframe || normTf(state.analysisTimeframe || state.timeframe) || 'M1',
     secondsRemaining: timing.secondsRemaining,
@@ -227,6 +229,18 @@ function baseDecision(state = {}) {
       alert: 'silent',
       possibleSince: null,
       reason: 'Montando o padrão com as velas reais da CasaTrade.'
+    };
+  }
+
+  if (!operationSync?.ready) {
+    return {
+      ...common,
+      uiState: 'ANALYZING_MARKET',
+      direction: null,
+      actionable: false,
+      alert: 'silent',
+      possibleSince: null,
+      reason: operationSync?.reason || 'Sincronizando período da vela, expiração e fechamento real.'
     };
   }
 
