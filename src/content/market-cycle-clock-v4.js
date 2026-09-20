@@ -110,8 +110,10 @@
       if (!value) continue;
       const flags = `${el.className || ''} ${el.getAttribute?.('aria-selected') || ''} ${el.getAttribute?.('aria-current') || ''} ${el.getAttribute?.('data-state') || ''}`;
       const context = fold(`${flags} ${el.parentElement?.innerText || ''}`);
+      if (/chart range|range do grafico|faixa do grafico|visualizacao|view range|visible range|zoom|history range|historico visivel/.test(context)) continue;
       let score = /true|active|selected|current|checked/i.test(flags) ? 190 : 0;
-      if (/vela|candle|timeframe|periodo|period|grafico|gráfico/.test(context)) score += 90;
+      if (/periodo da vela|candle period|candle interval|timeframe/.test(context)) score += 130;
+      else if (/vela|candle|periodo|period/.test(context)) score += 55;
       if (/expira|expiry|expiration|duration|duracao|hora de compra|buy time|entry time/.test(context)) score -= 230;
       rows.push({ value, score });
     }
@@ -255,8 +257,9 @@
     if (!['trader-dom-countdown', 'network-server-cycle'].includes(String(clock.source || ''))) return null;
     if (!sameMarket(clock.asset, focus.asset)) return null;
     if (tf(clock.timeframe) && cycleTf && tf(clock.timeframe) !== tf(cycleTf)) return null;
-    if (Number(clock.frameId) !== Number(focus.frameId)) return null;
-    if (String(clock.frameHost || '').toLowerCase() !== host) return null;
+    // Focus/feed/countdown can live in trusted sibling CasaTrade frames on
+    // Android. Market identity + timeframe are authoritative; frame equality
+    // is only a transport detail.
     if (Date.now() - Number(clock.at || 0) >= 3000) return null;
     return clock;
   }
