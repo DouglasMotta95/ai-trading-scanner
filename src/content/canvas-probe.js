@@ -39,6 +39,21 @@
   let lastAppScanAt = 0;
   let appCandidates = [];
 
+  // Diagnostic-only counters. They do not participate in market detection,
+  // publishing decisions, throttles, or any reader behavior.
+  const canvasDiagnostic = {
+    startedAt: Date.now(),
+    hookInstalled: false,
+    hookedContexts: [],
+    interceptedTotal: 0,
+    fillTextTotal: 0,
+    strokeTextTotal: 0,
+    recentCallTimes: [],
+    expirationPublishes: 0,
+    lastExpirationPayload: null,
+    lastExpirationPublishedAt: 0
+  };
+
   const clean = v => String(v ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
   const num = v => {
     if (typeof v === 'number' && Number.isFinite(v)) return v;
@@ -118,21 +133,33 @@
     while (recentCanvasText.length > 800) recentCanvasText.shift();
   }
 
-  function hookCanvas(proto) {
+  function hookCanvas(proto, label = 'unknown') {
     if (!proto || proto.__atsMarketTextHookedV5) return;
     try { Object.defineProperty(proto, '__atsMarketTextHookedV5', { value: true }); } catch { return; }
+    canvasDiagnostic.hookInstalled = true;
+    if (!canvasDiagnostic.hookedContexts.includes(label)) canvasDiagnostic.hookedContexts.push(label);
     for (const name of ['fillText', 'strokeText']) {
       const native = proto[name];
       if (typeof native !== 'function') continue;
       proto[name] = function(text, ...args) {
+        try {
+          const at = Date.now();
+          canvasDiagnostic.interceptedTotal += 1;
+          if (name === 'fillText') canvasDiagnostic.fillTextTotal += 1;
+          if (name === 'strokeText') canvasDiagnostic.strokeTextTotal += 1;
+          canvasDiagnostic.recentCallTimes.push(at);
+          while (canvasDiagnostic.recentCallTimes.length && canvasDiagnostic.recentCallTimes[0] < at - 6000) {
+            canvasDiagnostic.recentCallTimes.shift();
+          }
+        } catch {}
         try { rememberCanvasText(text); } catch {}
         return native.call(this, text, ...args);
       };
     }
   }
 
-  try { hookCanvas(window.CanvasRenderingContext2D?.prototype); } catch {}
-  try { hookCanvas(window.OffscreenCanvasRenderingContext2D?.prototype); } catch {}
+  try { hookCanvas(window.CanvasRenderingContext2D?.prototype, 'CanvasRenderingContext2D'); } catch {}
+  try { hookCanvas(window.OffscreenCanvasRenderingContext2D?.prototype, 'OffscreenCanvasRenderingContext2D'); } catch {}
 
   function domParts() {
     const parts = [];
@@ -393,6 +420,16 @@
     lastControlPublishKey = key;
     lastControlPublishAt = now;
 
+    if (expiration) {
+      canvasDiagnostic.expirationPublishes += 1;
+      canvasDiagnostic.lastExpirationPublishedAt = now;
+      canvasDiagnostic.lastExpirationPayload = {
+        expiration,
+        confidence: 98,
+        sourceKey: 'rendered-controls-independent'
+      };
+    }
+
     window.postMessage({
       source: 'ATS_NETWORK_PROBE',
       type: 'summary',
@@ -513,6 +550,71 @@
       aggregateAndPublish();
     });
   }
+
+  function canvasDiagnosticSnapshot() {
+    const now = Date.now();
+    const cutoff = now - 6000;
+    const recentCalls = canvasDiagnostic.recentCallTimes.filter(at => at >= cutoff);
+
+    const distinct = [];
+    const seen = new Set();
+    for (let i = recentCanvasText.length - 1; i >= 0 && distinct.length < 40; i--) {
+      const row = recentCanvasText[i];
+      const text = clean(row?.text);
+      if (!text || seen.has(text)) continue;
+      seen.add(text);
+      distinct.push({ text, ageMs: Math.max(0, now - Number(row?.at || now)) });
+    }
+    distinct.reverse();
+
+    const concatenated = recentCanvasText.map(row => clean(row?.text)).filter(Boolean).join(' ');
+    const lastPayload = canvasDiagnostic.lastExpirationPayload
+      ? {
+          ...canvasDiagnostic.lastExpirationPayload,
+          ageMs: Math.max(0, now - Number(canvasDiagnostic.lastExpirationPublishedAt || now))
+        }
+      : null;
+
+    return {
+      hookInstalled: canvasDiagnostic.hookInstalled === true,
+      frame: {
+        frameId,
+        href: String(location.href || ''),
+        isTop,
+        host: String(location.hostname || '').toLowerCase()
+      },
+      hookedContexts: canvasDiagnostic.hookedContexts.slice(),
+      intercepted: {
+        total: Number(canvasDiagnostic.interceptedTotal || 0),
+        fillText: Number(canvasDiagnostic.fillTextTotal || 0),
+        strokeText: Number(canvasDiagnostic.strokeTextTotal || 0),
+        last6s: recentCalls.length
+      },
+      recentCanvasText: distinct,
+      concatenatedTextLength: concatenated.length,
+      expirationFrom: expirationFrom(concatenated),
+      timeframeFrom: timeframeFrom(concatenated),
+      publishRenderedControls: {
+        expirationSendCount: Number(canvasDiagnostic.expirationPublishes || 0),
+        lastPayload
+      },
+      startedAt: canvasDiagnostic.startedAt,
+      observedAt: now
+    };
+  }
+
+  const diagnosticMessageHandler = event => {
+    const data = event.data;
+    if (!data || data.source !== 'ATS_EXPIRATION_DIAGNOSTIC_REQUEST' || !data.requestId) return;
+    try {
+      window.postMessage({
+        source: 'ATS_CANVAS_DIAGNOSTIC_SNAPSHOT',
+        requestId: data.requestId,
+        payload: canvasDiagnosticSnapshot()
+      }, '*');
+    } catch {}
+  };
+  window.addEventListener('message', diagnosticMessageHandler);
 
   const start = () => {
     ensureMarker();
