@@ -17,10 +17,10 @@ export const A_PLUS_PROFILES = Object.freeze({
     operatingMs: 60_000,
     contextMs: 300_000,
     requiredExpiration: '60s',
-    minimumOperatingBars: 20,
-    minimumContextBars: 6,
-    possibleScore: 62,
-    enterScore: 78,
+    minimumOperatingBars: 8,
+    minimumContextBars: 1,
+    possibleScore: 38,
+    enterScore: 52,
     preferredStableMs: 5000
   }),
   M5: Object.freeze({
@@ -29,17 +29,17 @@ export const A_PLUS_PROFILES = Object.freeze({
     operatingMs: 300_000,
     contextMs: 900_000,
     requiredExpiration: '300s',
-    minimumOperatingBars: 20,
-    minimumContextBars: 6,
-    possibleScore: 64,
-    enterScore: 80,
+    minimumOperatingBars: 8,
+    minimumContextBars: 1,
+    possibleScore: 38,
+    enterScore: 52,
     preferredStableMs: 7000
   })
 });
 
 export const A_PLUS_THRESHOLDS = Object.freeze({
-  possibleScore: 62,
-  enterScore: 78,
+  possibleScore: 38,
+  enterScore: 52,
   opposingLevelAtr: .35,
   breakoutMarginAtr: .18,
   maxImpulseRangeMultiple: 1.75,
