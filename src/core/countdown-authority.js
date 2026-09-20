@@ -2,6 +2,7 @@
   if (globalThis.__ATS_COUNTDOWN_AUTHORITY__) return;
 
   const EXACT_SOURCES = new Set(['trader-dom-countdown', 'network-server-cycle']);
+  const CLOCK_FRESH_MS = 8000;
   const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
 
   function normalizeMarket(value = '') {
@@ -65,7 +66,7 @@
       && seconds <= duration + 2
       && at > 0
       && Number(now) - at >= 0
-      && Number(now) - at < 3000;
+      && Number(now) - at < CLOCK_FRESH_MS;
 
     return ready
       ? { ready: true, secondsRemaining: seconds, timeframe, source: clean(clock.source) }
