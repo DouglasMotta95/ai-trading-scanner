@@ -359,31 +359,9 @@ let lastRenderedState = {};
 let countdownUi = { value: null, at: 0, cycle: '' };
 
 function projectedRemaining(state = {}) {
-  const tf = normTf(state.diagnostics?.marketClock?.timeframe || state.analysisTimeframe || state.timeframe || state.signal?.timeframe);
-  const duration = timeframeSeconds(tf) || timeframeSeconds(selectedOperatingTimeframe(state)) || 60;
-  const sources = [
-    num(state.professionalDecision?.secondsRemaining),
-    num(state.diagnostics?.marketClock?.secondsRemaining),
-    num(state.signal?.secondsRemaining)
-  ];
-  const direct = sources.find(value => value != null && value >= 0 && value <= duration + 2);
-  if (direct != null) return Math.max(0, direct);
-
-  const candidates = [
-    state.currentCandle,
-    state.signal?.currentCandle,
-    Array.isArray(state.candles) ? state.candles.at(-1) : null
-  ].filter(Boolean);
-  for (const row of candidates) {
-    let openAt = num(row?.time ?? row?.timestamp);
-    if (openAt != null && openAt > 0 && openAt < 1e12) openAt *= 1000;
-    if (!Number.isFinite(openAt)) continue;
-    const closeAt = openAt + duration * 1000;
-    const now = Date.now();
-    if (now < openAt - 1500 || now > closeAt + 1500) continue;
-    return Math.max(0, Math.min(duration, Math.ceil((closeAt - now) / 1000)));
-  }
-  return null;
+  const authority = globalThis.__ATS_COUNTDOWN_AUTHORITY__;
+  const timing = authority?.readAuthoritativeCountdown?.(state, Date.now()) || null;
+  return timing?.ready === true ? Number(timing.secondsRemaining) : null;
 }
 
 function smoothedRemaining(state = {}) {
