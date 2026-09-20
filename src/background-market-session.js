@@ -1,5 +1,6 @@
 import { updateScannerState } from './services/scanner-state-atomic.js';
 import { shouldResetForFocusedAsset, validateMarketBundle } from './core/market-session-guard.js';
+import { strongSelectedMarketMismatch } from './core/feed-focus-guard.js';
 import { MARKET_SWITCH_TIMING, isWithinSwitchGuard, protocolTakeoverAllowed, realSelectionAgeMs, resyncSchedule, shouldRefreshVisualSelectionLock } from './core/market-switch-timing.js';
 
 const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
@@ -40,6 +41,23 @@ function forceMarketEpochResync(tabId, epoch, asset = '') {
     }, delay);
   }
 }
+
+function forceMarketObservationRescan(tabId, asset = '') {
+  const id = Number(tabId);
+  if (!Number.isInteger(id) || id <= 0) return;
+  for (const delay of resyncSchedule()) {
+    setTimeout(() => {
+      try {
+        chrome.tabs?.sendMessage?.(id, {
+          type: 'ATS_FORCE_MARKET_RESYNC',
+          asset,
+          reason: 'selected-feed-contradiction'
+        }, () => void chrome.runtime?.lastError);
+      } catch {}
+    }, delay);
+  }
+}
+
 
 function normAsset(value = '') {
   const raw = clean(value).toUpperCase();
@@ -594,7 +612,7 @@ export async function applyClock(message = {}, sender = {}) {
   return updateScannerState(state => {
     if (!licenseActive(state)) return;
     const focus = state.diagnostics?.focusedAsset || null;
-    if (!focus?.asset || !sameMarket(focus.asset, asset) || clean(focus.frameHost).toLowerCase() !== info.frameHost) return;
+    if (!focus?.asset || !sameMarket(focus.asset, asset)) return;
     if (state.targetTabId && Number(state.targetTabId) !== Number(info.tabId)) return;
 
     if (!exact || !validRemaining) {
@@ -668,6 +686,66 @@ export async function applyFeed(payload = {}, sender = {}) {
     const focus = state.diagnostics?.focusedAsset || null;
     if (!focus?.asset) return;
     if (state.targetTabId && Number(state.targetTabId) !== Number(info.tabId)) return;
+
+    const mismatch = strongSelectedMarketMismatch({
+      candidates: candidates(payload),
+      focusAsset: focus.asset,
+      now: Date.now()
+    });
+    if (mismatch?.asset) {
+      const mismatchHistory = historyFor(payload, mismatch.asset);
+      const mismatchBundle = validateMarketBundle({
+        focusAsset: mismatch.asset,
+        candidateAsset: mismatch.asset,
+        price: mismatch.price,
+        candles: mismatchHistory,
+        requireCandles: true
+      });
+      if (mismatchBundle.ok) {
+        const session = state.diagnostics?.marketSession || {};
+        return {
+          ...state,
+          connection: 'connecting',
+          asset: null,
+          price: null,
+          candles: [],
+          currentCandle: null,
+          marketHistory: {},
+          signal: null,
+          professionalDecision: null,
+          aiAudit: null,
+          tradeIntent: null,
+          entryAdvice: null,
+          lastConfirmed: null,
+          lastSeen: null,
+          diagnostics: {
+            ...(state.diagnostics || {}),
+            marketClock: null,
+            feedFocusContradiction: {
+              from: normAsset(focus.asset),
+              to: normAsset(mismatch.asset),
+              confidence: Number(mismatch.confidence || 0),
+              observedAt: Number(mismatch.observedAt || 0),
+              at: Date.now()
+            },
+            marketSession: {
+              ...session,
+              pendingAsset: normAsset(mismatch.asset),
+              dataReady: false,
+              transitioning: true,
+              dataMode: 'syncing'
+            },
+            acquisition: {
+              ...(state.diagnostics?.acquisition || {}),
+              stage: 'confirming_asset_switch',
+              reason: `Feed selecionado mudou para ${normAsset(mismatch.asset)}. Descartando dados antigos e confirmando o gráfico visível.`,
+              at: Date.now()
+            }
+          }
+        };
+      }
+    }
+
     const asset = normAsset(focus.asset);
     const candidate = bestForFocus(payload, asset);
     if (!candidate) return;
@@ -756,6 +834,10 @@ export async function applyFeed(payload = {}, sender = {}) {
       }
     };
   });
+  if (nextState?.diagnostics?.feedFocusContradiction
+      && nextState?.diagnostics?.marketSession?.transitioning === true) {
+    forceMarketObservationRescan(info.tabId, nextState.diagnostics.feedFocusContradiction.to || '');
+  }
   if (nextState?.diagnostics?.marketSession?.dataReady === true) {
     globalThis.__ATS_SCHEDULE_CENTRAL_ANALYSIS__?.(true);
   }
