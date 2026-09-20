@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { assessHighConfidence, A_PLUS_THRESHOLDS, A_PLUS_WEIGHTS, A_PLUS_PROFILES } from '../src/core/high-confidence.js';
+import { updateSignalJournal } from '../src/core/signal-journal.js';
 
 const read = path => fs.readFileSync(new URL('../' + path, import.meta.url), 'utf8');
 
