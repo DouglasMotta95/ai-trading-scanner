@@ -63,14 +63,26 @@ function exactClockReady(state = {}) {
     && Number.isFinite(Number(clock?.secondsRemaining));
 }
 
+function operationRequirement(state = {}) {
+  const timeframe = clean(state.analystPreferences?.operationMode || 'M1').toUpperCase() === 'M5' ? 'M5' : 'M1';
+  const expiration = clean(state.analystPreferences?.operationExpiration || state.diagnostics?.expirationGuard?.required || (timeframe === 'M5' ? '300s' : '60s'));
+  return {
+    timeframe,
+    expiration,
+    expirationLabel: expiration === '300s' ? '5 minutos' : '1 minuto'
+  };
+}
+
 function exactLiveTime(state = {}) {
   if (!exactClockReady(state)) return false;
   const clock = state.diagnostics?.marketClock || {};
+  const operation = operationRequirement(state);
+  const operation = operationRequirement(state);
   const expirationAt = Number(state.platformControls?.expirationCheckedAt || state.platformControls?.observed?.observedAt?.expiration || 0);
   const expirationFresh = expirationAt > 0 && Date.now() - expirationAt < CONTROLS_FRESH_MS;
   const actualExpiration = expirationFresh ? clean(state.platformControls?.observed?.expiration) : '';
-  return clean(clock.timeframe || state.analysisTimeframe || state.timeframe).toUpperCase() === 'M1'
-    && actualExpiration === '60s';
+  return clean(clock.timeframe || state.analysisTimeframe || state.timeframe).toUpperCase() === operation.timeframe
+    && actualExpiration === operation.expiration;
 }
 
 function connectionFailure(state = {}) {
@@ -110,7 +122,7 @@ function renderShell(state = {}) {
   const expirationSource = clean(expirationGuard.source || state.platformControls?.expirationSource || '');
   const expirationDivergence = expirationGuard.divergence === true;
   const expiration = clean(expirationGuard.actual || (expirationFresh ? state.platformControls?.observed?.expiration : '') || '');
-  const expirationWrong = dataConnected && !!expiration && expiration !== '60s';
+  const expirationWrong = dataConnected && !!expiration && expiration !== operation.expiration;
   const sessionStartedAt = Number(session.startedAt || state.diagnostics?.target?.connectedAt || 0);
   const sessionAge = sessionStartedAt > 0 ? Date.now() - sessionStartedAt : 0;
   const panelAge = Math.max(0, Date.now() - PANEL_OPENED_AT);
@@ -162,9 +174,9 @@ function renderShell(state = {}) {
             : expirationPending
               ? 'EXPIRAÇÃO PENDENTE — a CasaTrade não expõe esse valor para leitura. Informe abaixo a expiração que você está usando.'
               : connected && expirationWrong
-            ? 'Ajuste a expiração da CasaTrade para 1 minuto.'
+            ? `Ajuste a expiração da CasaTrade para ${operation.expirationLabel}.`
             : tradeReady
-              ? `${state.asset} • M1 • countdown e expiração confirmados pela CasaTrade.`
+              ? `${state.asset} • ${operation.timeframe} • countdown e expiração confirmados pela CasaTrade.`
               : connected
                 ? `${state.asset} conectado. Dados reais recebidos; validando condições finais da entrada.`
                 : connecting
@@ -484,6 +496,7 @@ function expirationDiagnosticText(response = {}) {
     canvasLines,
     '',
     '6. RELÓGIO DA VELA E FEED',
+    `Modo de operação ativo: ${clean(lastState?.analystPreferences?.operationMode || 'M1')} + ${clean(lastState?.analystPreferences?.operationExpiration || '60s')}`,
     `Perfil de sensibilidade ativo: ${clean(lastState?.analystPreferences?.sensitivityLabel || lastState?.analystPreferences?.sensitivityProfile || 'MÉDIO')}`,
     '',
     'A) state.diagnostics.marketClock',
