@@ -231,7 +231,7 @@ function currentOhlc(state = {}) {
 
 function entryBlockReason(state = {}) {
   const expiration = expirationObservation(state);
-  if (!expiration.value) return 'EXPIRAÇÃO PENDENTE — LEIA O SELETOR DA CASATRADE E TENTE NOVAMENTE';
+  if (!expiration.value) return 'EXPIRAÇÃO PENDENTE — INFORME A EXPIRAÇÃO NO CAMPO DO TOPO DO PAINEL';
   if (expiration.value !== '60s') return 'AJUSTE A EXPIRAÇÃO DA CASATRADE PARA 1 MINUTO';
 
   const clock = state.diagnostics?.marketClock || {};
