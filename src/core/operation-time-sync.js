@@ -57,7 +57,10 @@
     const observed = controls?.observed || {};
     const observedValue = normExp(observed.expiration);
     const observedAt = Number(observed?.observedAt?.expiration || controls.expirationCheckedAt || 0);
-    if (controls.liveAuthority === true && observedValue && observedAt > 0) {
+    if (observedValue && observedAt > 0) {
+      // platformControls is background-owned state populated only by trusted
+      // CasaTrade readers. Older/recovered states may predate liveAuthority,
+      // so the real value + real observation timestamp are the authority.
       return { value: observedValue, at: observedAt, source: clean(controls.source || observed.source || 'platform-controls') };
     }
 
