@@ -429,6 +429,16 @@
     invalidateElements();
     schedulePublish(0, true);
   };
+
+  chrome.runtime?.onMessage?.addListener?.(message => {
+    if (message?.type !== 'ATS_FORCE_MARKET_RESYNC') return false;
+    invalidateElements();
+    schedulePublish(0, true);
+    try { globalThis.__ATS_FORCE_CHART_MARKET_SCAN__?.(); } catch {}
+    try { globalThis.__ATS_FORCE_MARKET_CLOCK_SCAN__?.(); } catch {}
+    try { globalThis.__ATS_FORCE_EMBEDDED_FEED_REPLAY__?.(); } catch {}
+    return false;
+  });
   setInterval(() => schedulePublish(0, false), 600);
   setTimeout(() => { invalidateElements(); publish(true); }, 250);
 })();
