@@ -8,6 +8,15 @@ const atsNormExpiration = value => {
   m = s.match(/^(\d{1,3}):(\d{2})$/); return m ? `${Number(m[1]) * 60 + Number(m[2])}s` : null;
 };
 
+function atsClockBoundToFocus(clock = {}, focus = {}) {
+  const sameFrame = Number(clock.frameId) === Number(focus.frameId)
+    && atsClean(clock.frameHost).toLowerCase() === atsClean(focus.frameHost).toLowerCase();
+  const boundControlFrame = clock.crossFrameControl === true
+    && Number(clock.boundFocusFrameId) === Number(focus.frameId)
+    && atsClean(clock.boundFocusFrameHost).toLowerCase() === atsClean(focus.frameHost).toLowerCase();
+  return sameFrame || boundControlFrame;
+}
+
 function atsExactTimeReady(state = {}) {
   const clock = state.diagnostics?.marketClock || {};
   const focus = state.diagnostics?.focusedAsset || {};
@@ -23,8 +32,7 @@ function atsExactTimeReady(state = {}) {
     && ['trader-dom-countdown', 'network-server-cycle'].includes(String(clock.source || ''))
     && Number(clock.at || 0) > 0
     && Date.now() - Number(clock.at) < 3000
-    && Number(clock.frameId) === Number(focus.frameId)
-    && atsClean(clock.frameHost).toLowerCase() === atsClean(focus.frameHost).toLowerCase()
+    && atsClockBoundToFocus(clock, focus)
     && !!actualExpiration
     && controlsFresh;
 }
