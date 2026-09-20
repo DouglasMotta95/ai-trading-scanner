@@ -3,6 +3,7 @@ import { readScannerState, updateScannerState } from './services/scanner-state-a
 import { operatingTimeframeFromPreferences } from './core/operation-mode.js';
 import './core/countdown-authority.js';
 import './core/operation-time-sync.js';
+import { updateSignalJournal } from './core/signal-journal.js';
 
 // Single owner of technical analysis.
 // All acquisition modules only update scannerState. This loop coalesces those
@@ -50,76 +51,6 @@ function historyFor(state = {}, asset = '') {
   return rows.filter(row => [row?.open, row?.high, row?.low, row?.close].every(value => num(value) != null)).slice(-180);
 }
 
-function candleTime(row = {}) {
-  let value = num(row?.time ?? row?.timestamp);
-  if (value != null && value > 0 && value < 1e12) value *= 1000;
-  return Number.isFinite(value) ? value : null;
-}
-
-function journalKey(row = {}) {
-  return `${marketId(row.asset)}|${Number(row.targetStart || 0)}|${String(row.direction || '').toUpperCase()}`;
-}
-
-function resolveSignalJournal(current = {}, snapshot = {}, issued = null, tfMs = 60000) {
-  const now = Date.now();
-  const rows = (Array.isArray(current.signalJournal) ? current.signalJournal : []).slice(-249).map(row => ({ ...row }));
-  const byKey = new Map(rows.map(row => [journalKey(row), row]));
-
-  if (issued?.direction && issued?.targetStart) {
-    const key = journalKey(issued);
-    if (!byKey.has(key)) {
-      byKey.set(key, {
-        key,
-        asset: marketId(issued.asset),
-        direction: issued.direction,
-        targetStart: Number(issued.targetStart),
-        activeUntil: Number(issued.activeUntil || Number(issued.targetStart) + tfMs),
-        issuedAt: Number(issued.issuedAt || now),
-        setup: clean(issued.setup || ''),
-        regime: clean(issued.regime || ''),
-        technicalScore: Number(issued.score || 0),
-        qualityScore: Number(issued.qualityScore || 0),
-        qualityFactors: issued.qualityFactors || null,
-        resolved: false,
-        outcome: null
-      });
-    }
-  }
-
-  const candles = Array.isArray(snapshot.candles) ? snapshot.candles : [];
-  for (const row of byKey.values()) {
-    if (row.resolved === true) continue;
-    if (!sameMarket(row.asset, snapshot.asset)) continue;
-    const targetStart = Number(row.targetStart || 0);
-    if (!targetStart || now < targetStart + tfMs) continue;
-    const targetBucket = Math.floor(targetStart / tfMs) * tfMs;
-    const targetRows = candles
-      .map(candle => ({ candle, time: candleTime(candle) }))
-      .filter(item => item.time != null && item.time >= targetBucket && item.time < targetBucket + tfMs)
-      .sort((a,b) => a.time - b.time);
-    if (!targetRows.length) continue;
-    const first = targetRows[0].candle;
-    const last = targetRows.at(-1).candle;
-    const open = num(first.open), close = num(last.close);
-    if (open == null || close == null) continue;
-    const direction = String(row.direction || '').toUpperCase();
-    const delta = close - open;
-    const outcome = delta === 0
-      ? 'DRAW'
-      : direction === 'BUY'
-        ? (delta > 0 ? 'WIN' : 'LOSS')
-        : (delta < 0 ? 'WIN' : 'LOSS');
-    row.resolved = true;
-    row.outcome = outcome;
-    row.open = open;
-    row.close = close;
-    row.resolvedAt = now;
-  }
-
-  return [...byKey.values()]
-    .sort((a,b) => Number(a.issuedAt || 0) - Number(b.issuedAt || 0))
-    .slice(-250);
-}
 
 function consolidatedSnapshot(state = {}) {
   if (!activeAccess(state) || state.scanner !== 'scanning' || state.connection !== 'online') return null;
@@ -287,7 +218,13 @@ async function runCentralAnalysis(force = false) {
         : existingAdviceActive
           ? existingAdvice
           : null;
-      const signalJournal = resolveSignalJournal(current, snapshot, entryAdvice, tfMs);
+      const signalJournal = updateSignalJournal({
+        previousRows: current.signalJournal,
+        snapshot,
+        issued: entryAdvice,
+        tfMs,
+        now: Date.now()
+      });
 
       const next = {
         ...current,
