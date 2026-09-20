@@ -1,6 +1,8 @@
 import { processSnapshot, resetOrchestrator } from './core/orchestrator.js';
 import { readScannerState, updateScannerState } from './services/scanner-state-atomic.js';
-import { resolveSignalHistory, signalPerformance } from './core/signal-outcomes.js';
+import { resolveSignalHistory, signalPerformance, resolveSignalOutcome } from './core/signal-outcomes.js';
+import { getThresholds } from './core/analysis.js';
+import { storageLocalGet, storageLocalSet } from './services/chrome-compat.js';
 import { track as telemetryEvent } from './services/telemetry.js';
 
 // Single owner of technical analysis.
@@ -29,6 +31,168 @@ const marketId = value => {
   return pair ? `${pair[1]}/${pair[2]}${otc ? ' (OTC)' : ''}` : raw;
 };
 const sameMarket = (a, b) => !!marketId(a) && marketId(a) === marketId(b);
+const normExp = value => {
+  const raw = clean(value).toLowerCase().replace(/\s+/g, '');
+  let match = raw.match(/^(\d{1,5})(?:s|seg|segundo|segundos)$/);
+  if (match) return `${Number(match[1])}s`;
+  match = raw.match(/^(\d{1,4})(?:m|min|minuto|minutos)$/);
+  if (match) return `${Number(match[1]) * 60}s`;
+  return null;
+};
+
+const SIGNAL_PERFORMANCE_KEY = 'atsSignalPerformanceLedgerV1';
+const SIGNAL_PERFORMANCE_MAX = 2000;
+let signalPerformanceQueue = Promise.resolve();
+let lastSignalPerformanceSignature = '';
+
+const candleTimestamp = row => {
+  let value = Number(row?.time ?? row?.timestamp);
+  if (Number.isFinite(value) && value > 0 && value < 1e12) value *= 1000;
+  return Number.isFinite(value) && value > 0 ? value : null;
+};
+
+function performanceEmission(state = {}) {
+  const signal = state.signal || {};
+  const professional = state.professionalDecision || {};
+  const professionalUi = clean(professional.uiState).toUpperCase();
+  const technicalUi = clean(signal.uiState).toUpperCase();
+  const ui = ['ENTER_BUY','ENTER_SELL','POSSIBLE_BUY','POSSIBLE_SELL'].includes(professionalUi)
+    ? professionalUi
+    : ['ENTER_BUY','ENTER_SELL','POSSIBLE_BUY','POSSIBLE_SELL'].includes(technicalUi)
+      ? technicalUi
+      : '';
+  if (!ui) return null;
+
+  const type = ui.startsWith('ENTER_') ? 'ENTER' : 'POSSIBLE';
+  const direction = ui.endsWith('_BUY') ? 'BUY' : ui.endsWith('_SELL') ? 'SELL' : '';
+  if (!direction) return null;
+
+  const focus = state.diagnostics?.focusedAsset || {};
+  const clock = state.diagnostics?.marketClock || {};
+  if (focus.reliable !== true || focus.chartScoped !== true || focus.trustedChartFrame !== true) return null;
+  if (clock.verified !== true || clock.available === false || clock.role !== 'candle-close') return null;
+
+  const timeframe = normTf(state.analysisTimeframe || state.timeframe || professional.timeframe || signal.timeframe || clock.timeframe);
+  const expiration = normExp(state.platformControls?.observed?.expiration || state.targetExpiration || state.expiration || professional.actualExpiration);
+  if (timeframe !== 'M1' || expiration !== '60s') return null;
+
+  const complete = (Array.isArray(state.candles) ? state.candles : []).filter(row =>
+    [row?.open,row?.high,row?.low,row?.close].every(value => num(value) != null)
+  );
+  if (complete.length < 2) return null;
+
+  const analytics = signal.analytics || {};
+  const power = Number(direction === 'BUY' ? analytics.buyPower : analytics.sellPower) || 0;
+  if (power < 50) return null;
+
+  const targetStart = num(signal.targetStart ?? state.decisionCycle?.targetStart);
+  if (targetStart == null) return null;
+
+  const thresholds = getThresholds(state.analystPreferences?.sensitivityProfile || 'MEDIO');
+  const emittedAt = Date.now();
+  const score = num(professional.score ?? signal.analysisScore ?? signal.score) ?? 0;
+  const secondsRemaining = num(professional.secondsRemaining ?? signal.secondsRemaining ?? clock.secondsRemaining);
+  const referencePrice = num(state.price);
+  const id = [marketId(state.asset), 'M1', Number(targetStart), direction, type].join('|');
+
+  return {
+    id,
+    asset: marketId(state.asset),
+    direction,
+    type,
+    score,
+    candleStrength: num(analytics.currentStrength),
+    secondsRemaining,
+    emittedAt,
+    referencePrice,
+    timeframe: 'M1',
+    expiration: '60s',
+    profile: thresholds.label,
+    profileKey: thresholds.profile,
+    targetStart: Number(targetStart),
+    entryPrice: null,
+    exitPrice: null,
+    result: null,
+    status: 'pending'
+  };
+}
+
+function performanceFeedAdvancedPastTarget(candles = [], targetStart = 0) {
+  const end = Number(targetStart || 0) + 60_000;
+  return (Array.isArray(candles) ? candles : []).some(row => Number(candleTimestamp(row) || 0) >= end);
+}
+
+async function updateSignalPerformanceLedger(state = {}) {
+  const emission = performanceEmission(state);
+  const candles = Array.isArray(state.candles) ? state.candles : [];
+  const stored = await storageLocalGet(SIGNAL_PERFORMANCE_KEY).catch(() => ({}));
+  const current = stored?.[SIGNAL_PERFORMANCE_KEY];
+  let rows = Array.isArray(current?.rows) ? current.rows.slice(-SIGNAL_PERFORMANCE_MAX) : [];
+  let changed = false;
+
+  if (emission && !rows.some(row => row?.id === emission.id)) {
+    rows.push(emission);
+    changed = true;
+  }
+
+  const now = Date.now();
+  rows = rows.map(row => {
+    if (!row || row.status === 'resolved' || row.result) return row;
+    if (!sameMarket(row.asset, state.asset)) return row;
+
+    const outcome = resolveSignalOutcome(row, candles, { now });
+    if (outcome) {
+      changed = true;
+      return {
+        ...row,
+        entryPrice: outcome.entryPrice,
+        exitPrice: outcome.exitPrice,
+        result: outcome.result === 'DRAW' ? 'EMPATE' : outcome.result,
+        status: 'resolved',
+        resolvedAt: outcome.resolvedAt,
+        outcomeBasis: outcome.outcomeBasis
+      };
+    }
+
+    const due = now >= Number(row.targetStart || 0) + 60_000;
+    if (due && performanceFeedAdvancedPastTarget(candles, row.targetStart)) {
+      changed = true;
+      return {
+        ...row,
+        result: 'INDETERMINADO',
+        status: 'resolved',
+        resolvedAt: now,
+        outcomeBasis: 'target_candle_data_unavailable'
+      };
+    }
+    return row;
+  });
+
+  if (!changed) return;
+  rows = rows.slice(-SIGNAL_PERFORMANCE_MAX);
+  await storageLocalSet({
+    [SIGNAL_PERFORMANCE_KEY]: {
+      rows,
+      updatedAt: Date.now()
+    }
+  });
+}
+
+function observeSignalPerformance(state = {}) {
+  const emission = performanceEmission(state);
+  const lastCandle = (Array.isArray(state.candles) ? state.candles : []).at(-1) || null;
+  const signature = JSON.stringify([
+    emission?.id || null,
+    candleTimestamp(lastCandle),
+    state.asset || null,
+    state.diagnostics?.marketSession?.epoch || 0
+  ]);
+  if (signature === lastSignalPerformanceSignature) return;
+  lastSignalPerformanceSignature = signature;
+  signalPerformanceQueue = signalPerformanceQueue
+    .then(() => updateSignalPerformanceLedger(state))
+    .catch(() => {});
+}
 const clockBoundToFocus = (clock = {}, focus = {}) => {
   const sameFrame = Number(clock.frameId) === Number(focus.frameId)
     && clean(clock.frameHost).toLowerCase() === clean(focus.frameHost).toLowerCase();
@@ -158,6 +322,7 @@ function rawInputSignature(state = {}, snapshot = null) {
   return JSON.stringify([
     snapshot.asset, snapshot.price, snapshot.timeframe, snapshot.expiration,
     snapshot.secondsRemaining, Number(clock.at || 0), clean(clock.source),
+    getThresholds(state.analystPreferences?.sensitivityProfile || 'MEDIO').profile,
     Number(state.lastSeen || 0), tail
   ]);
 }
@@ -211,6 +376,7 @@ async function runCentralAnalysis(force = false) {
         snapshot.asset,
         snapshot.analysisTimeframe,
         Number(session.epoch || 0),
+        getThresholds(current.analystPreferences?.sensitivityProfile || 'MEDIO').profile,
         Number(focus.frameId ?? -1),
         clean(focus.frameHost).toLowerCase()
       ].join('|');
@@ -272,9 +438,10 @@ async function runCentralAnalysis(force = false) {
       };
 
       const seconds = num(snapshot.secondsRemaining);
+      const activeThresholds = getThresholds(current.analystPreferences?.sensitivityProfile || 'MEDIO');
       const locked = clean(nextWithHistory.decisionCycle?.locked).toUpperCase();
       const confirmed = nextWithHistory.signal?.state === 'CONFIRM' || ['ENTER_BUY', 'ENTER_SELL'].includes(clean(nextWithHistory.signal?.uiState).toUpperCase());
-      needsConfirmationFollowup = seconds != null && seconds > 0 && seconds <= 10 && !confirmed && locked !== 'WAIT';
+      needsConfirmationFollowup = seconds != null && seconds > 0 && seconds <= activeThresholds.entryWindowSeconds && !confirmed && locked !== 'WAIT';
       return nextWithHistory;
     });
   } finally {
@@ -314,9 +481,13 @@ globalThis.__ATS_SCHEDULE_CENTRAL_ANALYSIS__ = scheduleAnalysis;
 chrome.storage?.onChanged?.addListener?.((changes, area) => {
   if (area !== 'local' || !changes.scannerState?.newValue) return;
   observeState(changes.scannerState.newValue);
+  observeSignalPerformance(changes.scannerState.newValue);
 });
 
-readScannerState().then(observeState).catch(() => {});
+readScannerState().then(state => {
+  observeState(state);
+  observeSignalPerformance(state);
+}).catch(() => {});
 
 const HEALTH_CHECK_MS = 1000;
 const RECOVERY_AFTER_MS = 4500;
