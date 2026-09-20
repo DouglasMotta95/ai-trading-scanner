@@ -13,15 +13,59 @@ export const INDICATOR_SCORE_WEIGHTS = Object.freeze({
   bollinger: 0
 });
 
-export const ANALYST_THRESHOLDS = Object.freeze({
-  minimumClosedCandles: 2,
-  preferredClosedCandles: 3,
-  minimumPatternRows: 3,
-  possibleScore: 44,
-  confirmScore: 58,
-  candleStrength: 62,
-  rejectionStrength: 50
+const THRESHOLD_PROFILES = Object.freeze({
+  RIGIDO: Object.freeze({
+    profile: 'RIGIDO',
+    label: 'RÍGIDO',
+    minimumClosedCandles: 2,
+    preferredClosedCandles: 3,
+    minimumPatternRows: 3,
+    possibleScore: 44,
+    confirmScore: 58,
+    finalScore: 58,
+    candleStrength: 62,
+    rejectionStrength: 50,
+    entryWindowSeconds: 10,
+    holdSeconds: 3
+  }),
+  MEDIO: Object.freeze({
+    profile: 'MEDIO',
+    label: 'MÉDIO',
+    minimumClosedCandles: 2,
+    preferredClosedCandles: 3,
+    minimumPatternRows: 3,
+    possibleScore: 40,
+    confirmScore: 52,
+    finalScore: 52,
+    candleStrength: 55,
+    rejectionStrength: 45,
+    entryWindowSeconds: 12,
+    holdSeconds: 2
+  }),
+  SOLTO: Object.freeze({
+    profile: 'SOLTO',
+    label: 'SOLTO',
+    minimumClosedCandles: 2,
+    preferredClosedCandles: 3,
+    minimumPatternRows: 3,
+    possibleScore: 36,
+    confirmScore: 48,
+    finalScore: 48,
+    candleStrength: 50,
+    rejectionStrength: 40,
+    entryWindowSeconds: 15,
+    holdSeconds: 2
+  })
 });
+
+export function getThresholds(profile = 'MEDIO') {
+  const raw = String(profile ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toUpperCase();
+  return THRESHOLD_PROFILES[raw] || THRESHOLD_PROFILES.MEDIO;
+}
+
+// Compatibility export for older tests/imports. Runtime signal sensitivity uses
+// getThresholds(profile); RIGIDO remains the exact historical threshold set.
+export const ANALYST_THRESHOLDS = THRESHOLD_PROFILES.RIGIDO;
 
 const formatLevel = value => {
   const n = finite(value);
@@ -31,11 +75,12 @@ const formatLevel = value => {
   return n.toFixed(digits).replace(/0+$/, '').replace(/\.$/, '');
 };
 
-export function waitingFor(recent = {}, direction = null, score = 0) {
+export function waitingFor(recent = {}, direction = null, score = 0, profile = 'MEDIO') {
+  const thresholds = getThresholds(profile);
   if (!recent?.ready) {
     return {
       type: 'history', direction: null, label: 'Histórico recente', level: null,
-      current: Number(recent?.count || 0), required: ANALYST_THRESHOLDS.minimumPatternRows,
+      current: Number(recent?.count || 0), required: thresholds.minimumPatternRows,
       text: 'Aguardando histórico recente suficiente para formar o padrão.'
     };
   }
@@ -79,9 +124,9 @@ export function waitingFor(recent = {}, direction = null, score = 0) {
     if (recent.rejection !== chosenDirection) add({
       type: 'rejection', direction: chosenDirection,
       label: `Rejeição ${buy ? 'compradora' : 'vendedora'}`, level: null,
-      current: rejectionNow, required: ANALYST_THRESHOLDS.rejectionStrength,
-      gap: Math.max(0, ANALYST_THRESHOLDS.rejectionStrength - rejectionNow) / ANALYST_THRESHOLDS.rejectionStrength,
-      text: `Aguardando confirmação de rejeição ${buy ? 'compradora' : 'vendedora'} (${Math.round(rejectionNow)}%/${ANALYST_THRESHOLDS.rejectionStrength}%).`
+      current: rejectionNow, required: thresholds.rejectionStrength,
+      gap: Math.max(0, thresholds.rejectionStrength - rejectionNow) / thresholds.rejectionStrength,
+      text: `Aguardando confirmação de rejeição ${buy ? 'compradora' : 'vendedora'} (${Math.round(rejectionNow)}%/${thresholds.rejectionStrength}%).`
     });
 
     const power = Number(buy ? metrics.buyPower : metrics.sellPower) || 0;
@@ -93,12 +138,12 @@ export function waitingFor(recent = {}, direction = null, score = 0) {
     });
 
     const strength = Number(metrics.currentStrength || 0);
-    if (strength < ANALYST_THRESHOLDS.candleStrength) add({
+    if (strength < thresholds.candleStrength) add({
       type: 'candle_strength', direction: chosenDirection,
       label: 'Força da vela atual', level: null,
-      current: strength, required: ANALYST_THRESHOLDS.candleStrength,
-      gap: Math.max(0, ANALYST_THRESHOLDS.candleStrength - strength) / ANALYST_THRESHOLDS.candleStrength,
-      text: `Aguardando força da vela atingir ${ANALYST_THRESHOLDS.candleStrength}% (agora ${Math.round(strength)}%).`
+      current: strength, required: thresholds.candleStrength,
+      gap: Math.max(0, thresholds.candleStrength - strength) / thresholds.candleStrength,
+      text: `Aguardando força da vela atingir ${thresholds.candleStrength}% (agora ${Math.round(strength)}%).`
     });
 
     const continuation = Number(recent.continuationScore || 0);
@@ -111,13 +156,13 @@ export function waitingFor(recent = {}, direction = null, score = 0) {
     });
   }
 
-  const targetScore = Number(score) < ANALYST_THRESHOLDS.possibleScore
-    ? ANALYST_THRESHOLDS.possibleScore
-    : Number(score) < ANALYST_THRESHOLDS.confirmScore
-      ? ANALYST_THRESHOLDS.confirmScore
+  const targetScore = Number(score) < thresholds.possibleScore
+    ? thresholds.possibleScore
+    : Number(score) < thresholds.confirmScore
+      ? thresholds.confirmScore
       : null;
   if (targetScore != null) add({
-    type: targetScore === ANALYST_THRESHOLDS.possibleScore ? 'possible_score' : 'confirm_score',
+    type: targetScore === thresholds.possibleScore ? 'possible_score' : 'confirm_score',
     direction: chosenDirection, label: 'Força do padrão', level: null,
     current: Number(score) || 0, required: targetScore,
     gap: Math.max(0, targetScore - Number(score || 0)) / targetScore,
@@ -211,7 +256,8 @@ function indicatorReinforcement(candles = [], direction = null) {
   };
 }
 
-function analystMetrics(rows = []) {
+function analystMetrics(rows = [], profile = 'MEDIO') {
+  const thresholds = getThresholds(profile);
   const window = rows.slice(-5);
   const last = window[window.length - 1] || null;
   const previous = window.slice(0, -1);
@@ -221,9 +267,9 @@ function analystMetrics(rows = []) {
   const currentStrength = clamp(last?.strength || 0);
   const rejectionBuy = clamp((last?.lowerRatio || 0) * 100);
   const rejectionSell = clamp((last?.upperRatio || 0) * 100);
-  const rejectionDirection = rejectionBuy >= ANALYST_THRESHOLDS.rejectionStrength && last?.close > last?.open
+  const rejectionDirection = rejectionBuy >= thresholds.rejectionStrength && last?.close > last?.open
     ? 'BUY'
-    : rejectionSell >= ANALYST_THRESHOLDS.rejectionStrength && last?.close < last?.open
+    : rejectionSell >= thresholds.rejectionStrength && last?.close < last?.open
       ? 'SELL'
       : null;
   const rejectionStrength = rejectionDirection === 'BUY' ? rejectionBuy : rejectionDirection === 'SELL' ? rejectionSell : Math.max(rejectionBuy, rejectionSell);
@@ -246,12 +292,13 @@ function analystMetrics(rows = []) {
   };
 }
 
-export function recentPriceAction(candles = []) {
+export function recentPriceAction(candles = [], profile = 'MEDIO') {
+  const thresholds = getThresholds(profile);
   const rows = (Array.isArray(candles) ? candles : []).map(shape).filter(Boolean).slice(-10);
-  if (rows.length < ANALYST_THRESHOLDS.minimumPatternRows) {
+  if (rows.length < thresholds.minimumPatternRows) {
     return {
       ready: false,
-      required: ANALYST_THRESHOLDS.minimumPatternRows,
+      required: thresholds.minimumPatternRows,
       count: rows.length,
       direction: null,
       score: 0,
@@ -261,7 +308,7 @@ export function recentPriceAction(candles = []) {
       doji: false,
       rejection: null,
       aligned: 0,
-      metrics: analystMetrics(rows),
+      metrics: analystMetrics(rows, profile),
       breakoutHigh: null,
       breakoutLow: null,
       support: null,
@@ -285,17 +332,17 @@ export function recentPriceAction(candles = []) {
   const tiny = rows.filter(x => x.bodyRatio < .2).length;
   const lateral = rangeSpan > 0 && Math.abs(last.close - rows[0].open) / rangeSpan < .2 && avgBody < .38;
   const doji = last.bodyRatio < .12 && last.upperRatio > .28 && last.lowerRatio > .28;
-  const force = last.bodyRatio >= ANALYST_THRESHOLDS.candleStrength / 100;
+  const force = last.bodyRatio >= thresholds.candleStrength / 100;
   const prevHigh = Math.max(...prev.slice(-4).map(x => x.high));
   const prevLow = Math.min(...prev.slice(-4).map(x => x.low));
   const averageRange = avg(rows.map(x => x.range));
   const breakout = last.close > prevHigh ? 'BUY' : last.close < prevLow ? 'SELL' : null;
-  const rejection = last.lowerRatio >= ANALYST_THRESHOLDS.rejectionStrength / 100 && last.close > last.open
+  const rejection = last.lowerRatio >= thresholds.rejectionStrength / 100 && last.close > last.open
     ? 'BUY'
-    : last.upperRatio >= ANALYST_THRESHOLDS.rejectionStrength / 100 && last.close < last.open
+    : last.upperRatio >= thresholds.rejectionStrength / 100 && last.close < last.open
       ? 'SELL'
       : null;
-  const metrics = analystMetrics(rows);
+  const metrics = analystMetrics(rows, profile);
 
   let buy = 0, sell = 0;
   const reasons = [];
@@ -344,7 +391,7 @@ export function recentPriceAction(candles = []) {
 
   return {
     ready: true,
-    required: ANALYST_THRESHOLDS.minimumPatternRows,
+    required: thresholds.minimumPatternRows,
     count: rows.length,
     direction,
     score,
@@ -371,10 +418,11 @@ export function recentPriceAction(candles = []) {
   };
 }
 
-export function analyzeCandles(candles = [], indicatorCandles = candles) {
+export function analyzeCandles(candles = [], indicatorCandles = candles, profile = 'MEDIO') {
+  const thresholds = getThresholds(profile);
   const rows = (Array.isArray(candles) ? candles : []).filter(c => [c?.open, c?.high, c?.low, c?.close].every(v => finite(v) != null));
   const indicatorRows = (Array.isArray(indicatorCandles) ? indicatorCandles : []).filter(c => finite(c?.close) != null);
-  const recent = recentPriceAction(rows);
+  const recent = recentPriceAction(rows, thresholds.profile);
   const levelAnalytics = {
     breakoutHigh: recent.breakoutHigh ?? null,
     breakoutLow: recent.breakoutLow ?? null,
@@ -392,7 +440,7 @@ export function analyzeCandles(candles = [], indicatorCandles = candles) {
       recent,
       indicators: indicatorReinforcement(indicatorRows, null),
       analytics: { ...(recent.metrics || {}), ...levelAnalytics },
-      waitingFor: waitingFor(recent, null, 0)
+      waitingFor: waitingFor(recent, null, 0, thresholds.profile)
     };
   }
   if (!recent.direction) {
@@ -405,21 +453,21 @@ export function analyzeCandles(candles = [], indicatorCandles = candles) {
       recent,
       indicators: indicatorReinforcement(indicatorRows, null),
       analytics: { ...(recent.metrics || {}), ...levelAnalytics },
-      waitingFor: waitingFor(recent, null, recent.score)
+      waitingFor: waitingFor(recent, null, recent.score, thresholds.profile)
     };
   }
 
   const indicators = indicatorReinforcement(indicatorRows, recent.direction);
   const score = clamp(recent.score + indicators.adjustment);
   return {
-    state: score >= ANALYST_THRESHOLDS.possibleScore ? 'WATCH' : 'WAIT',
+    state: score >= thresholds.possibleScore ? 'WATCH' : 'WAIT',
     score,
     baseScore: recent.score,
     direction: recent.direction,
     reasons: [...recent.reasons, ...indicators.reasons],
     recent,
     indicators,
-    waitingFor: waitingFor(recent, recent.direction, score),
+    waitingFor: waitingFor(recent, recent.direction, score, thresholds.profile),
     analytics: {
       ...(recent.metrics || {}),
       ...levelAnalytics,
