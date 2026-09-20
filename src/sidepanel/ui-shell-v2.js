@@ -484,6 +484,7 @@ function expirationDiagnosticText(response = {}) {
     canvasLines,
     '',
     '6. RELÓGIO DA VELA E FEED',
+    `Perfil de sensibilidade ativo: ${clean(lastState?.analystPreferences?.sensitivityLabel || lastState?.analystPreferences?.sensitivityProfile || 'MÉDIO')}`,
     '',
     'A) state.diagnostics.marketClock',
     marketClockLine,
