@@ -29,6 +29,38 @@ function marketReady(state = {}) {
     && rows.length >= 2;
 }
 
+function normTf(value = '') {
+  const raw = clean(value).toUpperCase().replace(/\s+/g, '');
+  let match = raw.match(/^([SMH])(\d{1,5})$/);
+  if (match && Number(match[2]) > 0) return `${match[1]}${Number(match[2])}`;
+  match = raw.match(/^(\d{1,4})(?:M|MIN)$/);
+  return match && Number(match[1]) > 0 ? `M${Number(match[1])}` : null;
+}
+
+function timingReady(state = {}) {
+  const focus = state.diagnostics?.focusedAsset || {};
+  const clock = state.diagnostics?.marketClock || {};
+  const expAt = Number(state.platformControls?.expirationCheckedAt || state.platformControls?.observed?.observedAt?.expiration || 0);
+  const expiration = expAt > 0 && Date.now() - expAt < 7000
+    ? clean(state.platformControls?.observed?.expiration)
+    : '';
+  return expiration === '60s'
+    && clock.verified === true
+    && clock.available !== false
+    && ['trader-dom-countdown','network-server-cycle'].includes(clean(clock.source))
+    && normTf(clock.timeframe) === 'M1'
+    && sameMarket(clock.asset, state.asset)
+    && Number(clock.frameId) === Number(focus.frameId)
+    && clean(clock.frameHost).toLowerCase() === clean(focus.frameHost).toLowerCase()
+    && Number(clock.at || 0) > 0
+    && Date.now() - Number(clock.at) < 3200
+    && num(clock.secondsRemaining) != null;
+}
+
+function analysisReady(state = {}) {
+  return marketReady(state) && timingReady(state);
+}
+
 function technicalDirection(state = {}) {
   const signal = state.signal || {};
   const ui = clean(signal.uiState).toUpperCase();
@@ -44,6 +76,13 @@ function guidance(state = {}) {
       tone: 'waiting',
       value: 'AGUARDANDO DADOS',
       hint: 'Confirmando ativo, preço e velas reais da CasaTrade antes de calcular o score.'
+    };
+  }
+  if (!timingReady(state)) {
+    return {
+      tone: 'waiting',
+      value: 'AGUARDANDO TEMPO CASATRADE',
+      hint: 'O score só aparece depois de M1, countdown real e expiração de 1 minuto estarem confirmados.'
     };
   }
   const technical = state.signal || {};
@@ -110,7 +149,7 @@ function guidance(state = {}) {
 }
 
 function render(state = {}) {
-  const ready = marketReady(state);
+  const ready = analysisReady(state);
   const technicalConfidence = ready ? assessEntryConfidence(state) : { score: 0 };
   const decision = ready ? (state.professionalDecision || {}) : {};
   const technical = ready ? (state.signal || {}) : {};
