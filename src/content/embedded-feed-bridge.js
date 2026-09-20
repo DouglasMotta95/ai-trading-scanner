@@ -75,13 +75,21 @@
       countUnder2: 0,
       boundaryNull: 0
     },
-    marketClockV2Sent: 0
+    marketClockV2Sent: 0,
+    stateBoundaryIntervalCycles: 0,
+    stateBoundaryPublications: 0,
+    stateBoundaryLastRefusalReason: '',
+    stateBoundaryLastDelayMs: null
   };
   let lastBoundaryDiagnosticReason = null;
   let clockBusy = false;
   let clockProbe = null;
   let candleClockProbe = null;
   let lastClockSentAt = 0;
+  let lastBoundaryAsset = '';
+  let lastBoundaryTimeframe = '';
+  let lastObservedBoundaryOpenAt = null;
+  let blockedBoundaryOpenAt = null;
 
   function candleRowsFor(payload = {}, asset = '') {
     const recent = payload?.recentCandles && typeof payload.recentCandles === 'object' ? payload.recentCandles : {};
@@ -92,25 +100,94 @@
       .sort((a, b) => Number(normalizeTime(a?.time ?? a?.timestamp)) - Number(normalizeTime(b?.time ?? b?.timestamp)));
   }
 
+  function stateCandleRowsFor(state = {}, asset = '') {
+    const stateAsset = state.asset || state.diagnostics?.marketSession?.asset || '';
+    if (stateAsset && !sameMarket(stateAsset, asset)) return [];
+    const rows = Array.isArray(state.candles) ? state.candles : [];
+    return rows
+      .filter(row => (!row?.asset || sameMarket(row.asset, asset))
+        && validOhlc(row)
+        && normalizeTime(row?.time ?? row?.timestamp))
+      .sort((a, b) => Number(normalizeTime(a?.time ?? a?.timestamp)) - Number(normalizeTime(b?.time ?? b?.timestamp)));
+  }
+
   function structuredCandleBoundary(payload = {}, state = {}, focus = null, candidate = null) {
     lastBoundaryDiagnosticReason = null;
-    if (!focus?.asset) { lastBoundaryDiagnosticReason = 'boundaryNull'; return null; }
-    const rows = candleRowsFor(payload, focus.asset);
+    if (!focus?.asset) {
+      candleClockProbe = null;
+      lastBoundaryDiagnosticReason = 'boundary nulo';
+      return null;
+    }
+
+    let rows = candleRowsFor(payload, focus.asset);
+    let clockMode = 'structured-current-candle-boundary';
+    if (!rows.length) {
+      rows = stateCandleRowsFor(state, focus.asset);
+      clockMode = 'state-candle-boundary';
+    }
+
     const latest = rows.at(-1) || null;
-    if (!latest) { candleClockProbe = null; lastBoundaryDiagnosticReason = 'boundaryNull'; return null; }
+    if (!latest) {
+      candleClockProbe = null;
+      lastBoundaryDiagnosticReason = 'boundary nulo';
+      return null;
+    }
 
     const timeframe = normalizeTf(candidate?.timeframe || latest?.timeframe || state.analysisTimeframe || state.timeframe);
     const duration = durationSeconds(timeframe);
     const openAt = normalizeTime(latest?.time ?? latest?.timestamp);
     const now = Date.now();
-    if (!timeframe || !duration || !openAt) { candleClockProbe = null; lastBoundaryDiagnosticReason = 'boundaryNull'; return null; }
+    if (!timeframe || !duration || !openAt) {
+      candleClockProbe = null;
+      lastBoundaryDiagnosticReason = 'boundary nulo';
+      return null;
+    }
 
     const durationMs = duration * 1000;
+    if (openAt % durationMs !== 0) {
+      candleClockProbe = null;
+      lastBoundaryDiagnosticReason = 'openAt fora da grade do timeframe';
+      return null;
+    }
+
+    const focusMarket = marketId(focus.asset);
+    if (lastBoundaryAsset !== focusMarket || lastBoundaryTimeframe !== timeframe) {
+      lastBoundaryAsset = focusMarket;
+      lastBoundaryTimeframe = timeframe;
+      lastObservedBoundaryOpenAt = null;
+      blockedBoundaryOpenAt = null;
+      candleClockProbe = null;
+    }
+
     // Only the candle that is demonstrably open right now may become a clock anchor.
     // A closed historical candle is rejected instead of being shifted forward by guesswork.
     if (openAt > now + 1500 || now < openAt - 1500 || now >= openAt + durationMs + 1200) {
       candleClockProbe = null;
-      lastBoundaryDiagnosticReason = 'boundaryNull';
+      lastBoundaryDiagnosticReason = 'boundary nulo';
+      return null;
+    }
+
+    // Validate each observed candle rollover against the local device clock.
+    // The first candle seen after load establishes the baseline; every later
+    // open must arrive close to its actual open timestamp.
+    if (lastObservedBoundaryOpenAt != null && Number(openAt) !== Number(lastObservedBoundaryOpenAt)) {
+      const delayMs = now - openAt;
+      feedDiagnostic.stateBoundaryLastDelayMs = delayMs;
+      lastObservedBoundaryOpenAt = openAt;
+      if (delayMs < -1500 || delayMs > 2500) {
+        blockedBoundaryOpenAt = openAt;
+        candleClockProbe = null;
+        lastBoundaryDiagnosticReason = 'relógio do aparelho ou feed fora de sincronia';
+        return null;
+      }
+      blockedBoundaryOpenAt = null;
+    } else if (lastObservedBoundaryOpenAt == null) {
+      lastObservedBoundaryOpenAt = openAt;
+    }
+
+    if (blockedBoundaryOpenAt != null && Number(blockedBoundaryOpenAt) === Number(openAt)) {
+      candleClockProbe = null;
+      lastBoundaryDiagnosticReason = 'relógio do aparelho ou feed fora de sincronia';
       return null;
     }
 
@@ -121,16 +198,20 @@
     const count = sameAnchor && localDelta > 80 && localDelta < 5000
       ? Math.min(8, Number(previous.count || 1) + 1)
       : 1;
-    candleClockProbe = { asset: marketId(focus.asset), timeframe, openAt, observedAt: now, count };
-    if (count < 2) { lastBoundaryDiagnosticReason = 'countUnder2'; return null; }
+    candleClockProbe = { asset: focusMarket, timeframe, openAt, observedAt: now, count };
+    if (count < 2) {
+      lastBoundaryDiagnosticReason = 'count<2';
+      return null;
+    }
 
     const remainingMs = openAt + durationMs - now;
     const secondsRemaining = Math.max(0, Math.min(duration, Math.ceil(remainingMs / 1000)));
     if (!Number.isFinite(secondsRemaining) || secondsRemaining < 0 || secondsRemaining > duration) {
-      lastBoundaryDiagnosticReason = 'boundaryNull';
+      lastBoundaryDiagnosticReason = 'boundary nulo';
       return null;
     }
-    return { timeframe, secondsRemaining, openAt, count };
+
+    return { timeframe, secondsRemaining, openAt, count, clockMode };
   }
 
   async function publishCandleBoundaryClock(payload = {}, state = {}, focus = null, candidate = null) {
@@ -140,13 +221,20 @@
     if (now - lastClockSentAt < 300) return true;
     lastClockSentAt = now;
     feedDiagnostic.marketClockV2Sent += 1;
+    if (boundary.clockMode === 'state-candle-boundary') {
+      feedDiagnostic.stateBoundaryPublications += 1;
+      feedDiagnostic.stateBoundaryLastRefusalReason = '';
+    }
     await sendMessage({
       type: 'ATS_MARKET_CLOCK_V2', asset: focus.asset, timeframe: boundary.timeframe,
       secondsRemaining: boundary.secondsRemaining,
       expiration: state.targetExpiration || state.expiration || candidate?.expiration || null,
       available: true, verified: true, clockRole: 'candle-close',
-      clockSource: 'network-server-cycle', clockMode: 'structured-current-candle-boundary',
-      clockText: 'Fechamento confirmado pela vela atual do feed estruturado', clockToken: `${boundary.secondsRemaining}s`,
+      clockSource: 'network-server-cycle', clockMode: boundary.clockMode,
+      clockText: boundary.clockMode === 'state-candle-boundary'
+        ? 'Fechamento confirmado pela vela atual do estado ao vivo'
+        : 'Fechamento confirmado pela vela atual do feed estruturado',
+      clockToken: `${boundary.secondsRemaining}s`,
       confidence: 94, frameHost: host, at: now
     });
     return true;
@@ -239,6 +327,41 @@
     }
   }
 
+  async function stateCandleBoundaryIntervalTick() {
+    feedDiagnostic.stateBoundaryIntervalCycles += 1;
+    if (clockBusy) {
+      feedDiagnostic.stateBoundaryLastRefusalReason = 'clockBusy';
+      return;
+    }
+    clockBusy = true;
+    try {
+      const response = await sendMessage({ type: 'ATS_READ_SCANNER_STATE' });
+      const state = response?.state || null;
+      const focus = state?.diagnostics?.focusedAsset || null;
+      if (!focus?.asset || focus.reliable !== true || focus.chartScoped !== true || focus.trustedChartFrame !== true) {
+        feedDiagnostic.stateBoundaryLastRefusalReason = 'focus não confiável';
+        return;
+      }
+      if (String(focus.frameHost || '').toLowerCase() !== host) {
+        feedDiagnostic.stateBoundaryLastRefusalReason = 'frameHost diferente';
+        return;
+      }
+
+      const published = await publishCandleBoundaryClock({}, state, focus, null);
+      if (!published) {
+        feedDiagnostic.stateBoundaryLastRefusalReason = lastBoundaryDiagnosticReason || 'boundary nulo';
+      }
+    } catch (error) {
+      feedDiagnostic.stateBoundaryLastRefusalReason = clean(error?.message || error || 'erro no ciclo do relógio');
+    } finally {
+      clockBusy = false;
+    }
+  }
+
+  const stateCandleBoundaryInterval = setInterval(() => {
+    stateCandleBoundaryIntervalTick().catch(() => {});
+  }, 1000);
+
   const networkMessageHandler = event => {
     const data = event.data;
     if (!data || data.source !== 'ATS_NETWORK_PROBE' || data.type !== 'summary') return;
@@ -318,6 +441,14 @@
             reasons: { ...feedDiagnostic.maybeClockReasons },
             marketClockV2Sent: Number(feedDiagnostic.marketClockV2Sent || 0)
           },
+          stateCandleBoundary: {
+            intervalCycles: Number(feedDiagnostic.stateBoundaryIntervalCycles || 0),
+            publicationsSent: Number(feedDiagnostic.stateBoundaryPublications || 0),
+            lastRefusalReason: clean(feedDiagnostic.stateBoundaryLastRefusalReason || ''),
+            lastDelayMs: Number.isFinite(Number(feedDiagnostic.stateBoundaryLastDelayMs))
+              ? Number(feedDiagnostic.stateBoundaryLastDelayMs)
+              : null
+          },
           startedAt: expirationThrottleDiagnosticStartedAt,
           observedAt: Date.now()
         }
@@ -331,6 +462,7 @@
     teardown() {
       try { window.removeEventListener('message', networkMessageHandler); } catch {}
       try { window.removeEventListener('message', diagnosticMessageHandler); } catch {}
+      try { clearInterval(stateCandleBoundaryInterval); } catch {}
     }
   };
 })();
