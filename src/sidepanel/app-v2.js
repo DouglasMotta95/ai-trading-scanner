@@ -15,7 +15,6 @@ const DEFAULT_PREFS = Object.freeze({
 
 const PANEL_OPENED_AT = Date.now();
 let prefs = { ...DEFAULT_PREFS };
-let liveOhlc = null;
 let audioContext = null;
 
 const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
@@ -187,36 +186,9 @@ function liveCycleKey(state = {}) {
 }
 
 function currentOhlc(state = {}) {
-  const direct = state.signal?.currentCandle || state.currentCandle || null;
-  if (direct && completeCandle(direct)) {
-    return {
-      open: num(direct.open), high: num(direct.high), low: num(direct.low), close: num(direct.close),
-      approximate: direct.partial === true || direct.openReliable === false || direct.rangeReliable === false,
-      source: direct.source || 'casatrade'
-    };
-  }
-
-  const tf = normTf(state.analysisTimeframe || state.timeframe);
-  const durationMs = (timeframeSeconds(tf) || 0) * 1000;
-  const now = Date.now();
-  const rows = (Array.isArray(state.candles) ? state.candles : []).filter(completeCandle);
-  const matching = rows.map(row => {
-    let time = num(row.time ?? row.timestamp);
-    if (time != null && time > 0 && time < 1e11) time *= 1000;
-    return { row, time };
-  }).filter(item => item.time && durationMs && now >= item.time - 1500 && now < item.time + durationMs + 1500).sort((a, b) => b.time - a.time)[0];
-  if (matching) {
-    return { open: num(matching.row.open), high: num(matching.row.high), low: num(matching.row.low), close: num(matching.row.close), approximate: false, source: 'structured-casatrade' };
-  }
-
-  const price = num(state.price);
-  const key = liveCycleKey(state);
-  if (price == null || !key) return { open: null, high: null, low: null, close: price, approximate: true, source: 'unavailable' };
-  if (!liveOhlc || liveOhlc.key !== key) liveOhlc = { key, open: price, high: price, low: price, close: price };
-  liveOhlc.high = Math.max(liveOhlc.high, price);
-  liveOhlc.low = Math.min(liveOhlc.low, price);
-  liveOhlc.close = price;
-  return { ...liveOhlc, approximate: true, source: 'live-price-observed' };
+  const selector = globalThis.__ATS_OHLC_DISPLAY__?.selectDisplayOhlc;
+  if (typeof selector === 'function') return selector(state, Date.now());
+  return { open: null, high: null, low: null, close: num(state.price), approximate: false, source: 'live-price-only' };
 }
 
 function entryBlockReason() {
@@ -339,9 +311,11 @@ function renderOhlc(state = {}) {
   setText('currentClose', row.close == null ? '—' : fmtPrice(row.close));
   setText('ohlcQuality', row.source === 'structured-casatrade'
     ? 'OHLC estruturado recebido da CasaTrade.'
-    : row.open != null
-      ? '≈ OHLC parcial montado apenas com preços reais observados nesta vela.'
-      : 'Aguardando abertura/range confiáveis da vela atual.');
+    : row.source === 'live-price-only'
+      ? 'Cotação atual real. Aguardando OHLC estruturado da CasaTrade.'
+      : row.open != null
+        ? 'OHLC real recebido da CasaTrade.'
+        : 'Aguardando OHLC estruturado da vela atual.');
 }
 
 function renderLicense(state = {}) {
