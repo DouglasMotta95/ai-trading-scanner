@@ -113,6 +113,7 @@ function renderShell(state = {}) {
   const failure = connectionFailure(state);
   const connecting = !platformLinked && !failure && activeLicense(state)
     && (state.connection === 'connecting' || state.scanner === 'scanning');
+  const operation = operationRequirement(state);
 
   const expirationAt = Number(state.platformControls?.expirationCheckedAt || state.platformControls?.observed?.observedAt?.expiration || 0);
   const expirationFresh = expirationAt > 0 && Date.now() - expirationAt < CONTROLS_FRESH_MS;
