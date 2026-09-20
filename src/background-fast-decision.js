@@ -33,6 +33,8 @@ async function applyFastDecision(observed = {}) {
   const nextSignal = fastLiveDecision(observed.signal, {
     asset: observed.asset,
     timeframe: observed.analysisTimeframe || observed.timeframe || 'M1',
+    operationMode: observed.analystPreferences?.operationMode || 'M1',
+    sensitivityProfile: observed.analystPreferences?.sensitivityProfile || 'MEDIO',
     secondsRemaining: observed.diagnostics?.marketClock?.secondsRemaining ?? observed.signal?.secondsRemaining,
     targetStart: observed.diagnostics?.marketClock?.closeAt ?? observed.signal?.targetStart,
     serverTime: observed.serverTime || Date.now()
