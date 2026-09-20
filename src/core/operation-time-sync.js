@@ -40,6 +40,18 @@
     });
   }
 
+  function preferencesFromMessage(current = {}, message = {}) {
+    const config = configFor(message.operatingTimeframe || current.operatingTimeframe || 'M1');
+    return {
+      ...current,
+      mode: 'A_PLUS',
+      operatingTimeframe: config.timeframe,
+      holdSeconds: 3,
+      geminiEnabled: message.geminiEnabled == null ? current.geminiEnabled !== false : message.geminiEnabled !== false,
+      preferredExpiration: normExp(message.preferredExpiration || '') || config.expiration
+    };
+  }
+
   function sameMarket(a, b) {
     const normalize = value => {
       const raw = clean(value).toUpperCase();
@@ -128,6 +140,7 @@
     normExp,
     operatingTimeframe,
     configFor,
+    preferencesFromMessage,
     read
   });
 })();
