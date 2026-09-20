@@ -146,7 +146,11 @@
       const m = own.match(/^M(\d{1,3})$/i) || own.match(/^(\d{1,3})\s*m$/i);
       if (!m || Number(m[1]) <= 0) continue;
       const flags = `${el.className || ''} ${el.getAttribute?.('aria-selected') || ''} ${el.getAttribute?.('aria-current') || ''} ${el.getAttribute?.('data-state') || ''}`;
+      const ctx = fold(neighborhood(el, 2));
+      if (/chart range|range do grafico|range do gráfico|faixa do grafico|faixa do gráfico|visualizacao|visualização|view range|visible range|zoom|history range|historico visivel|histórico visível/.test(ctx)) continue;
       let score = /true|active|selected|current|checked/i.test(flags) ? 20 : 5;
+      if (/periodo da vela|período da vela|candle period|candle interval|timeframe/.test(ctx)) score += 18;
+      if (/expira|expiry|expiration|duration/.test(ctx)) score -= 25;
       if (el.getBoundingClientRect().left < innerWidth * .28) score += 3;
       rows.push({ timeframe: `M${Number(m[1])}`, score });
     }
