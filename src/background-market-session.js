@@ -133,9 +133,19 @@ function clockMatchesFocus(state = {}, info = null) {
   if (clean(clock.role) !== 'candle-close' || clock.available === false) return null;
   if (Date.now() - Number(clock.at || 0) > CLOCK_FRESH_MS) return null;
   if (!sameMarket(clock.asset, focus.asset)) return null;
-  if (Number(clock.frameId) !== Number(focus.frameId)) return null;
-  if (clean(clock.frameHost).toLowerCase() !== clean(focus.frameHost).toLowerCase()) return null;
-  if (info && (Number(info.frameId) !== Number(focus.frameId) || info.frameHost !== clean(focus.frameHost).toLowerCase())) return null;
+
+  const sameFocusFrame = Number(clock.frameId) === Number(focus.frameId)
+    && clean(clock.frameHost).toLowerCase() === clean(focus.frameHost).toLowerCase();
+  const boundControlFrame = clock.crossFrameControl === true
+    && Number(clock.boundFocusFrameId) === Number(focus.frameId)
+    && clean(clock.boundFocusFrameHost).toLowerCase() === clean(focus.frameHost).toLowerCase();
+  if (!sameFocusFrame && !boundControlFrame) return null;
+
+  // When validating an incoming/previous clock, compare the sender with the
+  // clock source frame. A cross-frame control clock is intentionally not sent
+  // by the focused market-data frame.
+  if (info && (Number(info.frameId) !== Number(clock.frameId)
+    || info.frameHost !== clean(clock.frameHost).toLowerCase())) return null;
   const remaining = num(clock.secondsRemaining);
   const duration = timeframeSeconds(clock.timeframe || state.analysisTimeframe || state.timeframe);
   if (remaining == null || remaining < 0 || (duration && remaining > duration + 2)) return null;
@@ -294,10 +304,11 @@ export function resetForSession(state = {}, { asset, timeframe = null, info, rea
   };
 }
 
-function clockRecord(message = {}, info = {}, asset = '', timeframe = null, secondsRemaining = null) {
+function clockRecord(message = {}, info = {}, asset = '', timeframe = null, secondsRemaining = null, focus = null) {
   const verified = message.verified === true;
   const at = Date.now();
   const closeAt = secondsRemaining == null ? null : Math.round((at + Number(secondsRemaining) * 1000) / 1000) * 1000;
+  const crossFrameControl = message.crossFrameControl === true;
   return {
     asset, timeframe, secondsRemaining, closeAt, available: true, verified,
     operational: verified || message.operational === true,
@@ -305,7 +316,11 @@ function clockRecord(message = {}, info = {}, asset = '', timeframe = null, seco
     source: clean(message.clockSource), mode: clean(message.clockMode || (verified ? 'exact' : 'fallback')),
     confidence: Number(message.confidence || 0),
     text: clean(message.clockText || ''), token: clean(message.clockToken || ''),
-    frameId: info.frameId, frameHost: info.frameHost, at
+    frameId: info.frameId, frameHost: info.frameHost,
+    crossFrameControl,
+    boundFocusFrameId: crossFrameControl ? Number(focus?.frameId) : null,
+    boundFocusFrameHost: crossFrameControl ? clean(focus?.frameHost).toLowerCase() : null,
+    at
   };
 }
 
@@ -467,7 +482,17 @@ export async function applyClock(message = {}, sender = {}) {
   return updateScannerState(state => {
     if (!licenseActive(state)) return;
     const focus = state.diagnostics?.focusedAsset || null;
-    if (!focus?.asset || !sameMarket(focus.asset, asset) || Number(focus.frameId) !== Number(info.frameId) || clean(focus.frameHost).toLowerCase() !== info.frameHost) return;
+    if (!focus?.asset || !sameMarket(focus.asset, asset)) return;
+
+    const sameFocusFrame = Number(focus.frameId) === Number(info.frameId)
+      && clean(focus.frameHost).toLowerCase() === info.frameHost;
+    const crossFrameControl = message.crossFrameControl === true
+      && exact
+      && info.casaOwnedChart === true
+      && Number(info.frameId) === 0
+      && Number(message.boundFocusFrameId) === Number(focus.frameId)
+      && clean(message.boundFocusFrameHost).toLowerCase() === clean(focus.frameHost).toLowerCase();
+    if (!sameFocusFrame && !crossFrameControl) return;
 
     // A fallback may keep the analyst moving, but it must never replace a fresh
     // exact CasaTrade clock that is already authoritative for this same frame.
@@ -486,7 +511,11 @@ export async function applyClock(message = {}, sender = {}) {
           marketClock: {
             asset, timeframe, available: false, verified: false, operational: false, role: 'candle-close',
             source: clean(message.clockSource || 'unverified'), mode: clean(message.clockMode || ''),
-            frameId: info.frameId, frameHost: info.frameHost, at: Date.now()
+            frameId: info.frameId, frameHost: info.frameHost,
+            crossFrameControl,
+            boundFocusFrameId: crossFrameControl ? Number(focus.frameId) : null,
+            boundFocusFrameHost: crossFrameControl ? clean(focus.frameHost).toLowerCase() : null,
+            at: Date.now()
           },
           acquisition: { ...(state.diagnostics?.acquisition || {}), stage: 'syncing_clock', reason: 'Sincronizando o relógio da vela com a CasaTrade.', at: Date.now() }
         }
@@ -494,19 +523,25 @@ export async function applyClock(message = {}, sender = {}) {
     }
 
     const session = state.diagnostics?.marketSession || {};
-    const sessionChanged = !sameMarket(session.asset, asset) || clean(session.timeframe).toUpperCase() !== clean(timeframe).toUpperCase()
-      || Number(session.frameId) !== Number(info.frameId) || clean(session.frameHost).toLowerCase() !== info.frameHost;
+    const frameChanged = Number(session.frameId) !== Number(focus.frameId)
+      || clean(session.frameHost).toLowerCase() !== clean(focus.frameHost).toLowerCase();
+    const sessionChanged = !sameMarket(session.asset, asset)
+      || clean(session.timeframe).toUpperCase() !== clean(timeframe).toUpperCase()
+      || frameChanged;
     let next = state;
     if (sessionChanged) {
+      const sessionInfo = crossFrameControl
+        ? { ...info, frameId: Number(focus.frameId), frameHost: clean(focus.frameHost).toLowerCase() }
+        : info;
       next = resetForSession(state, {
-        asset, timeframe, info, source: exact ? 'exact-candle-clock' : 'fallback-candle-clock',
+        asset, timeframe, info: sessionInfo, source: exact ? 'exact-candle-clock' : 'fallback-candle-clock',
         reason: exact
           ? `Sessão ${asset} • ${timeframe || '—'} sincronizada ao fechamento real da vela.`
           : `Sessão ${asset} • ${timeframe || '—'} em leitura ao vivo com clock temporário de contingência.`
       });
     }
 
-    const record = clockRecord(message, info, asset, timeframe, secondsRemaining);
+    const record = clockRecord(message, info, asset, timeframe, secondsRemaining, focus);
     let clockState = {
       ...next,
       connection: next.price != null ? 'online' : 'connecting',
@@ -519,7 +554,8 @@ export async function applyClock(message = {}, sender = {}) {
         marketClock: record,
         marketSession: {
           ...(next.diagnostics?.marketSession || {}), asset, timeframe,
-          frameId: info.frameId, frameHost: info.frameHost, dataMode: next.price != null ? 'live' : 'syncing'
+          frameId: Number(focus.frameId), frameHost: clean(focus.frameHost).toLowerCase(),
+          dataMode: next.price != null ? 'live' : 'syncing'
         },
         acquisition: {
           ...(next.diagnostics?.acquisition || {}),
