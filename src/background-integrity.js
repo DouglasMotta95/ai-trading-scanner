@@ -38,8 +38,8 @@ function focusValid(state, now = Date.now()) {
   return !!normAsset(focus?.asset)
     && focus?.reliable === true
     && focus?.chartScoped === true
-    && focus?.embeddedTrader === true
-    && traderHost(clean(focus?.frameHost).toLowerCase())
+    && (focus?.embeddedTrader === true || focus?.casaTradeFrame === true)
+    && (traderHost(clean(focus?.frameHost).toLowerCase()) || casaHost(clean(focus?.frameHost).toLowerCase()))
     && now - Number(focus?.at || 0) < FOCUS_FRESH_MS;
 }
 
@@ -52,8 +52,13 @@ function clockValid(state, now = Date.now()) {
     && clean(clock?.source) === 'trader-dom-countdown'
     && now - Number(clock?.at || 0) < CLOCK_FRESH_MS
     && sameAsset(clock?.asset, focus?.asset)
-    && Number(clock?.frameId) === Number(focus?.frameId)
-    && clean(clock?.frameHost).toLowerCase() === clean(focus?.frameHost).toLowerCase()
+    && (
+      (Number(clock?.frameId) === Number(focus?.frameId)
+        && clean(clock?.frameHost).toLowerCase() === clean(focus?.frameHost).toLowerCase())
+      || (clock?.crossFrameControl === true
+        && Number(clock?.boundFocusFrameId) === Number(focus?.frameId)
+        && clean(clock?.boundFocusFrameHost).toLowerCase() === clean(focus?.frameHost).toLowerCase())
+    )
     && num(clock?.secondsRemaining) != null;
 }
 
