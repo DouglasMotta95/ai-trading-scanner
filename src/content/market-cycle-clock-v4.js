@@ -101,6 +101,9 @@
   }
 
   function selectedChartTf() {
+    const explicit = globalThis.__ATS_EXPLICIT_CANDLE_TIMEFRAME__;
+    const explicitTf = tf(explicit?.value || '');
+    if (explicitTf) return explicitTf;
     const rows = [];
     for (const el of nodes(5000)) {
       if (!visible(el)) continue;
@@ -118,7 +121,9 @@
       rows.push({ value, score });
     }
     rows.sort((a, b) => b.score - a.score);
-    return rows[0]?.score > 0 ? rows[0].value : null;
+    // Reject generic minute tokens; use only a selected/semantic candle-period
+    // control, otherwise platform controls/structured feed own the timeframe.
+    return rows[0]?.score >= 130 ? rows[0].value : null;
   }
 
   function inOrNearChart(rect, chart) {
