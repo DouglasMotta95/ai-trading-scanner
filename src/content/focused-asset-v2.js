@@ -1,5 +1,7 @@
 (() => {
-  if (globalThis.__ATS_FOCUSED_ASSET_TRACKER_V2__) return;
+  // Restartable reader: a newly loaded extension must replace the previous
+  // in-page tracker even when the CasaTrade tab itself was not reloaded.
+  try { globalThis.__ATS_FOCUSED_ASSET_TRACKER_V2_RUNTIME__?.teardown?.(); } catch {}
   globalThis.__ATS_FOCUSED_ASSET_TRACKER_V2__ = true;
   globalThis.__ATS_FOCUSED_ASSET_TRACKER__ = true;
 
@@ -126,6 +128,21 @@
     return rect.right >= chart.left - padX && rect.left <= chart.right + padX && rect.bottom >= top && rect.top <= bottom;
   }
 
+  // CasaTrade mobile/tablet can render the active instrument label in the shell
+  // while the chart canvas lives in a child frame. In that layout chartRect()
+  // is unavailable in the shell, so use the visual chart-header position as
+  // strong evidence. This intentionally excludes the very top tab strip.
+  function chartHeaderGeometry(rect, text = '') {
+    if (!rect || !text || text.length > 48) return false;
+    const minTop = Math.max(90, innerHeight * .18);
+    const maxTop = Math.max(260, innerHeight * .50);
+    return rect.top >= minTop
+      && rect.top <= maxTop
+      && rect.left >= 0
+      && rect.left <= innerWidth * .42
+      && rect.width <= innerWidth * .46;
+  }
+
   const INTERACTION_TRANSITION_MS = 8000;
   let recentInteraction = { asset: '', at: 0 };
   const interactionFresh = asset => sameAsset(recentInteraction.asset, asset) && Date.now() - Number(recentInteraction.at || 0) < INTERACTION_TRANSITION_MS;
@@ -162,15 +179,18 @@
       const selection = selectionEvidence(el);
       if (selection.rejected) continue;
       const context = contextOf(el);
-      const chartScoped = nearChart(rect, chart) || /chart|tradingview|instrument|symbol|asset|header/.test(context);
+      const geometricHeader = chartHeaderGeometry(rect, text);
+      const chartScoped = nearChart(rect, chart) || geometricHeader || /chart|tradingview|instrument|symbol|asset|header/.test(context);
       const listContext = /watchlist|asset-list|instrument-list|listbox|search|history|portfolio|ranking|modal|drawer|dropdown|menu/.test(context);
       const interaction = interactionFresh(asset);
       // A visible dropdown/watchlist can contain dozens of symbols over the chart.
-      // Only its selected/current row or the row the user just touched may own focus.
-      if (listContext && !selection.explicit && !interaction) continue;
+      // The chart-header geometry is allowed through because CasaTrade tablet
+      // layouts often place the current asset inside a generic tabs/list shell.
+      if (listContext && !selection.explicit && !interaction && !geometricHeader) continue;
       if (!chartScoped) continue;
       let score = selection.score;
       if (chartScoped) score += 520;
+      if (geometricHeader) score += 900;
       if (chart && nearChart(rect, chart)) score += 480;
       if (/chart|tradingview|instrument|symbol|header/.test(context)) score += 180;
       if (interaction) score += 900;
@@ -298,6 +318,23 @@
   document.addEventListener('pointerup', noteInteraction, true);
   document.addEventListener('touchend', noteInteraction, true);
   document.addEventListener('click', noteInteraction, true);
-  setInterval(() => schedulePublish(0, false), 600);
-  setTimeout(() => { invalidateElements(); publish(true); }, 250);
+  const intervalId = setInterval(() => schedulePublish(0, false), 600);
+  const bootTimer = setTimeout(() => { invalidateElements(); publish(true); }, 250);
+
+  globalThis.__ATS_FORCE_FOCUS_SCAN__ = () => {
+    invalidateElements();
+    schedulePublish(0, true);
+  };
+  globalThis.__ATS_FOCUSED_ASSET_TRACKER_V2_RUNTIME__ = {
+    version: 'focused-asset-v2-restartable',
+    teardown() {
+      try { observer.disconnect(); } catch {}
+      try { document.removeEventListener('pointerup', noteInteraction, true); } catch {}
+      try { document.removeEventListener('touchend', noteInteraction, true); } catch {}
+      try { document.removeEventListener('click', noteInteraction, true); } catch {}
+      try { clearInterval(intervalId); } catch {}
+      try { clearTimeout(bootTimer); } catch {}
+      if (scanTimer) { try { clearTimeout(scanTimer); } catch {} }
+    }
+  };
 })();
