@@ -63,6 +63,14 @@ export function getThresholds(profile = 'MEDIO') {
   return THRESHOLD_PROFILES[raw] || THRESHOLD_PROFILES.MEDIO;
 }
 
+export function getOperationMode(value = 'M1') {
+  const raw = String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toUpperCase();
+  const isM5 = raw === 'M5' || raw === '5M' || raw.includes('M5 +') || raw.includes('5 MIN');
+  return isM5
+    ? Object.freeze({ timeframe: 'M5', expiration: '300s', durationSeconds: 300 })
+    : Object.freeze({ timeframe: 'M1', expiration: '60s', durationSeconds: 60 });
+}
+
 // Compatibility export for older tests/imports. Runtime signal sensitivity uses
 // getThresholds(profile); RIGIDO remains the exact historical threshold set.
 export const ANALYST_THRESHOLDS = THRESHOLD_PROFILES.RIGIDO;
