@@ -2,7 +2,7 @@
 const $ = id => document.getElementById(id);
 const PREF_KEY = 'atsScannerUiPreferences';
 const EXACT_CLOCK_SOURCES = new Set(['trader-dom-countdown','network-server-cycle']);
-const CLOCK_FRESH_MS = 3200;
+const CLOCK_FRESH_MS = 8000;
 const CONTROLS_FRESH_MS = 7000;
 const PANEL_OPENED_AT = Date.now();
 
