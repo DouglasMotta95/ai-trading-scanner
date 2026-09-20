@@ -46,12 +46,15 @@ jobs:
           rm -rf dist/ai-trading-scanner-extension
           mkdir -p dist/ai-trading-scanner-extension
           cp manifest.json dist/ai-trading-scanner-extension/manifest.json
+          cp package.json dist/ai-trading-scanner-extension/package.json
+          test -f package-lock.json && cp package-lock.json dist/ai-trading-scanner-extension/package-lock.json || true
           cp -R src dist/ai-trading-scanner-extension/src
+          cp -R test dist/ai-trading-scanner-extension/test
       - name: Upload extension test package
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ai-trading-scanner-extension-demo
+          name: ai-trading-scanner-v01148-verification
           path: dist/ai-trading-scanner-extension/
           if-no-files-found: error
           retention-days: 30
