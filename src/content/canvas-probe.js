@@ -1,6 +1,9 @@
 (() => {
-  if (window.__ATS_RENDERED_MARKET_PROBE_V4__) return;
-  window.__ATS_RENDERED_MARKET_PROBE_V4__ = true;
+  // V5 intentionally uses a new guard. MAIN-world code from an older unpacked
+  // extension can survive while the CasaTrade tab stays open; the new probe
+  // must start alongside it so fixes take effect without requiring a page reload.
+  if (window.__ATS_RENDERED_MARKET_PROBE_V5__) return;
+  window.__ATS_RENDERED_MARKET_PROBE_V5__ = true;
 
   const isCasaTradeHost = host => {
     const h = String(host || '').toLowerCase().replace(/\.$/, '');
@@ -17,7 +20,7 @@
   // CasaTrade hostname or referrer of its own.
   if (!isCasaTradeHost(location.hostname) && !isCasaTradeHost(refHost) && !fallbackFrame) return;
 
-  const FRAME_SOURCE = 'ATS_CT_RENDER_OBSERVATION_V4';
+  const FRAME_SOURCE = 'ATS_CT_RENDER_OBSERVATION_V5';
   const frameId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
   const isTop = window === window.top;
   const frameRows = new Map();
@@ -116,8 +119,8 @@
   }
 
   function hookCanvas(proto) {
-    if (!proto || proto.__atsMarketTextHooked) return;
-    try { Object.defineProperty(proto, '__atsMarketTextHooked', { value: true }); } catch { return; }
+    if (!proto || proto.__atsMarketTextHookedV5) return;
+    try { Object.defineProperty(proto, '__atsMarketTextHookedV5', { value: true }); } catch { return; }
     for (const name of ['fillText', 'strokeText']) {
       const native = proto[name];
       if (typeof native !== 'function') continue;
