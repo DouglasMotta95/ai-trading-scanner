@@ -19,6 +19,14 @@ const marketId = value => {
   return pair ? `${pair[1]}/${pair[2]}${otc ? ' (OTC)' : ''}` : raw;
 };
 const sameMarket = (a, b) => !!marketId(a) && marketId(a) === marketId(b);
+const clockBoundToFocus = (clock = {}, focus = {}) => {
+  const sameFrame = Number(clock.frameId) === Number(focus.frameId)
+    && text(clock.frameHost).toLowerCase() === text(focus.frameHost).toLowerCase();
+  const boundControlFrame = clock.crossFrameControl === true
+    && Number(clock.boundFocusFrameId) === Number(focus.frameId)
+    && text(clock.boundFocusFrameHost).toLowerCase() === text(focus.frameHost).toLowerCase();
+  return sameFrame || boundControlFrame;
+};
 const normTf = value => {
   const raw = text(value).toUpperCase().replace(/\s+/g, '');
   let match = raw.match(/^([SMH])(\d{1,5})$/);
@@ -71,8 +79,7 @@ export function exactCasaTradeTime(state = {}) {
   }
   if (!EXACT_CLOCK_SOURCES.has(text(clock.source))) return { ready: false, reason: 'Fonte de tempo não autoritativa.' };
   if (!sameMarket(clock.asset, state.asset)) return { ready: false, reason: 'Relógio pertence a outro ativo.' };
-  if (Number(clock.frameId) !== Number(focus.frameId)) return { ready: false, reason: 'Relógio pertence a outro gráfico.' };
-  if (text(clock.frameHost).toLowerCase() !== text(focus.frameHost).toLowerCase()) return { ready: false, reason: 'Relógio pertence a outro frame.' };
+  if (!clockBoundToFocus(clock, focus)) return { ready: false, reason: 'Relógio ainda não foi vinculado ao gráfico ativo.' };
   if (Date.now() - Number(clock.at || 0) >= CLOCK_FRESH_MS) return { ready: false, reason: 'Relógio da CasaTrade ficou desatualizado.' };
   if (num(clock.secondsRemaining) == null) return { ready: false, reason: 'Countdown da CasaTrade indisponível.' };
 
