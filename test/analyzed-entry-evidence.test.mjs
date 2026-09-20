@@ -67,3 +67,21 @@ test('exhausted impulse stays blocked unless there is real directional rejection
   assert.equal(protectedByRejection.qualifies, true);
   assert.equal(protectedByRejection.setup, 'rejeição');
 });
+
+
+test('range momentum alone is rejected; range needs rejection or confirmed breakout', () => {
+  const midRange = signal();
+  midRange.regime = { type: 'range' };
+  const blocked = assessEntryEvidence(midRange, 'BUY');
+  assert.equal(blocked.qualifies, false);
+  assert.equal(blocked.blocker, 'range-needs-rejection-or-breakout');
+
+  const rejection = signal({
+    rejectionDirection: 'BUY',
+    rejectionStrength: 55
+  });
+  rejection.regime = { type: 'range' };
+  const allowed = assessEntryEvidence(rejection, 'BUY');
+  assert.equal(allowed.qualifies, true);
+  assert.equal(allowed.setup, 'rejeição no range');
+});
