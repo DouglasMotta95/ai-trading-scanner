@@ -868,7 +868,7 @@ async function setAnalystPreferences(message = {}) {
   const operatingTimeframe = normalizeOperatingTimeframe(message.operatingTimeframe);
   const preferredExpiration = expirationForOperatingTimeframe(operatingTimeframe);
   const next = await updateScannerState(current => {
-    const previousTf = normalizeOperatingTimeframe(current.analystPreferences?.operatingTimeframe || 'M5');
+    const previousTf = normalizeOperatingTimeframe(current.analystPreferences?.operatingTimeframe || 'M1');
     const changed = previousTf !== operatingTimeframe;
     return {
       ...current,
