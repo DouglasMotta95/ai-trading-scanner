@@ -6,7 +6,7 @@ import { readScannerState, updateScannerState } from './services/scanner-state-a
 const EXACT_CLOCK_SOURCES = new Set(['trader-dom-countdown', 'network-server-cycle']);
 const CLOCK_FRESH_MS = 3000;
 const FOCUS_FRESH_MS = 5500;
-const DEFAULT_PREFS = Object.freeze({ mode: 'A_PLUS', operatingTimeframe: 'M5', geminiEnabled: true, holdSeconds: 3, preferredExpiration: '300s' });
+const DEFAULT_PREFS = Object.freeze({ mode: 'A_PLUS', operatingTimeframe: 'M1', geminiEnabled: true, holdSeconds: 3, preferredExpiration: '60s' });
 
 const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
 const text = value => String(value ?? '').trim();
