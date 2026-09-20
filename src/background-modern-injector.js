@@ -45,6 +45,32 @@ async function injectFile(tabId, file, world) {
     return { file, world, ok:false, mode:'failed', frameCount:0, error:cleanError(firstError) };
   }
 }
+
+function kickLiveReaders() {
+  try { globalThis.__ATS_FORCE_ALIAS_FOCUS_SCAN__?.(); } catch {}
+  try { globalThis.__ATS_FORCE_FOCUS_SCAN__?.(); } catch {}
+  try { globalThis.__ATS_FORCE_EXPIRATION_SCAN__?.(); } catch {}
+  return {
+    host: String(location.hostname || '').toLowerCase().replace(/\.$/, ''),
+    focus: String(globalThis.__ATS_FOCUSED_ASSET_VALUE__ || ''),
+    expiration: globalThis.__ATS_EXPIRATION_PROBE_LAST__?.expiration || null
+  };
+}
+
+async function kickReaders(tabId) {
+  const target = { tabId, allFrames:true };
+  try {
+    const result = await executeScriptCompat({ target, func:kickLiveReaders, world:'ISOLATED' });
+    return { ok:true, frames:frameRows(result) };
+  } catch (firstError) {
+    try {
+      const result = await executeScriptCompat({ target, func:kickLiveReaders });
+      return { ok:true, frames:frameRows(result), firstError:cleanError(firstError) };
+    } catch (secondError) {
+      return { ok:false, frames:[], firstError:cleanError(firstError), error:cleanError(secondError) };
+    }
+  }
+}
 async function recordInjection(tabId, startedAt, probe, rows) {
   const endedAt = Date.now();
   const isolated = rows.filter(row => row.world === 'ISOLATED'), main = rows.filter(row => row.world === 'MAIN');
@@ -64,7 +90,30 @@ async function inject(tabId) {
   const probe = await probeFrames(tabId), rows = [];
   for (const file of isolated) rows.push(await injectFile(tabId,file,'ISOLATED'));
   for (const file of mainWorld) rows.push(await injectFile(tabId,file,'MAIN'));
+
+  const critical = new Set([
+    'src/content/runtime-message-compat.js',
+    'src/content/focused-asset-v2.js',
+    'src/content/focused-asset-alias-bridge.js',
+    'src/content/chart-frame-market-reader.js',
+    'src/content/market-cycle-clock-v4.js',
+    'src/content/casatrade-expiration-probe.js'
+  ]);
+  const missingCritical = [...critical].filter(file => !rows.some(row => row.file === file && row.ok));
+  const kick = await kickReaders(tabId);
   const telemetry = await recordInjection(tabId,startedAt,probe,rows);
-  return telemetry.isolated.ok > 0 || telemetry.main.ok > 0;
+  await updateScannerState(state => ({
+    ...state,
+    diagnostics: {
+      ...(state.diagnostics || {}),
+      runtimeInjection: {
+        ...(state.diagnostics?.runtimeInjection || telemetry),
+        missingCritical,
+        readersKicked: kick.ok === true,
+        readerKickFrames: Array.isArray(kick.frames) ? kick.frames.length : 0
+      }
+    }
+  })).catch(() => {});
+  return missingCritical.length === 0 && kick.ok === true;
 }
 globalThis.__ATS_INJECT_MODERN_PIPELINE__ = inject;
