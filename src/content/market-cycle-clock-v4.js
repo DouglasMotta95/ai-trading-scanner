@@ -1,5 +1,5 @@
 (() => {
-  if (globalThis.__ATS_MARKET_CYCLE_CLOCK_V4__) return;
+  try { globalThis.__ATS_MARKET_CYCLE_CLOCK_V4_RUNTIME__?.teardown?.(); } catch {}
   globalThis.__ATS_MARKET_CYCLE_CLOCK_V4__ = true;
   globalThis.__ATS_MARKET_CYCLE_CLOCK_V3__ = true;
   globalThis.__ATS_MARKET_CLOCK_SYNC__ = true;
@@ -313,10 +313,11 @@
     } finally { canvasBusy = false; }
   }
 
-  window.addEventListener('message', event => {
+  const canvasMessageHandler = event => {
     if (event.data?.source !== 'ATS_CANVAS_CANDLE_COUNTDOWN') return;
     acceptCanvasCountdown(event.data.payload || {}).catch(() => {});
-  });
+  };
+  window.addEventListener('message', canvasMessageHandler);
 
   let busy = false, lastKey = '', lastAt = 0;
   async function tick() {
@@ -366,6 +367,14 @@
     } finally { busy = false; }
   }
 
-  setInterval(tick, 650);
+  const intervalId = setInterval(tick, 650);
+  globalThis.__ATS_FORCE_MARKET_CLOCK_SCAN__ = () => tick();
+  globalThis.__ATS_MARKET_CYCLE_CLOCK_V4_RUNTIME__ = {
+    version: 'market-cycle-clock-v4-restartable',
+    teardown() {
+      try { window.removeEventListener('message', canvasMessageHandler); } catch {}
+      try { clearInterval(intervalId); } catch {}
+    }
+  };
   tick();
 })();
