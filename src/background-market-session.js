@@ -183,6 +183,62 @@ export function withMarketSessionEpoch(state = {}, expectedEpoch, writer) {
   return typeof writer === 'function' ? writer(state) : state;
 }
 
+export function clearUserDeclaredExpirationState(state = {}) {
+  const controls = state.platformControls || null;
+  const guard = state.diagnostics?.expirationGuard || null;
+  const declared = clean(controls?.userDeclaredExpiration || '');
+  const expirationSource = clean(controls?.expirationSource || controls?.source || '');
+  const observedSource = clean(controls?.observed?.source || '');
+  const guardSource = clean(guard?.source || '');
+  const declaredDerived = expirationSource === 'user-declared'
+    || observedSource === 'user-declared'
+    || guardSource === 'user-declared';
+
+  if (!declared && !declaredDerived) return state;
+
+  let nextControls = controls;
+  if (controls) {
+    const observed = controls.observed ? {
+      ...controls.observed,
+      observedAt: { ...(controls.observed.observedAt || {}) },
+      confidence: { ...(controls.observed.confidence || {}) }
+    } : null;
+
+    if (observed && declaredDerived) {
+      observed.expiration = null;
+      observed.observedAt.expiration = 0;
+      observed.confidence.expiration = 0;
+      if (clean(observed.source) === 'user-declared') observed.source = '';
+    }
+
+    nextControls = {
+      ...controls,
+      userDeclaredExpiration: null,
+      userDeclaredAt: 0,
+      ...(observed ? { observed } : {}),
+      ...(declaredDerived ? {
+        expirationCheckedAt: 0,
+        expirationSource: null,
+        aligned: false,
+        expirationVerified: false,
+        liveAuthority: false,
+        ...(clean(controls.source) === 'user-declared' ? { source: null } : {})
+      } : {})
+    };
+  }
+
+  const diagnostics = { ...(state.diagnostics || {}) };
+  if (guardSource === 'user-declared') delete diagnostics.expirationGuard;
+  if (clean(diagnostics.platformTime?.source) === 'user-declared') delete diagnostics.platformTime;
+
+  return {
+    ...state,
+    ...(declaredDerived ? { expiration: null, targetExpiration: null } : {}),
+    platformControls: nextControls,
+    diagnostics
+  };
+}
+
 export function clearMarketAuthorityState(state = {}, extra = {}) {
   const previous = state.diagnostics?.marketSession || {};
   const epoch = nextEpoch(previous);
@@ -247,6 +303,11 @@ export function resetForSession(state = {}, { asset, timeframe = null, info, rea
   const fromAsset = normAsset(state.asset || previous.confirmedAsset || previous.asset || state.diagnostics?.focusedAsset?.asset || '');
   const toAsset = normAsset(asset);
   const switched = !!fromAsset && !!toAsset && !sameMarket(fromAsset, toAsset);
+  // The existing market-session epoch is the asset-boundary authority.
+  // When that epoch advances because the confirmed market changed, any
+  // user-declared expiration belongs to the previous asset and must not cross
+  // into the new session.
+  const sessionBase = switched ? clearUserDeclaredExpirationState(state) : state;
   const switchLog = [
     ...(Array.isArray(state.diagnostics?.assetSwitchLog) ? state.diagnostics.assetSwitchLog : []),
     ...(switched ? [{
@@ -260,7 +321,7 @@ export function resetForSession(state = {}, { asset, timeframe = null, info, rea
   ].slice(-12);
 
   return {
-    ...state,
+    ...sessionBase,
     connection: 'connecting',
     // Do not publish the new asset as live until price + real candle history for
     // that exact instrument have passed the identity/scale guard below.
@@ -280,9 +341,9 @@ export function resetForSession(state = {}, { asset, timeframe = null, info, rea
     lastConfirmed: null,
     tradeIntent: null,
     lastSeen: null,
-    platformControls: state.platformControls || null,
+    platformControls: sessionBase.platformControls || null,
     diagnostics: {
-      ...(state.diagnostics || {}),
+      ...(sessionBase.diagnostics || {}),
       marketClock: null,
       assetSwitchLog: switchLog,
       marketSession: {
