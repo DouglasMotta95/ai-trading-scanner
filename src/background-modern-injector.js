@@ -49,11 +49,18 @@ async function injectFile(tabId, file, world) {
 function kickLiveReaders() {
   try { globalThis.__ATS_FORCE_ALIAS_FOCUS_SCAN__?.(); } catch {}
   try { globalThis.__ATS_FORCE_FOCUS_SCAN__?.(); } catch {}
+  try { globalThis.__ATS_FORCE_UI_CONTROL_SCAN__?.(); } catch {}
   try { globalThis.__ATS_FORCE_EXPIRATION_SCAN__?.(); } catch {}
+  try { globalThis.__ATS_FORCE_CHART_PRICE_SCAN__?.(); } catch {}
+  try { globalThis.__ATS_FORCE_MARKET_CLOCK_SCAN__?.(); } catch {}
   return {
     host: String(location.hostname || '').toLowerCase().replace(/\.$/, ''),
     focus: String(globalThis.__ATS_FOCUSED_ASSET_VALUE__ || ''),
-    expiration: globalThis.__ATS_EXPIRATION_PROBE_LAST__?.expiration || null
+    expiration: globalThis.__ATS_EXPIRATION_PROBE_LAST__?.expiration || null,
+    focusReader: globalThis.__ATS_FOCUSED_ASSET_TRACKER_V2_RUNTIME__?.version || null,
+    aliasReader: globalThis.__ATS_FOCUSED_ASSET_ALIAS_RUNTIME__?.version || null,
+    clockReader: globalThis.__ATS_MARKET_CYCLE_CLOCK_V4_RUNTIME__?.version || null,
+    priceReader: globalThis.__ATS_CHART_FRAME_MARKET_READER_RUNTIME__?.version || null
   };
 }
 
