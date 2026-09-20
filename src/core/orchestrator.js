@@ -177,7 +177,7 @@ function decisionQuality(signal = {}, direction = null) {
             && strongBreakout
             && breakoutMargin >= .18
             && rangeMultiple > 0
-            && rangeMultiple <= 1.45
+            && rangeMultiple <= A_PLUS_THRESHOLDS.maxImpulseRangeMultiple
         }
       ]
     : [
