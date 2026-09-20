@@ -1,7 +1,7 @@
 import { processSnapshot, resetOrchestrator } from './core/orchestrator.js';
 import { readScannerState, updateScannerState } from './services/scanner-state-atomic.js';
 import { resolveSignalHistory, signalPerformance, resolveSignalOutcome } from './core/signal-outcomes.js';
-import { getThresholds } from './core/analysis.js';
+import { getThresholds, getOperationMode } from './core/analysis.js';
 import { storageLocalGet, storageLocalSet } from './services/chrome-compat.js';
 import { track as telemetryEvent } from './services/telemetry.js';
 
@@ -72,9 +72,10 @@ function performanceEmission(state = {}) {
   if (focus.reliable !== true || focus.chartScoped !== true || focus.trustedChartFrame !== true) return null;
   if (clock.verified !== true || clock.available === false || clock.role !== 'candle-close') return null;
 
+  const operationMode = getOperationMode(state.analystPreferences?.operationMode || 'M1');
   const timeframe = normTf(state.analysisTimeframe || state.timeframe || professional.timeframe || signal.timeframe || clock.timeframe);
   const expiration = normExp(state.platformControls?.observed?.expiration || state.targetExpiration || state.expiration || professional.actualExpiration);
-  if (timeframe !== 'M1' || expiration !== '60s') return null;
+  if (timeframe !== operationMode.timeframe || expiration !== operationMode.expiration) return null;
 
   const complete = (Array.isArray(state.candles) ? state.candles : []).filter(row =>
     [row?.open,row?.high,row?.low,row?.close].every(value => num(value) != null)
@@ -93,7 +94,7 @@ function performanceEmission(state = {}) {
   const score = num(professional.score ?? signal.analysisScore ?? signal.score) ?? 0;
   const secondsRemaining = num(professional.secondsRemaining ?? signal.secondsRemaining ?? clock.secondsRemaining);
   const referencePrice = num(state.price);
-  const id = [marketId(state.asset), 'M1', Number(targetStart), direction].join('|');
+  const id = [marketId(state.asset), operationMode.timeframe, Number(targetStart), direction].join('|');
 
   return {
     id,
@@ -105,8 +106,9 @@ function performanceEmission(state = {}) {
     secondsRemaining,
     emittedAt,
     referencePrice,
-    timeframe: 'M1',
-    expiration: '60s',
+    timeframe: operationMode.timeframe,
+    expiration: operationMode.expiration,
+    mode: operationMode.timeframe,
     profile: thresholds.label,
     profileKey: thresholds.profile,
     targetStart: Number(targetStart),
@@ -117,8 +119,8 @@ function performanceEmission(state = {}) {
   };
 }
 
-function performanceFeedAdvancedPastTarget(candles = [], targetStart = 0) {
-  const end = Number(targetStart || 0) + 60_000;
+function performanceFeedAdvancedPastTarget(candles = [], targetStart = 0, durationMs = 60_000) {
+  const end = Number(targetStart || 0) + Number(durationMs || 60_000);
   return (Array.isArray(candles) ? candles : []).some(row => Number(candleTimestamp(row) || 0) >= end);
 }
 
@@ -160,8 +162,10 @@ async function updateSignalPerformanceLedger(state = {}) {
       };
     }
 
-    const due = now >= Number(row.targetStart || 0) + 60_000;
-    if (due && performanceFeedAdvancedPastTarget(candles, row.targetStart)) {
+    const rowMode = getOperationMode(row.mode || row.timeframe || 'M1');
+    const durationMs = rowMode.durationSeconds * 1000;
+    const due = now >= Number(row.targetStart || 0) + durationMs;
+    if (due && performanceFeedAdvancedPastTarget(candles, row.targetStart, durationMs)) {
       changed = true;
       return {
         ...row,
@@ -330,6 +334,7 @@ function rawInputSignature(state = {}, snapshot = null) {
     snapshot.asset, snapshot.price, snapshot.timeframe, snapshot.expiration,
     snapshot.secondsRemaining, Number(clock.at || 0), clean(clock.source),
     getThresholds(state.analystPreferences?.sensitivityProfile || 'MEDIO').profile,
+    getOperationMode(state.analystPreferences?.operationMode || 'M1').timeframe,
     Number(state.lastSeen || 0), tail
   ]);
 }
@@ -384,6 +389,7 @@ async function runCentralAnalysis(force = false) {
         snapshot.analysisTimeframe,
         Number(session.epoch || 0),
         getThresholds(current.analystPreferences?.sensitivityProfile || 'MEDIO').profile,
+        getOperationMode(current.analystPreferences?.operationMode || 'M1').timeframe,
         Number(focus.frameId ?? -1),
         clean(focus.frameHost).toLowerCase()
       ].join('|');
