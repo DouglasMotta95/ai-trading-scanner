@@ -42,7 +42,7 @@ const normExp = value => {
 
 function preferences(state = {}) {
   const raw = state.analystPreferences || {};
-  const operatingTimeframe = normTf(raw.operatingTimeframe) === 'M1' ? 'M1' : 'M5';
+  const operatingTimeframe = normTf(raw.operatingTimeframe) === 'M5' ? 'M5' : 'M1';
   return {
     mode: 'A_PLUS',
     operatingTimeframe,
