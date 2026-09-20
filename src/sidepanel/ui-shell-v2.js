@@ -41,15 +41,12 @@ function baseHandshake(state = {}) {
 
 function exactClockReady(state = {}) {
   if (!baseHandshake(state)) return false;
-  const focus = state.diagnostics?.focusedAsset || null;
   const clock = state.diagnostics?.marketClock || null;
   return clock?.verified === true
     && clock?.available !== false
     && clock?.role === 'candle-close'
     && EXACT_CLOCK_SOURCES.has(clean(clock?.source))
     && sameMarket(clock?.asset, state.asset)
-    && Number(clock?.frameId) === Number(focus?.frameId)
-    && clean(clock?.frameHost).toLowerCase() === clean(focus?.frameHost).toLowerCase()
     && Number(clock?.at || 0) > 0
     && Date.now() - Number(clock.at) < CLOCK_FRESH_MS
     && Number.isFinite(Number(clock?.secondsRemaining));
