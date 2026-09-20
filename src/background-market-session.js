@@ -543,7 +543,15 @@ export async function applyFeed(payload = {}, sender = {}) {
     if (!candidate) return;
 
     const incomingHistory = historyFor(payload, asset);
-    const previousHistory = stateHistory(state, asset);
+    // During a market switch the previous state may still contain candles from
+    // the old instrument. Never merge them into the newly focused asset. A new
+    // session must bootstrap exclusively from history explicitly keyed/tagged
+    // for the focused instrument.
+    const sessionBeforeFeed = state.diagnostics?.marketSession || {};
+    const sessionOwnsFocus = sameMarket(sessionBeforeFeed.confirmedAsset || sessionBeforeFeed.asset, asset)
+      && sessionBeforeFeed.transitioning !== true;
+    const stateOwnsFocus = sameMarket(state.asset, asset);
+    const previousHistory = sessionOwnsFocus && stateOwnsFocus ? stateHistory(state, asset) : [];
     const mergedHistory = mergeRows(previousHistory, incomingHistory);
     const bundle = validateMarketBundle({
       focusAsset: asset,
