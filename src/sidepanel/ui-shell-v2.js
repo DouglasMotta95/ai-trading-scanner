@@ -110,6 +110,8 @@ function renderShell(state = {}) {
   const dataConnected = baseHandshake(state);
   const connected = dataConnected || switching;
   const platformLinked = connected;
+  const operationSync = globalThis.__ATS_OPERATION_TIME_SYNC__?.read?.(state, Date.now()) || null;
+  const synchronized = dataConnected && operationSync?.ready === true;
   const failure = connectionFailure(state);
   const connecting = !platformLinked && !failure && activeLicense(state)
     && (state.connection === 'connecting' || state.scanner === 'scanning');
@@ -123,7 +125,7 @@ function renderShell(state = {}) {
       : failure
         ? 'FALHA AO CONECTAR'
         : connected
-          ? 'CONECTADO — ANALISANDO SINAL'
+          ? (synchronized ? 'CONECTADO — ANALISANDO SINAL' : 'CONECTADO — SINCRONIZANDO')
           : connecting
             ? 'CONECTANDO À CASATRADE'
             : activeLicense(state)
@@ -137,7 +139,9 @@ function renderShell(state = {}) {
       ? 'Limpando o ativo anterior e confirmando o gráfico que está aberto agora.'
       : failure
         || (connected
-          ? `${state.asset || pendingAsset || 'CasaTrade'} conectado. Procurando POSSÍVEL COMPRA/VENDA; entrada final perto dos ${finalWindowSeconds(state)}s.`
+          ? synchronized
+            ? `${state.asset || pendingAsset || 'CasaTrade'} conectado. Procurando POSSÍVEL COMPRA/VENDA; entrada final perto dos ${finalWindowSeconds(state)}s.`
+            : clean(operationSync?.reason || state.diagnostics?.acquisition?.reason || 'Sincronizando período da vela, expiração e countdown real.')
           : connecting
             ? clean(acquisition.reason || 'Identificando ativo, preço e velas do gráfico atual.')
             : activeLicense(state)
