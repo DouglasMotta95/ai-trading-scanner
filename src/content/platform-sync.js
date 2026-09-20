@@ -1,5 +1,5 @@
 (() => {
-  if (globalThis.__ATS_PLATFORM_SYNC__) return;
+  try { globalThis.__ATS_PLATFORM_SYNC_RUNTIME__?.teardown?.(); } catch {}
   globalThis.__ATS_PLATFORM_SYNC__ = true;
 
   const host = String(location.hostname || '').toLowerCase().replace(/\.$/, '');
@@ -272,7 +272,7 @@
     return { ok: !!(matched.amount && matched.timeframe && matched.expiration), desired, before, after, attempted, applied, matched };
   }
 
-  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  const runtimeMessageHandler = (message, _sender, sendResponse) => {
     if (message?.type === 'ATS_PLATFORM_READ') {
       const local = readDom();
       if (!localCount(local)) return false;
@@ -285,5 +285,44 @@
       apply(message.preferences || {}).then(result => sendResponse(result)).catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
       return true;
     }
-  });
+  };
+  chrome.runtime.onMessage.addListener(runtimeMessageHandler);
+
+  let lastPublishedKey = '';
+  let lastPublishedAt = 0;
+  async function publishVisibleControls(force = false) {
+    const observed = readDom();
+    if (!observed.timeframe && !observed.expiration && observed.amount == null) return;
+    const key = JSON.stringify([observed.amount, observed.timeframe, observed.expiration]);
+    const now = Date.now();
+    if (!force && key === lastPublishedKey && now - lastPublishedAt < 650) return;
+    lastPublishedKey = key;
+    lastPublishedAt = now;
+    await sendMessage({
+      type: 'ATS_PLATFORM_CONTROLS_OBSERVED',
+      snapshot: {
+        amount: observed.amount,
+        timeframe: observed.timeframe,
+        expiration: observed.expiration,
+        confidence: {
+          amount: Number(observed.confidence?.amount || 0),
+          timeframe: Math.max(55, Number(observed.confidence?.timeframe || 0)),
+          expiration: Math.max(68, Number(observed.confidence?.expiration || 0))
+        },
+        source: 'casatrade-platform-sync-live',
+        observedAt: now
+      }
+    }).catch(() => {});
+  }
+
+  const controlsInterval = setInterval(() => publishVisibleControls(false).catch(() => {}), 650);
+  globalThis.__ATS_FORCE_PLATFORM_SYNC_READ__ = () => publishVisibleControls(true);
+  globalThis.__ATS_PLATFORM_SYNC_RUNTIME__ = {
+    version: 'platform-sync-live-restartable',
+    teardown() {
+      try { chrome.runtime.onMessage.removeListener(runtimeMessageHandler); } catch {}
+      try { clearInterval(controlsInterval); } catch {}
+    }
+  };
+  publishVisibleControls(true).catch(() => {});
 })();
