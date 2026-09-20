@@ -626,29 +626,51 @@ async function readAndCommitDirectExpiration(tabId) {
 
 async function forceLiveControlRead(tabId) {
   if (!tabId || !chrome.scripting?.executeScript) return false;
+  let invoked = false;
   try {
-    const result = executeScriptCompat({
+    const result = await executeScriptCompat({
       target: { tabId, allFrames: true },
       world: 'ISOLATED',
       func: () => {
-        let asset = false;
+        const out = { asset: false, expiration: false, controls: false, clock: false };
         try {
           if (typeof globalThis.__ATS_FORCE_FOCUSED_ASSET_SCAN__ === 'function') {
             globalThis.__ATS_FORCE_FOCUSED_ASSET_SCAN__();
-            asset = true;
+            out.asset = true;
           }
         } catch {}
-        return { asset };
+        try {
+          if (typeof globalThis.__ATS_FORCE_EXPIRATION_SCAN__ === 'function') {
+            globalThis.__ATS_FORCE_EXPIRATION_SCAN__();
+            out.expiration = true;
+          }
+        } catch {}
+        try {
+          if (typeof globalThis.__ATS_FORCE_PLATFORM_CONTROL_SCAN__ === 'function') {
+            globalThis.__ATS_FORCE_PLATFORM_CONTROL_SCAN__();
+            out.controls = true;
+          }
+        } catch {}
+        try {
+          if (typeof globalThis.__ATS_FORCE_MARKET_CLOCK_SCAN__ === 'function') {
+            globalThis.__ATS_FORCE_MARKET_CLOCK_SCAN__();
+            out.clock = true;
+          }
+        } catch {}
+        return out;
       }
-    });
-    await result.catch(() => []);
-    await sleep(240);
-    return true;
-  } catch {
-    await sleep(240);
-    return false;
-  }
+    }).catch(() => []);
+    invoked = result.some(row => Object.values(row?.result || {}).some(Boolean));
+  } catch {}
+  // The DOM/background probe is a recovery path for compact Android layouts
+  // where the Expiração control is visible but not exposed to the content
+  // script tree in a stable way.
+  await readAndCommitDirectExpiration(tabId).catch(() => null);
+  await sleep(180);
+  return invoked;
 }
+
+globalThis.__ATS_FORCE_LIVE_CONTROL_READ__ = forceLiveControlRead;
 
 async function refreshTargetTab() {
   const state = await readScannerState();
