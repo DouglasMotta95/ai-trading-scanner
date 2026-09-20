@@ -17,7 +17,7 @@ export const ANALYST_THRESHOLDS = Object.freeze({
   minimumClosedCandles: 2,
   preferredClosedCandles: 3,
   minimumPatternRows: 3,
-  possibleScore: 44,
+  possibleScore: 55,
   confirmScore: 58,
   candleStrength: 62,
   rejectionStrength: 50
