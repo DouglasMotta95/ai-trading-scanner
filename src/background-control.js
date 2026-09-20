@@ -446,13 +446,14 @@ async function inspectExpirationDiagnostic() {
   const diagnosticSnapshots = await new Promise(resolve => {
     let canvas = null;
     let bridge = null;
+    let network = null;
     let settled = false;
 
     const finish = () => {
       if (settled) return;
       settled = true;
       try { window.removeEventListener('message', onDiagnosticMessage); } catch {}
-      resolve({ canvas, bridge });
+      resolve({ canvas, bridge, network });
     };
 
     const onDiagnosticMessage = event => {
@@ -460,7 +461,8 @@ async function inspectExpirationDiagnostic() {
       if (!data || data.requestId !== diagnosticRequestId) return;
       if (data.source === 'ATS_CANVAS_DIAGNOSTIC_SNAPSHOT') canvas = data.payload || null;
       if (data.source === 'ATS_EMBEDDED_FEED_DIAGNOSTIC_SNAPSHOT') bridge = data.payload || null;
-      if (canvas && bridge) finish();
+      if (data.source === 'ATS_NETWORK_DIAGNOSTIC_SNAPSHOT') network = data.payload || null;
+      if (canvas && bridge && network) finish();
     };
 
     try { window.addEventListener('message', onDiagnosticMessage); } catch {}
@@ -471,7 +473,7 @@ async function inspectExpirationDiagnostic() {
       }, '*');
     } catch {}
 
-    setTimeout(finish, 220);
+    setTimeout(finish, 260);
   });
 
   return {
@@ -491,7 +493,9 @@ async function inspectExpirationDiagnostic() {
     canvasDiagnostic: diagnosticSnapshots.canvas,
     canvasDiagnosticError: diagnosticSnapshots.canvas ? '' : 'ATS_CANVAS_DIAGNOSTIC_SNAPSHOT não respondeu dentro de 220 ms',
     embeddedFeedDiagnostic: diagnosticSnapshots.bridge,
-    embeddedFeedDiagnosticError: diagnosticSnapshots.bridge ? '' : 'ATS_EMBEDDED_FEED_DIAGNOSTIC_SNAPSHOT não respondeu dentro de 220 ms',
+    embeddedFeedDiagnosticError: diagnosticSnapshots.bridge ? '' : 'ATS_EMBEDDED_FEED_DIAGNOSTIC_SNAPSHOT não respondeu dentro de 260 ms',
+    networkDiagnostic: diagnosticSnapshots.network,
+    networkDiagnosticError: diagnosticSnapshots.network ? '' : 'ATS_NETWORK_DIAGNOSTIC_SNAPSHOT não respondeu dentro de 260 ms',
     selectedSelector,
     rawText: rawText || containerText || '',
     containerOuterHTML: outerHTML,
