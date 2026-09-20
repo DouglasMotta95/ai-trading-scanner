@@ -140,8 +140,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     const diagnostics = { ...(state.diagnostics || {}) };
     if (timeframeChanged) {
+      // Keep marketSession ownership intact. Deleting it here lets an unrelated
+      // controls observer bypass the asset/session epoch guard and is a source
+      // of cross-asset contamination. The market-session owner will perform the
+      // authoritative reset when the focused chart confirms the new timeframe.
       delete diagnostics.marketClock;
-      delete diagnostics.marketSession;
+      diagnostics.timeframeTransition = {
+        from: oldTf,
+        to: reliableTf,
+        at: Date.now(),
+        source: observed.source
+      };
     }
     const effectiveTf = reliableTf || oldTf || null;
     const m1Ready = effectiveTf === 'M1';
