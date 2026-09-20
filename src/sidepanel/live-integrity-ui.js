@@ -15,6 +15,15 @@
   const sameAsset = (a, b) => !!normAsset(a) && normAsset(a) === normAsset(b);
   const activeLicense = state => ['active','valid'].includes(String(state?.license?.status || '').toLowerCase());
 
+  function clockBoundToFocus(clock = {}, focus = {}) {
+    const sameFrame = Number(clock?.frameId) === Number(focus?.frameId)
+      && clean(clock?.frameHost).toLowerCase() === clean(focus?.frameHost).toLowerCase();
+    const boundControlFrame = clock?.crossFrameControl === true
+      && Number(clock?.boundFocusFrameId) === Number(focus?.frameId)
+      && clean(clock?.boundFocusFrameHost).toLowerCase() === clean(focus?.frameHost).toLowerCase();
+    return sameFrame || boundControlFrame;
+  }
+
   function authoritativeClockReady(state = {}) {
     const focus = state.diagnostics?.focusedAsset || null;
     const clock = state.diagnostics?.marketClock || null;
@@ -27,8 +36,7 @@
       && clean(clock.role) === 'candle-close'
       && clean(clock.source) === 'trader-dom-countdown'
       && sameAsset(clock.asset, state.asset)
-      && Number(clock.frameId) === Number(focus.frameId)
-      && clean(clock.frameHost).toLowerCase() === clean(focus.frameHost).toLowerCase()
+      && clockBoundToFocus(clock, focus)
       && Date.now() - Number(clock.at || 0) < 2200
       && num(clock.secondsRemaining) != null;
   }
