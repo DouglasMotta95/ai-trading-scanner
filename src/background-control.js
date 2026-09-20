@@ -256,6 +256,208 @@ function inspectCasaTradeControlsDirect() {
   };
 }
 
+
+function inspectExpirationDiagnostic() {
+  const clean0 = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
+  const fold0 = value => clean0(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const visible0 = el => {
+    try {
+      if (!el || !(el instanceof Element)) return false;
+      const r = el.getBoundingClientRect();
+      const s = getComputedStyle(el);
+      return r.width > 0 && r.height > 0
+        && s.display !== 'none'
+        && s.visibility !== 'hidden'
+        && Number(s.opacity || 1) > 0;
+    } catch { return false; }
+  };
+  const rawOf = el => {
+    try {
+      return clean0(
+        el?.getAttribute?.('aria-valuetext')
+        || el?.getAttribute?.('data-value')
+        || el?.getAttribute?.('aria-label')
+        || el?.getAttribute?.('title')
+        || (el instanceof HTMLInputElement || el instanceof HTMLSelectElement
+          ? (el.value || el.selectedOptions?.[0]?.textContent || '')
+          : '')
+        || el?.innerText
+        || el?.textContent
+        || ''
+      );
+    } catch { return ''; }
+  };
+  const hasExpirationWord = value => /expira|expiry|expiration|duracao|duration/.test(fold0(value));
+  const hasDuration = value => /\b\d{1,4}\s*(?:s|seg|segundo|segundos|m|min|minuto|minutos)\b/i.test(clean0(value));
+
+  const selectorAttempts = [];
+  const selectors = [
+    '[aria-label*="expira" i]',
+    '[title*="expira" i]',
+    '[data-testid*="expir" i]',
+    '[data-name*="expir" i]',
+    '[class*="expir" i]'
+  ];
+
+  let selected = null;
+  let selectedSelector = null;
+
+  for (const selector of selectors) {
+    let nodes = [];
+    try {
+      nodes = [...document.querySelectorAll(selector)];
+    } catch (error) {
+      selectorAttempts.push({
+        selector,
+        found: 0,
+        visible: 0,
+        reason: `selector_error: ${String(error?.message || error)}`
+      });
+      continue;
+    }
+
+    const visible = nodes.filter(visible0);
+    const withText = visible.filter(el => {
+      const text = rawOf(el) || clean0(el?.parentElement?.innerText || el?.parentElement?.textContent || '');
+      return hasExpirationWord(text);
+    });
+
+    let reason = 'ok';
+    if (!nodes.length) reason = 'nenhum elemento correspondeu ao seletor';
+    else if (!visible.length) reason = 'elementos encontrados, mas nenhum estava visível';
+    else if (!withText.length) reason = 'elementos visíveis encontrados, mas sem texto de Expiração';
+    else if (!withText.some(el => hasDuration(rawOf(el) + ' ' + clean0(el?.parentElement?.innerText || el?.parentElement?.textContent || '')))) {
+      reason = 'texto de Expiração encontrado, mas sem valor de duração no elemento/contexto imediato';
+    }
+
+    selectorAttempts.push({
+      selector,
+      found: nodes.length,
+      visible: visible.length,
+      expirationTextMatches: withText.length,
+      reason
+    });
+
+    if (!selected && withText.length) {
+      selected = withText.find(el => hasDuration(rawOf(el) + ' ' + clean0(el?.parentElement?.innerText || el?.parentElement?.textContent || '')))
+        || withText[0];
+      selectedSelector = selector;
+    }
+  }
+
+  if (!selected) {
+    const roots = [document];
+    const seen = new Set();
+    while (roots.length && !selected) {
+      const root = roots.shift();
+      if (!root || seen.has(root)) continue;
+      seen.add(root);
+
+      let nodes = [];
+      try { nodes = [...root.querySelectorAll('*')]; } catch {}
+      for (const el of nodes) {
+        try { if (el.shadowRoot) roots.push(el.shadowRoot); } catch {}
+        if (!visible0(el)) continue;
+        const own = rawOf(el);
+        if (!own || own.length > 220 || !hasExpirationWord(own)) continue;
+        selected = el;
+        selectedSelector = 'fallback:text-scan';
+        break;
+      }
+    }
+    selectorAttempts.push({
+      selector: 'fallback:text-scan',
+      found: selected ? 1 : 0,
+      visible: selected ? 1 : 0,
+      reason: selected
+        ? 'usado porque os seletores direcionados não localizaram um campo utilizável'
+        : 'nenhum elemento visível contendo texto de Expiração foi encontrado'
+    });
+  }
+
+  let rawText = '';
+  let container = selected;
+  if (selected) {
+    rawText = rawOf(selected);
+    if (!rawText) rawText = clean0(selected.innerText || selected.textContent || '');
+
+    // Prefer the smallest nearby container that contains both the label and its
+    // duration/value, without altering or clicking anything in CasaTrade.
+    let cursor = selected;
+    for (let i = 0; i < 5 && cursor; i++, cursor = cursor.parentElement) {
+      const text = clean0(cursor.innerText || cursor.textContent || '');
+      if (hasExpirationWord(text) && hasDuration(text)) {
+        container = cursor;
+        break;
+      }
+    }
+  }
+
+  const containerText = clean0(container?.innerText || container?.textContent || '');
+  const outerHTML = String(container?.outerHTML || '').slice(0, 3000);
+  let failureReason = '';
+  if (!selected) failureReason = 'Nenhum campo/container visível com texto de Expiração foi localizado.';
+  else if (!rawText && !containerText) failureReason = 'Container localizado, mas sem texto cru legível.';
+  else if (!hasDuration(rawText + ' ' + containerText)) failureReason = 'Texto de Expiração localizado, mas nenhum valor de duração foi encontrado no contexto próximo.';
+  else failureReason = 'O campo foi localizado pelo diagnóstico; compare este DOM com o seletor usado pelo leitor atual.';
+
+  return {
+    host: String(location.hostname || '').toLowerCase(),
+    href: String(location.href || '').slice(0, 300),
+    isTop: window === window.top,
+    selectedSelector,
+    rawText: rawText || containerText || '',
+    containerOuterHTML: outerHTML,
+    selectorAttempts,
+    failureReason,
+    observedAt: Date.now()
+  };
+}
+
+async function collectExpirationDiagnostic(tabId) {
+  if (!tabId) return { ok: false, error: 'target_tab_missing', frames: [] };
+  let rows = [];
+  try {
+    rows = await scriptingExecuteScript({
+      target: { tabId: Number(tabId), allFrames: true },
+      func: inspectExpirationDiagnostic,
+      world: 'ISOLATED'
+    }) || [];
+  } catch (firstError) {
+    try {
+      rows = await scriptingExecuteScript({
+        target: { tabId: Number(tabId), allFrames: true },
+        func: inspectExpirationDiagnostic
+      }) || [];
+    } catch (secondError) {
+      return {
+        ok: false,
+        error: String(secondError?.message || secondError || firstError),
+        frames: []
+      };
+    }
+  }
+
+  const frames = rows.map(row => ({
+    frameId: Number.isFinite(Number(row?.frameId)) ? Number(row.frameId) : null,
+    ...(row?.result || {})
+  }));
+
+  const useful = frames.filter(row => row.rawText || row.containerOuterHTML || row.selectedSelector);
+  useful.sort((a, b) =>
+    Number(!!b.containerOuterHTML) - Number(!!a.containerOuterHTML)
+    || Number(!!b.rawText) - Number(!!a.rawText)
+    || Number(b.isTop === true) - Number(a.isTop === true)
+  );
+
+  return {
+    ok: true,
+    frameCount: frames.length,
+    best: useful[0] || null,
+    frames
+  };
+}
+
 async function probePlatformControlsDirect(tabId) {
   if (!tabId) return { ok: false, error: 'target_tab_missing' };
   let rows = [];
@@ -629,6 +831,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     readScannerState().then(state => probePlatformControlsDirect(Number(state.targetTabId || 0)))
       .then(sendResponse)
       .catch(error => sendResponse({ ok: false, error: String(error?.message || error) }));
+    return true;
+  }
+
+  if (type === 'ATS_GET_EXPIRATION_DIAGNOSTIC') {
+    readScannerState().then(state => collectExpirationDiagnostic(Number(state.targetTabId || 0)))
+      .then(sendResponse)
+      .catch(error => sendResponse({ ok: false, error: String(error?.message || error), frames: [] }));
     return true;
   }
 
