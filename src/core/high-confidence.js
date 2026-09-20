@@ -42,7 +42,7 @@ export const A_PLUS_THRESHOLDS = Object.freeze({
   enterScore: 78,
   opposingLevelAtr: .35,
   breakoutMarginAtr: .18,
-  maxImpulseRangeMultiple: 1.45,
+  maxImpulseRangeMultiple: 1.75,
   minStableMs: 3000,
   preferredStableMs: 5000,
   adaptiveMinSamples: 20,
@@ -208,7 +208,7 @@ function volatilityContext(rows = [], currentRangeMultiple = 0) {
   const slow = Math.max(1e-12, avg(ranges.slice(-15,-5)) || median(ranges));
   const ratio = fast / slow;
   const dead = ratio < .48;
-  const explosive = ratio > 1.9 || Number(currentRangeMultiple || 0) > 1.6;
+  const explosive = ratio > 1.9 || Number(currentRangeMultiple || 0) > 1.75;
   const quality = dead || explosive ? 0 : ratio >= .65 && ratio <= 1.55 ? 10 : 5;
   return { quality, ratio, dead, explosive };
 }
