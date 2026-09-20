@@ -8,15 +8,15 @@ import { ANALYST_THRESHOLDS } from './analysis.js';
 
 // Price action/indicators remain in the legacy analyst. This wrapper owns exactly
 // one bounded decision for each target candle: ENTER BUY, ENTER SELL or WAIT.
-const CONFIRM_HITS = 2;
-const DECISION_HIT_GAP_MS = 2500;
-const POSSIBLE_CONFIRM_HITS = 2;
-const POSSIBLE_HIT_GAP_MS = 3500;
+const CONFIRM_HITS = 1;
+const DECISION_HIT_GAP_MS = 6000;
+const POSSIBLE_CONFIRM_HITS = 1;
+const POSSIBLE_HIT_GAP_MS = 6000;
 const OPPOSITE_SWITCH_HITS = 3;
 const OPPOSITE_MIN_HOLD_MS = 4000;
 const OPPOSITE_SCORE_MARGIN = 8;
 const OPPOSITE_STALE_MS = 5000;
-const FINAL_CANDIDATE_MIN_AGE_MS = 3000;
+const FINAL_CANDIDATE_MIN_AGE_MS = 750;
 const cycles = new Map();
 const wrapperCompletedDecisions = new Map();
 const WRAPPER_ROW_PREFIX = 'wrapper-cycle:';
@@ -42,9 +42,9 @@ function decisionWindows(snapshot = {}, signal = {}) {
   const duration = Math.max(2, Math.round(timeframeMs(timeframe) / 1000));
   // M1 product contract: pre-signal at ~30s, final decision at ~10s,
   // and settle as WAIT near the close if no setup confirms.
-  if (timeframe === 'M1') return { pre: 30, decision: 10, skip: 4, duration, timeframe };
+  if (timeframe === 'M1' || timeframe === 'M5') return { pre: 30, decision: 15, skip: 4, duration, timeframe };
 
-  // Longer/shorter candles keep proportional windows.
+  // Other candles keep proportional windows.
   const pre = Math.max(2, Math.min(duration - 1, 60, Math.round(duration * .50)));
   const decision = Math.max(1, Math.min(pre - 1, 30, Math.round(duration * .25)));
   const skip = Math.max(1, Math.min(decision, 8, Math.round(duration * .067)));
@@ -76,86 +76,41 @@ function targetStartOf(snapshot = {}, signal = {}) {
   return num(signal.targetStart) ?? (sampleAt + Math.max(0, seconds) * 1000);
 }
 
-function decisionQuality(signal = {}, direction = null) {
-  if (!direction) return { qualifies: false, setup: null };
-  const score = Number(signal.analysisScore ?? signal.score ?? 0);
-  if (score < ANALYST_THRESHOLDS.confirmScore) return { qualifies: false, setup: null };
-
+function patternEvidence(signal = {}, direction = null) {
+  if (!direction) return { identified: false, setup: null, count: 0 };
   const analytics = signal.analytics || {};
+  const declared = clean(signal.setup || '');
+  const inferred = inferSetup(signal, direction);
   const power = Number(direction === 'BUY' ? analytics.buyPower : analytics.sellPower) || 0;
   const currentStrength = Number(analytics.currentStrength || 0);
-  const rejectionStrength = Number(analytics.rejectionStrength || 0);
-  const directionalRejection = analytics.rejectionDirection === direction
-    || Number(direction === 'BUY' ? analytics.rejectionBuy : analytics.rejectionSell) >= ANALYST_THRESHOLDS.rejectionStrength;
-  const continuation = analytics.continuationDirection === direction && Number(analytics.continuationScore || 0) >= 55;
-  const momentum = analytics.momentumDirection === direction && Number(analytics.momentumScore || 0) >= 40;
-  const strongCandle = currentStrength >= ANALYST_THRESHOLDS.candleStrength;
-  const rejection = directionalRejection && rejectionStrength >= ANALYST_THRESHOLDS.rejectionStrength;
-  const regime = String(signal.regime?.type || '').toLowerCase();
-  const trendAligned = regime === 'uptrend'
-    ? direction === 'BUY'
-    : regime === 'downtrend'
-      ? direction === 'SELL'
-      : false;
-  const counterTrend = regime === 'uptrend'
-    ? direction === 'SELL'
-    : regime === 'downtrend'
-      ? direction === 'BUY'
-      : false;
-  const trendCompatible = regime === 'unknown' || trendAligned;
-
-  const strongBreakout = analytics.strongBreakout === true
+  const rejection = String(analytics.rejectionDirection || '').toUpperCase() === direction
+    && Number(analytics.rejectionStrength || 0) >= 38;
+  const continuation = String(analytics.continuationDirection || '').toUpperCase() === direction
+    && Number(analytics.continuationScore || 0) >= 48;
+  const momentum = String(analytics.momentumDirection || '').toUpperCase() === direction
+    && Number(analytics.momentumScore || 0) >= 38;
+  const breakout = analytics.strongBreakout === true
     && String(analytics.breakoutDirection || '').toUpperCase() === direction;
-  const breakoutMargin = Number(analytics.breakoutDistanceRatio || 0);
-  const rangeMultiple = Number(analytics.currentRangeMultiple || 0);
-  const exhaustionRisk = analytics.exhaustionRisk === true || analytics.overextendedImpulse === true;
-
-  // A large final impulse can be exhaustion, not continuation. Continuation
-  // entries are blocked when the current candle is stretched, unless a genuine
-  // rejection setup is present. This prevents chasing the just-finished candle.
-  if (exhaustionRisk && !rejection) {
-    return { qualifies: false, setup: null, blocker: 'exhaustion-risk' };
-  }
-
-  const setups = regime === 'range'
-    ? [
-        { name: 'rejeição no range', ok: power >= 52 && rejection },
-        {
-          name: 'rompimento confirmado no range',
-          ok: power >= 55
-            && score >= 64
-            && continuation
-            && momentum
-            && strongBreakout
-            && breakoutMargin >= .18
-            && rangeMultiple > 0
-            && rangeMultiple <= 1.45
-        }
-      ]
-    : [
-        { name: 'rejeição', ok: power >= 48 && rejection },
-        {
-          name: 'continuação com tendência',
-          ok: !counterTrend && trendCompatible && power >= 50 && continuation
-        },
-        {
-          name: 'momentum com tendência',
-          ok: !counterTrend && trendCompatible && power >= 50 && strongCandle && momentum
-        },
-        {
-          name: 'rompimento com tendência',
-          ok: !counterTrend && trendCompatible && power >= 50 && strongBreakout && breakoutMargin >= .18
-        },
-        {
-          name: 'confluência forte',
-          ok: !counterTrend && trendCompatible && power >= 48 && score >= 68 && momentum && (strongCandle || continuation || strongBreakout)
-        }
-      ];
-
-  const matched = setups.find(item => item.ok) || null;
-  return { qualifies: !!matched, setup: matched?.name || null, blocker: matched ? null : counterTrend ? 'counter-trend' : null };
+  const directionalCandle = power >= 48 && currentStrength >= 45;
+  const evidence = [rejection, continuation, momentum, breakout, directionalCandle].filter(Boolean).length;
+  const setup = inferred || declared || (rejection ? 'rejeição' : continuation ? 'continuação' : momentum ? 'momentum' : breakout ? 'rompimento' : directionalCandle ? 'força direcional' : null);
+  return { identified: !!setup || evidence > 0, setup, count: evidence };
 }
 
+function decisionQuality(signal = {}, direction = null) {
+  if (!direction) return { qualifies: false, setup: null, blocker: 'no-direction' };
+  const score = Number(signal.analysisScore ?? signal.score ?? 0);
+  if (score < ANALYST_THRESHOLDS.confirmScore) return { qualifies: false, setup: null, blocker: 'score' };
+
+  // v0.11.43 had become a gate cascade: score + very specific setup +
+  // two final hits inside 2.5s + 3s candidate age. On Android/tablet that
+  // combination could keep a real 60+ pattern in WAIT forever. Final entry now
+  // needs the technical score plus one identifiable directional pattern. Asset
+  // quality remains advisory; it does not veto an otherwise valid signal.
+  const pattern = patternEvidence(signal, direction);
+  if (!pattern.identified) return { qualifies: false, setup: null, blocker: 'no-pattern' };
+  return { qualifies: true, setup: pattern.setup || clean(signal.setup || '') || 'padrão direcional', blocker: null, evidenceCount: pattern.count };
+}
 function inferSetup(signal = {}, direction = null) {
   if (!direction) return null;
   const a = signal.analytics || {};
@@ -180,7 +135,10 @@ function inferSetup(signal = {}, direction = null) {
 function observeStablePossible(cycle, signal = {}, at = Date.now()) {
   const rawDirection = directionOf(signal);
   const rawScore = Number(signal.analysisScore ?? signal.score ?? 0);
-  const qualifies = ['BUY','SELL'].includes(rawDirection) && rawScore >= ANALYST_THRESHOLDS.possibleScore;
+  const pattern = patternEvidence(signal, rawDirection);
+  const qualifies = ['BUY','SELL'].includes(rawDirection)
+    && rawScore >= ANALYST_THRESHOLDS.possibleScore
+    && pattern.identified;
 
   if (!cycle.possibleDirection) {
     if (!qualifies) {
@@ -200,7 +158,7 @@ function observeStablePossible(cycle, signal = {}, at = Date.now()) {
       cycle.possibleScore = rawScore;
       cycle.possibleSince = at;
       cycle.lastPossibleStrongAt = at;
-      cycle.setup = inferSetup(signal, rawDirection) || cycle.setup;
+      cycle.setup = pattern.setup || inferSetup(signal, rawDirection) || cycle.setup;
     }
     return cycle.possibleDirection;
   }
@@ -208,7 +166,7 @@ function observeStablePossible(cycle, signal = {}, at = Date.now()) {
   if (qualifies && rawDirection === cycle.possibleDirection) {
     cycle.possibleScore = rawScore;
     cycle.lastPossibleStrongAt = at;
-    cycle.setup = inferSetup(signal, rawDirection) || cycle.setup;
+    cycle.setup = pattern.setup || inferSetup(signal, rawDirection) || cycle.setup;
     cycle.oppositeDirection = null;
     cycle.oppositeHits = 0;
     cycle.oppositeSince = null;
@@ -465,6 +423,13 @@ export function processSnapshot(snapshot = {}, state = {}) {
   }
   if (cycle.locked === 'WAIT') {
     return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: waitSignal(signal, cycle.reason || 'AGUARDAR — padrão não confirmou a tempo.'), decisionCycle: { ...cycle } };
+  }
+
+  // Before 30s, keep building even if a directional bias already exists.
+  // The user-facing POSSÍVEL window is intentionally bounded to the last ~30s.
+  if (secondsRemaining > windows.pre) {
+    cycles.set(key, cycle);
+    return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: buildingSignal(signal, windows), decisionCycle: { ...cycle } };
   }
 
   // Once a candidate has been published in this candle, never fall back to
