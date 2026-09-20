@@ -362,7 +362,7 @@ export async function applyFocus(message = {}, sender = {}) {
     const old = state.diagnostics?.focusedAsset || null;
     const incomingEmbeddedTrader = traderHost(info.frameHost);
     const incomingCasaFrame = casaHost(info.frameHost);
-    const focusAssetChanged = !!old?.asset && !sameMarket(old.asset, asset);
+    const assetChanged = !!old?.asset && !sameMarket(old.asset, asset);
     const confirmedAssetChanged = shouldResetForFocusedAsset(state, asset);
     const frameChanged = !!old && (Number(old.frameId) !== Number(info.frameId) || clean(old.frameHost).toLowerCase() !== info.frameHost);
     const interactionAt = Number(message.interactionAt || message.at || 0);
@@ -415,7 +415,7 @@ export async function applyFocus(message = {}, sender = {}) {
     // but may never replace a fresh reliable visual focus with another asset.
     // This also neutralizes stale content scripts that survived an unpacked
     // extension reload and still announce an older/ambiguous market.
-    if (focusAssetChanged && incomingProtocolOnly && freshVisualFocus && !protocolCanTakeOver) {
+    if (assetChanged && incomingProtocolOnly && freshVisualFocus && !protocolCanTakeOver) {
       return {
         ...state,
         diagnostics: {
@@ -434,7 +434,7 @@ export async function applyFocus(message = {}, sender = {}) {
     // few seconds. Never let that non-visual source roll the current visible
     // transition back to the old market. This is the guard against mixing
     // USO/USD price/history into a newly selected AUD/CAD session.
-    if (focusAssetChanged && !authoritativeVisual && contradictsSelectionLock && !protocolCanTakeOver) {
+    if (assetChanged && !authoritativeVisual && contradictsSelectionLock && !protocolCanTakeOver) {
       return {
         ...state,
         diagnostics: {
@@ -450,7 +450,7 @@ export async function applyFocus(message = {}, sender = {}) {
       };
     }
 
-    if (focusAssetChanged && incomingProtocolOnly && !protocolCanTakeOver && (transitionProtectsCurrentFocus || recentVisualSelection || protocolContradictsSelectionLock)) {
+    if (assetChanged && incomingProtocolOnly && !protocolCanTakeOver && (transitionProtectsCurrentFocus || recentVisualSelection || protocolContradictsSelectionLock)) {
       return {
         ...state,
         diagnostics: {
@@ -470,7 +470,7 @@ export async function applyFocus(message = {}, sender = {}) {
 
     // A passive symbol change from the same frame must prove stability before it
     // can replace a fresh selected market. User interaction/explicit selection wins immediately.
-    if (focusAssetChanged && oldFresh && !authoritativeVisual && !incomingExplicit && !incomingStable) {
+    if (assetChanged && oldFresh && !authoritativeVisual && !incomingExplicit && !incomingStable) {
       return {
         ...state,
         diagnostics: {
@@ -485,7 +485,7 @@ export async function applyFocus(message = {}, sender = {}) {
 
     // Hidden/inactive CasaTrade market frames can stay alive and keep publishing
     // their old symbol. They must never roll the visible user-selected chart back.
-    if (focusAssetChanged && frameChanged && oldFresh && !authoritativeVisual && !incomingExplicit && !incomingStable) {
+    if (assetChanged && frameChanged && oldFresh && !authoritativeVisual && !incomingExplicit && !incomingStable) {
       return {
         ...state,
         diagnostics: {
@@ -501,7 +501,7 @@ export async function applyFocus(message = {}, sender = {}) {
     // The same asset is often visible in the CasaTrade shell and the embedded
     // trader frame at the same time. Once the embedded trader owns the live clock,
     // shell heartbeats must not keep resetting the market session.
-    if (!focusAssetChanged && frameChanged && oldEmbeddedTrader && incomingCasaFrame && !authoritativeVisual) {
+    if (!assetChanged && frameChanged && oldEmbeddedTrader && incomingCasaFrame && !authoritativeVisual) {
       return state;
     }
 
@@ -509,7 +509,7 @@ export async function applyFocus(message = {}, sender = {}) {
     // IMPORTANT: a shell -> trader frame handoff is NOT a market switch. It must
     // never call resetForSession(), because doing so clears the current candle
     // candidate and can flip POSSÍVEL VENDA -> POSSÍVEL COMPRA within seconds.
-    const traderHandoff = !focusAssetChanged && frameChanged && !oldEmbeddedTrader && incomingEmbeddedTrader;
+    const traderHandoff = !assetChanged && frameChanged && !oldEmbeddedTrader && incomingEmbeddedTrader;
     let next = state;
 
     // Only a REAL asset change may reset market/session analysis state.
@@ -562,7 +562,7 @@ export async function applyFocus(message = {}, sender = {}) {
             ? { asset, at: now, source: 'protocol-selected-fallback' }
             : (next.diagnostics?.visualSelectionLock || null),
         focusedAsset: {
-          asset, at: now, stableSince: focusAssetChanged ? now : previousStableSince,
+          asset, at: now, stableSince: assetChanged ? now : previousStableSince,
           score: Number(message.score || 0), samples: Number(message.samples || 0), reliable: true,
           visual: message.visual !== false, explicit: message.explicit === true, chartScoped: true,
           interactionHint: userSelected,
