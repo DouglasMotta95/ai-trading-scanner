@@ -1,4 +1,5 @@
 import { readScannerState, updateScannerState } from './services/scanner-state-atomic.js';
+import './core/countdown-authority.js';
 
 // Product policy layer. The technical engine can keep collecting evidence with an
 // estimated clock, but the user-facing decision is never promoted while CasaTrade
@@ -155,52 +156,19 @@ function cycleKey(state = {}, signal = {}) {
 }
 
 function simpleEntryTiming(state = {}, signal = {}) {
-  const now = Date.now();
-  const clock = state.diagnostics?.marketClock || {};
-  const timeframe = normTf(clock.timeframe || state.analysisTimeframe || state.timeframe || signal.timeframe)
-    || preferences(state).operatingTimeframe;
-  const durationSeconds = timeframe === 'M5' ? 300 : 60;
-  const clockSeconds = num(clock.secondsRemaining);
-  const clockFresh = clockSeconds != null
-    && clockSeconds >= 0
-    && clockSeconds <= durationSeconds + 2
-    && Number(clock.at || 0) > 0
-    && now - Number(clock.at) < 6000;
-  if (clockFresh) {
-    return {
-      ready: true,
-      secondsRemaining: clockSeconds,
-      source: text(clock.source || 'market-clock'),
-      timeframe
-    };
-  }
-
-  const signalSeconds = num(signal.secondsRemaining);
-  if (signalSeconds != null && signalSeconds >= 0 && signalSeconds <= durationSeconds + 2) {
-    return {
-      ready: true,
-      secondsRemaining: signalSeconds,
-      source: 'technical-signal-clock',
-      timeframe
-    };
-  }
-
-  const candidates = [
-    state.currentCandle,
-    signal.currentCandle,
-    Array.isArray(state.candles) ? state.candles.at(-1) : null
-  ].filter(Boolean);
-  for (const row of candidates) {
-    let openAt = num(row?.time ?? row?.timestamp);
-    if (openAt != null && openAt > 0 && openAt < 1e12) openAt *= 1000;
-    if (!Number.isFinite(openAt)) continue;
-    const closeAt = openAt + durationSeconds * 1000;
-    if (now < openAt - 1500 || now > closeAt + 1500) continue;
-    const secondsRemaining = Math.max(0, Math.min(durationSeconds, Math.ceil((closeAt - now) / 1000)));
-    return { ready: true, secondsRemaining, source: 'current-candle-boundary', timeframe };
-  }
-
-  return { ready: false, secondsRemaining: null, source: null, timeframe };
+  const authority = globalThis.__ATS_COUNTDOWN_AUTHORITY__;
+  const timing = authority?.readAuthoritativeCountdown?.(state, Date.now()) || {
+    ready: false,
+    secondsRemaining: null,
+    timeframe: normTf(state.analysisTimeframe || state.timeframe || signal.timeframe) || preferences(state).operatingTimeframe,
+    source: null
+  };
+  return {
+    ready: timing.ready === true,
+    secondsRemaining: timing.ready === true ? Number(timing.secondsRemaining) : null,
+    source: timing.ready === true ? text(timing.source || '') : null,
+    timeframe: normTf(timing.timeframe) || preferences(state).operatingTimeframe
+  };
 }
 
 function baseDecision(state = {}) {
