@@ -93,7 +93,7 @@ function performanceEmission(state = {}) {
   const score = num(professional.score ?? signal.analysisScore ?? signal.score) ?? 0;
   const secondsRemaining = num(professional.secondsRemaining ?? signal.secondsRemaining ?? clock.secondsRemaining);
   const referencePrice = num(state.price);
-  const id = [marketId(state.asset), 'M1', Number(targetStart), direction, type].join('|');
+  const id = [marketId(state.asset), 'M1', Number(targetStart), direction].join('|');
 
   return {
     id,
@@ -130,9 +130,15 @@ async function updateSignalPerformanceLedger(state = {}) {
   let rows = Array.isArray(current?.rows) ? current.rows.slice(-SIGNAL_PERFORMANCE_MAX) : [];
   let changed = false;
 
-  if (emission && !rows.some(row => row?.id === emission.id)) {
-    rows.push(emission);
-    changed = true;
+  if (emission) {
+    const index = rows.findIndex(row => row?.id === emission.id);
+    if (index < 0) {
+      rows.push(emission);
+      changed = true;
+    } else if (rows[index]?.type === 'POSSIBLE' && emission.type === 'ENTER' && rows[index]?.status !== 'resolved') {
+      rows[index] = { ...rows[index], ...emission };
+      changed = true;
+    }
   }
 
   const now = Date.now();
