@@ -7,7 +7,7 @@ test('current build wires Gemini only through server-side gateway',()=>{
   const m=JSON.parse(read('manifest.json'));
   const e=read('src/background-entry.js');
   const client=read('src/services/ai-analysis.js');
-  assert.equal(m.version,'0.11.54');
+  assert.equal(m.version,'0.11.55');
   assert.match(e,/background-ai-analysis\.js/);
   assert.match(client,/\/v1\/ai\/analyze/);
   assert.doesNotMatch(client,/GEMINI_API_KEY|generativelanguage\.googleapis\.com/);
