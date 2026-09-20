@@ -1,6 +1,9 @@
 (() => {
   const BUTTON_ID = 'copyScannerDiagnostics';
   const STATUS_ID = 'copyScannerDiagnosticsStatus';
+  const PERFORMANCE_BUTTON_ID = 'copySignalPerformance';
+  const CLEAR_PERFORMANCE_BUTTON_ID = 'clearSignalPerformance';
+  const PERFORMANCE_KEY = 'atsSignalPerformanceLedgerV1';
 
   const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
   const clean = (value, max = 180) => String(value ?? '').normalize('NFKC').replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
@@ -56,6 +59,17 @@
     if (button.dataset.atsDiagnosticsOwner !== 'export') {
       button.dataset.atsDiagnosticsOwner = 'export';
       button.addEventListener('click', copyDiagnostics);
+    }
+
+    const performanceButton = document.getElementById(PERFORMANCE_BUTTON_ID);
+    if (performanceButton && performanceButton.dataset.atsPerformanceOwner !== 'export') {
+      performanceButton.dataset.atsPerformanceOwner = 'export';
+      performanceButton.addEventListener('click', copyPerformanceReport);
+    }
+    const clearPerformanceButton = document.getElementById(CLEAR_PERFORMANCE_BUTTON_ID);
+    if (clearPerformanceButton && clearPerformanceButton.dataset.atsPerformanceOwner !== 'export') {
+      clearPerformanceButton.dataset.atsPerformanceOwner = 'export';
+      clearPerformanceButton.addEventListener('click', clearPerformanceReport);
     }
   }
 
@@ -129,6 +143,7 @@
       platform: clean(state.platformId || state.platformName || ''),
       connection: clean(state.connection || ''),
       scanner: clean(state.scanner || ''),
+      sensitivityProfile: clean(state.analystPreferences?.sensitivityLabel || state.analystPreferences?.sensitivityProfile || 'MÉDIO', 24),
       asset: clean(state.asset || focus.asset || ''),
       timeframe: clean(state.analysisTimeframe || state.timeframe || clock.timeframe || ''),
       price: num(state.price),
@@ -235,6 +250,186 @@
       area.remove();
       return !!ok;
     } catch { return false; }
+  }
+
+  function resultSummary(rows = []) {
+    const list = Array.isArray(rows) ? rows : [];
+    const wins = list.filter(row => row?.result === 'WIN').length;
+    const losses = list.filter(row => row?.result === 'LOSS').length;
+    const draws = list.filter(row => row?.result === 'EMPATE' || row?.result === 'DRAW').length;
+    const indeterminate = list.filter(row => row?.result === 'INDETERMINADO').length;
+    const decided = wins + losses;
+    const winRate = decided ? wins / decided : null;
+    return { total: list.length, wins, losses, draws, indeterminate, decided, winRate };
+  }
+
+  function wilson95(wins = 0, losses = 0) {
+    const n = Number(wins || 0) + Number(losses || 0);
+    if (!n) return null;
+    const z = 1.96;
+    const p = Number(wins || 0) / n;
+    const z2 = z * z;
+    const denominator = 1 + z2 / n;
+    const center = (p + z2 / (2 * n)) / denominator;
+    const margin = z * Math.sqrt((p * (1 - p) + z2 / (4 * n)) / n) / denominator;
+    return { low: Math.max(0, center - margin), high: Math.min(1, center + margin) };
+  }
+
+  const pct = value => value == null || !Number.isFinite(Number(value))
+    ? '—'
+    : `${(Number(value) * 100).toFixed(1)}%`;
+
+  function summaryLine(label, rows = [], breakEven = null) {
+    const s = resultSummary(rows);
+    const ci = wilson95(s.wins, s.losses);
+    const delta = s.winRate == null || breakEven == null ? null : s.winRate - breakEven;
+    return `${label}: total=${s.total} | WIN=${s.wins} | LOSS=${s.losses} | EMPATE=${s.draws} | INDETERMINADO=${s.indeterminate} | taxa=${pct(s.winRate)} | IC95=${ci ? pct(ci.low) + '–' + pct(ci.high) : '—'}${delta == null ? '' : ' | diferença_vs_equilíbrio=' + (delta >= 0 ? '+' : '') + pct(delta)}`;
+  }
+
+  function groupLines(rows = [], keyFn, breakEven = null) {
+    const groups = new Map();
+    for (const row of rows) {
+      const key = clean(keyFn(row) ?? '—', 120) || '—';
+      const list = groups.get(key) || [];
+      list.push(row);
+      groups.set(key, list);
+    }
+    return [...groups.entries()]
+      .sort((a, b) => String(a[0]).localeCompare(String(b[0]), 'pt-BR', { numeric: true }))
+      .map(([key, list]) => summaryLine(key, list, breakEven))
+      .join('\n') || '[sem dados]';
+  }
+
+  function scoreBand(row = {}) {
+    const score = num(row.score);
+    if (score == null) return 'sem score';
+    if (score < 58) return '<58';
+    if (score <= 64) return '58-64';
+    if (score <= 69) return '65-69';
+    if (score <= 79) return '70-79';
+    return '80+';
+  }
+
+  function secondsBand(row = {}) {
+    const seconds = num(row.secondsRemaining);
+    if (seconds == null) return 'sem segundos';
+    if (seconds > 10) return 'acima de 10';
+    if (seconds >= 8) return '10-8';
+    if (seconds >= 5) return '7-5';
+    if (seconds >= 0) return '4-0';
+    return 'fora da janela';
+  }
+
+  function hourBand(row = {}) {
+    const at = Number(row.emittedAt || 0);
+    if (!(at > 0)) return 'hora desconhecida';
+    return `${String(new Date(at).getHours()).padStart(2, '0')}:00`;
+  }
+
+  function performanceReport(rows = [], state = {}) {
+    const safeRows = (Array.isArray(rows) ? rows : []).slice(-2000).map(row => ({
+      type: row?.type === 'ENTER' ? 'ENTER' : 'POSSIBLE',
+      result: ['WIN','LOSS','EMPATE','DRAW','INDETERMINADO'].includes(row?.result) ? row.result : null,
+      profile: clean(row?.profile || '—', 24),
+      score: num(row?.score),
+      secondsRemaining: num(row?.secondsRemaining),
+      direction: ['BUY','SELL'].includes(String(row?.direction || '').toUpperCase()) ? String(row.direction).toUpperCase() : '—',
+      asset: clean(row?.asset || '—', 64),
+      emittedAt: num(row?.emittedAt)
+    }));
+
+    const payoutRaw = num(state?.accountMetrics?.payoutPct);
+    const payout = payoutRaw == null
+      ? 0.88
+      : Math.max(0, Math.min(2, payoutRaw > 2 ? payoutRaw / 100 : payoutRaw));
+    const breakEven = 1 / (1 + payout);
+    const emitted = safeRows.map(row => Number(row.emittedAt || 0)).filter(value => value > 0).sort((a,b) => a-b);
+    const first = emitted[0] || null;
+    const last = emitted.at(-1) || null;
+
+    const enter = safeRows.filter(row => row.type === 'ENTER');
+    const possible = safeRows.filter(row => row.type === 'POSSIBLE');
+
+    return [
+      'AI Trading Scanner — RELATÓRIO DE DESEMPENHO DOS SINAIS',
+      `Gerado em: ${new Date().toISOString()}`,
+      `Perfil ativo: ${clean(state.analystPreferences?.sensitivityLabel || state.analystPreferences?.sensitivityProfile || 'MÉDIO', 24)}`,
+      `Payout usado: ${pct(payout)} | taxa de equilíbrio 1/(1+payout): ${pct(breakEven)}`,
+      `Período coberto: ${first ? new Date(first).toISOString() : '—'} até ${last ? new Date(last).toISOString() : '—'}`,
+      '',
+      'TOTAIS POR TIPO',
+      summaryLine('ENTER', enter, breakEven),
+      summaryLine('POSSIBLE', possible, breakEven),
+      '',
+      'POR PERFIL',
+      groupLines(safeRows, row => row.profile, breakEven),
+      '',
+      'POR FAIXA DE SCORE',
+      groupLines(safeRows, scoreBand, breakEven),
+      '',
+      'POR SEGUNDOS RESTANTES NA EMISSÃO',
+      groupLines(safeRows, secondsBand, breakEven),
+      '',
+      'POR DIREÇÃO',
+      groupLines(safeRows, row => row.direction, breakEven),
+      '',
+      'POR ATIVO',
+      groupLines(safeRows, row => row.asset, breakEven),
+      '',
+      'POR HORA DO DIA',
+      groupLines(safeRows, hourBand, breakEven),
+      '',
+      'Observação: EMPATE e INDETERMINADO ficam fora do denominador da taxa de acerto.'
+    ].join('\n');
+  }
+
+  async function copyPerformanceReport() {
+    const button = document.getElementById(PERFORMANCE_BUTTON_ID);
+    if (!button || button.dataset.busy === '1') return;
+    const original = button.textContent;
+    button.dataset.busy = '1';
+    button.disabled = true;
+    button.textContent = 'GERANDO…';
+    try {
+      const [stored, stateReply] = await Promise.all([
+        chrome.storage.local.get(PERFORMANCE_KEY).catch(() => ({})),
+        message({ type: 'ATS_READ_SCANNER_STATE' })
+      ]);
+      const rows = Array.isArray(stored?.[PERFORMANCE_KEY]?.rows) ? stored[PERFORMANCE_KEY].rows : [];
+      const report = performanceReport(rows, stateReply?.state || {});
+      const ok = await writeText(report);
+      button.textContent = ok ? 'COPIADO ✓' : 'FALHA AO COPIAR';
+    } catch {
+      button.textContent = 'FALHA AO COPIAR';
+    } finally {
+      setTimeout(() => {
+        button.textContent = original;
+        button.disabled = false;
+        delete button.dataset.busy;
+      }, 2200);
+    }
+  }
+
+  async function clearPerformanceReport() {
+    const button = document.getElementById(CLEAR_PERFORMANCE_BUTTON_ID);
+    if (!button || button.dataset.busy === '1') return;
+    const confirmed = window.confirm('Limpar todo o registro de desempenho dos sinais? Esta ação não pode ser desfeita.');
+    if (!confirmed) return;
+    const original = button.textContent;
+    button.dataset.busy = '1';
+    button.disabled = true;
+    try {
+      await chrome.storage.local.set({ [PERFORMANCE_KEY]: { rows: [], updatedAt: Date.now() } });
+      button.textContent = 'LIMPO ✓';
+    } catch {
+      button.textContent = 'FALHA';
+    } finally {
+      setTimeout(() => {
+        button.textContent = original;
+        button.disabled = false;
+        delete button.dataset.busy;
+      }, 1800);
+    }
   }
 
   async function copyDiagnostics() {
