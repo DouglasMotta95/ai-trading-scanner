@@ -30,7 +30,7 @@
     if (!focus || !clock || !state.asset) return false;
     return focus.reliable === true
       && focus.chartScoped === true
-      && focus.embeddedTrader === true
+      && (focus.embeddedTrader === true || focus.casaTradeFrame === true)
       && sameAsset(focus.asset, state.asset)
       && clock.verified === true
       && clean(clock.role) === 'candle-close'
