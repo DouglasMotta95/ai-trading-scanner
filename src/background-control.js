@@ -401,10 +401,61 @@ function inspectExpirationDiagnostic() {
   else if (!hasDuration(rawText + ' ' + containerText)) failureReason = 'Texto de Expiração localizado, mas nenhum valor de duração foi encontrado no contexto próximo.';
   else failureReason = 'O campo foi localizado pelo diagnóstico; compare este DOM com o seletor usado pelo leitor atual.';
 
+  const bodyInnerText = (() => {
+    try { return String(document.body?.innerText || ''); } catch { return ''; }
+  })();
+  const normalizedBodyText = fold0(bodyInnerText);
+  const wordPresence = {
+    expira: normalizedBodyText.includes('expira'),
+    valor: normalizedBodyText.includes('valor'),
+    comprar: normalizedBodyText.includes('comprar'),
+    vender: normalizedBodyText.includes('vender'),
+    lucro: normalizedBodyText.includes('lucro')
+  };
+
+  const iframeRows = [];
+  let iframeNodes = [];
+  try { iframeNodes = [...document.querySelectorAll('iframe')]; } catch {}
+  for (const frame of iframeNodes) {
+    let rect = { width: 0, height: 0 };
+    try { rect = frame.getBoundingClientRect(); } catch {}
+    let contentDocumentAccessible = false;
+    try { contentDocumentAccessible = !!frame.contentDocument; } catch { contentDocumentAccessible = false; }
+    iframeRows.push({
+      src: String(frame.getAttribute?.('src') || '').slice(0, 200),
+      sandbox: String(frame.getAttribute?.('sandbox') || ''),
+      id: String(frame.id || ''),
+      className: String(frame.className || ''),
+      width: Math.round(Number(rect.width || 0)),
+      height: Math.round(Number(rect.height || 0)),
+      contentDocumentAccessible
+    });
+  }
+
+  let openShadowRootCount = 0;
+  let allElements = [];
+  try { allElements = [...document.querySelectorAll('*')]; } catch {}
+  for (const el of allElements) {
+    try { if (el.shadowRoot) openShadowRootCount += 1; } catch {}
+  }
+
+  let canvasCount = 0;
+  try { canvasCount = document.querySelectorAll('canvas').length; } catch {}
+
   return {
     host: String(location.hostname || '').toLowerCase(),
     href: String(location.href || '').slice(0, 300),
     isTop: window === window.top,
+    visibilityState: String(document.visibilityState || ''),
+    title: String(document.title || '').slice(0, 300),
+    bodyInnerTextLength: bodyInnerText.length,
+    wordPresence,
+    documentContext: {
+      iframeCount: iframeRows.length,
+      iframes: iframeRows,
+      openShadowRootCount,
+      canvasCount
+    },
     selectedSelector,
     rawText: rawText || containerText || '',
     containerOuterHTML: outerHTML,
@@ -414,9 +465,79 @@ function inspectExpirationDiagnostic() {
   };
 }
 
+async function getTabDiagnostic(tabId) {
+  if (!tabId || !chrome.tabs?.get) return { tab: null, error: 'chrome.tabs.get unavailable or targetTabId missing' };
+  return new Promise(resolve => {
+    let settled = false;
+    const finish = (tab, error = '') => {
+      if (settled) return;
+      settled = true;
+      resolve({
+        tab: tab ? {
+          id: tab.id ?? null,
+          url: String(tab.url || ''),
+          active: tab.active === true,
+          discarded: tab.discarded === true,
+          status: String(tab.status || ''),
+          windowId: tab.windowId ?? null
+        } : null,
+        error: String(error || '')
+      });
+    };
+    try {
+      const returned = chrome.tabs.get(Number(tabId), tab => {
+        let runtimeError = null;
+        try { runtimeError = chrome.runtime?.lastError || null; } catch {}
+        finish(tab || null, runtimeError?.message || '');
+      });
+      if (returned && typeof returned.then === 'function') {
+        returned.then(tab => finish(tab || null, '')).catch(error => finish(null, String(error?.message || error)));
+      }
+    } catch (error) {
+      finish(null, String(error?.message || error));
+    }
+  });
+}
+
+async function listCasaTradeTabsDiagnostic() {
+  const rows = await tabsQuery({}).catch(() => []);
+  return (Array.isArray(rows) ? rows : []).filter(tab => {
+    try { return new URL(String(tab?.url || '')).hostname.toLowerCase().includes('casatrade'); }
+    catch { return false; }
+  }).map(tab => ({
+    id: tab.id ?? null,
+    url: String(tab.url || ''),
+    active: tab.active === true,
+    discarded: tab.discarded === true,
+    windowId: tab.windowId ?? null
+  }));
+}
+
 async function collectExpirationDiagnostic(tabId) {
-  if (!tabId) return { ok: false, error: 'target_tab_missing', frames: [] };
+  const [targetTabInfo, casaTradeTabs] = await Promise.all([
+    getTabDiagnostic(tabId),
+    listCasaTradeTabsDiagnostic()
+  ]);
+
+  if (!tabId) {
+    return {
+      ok: false,
+      error: 'target_tab_missing',
+      executeScriptErrors: ['target_tab_missing'],
+      targetTab: targetTabInfo.tab,
+      targetTabError: targetTabInfo.error,
+      casaTradeTabs,
+      frameCount: 0,
+      expectedFrameCountAtLeast: 0,
+      best: null,
+      frames: []
+    };
+  }
+
   let rows = [];
+  const executeScriptErrors = [];
+  let isolatedFailed = false;
+
   try {
     rows = await scriptingExecuteScript({
       target: { tabId: Number(tabId), allFrames: true },
@@ -424,15 +545,25 @@ async function collectExpirationDiagnostic(tabId) {
       world: 'ISOLATED'
     }) || [];
   } catch (firstError) {
+    isolatedFailed = true;
+    executeScriptErrors.push(String(firstError?.message || firstError));
     try {
       rows = await scriptingExecuteScript({
         target: { tabId: Number(tabId), allFrames: true },
         func: inspectExpirationDiagnostic
       }) || [];
     } catch (secondError) {
+      executeScriptErrors.push(String(secondError?.message || secondError));
       return {
         ok: false,
         error: String(secondError?.message || secondError || firstError),
+        executeScriptErrors,
+        targetTab: targetTabInfo.tab,
+        targetTabError: targetTabInfo.error,
+        casaTradeTabs,
+        frameCount: 0,
+        expectedFrameCountAtLeast: 0,
+        best: null,
         frames: []
       };
     }
@@ -442,6 +573,20 @@ async function collectExpirationDiagnostic(tabId) {
     frameId: Number.isFinite(Number(row?.frameId)) ? Number(row.frameId) : null,
     ...(row?.result || {})
   }));
+
+  const topFrame = frames.find(row => row.isTop === true) || frames.find(row => Number(row.frameId) === 0) || null;
+  const topIframeCount = Number(topFrame?.documentContext?.iframeCount || 0);
+  const expectedFrameCountAtLeast = topFrame ? 1 + topIframeCount : 1;
+
+  if (frames.length < expectedFrameCountAtLeast) {
+    executeScriptErrors.push(
+      `executeScript_returned_fewer_frames: returned=${frames.length} expected_at_least=${expectedFrameCountAtLeast} top_iframe_count=${topIframeCount}`
+    );
+  }
+
+  if (isolatedFailed && !executeScriptErrors.length) {
+    executeScriptErrors.push('executeScript isolated-world failed without an exposed error message');
+  }
 
   const useful = frames.filter(row => row.rawText || row.containerOuterHTML || row.selectedSelector);
   useful.sort((a, b) =>
@@ -453,6 +598,11 @@ async function collectExpirationDiagnostic(tabId) {
   return {
     ok: true,
     frameCount: frames.length,
+    expectedFrameCountAtLeast,
+    executeScriptErrors,
+    targetTab: targetTabInfo.tab,
+    targetTabError: targetTabInfo.error,
+    casaTradeTabs,
     best: useful[0] || null,
     frames
   };
