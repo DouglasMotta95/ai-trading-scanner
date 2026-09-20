@@ -201,17 +201,27 @@
     const payload = data.payload || {};
 
     const networkExpiration = normalizeExp(payload.controls?.expiration);
+    const networkTimeframe = normalizeTf(payload.controls?.timeframe);
     const networkExpirationConfidence = Number(payload.controls?.confidence || 0);
+    const networkTimeframeConfidence = Number(payload.controls?.timeframeConfidence || 0);
     const networkExpirationAt = Number(payload.controls?.observedAt || 0);
-    if (networkExpiration && networkExpirationConfidence >= 84 && now - networkExpirationAt < 7000) {
+    const controlsFresh = networkExpirationAt > 0 && now - networkExpirationAt < 7000;
+    if (controlsFresh && (
+      (networkExpiration && networkExpirationConfidence >= 84)
+      || (networkTimeframe && networkTimeframeConfidence >= 55)
+    )) {
       sendMessage({
         type: 'ATS_PLATFORM_CONTROLS_OBSERVED',
         snapshot: {
           amount: null,
-          expiration: networkExpiration,
-          timeframe: null,
-          confidence: { amount: 0, expiration: networkExpirationConfidence, timeframe: 0 },
-          source: 'casatrade-network-control',
+          expiration: networkExpiration || null,
+          timeframe: networkTimeframe || null,
+          confidence: {
+            amount: 0,
+            expiration: networkExpiration ? networkExpirationConfidence : 0,
+            timeframe: networkTimeframe ? networkTimeframeConfidence : 0
+          },
+          source: clean(payload.controls?.sourceKey || 'casatrade-network-control').slice(0, 64),
           observedAt: networkExpirationAt || now
         }
       }).catch(() => {});
