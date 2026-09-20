@@ -130,8 +130,11 @@
       const own = clean(el.getAttribute?.('aria-label') || el.getAttribute?.('aria-valuetext') || el.getAttribute?.('title') || el.innerText || el.textContent || '');
       if (!own || own.length > 100) continue;
       const parentText = clean(el.parentElement?.innerText || el.parentElement?.textContent || '');
-      const context = fold(`${own} ${parentText} ${el.id || ''} ${el.className || ''}`).slice(0, 360);
-      if (/hora de compra|buy time|entry time|duration|duracao|tempo da operacao|tempo de operação/.test(context)) continue;
+      const localContext = fold(`${own} ${el.getAttribute?.('aria-label') || ''} ${el.getAttribute?.('title') || ''} ${el.id || ''} ${el.className || ''}`).slice(0, 220);
+      const parentContext = fold(parentText).slice(0, 360);
+      const context = `${localContext} ${parentContext}`;
+      const colonOnly = /^\d{1,3}:[0-5]\d$/.test(own);
+      if (!colonOnly && /hora de compra|buy time|entry time|duration|duracao|tempo da operacao|tempo de operação/.test(localContext)) continue;
       const values = [];
       for (const match of own.matchAll(/\b(\d{1,3}):([0-5]\d)\b/g)) values.push({ seconds: Number(match[1]) * 60 + Number(match[2]), token: match[0] });
       for (const match of own.matchAll(/\b(\d{1,5})\s*(?:s|seg|segundo|segundos)\b/gi)) values.push({ seconds: Number(match[1]), token: match[0] });
@@ -139,8 +142,11 @@
       const rect = el.getBoundingClientRect();
       const chartScoped = inOrNearChart(rect, chart);
       const candleSemantic = /vela|candle|remaining|restante|countdown|timer|fechamento|close/.test(context);
-      const expirySemantic = /expira|expiry|expiration/.test(context);
-      const colonOnly = /^\d{1,3}:[0-5]\d$/.test(own);
+      // For a plain MM:SS token, expiration words in a broad ancestor are not
+      // evidence that the token belongs to the expiration control. The live
+      // chart timer in CasaTrade tablet mode is exactly such a plain token.
+      const expirySemantic = /expira|expiry|expiration/.test(localContext)
+        || (!colonOnly && /expira|expiry|expiration/.test(parentContext));
       // Expiration is a different control. Never let "5 seg" / "1 min"
       // from the expiration selector become the candle countdown.
       if (expirySemantic && !candleSemantic) continue;
