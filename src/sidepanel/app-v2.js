@@ -9,6 +9,8 @@ const DEFAULT_PREFS = Object.freeze({
   analystMode: 'NORMAL',
   geminiEnabled: true,
   sensitivityProfile: 'MEDIO',
+  operationMode: 'M1',
+  payoutByMode: { M1: 88, M5: 88 },
   holdSeconds: 2,
   expectedAsset: ''
 });
@@ -87,6 +89,13 @@ function normExp(value = '') {
   match = raw.match(/^(\d{1,3}):(\d{2})$/); if (match) return `${Number(match[1]) * 60 + Number(match[2])}s`;
   return null;
 }
+function operationRequirement(state = {}) {
+  const timeframe = String(state.analystPreferences?.operationMode || prefs.operationMode || 'M1').toUpperCase() === 'M5' ? 'M5' : 'M1';
+  const durationSeconds = Number(state.analystPreferences?.operationDurationSeconds || timeframeSeconds(timeframe) || (timeframe === 'M5' ? 300 : 60));
+  const expiration = normExp(state.analystPreferences?.operationExpiration || `${durationSeconds}s`) || (timeframe === 'M5' ? '300s' : '60s');
+  return { timeframe, expiration, durationSeconds };
+}
+
 function expLabel(value = '') {
   const exp = normExp(value);
   if (!exp) return '—';
@@ -160,9 +169,10 @@ function liveTimingReady(state = {}) {
   if (!exactClockReady(state)) return false;
   const clock = state.diagnostics?.marketClock || {};
   const expiration = expirationObservation(state);
+  const operation = operationRequirement(state);
   return expiration.fresh === true
-    && expiration.value === '60s'
-    && normTf(clock.timeframe) === 'M1';
+    && expiration.value === operation.expiration
+    && normTf(clock.timeframe) === operation.timeframe;
 }
 
 function entryTimeReady(state = {}) {
@@ -171,11 +181,12 @@ function entryTimeReady(state = {}) {
   const expiration = expirationObservation(state);
   const actualExpiration = expiration.value;
   if (!actualExpiration || !expiration.fresh) return false;
+  const operation = operationRequirement(state);
   const clockTf = normTf(clock.timeframe);
   const stateTf = normTf(state.analysisTimeframe || state.timeframe);
   const controlTf = normTf(state.platformControls?.observed?.timeframe);
-  if (!clockTf || clockTf !== 'M1') return false;
-  if (actualExpiration !== '60s') return false;
+  if (!clockTf || clockTf !== operation.timeframe) return false;
+  if (actualExpiration !== operation.expiration) return false;
   if (stateTf && stateTf !== clockTf) return false;
   if (controlTf && controlTf !== clockTf) return false;
   return state.professionalDecision?.timeReady === true && state.professionalDecision?.expirationReady === true;
@@ -231,25 +242,28 @@ function currentOhlc(state = {}) {
 }
 
 function entryBlockReason(state = {}) {
+  const operation = operationRequirement(state);
+  const expirationLabel = operation.expiration === '300s' ? '5 MINUTOS' : '1 MINUTO';
   const expiration = expirationObservation(state);
   if (!expiration.value) return 'EXPIRAÇÃO PENDENTE — INFORME A EXPIRAÇÃO NO CAMPO DO TOPO DO PAINEL';
-  if (expiration.value !== '60s') return 'AJUSTE A EXPIRAÇÃO DA CASATRADE PARA 1 MINUTO';
+  if (expiration.value !== operation.expiration) return `AJUSTE A EXPIRAÇÃO DA CASATRADE PARA ${expirationLabel}`;
 
   const clock = state.diagnostics?.marketClock || {};
   if (!exactClockReady(state)) return 'COUNTDOWN REAL PENDENTE — AGUARDANDO TEMPO EXATO DA CASATRADE';
 
   const clockTf = normTf(clock.timeframe);
-  if (clockTf !== 'M1') return 'AJUSTE O TIMEFRAME DA CASATRADE PARA M1';
+  if (clockTf !== operation.timeframe) return `AJUSTE O TIMEFRAME DA CASATRADE PARA ${operation.timeframe}`;
   return 'ENTRADA AINDA NÃO LIBERADA';
 }
 
 function gateKind(state = {}) {
+  const operation = operationRequirement(state);
   const expiration = expirationObservation(state);
   if (!expiration.value) return 'waiting';
-  if (expiration.value !== '60s') return 'rule';
+  if (expiration.value !== operation.expiration) return 'rule';
   if (!exactClockReady(state)) return 'waiting';
   const clockTf = normTf(state.diagnostics?.marketClock?.timeframe);
-  if (clockTf !== 'M1') return 'rule';
+  if (clockTf !== operation.timeframe) return 'rule';
   return 'waiting';
 }
 
@@ -409,6 +423,7 @@ function render(state = {}) {
   const actualTf = normTf(clock.timeframe || state.platformControls?.observed?.timeframe || state.analysisTimeframe || state.timeframe);
   const expirationObs = expirationObservation(state);
   const actualExp = expirationObs.value;
+  const operation = operationRequirement(state);
   const pending = transitionAsset(state);
   const session = sessionInfo(state);
   const freshMarket = marketDataReady(state) && focusReady(state) && sameMarket(state.diagnostics?.focusedAsset?.asset, state.asset);
@@ -430,8 +445,8 @@ function render(state = {}) {
       setText('expiration', informedLabel);
       setSourceState('expirationSource', 'INFORMADA', 'estimated', 'Informada por você, não verificada pela CasaTrade');
     } else {
-      setText('heroExpiration', actualExp === '60s' ? '1 min ✓' : expLabel(actualExp));
-      setText('expiration', actualExp === '60s' ? '1 min ✓' : expLabel(actualExp));
+      setText('heroExpiration', actualExp === operation.expiration ? `${expLabel(actualExp)} ✓` : expLabel(actualExp));
+      setText('expiration', actualExp === operation.expiration ? `${expLabel(actualExp)} ✓` : expLabel(actualExp));
       setSourceState('expirationSource', 'REAL', 'real', 'Expiração relida diretamente do controle da CasaTrade.');
     }
   } else {
@@ -573,6 +588,16 @@ function play(kind) {
   try { navigator?.vibrate?.([110,55,150,55,210]); } catch {}
 }
 function syncSettingsUi() {
+  const operationMode = prefs.operationMode === 'M5' ? 'M5' : 'M1';
+  const operationExpirationLabel = operationMode === 'M5' ? '5 min' : '1 min';
+  const payoutMap = prefs.payoutByMode && typeof prefs.payoutByMode === 'object' ? prefs.payoutByMode : { M1: 88, M5: 88 };
+  if ($('operationMode')) $('operationMode').value = operationMode;
+  if ($('signalPayout')) $('signalPayout').value = String(Number(payoutMap[operationMode] ?? 88));
+  setText('scannerModeTitle', `${operationMode} AO VIVO`);
+  setText('scannerModeHeading', `Scanner ${operationMode}`);
+  setText('operationTimeframeDisplay', operationMode);
+  setText('operationExpirationDisplay', operationExpirationLabel);
+  setText('operationModeNote', `Modo ${operationMode}: timeframe ${operationMode} + expiração de ${operationMode === 'M5' ? '5 minutos' : '1 minuto'}. A execução continua manual na CasaTrade.`);
   if ($('overlayToggle')) $('overlayToggle').checked = !!prefs.overlayEnabled;
   if ($('geminiToggle')) $('geminiToggle').checked = prefs.geminiEnabled !== false;
   if ($('signalSensitivityProfile')) $('signalSensitivityProfile').value = ['RIGIDO','MEDIO','SOLTO'].includes(prefs.sensitivityProfile) ? prefs.sensitivityProfile : 'MEDIO';
@@ -592,6 +617,7 @@ async function pushAnalystPreferences() {
     type: 'ATS_SET_ANALYST_PREFERENCES',
     mode: 'NORMAL',
     geminiEnabled: prefs.geminiEnabled,
+    operationMode: prefs.operationMode === 'M5' ? 'M5' : 'M1',
     sensitivityProfile: ['RIGIDO','MEDIO','SOLTO'].includes(prefs.sensitivityProfile) ? prefs.sensitivityProfile : 'MEDIO',
     preferredExpiration: null
   }).catch(() => null);
@@ -624,6 +650,11 @@ async function loadPrefs() {
     alertLevel: ['off','discrete','strong'].includes(migratedAlert) ? migratedAlert : DEFAULT_PREFS.alertLevel,
     analystMode: 'NORMAL',
     geminiEnabled: raw.geminiEnabled !== false,
+    operationMode: String(raw.operationMode || '').toUpperCase() === 'M5' ? 'M5' : 'M1',
+    payoutByMode: {
+      M1: Math.max(1, Math.min(200, Number(raw.payoutByMode?.M1 ?? 88) || 88)),
+      M5: Math.max(1, Math.min(200, Number(raw.payoutByMode?.M5 ?? 88) || 88))
+    },
     sensitivityProfile: ['RIGIDO','MEDIO','SOLTO'].includes(String(raw.sensitivityProfile || '').toUpperCase()) ? String(raw.sensitivityProfile).toUpperCase() : 'MEDIO',
     holdSeconds: String(raw.sensitivityProfile || '').toUpperCase() === 'RIGIDO' ? 3 : 2,
     expectedAsset: clean(raw.expectedAsset || '')
@@ -634,9 +665,26 @@ async function loadPrefs() {
 
 $('overlayToggle')?.addEventListener('change', event => setPref('overlayEnabled', !!event.currentTarget.checked));
 $('geminiToggle')?.addEventListener('change', event => setPref('geminiEnabled', !!event.currentTarget.checked));
+$('operationMode')?.addEventListener('change', event => {
+  const value = String(event.currentTarget.value || '').toUpperCase() === 'M5' ? 'M5' : 'M1';
+  setPref('operationMode', value);
+});
 $('signalSensitivityProfile')?.addEventListener('change', event => {
   const value = String(event.currentTarget.value || '').toUpperCase();
   setPref('sensitivityProfile', ['RIGIDO','MEDIO','SOLTO'].includes(value) ? value : 'MEDIO');
+});
+$('signalPayout')?.addEventListener('change', async event => {
+  const mode = prefs.operationMode === 'M5' ? 'M5' : 'M1';
+  const value = Math.max(1, Math.min(200, Number(event.currentTarget.value) || 88));
+  prefs = {
+    ...prefs,
+    payoutByMode: {
+      ...(prefs.payoutByMode || { M1: 88, M5: 88 }),
+      [mode]: value
+    }
+  };
+  syncSettingsUi();
+  await savePrefs();
 });
 $('notificationToggle')?.addEventListener('change', event => setPref('notificationsEnabled', !!event.currentTarget.checked));
 $('analystMode')?.addEventListener('change', event => setPref('analystMode', event.currentTarget.value === 'A_PLUS' ? 'A_PLUS' : 'NORMAL'));
