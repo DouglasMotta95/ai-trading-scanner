@@ -310,6 +310,15 @@ async function readSessionHistory() {
   };
 }
 
+function clockBoundToFocus(clock = {}, focus = {}) {
+  const sameFrame = Number(clock.frameId) === Number(focus.frameId)
+    && clean(clock.frameHost).toLowerCase() === clean(focus.frameHost).toLowerCase();
+  const boundControlFrame = clock.crossFrameControl === true
+    && Number(clock.boundFocusFrameId) === Number(focus.frameId)
+    && clean(clock.boundFocusFrameHost).toLowerCase() === clean(focus.frameHost).toLowerCase();
+  return sameFrame || boundControlFrame;
+}
+
 function exactTradeReady(state = {}) {
   const clock = state.diagnostics?.marketClock || {};
   const focus = state.diagnostics?.focusedAsset || {};
@@ -321,8 +330,7 @@ function exactTradeReady(state = {}) {
   if (clock.verified !== true || clock.available === false || clock.role !== 'candle-close' || !EXACT_CLOCK_SOURCES.has(clean(clock.source))) return false;
   if (Date.now() - Number(clock.at || 0) >= 3000) return false;
   if (!sameAsset(clock.asset, state.asset) || !sameAsset(focus.asset, state.asset)) return false;
-  if (Number(clock.frameId) !== Number(focus.frameId)) return false;
-  if (clean(clock.frameHost).toLowerCase() !== clean(focus.frameHost).toLowerCase()) return false;
+  if (!clockBoundToFocus(clock, focus)) return false;
   if (!actualExpiration || !controlsFresh) return false;
   return true;
 }
