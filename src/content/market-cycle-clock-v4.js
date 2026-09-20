@@ -31,7 +31,9 @@
     return time > 946684800000 ? time : null;
   };
 
+  const clockMath = globalThis.__ATS_MARKET_CLOCK_MATH__ || null;
   function tf(value) {
+    if (clockMath?.normalizeTimeframe) return clockMath.normalizeTimeframe(value);
     const s = fold(value).replace(/\s+/g, '');
     let m = s.match(/^s(\d{1,5})$/) || s.match(/^(\d{1,5})(?:s|seg|segundo|segundos)$/);
     if (m && Number(m[1]) > 0) return `S${Number(m[1])}`;
@@ -42,6 +44,8 @@
     return null;
   }
   function secondsFor(value) {
+    const durationMs = clockMath?.durationMsForTimeframe?.(value);
+    if (Number.isFinite(Number(durationMs)) && Number(durationMs) > 0) return Number(durationMs) / 1000;
     const x = tf(value);
     if (!x) return null;
     if (x[0] === 'S') return Number(x.slice(1));
@@ -264,7 +268,12 @@
     const exactTf = tf(freshExactClock(state, state.diagnostics?.focusedAsset || null, null)?.timeframe);
     const platformDiag = state.diagnostics?.platformTime || {};
     const platformTf = Number(platformDiag.at || 0) > 0 && Date.now() - Number(platformDiag.at) < 7000 ? tf(platformDiag.timeframe) : null;
-    return controlTf || chartTf || exactTf || platformTf || null;
+    return clockMath?.selectCycleTimeframe?.({
+      chartTimeframe: chartTf,
+      controlTimeframe: controlTf,
+      exactTimeframe: exactTf,
+      platformTimeframe: platformTf
+    }) || chartTf || controlTf || exactTf || platformTf || null;
   }
 
   function structuredFeedTf(state = {}, focus = null) {
@@ -283,7 +292,7 @@
     if (session.dataReady !== true) return null;
     if (!sameMarket(session.confirmedAsset || session.asset, focus.asset)) return null;
     if (!sameMarket(state.asset, focus.asset)) return null;
-    const durationMs = duration * 1000;
+    const durationMs = clockMath?.durationMsForTimeframe?.(cycleTf) || duration * 1000;
     const source = state.marketHistory || {};
     const key = Object.keys(source).find(value => sameMarket(value, focus?.asset));
     const rows = key && Array.isArray(source[key]) ? source[key] : Array.isArray(state.candles) && sameMarket(state.asset, focus?.asset) ? state.candles : [];
