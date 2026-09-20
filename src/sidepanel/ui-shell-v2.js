@@ -104,6 +104,12 @@ function renderShell(state = {}) {
   const panelAge = Math.max(0, Date.now() - PANEL_OPENED_AT);
   const expirationWaitAge = sessionAge > 0 ? Math.min(sessionAge, panelAge) : panelAge;
   const expirationPending = dataConnected && !expiration && expirationWaitAge >= 1500;
+  const marketPending = !dataConnected
+    && !switching
+    && activeLicense(state)
+    && !!state.targetTabId
+    && state.scanner === 'scanning'
+    && expirationWaitAge >= 4000;
 
   const strip = $('syncStrip');
   if (strip) strip.className = `sync-strip ${platformLinked ? 'live' : 'syncing'}`;
@@ -113,9 +119,11 @@ function renderShell(state = {}) {
       ? `ATUALIZANDO PARA ${pendingAsset}`
       : failure
         ? 'FALHA AO CONECTAR'
-        : expirationPending
-          ? 'CONECTADO — EXPIRAÇÃO PENDENTE'
-          : connected && expirationWrong
+        : marketPending
+          ? 'CASATRADE VINCULADA — LEITURA PENDENTE'
+          : expirationPending
+            ? 'CONECTADO — EXPIRAÇÃO PENDENTE'
+            : connected && expirationWrong
             ? 'CONECTADO — AJUSTE A EXPIRAÇÃO'
             : tradeReady
               ? 'CONECTADO — PRONTO PARA ANALISAR'
@@ -133,9 +141,11 @@ function renderShell(state = {}) {
     $('syncText').textContent = switching
       ? 'Dados do ativo anterior foram limpos. Confirmando preço e velas reais do novo instrumento.'
       : failure
-        || (expirationPending
-          ? 'EXPIRAÇÃO PENDENTE — não foi possível confirmar o valor real; toque em TENTAR NOVAMENTE.'
-          : connected && expirationWrong
+        || (marketPending
+          ? 'Os leitores ainda não confirmaram ativo, preço e velas. Toque em TENTAR NOVAMENTE para reinjetar sem recarregar a CasaTrade.'
+          : expirationPending
+            ? 'EXPIRAÇÃO PENDENTE — não foi possível confirmar o valor real; toque em TENTAR NOVAMENTE.'
+            : connected && expirationWrong
             ? 'Ajuste a expiração da CasaTrade para 1 minuto.'
             : tradeReady
               ? `${state.asset} • M1 • countdown e expiração confirmados pela CasaTrade.`
@@ -158,7 +168,7 @@ function renderShell(state = {}) {
   }
 
   const retry = $('retryLiveRead');
-  if (retry) retry.hidden = !(expirationPending || failure);
+  if (retry) retry.hidden = !(marketPending || expirationPending || failure);
 }
 async function connectNow() {
   const button = $('connectScanner');
@@ -174,7 +184,7 @@ async function connectNow() {
       const error = String(response?.error || 'background_no_response');
       const messages = {
         platform_not_registered: 'Abra a CasaTrade na aba ativa e tente novamente.',
-        runtime_injection_failed: 'CasaTrade reconhecida, mas os leitores ao vivo não entraram na página. Recarregue a aba e tente novamente.',
+        runtime_injection_failed: 'CasaTrade reconhecida, mas os leitores ao vivo não responderam. Toque em TENTAR NOVAMENTE; se persistir, recarregue a aba.',
         license_required: 'A licença precisa estar ativa antes de conectar.',
         background_no_response: 'O serviço da extensão não respondeu. Recarregue a extensão e a aba da CasaTrade.'
       };
