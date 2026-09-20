@@ -7,7 +7,7 @@ const DEFAULT_PREFS = Object.freeze({
   alertLevel: 'discrete',
   notificationsEnabled: true,
   analystMode: 'A_PLUS',
-  operatingTimeframe: 'M5',
+  operatingTimeframe: 'M1',
   geminiEnabled: true,
   holdSeconds: 3,
   expectedAsset: ''
