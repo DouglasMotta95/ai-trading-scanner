@@ -1,4 +1,5 @@
 import { assessEntryConfidence } from '../core/entry-confidence.js';
+import { getOperationMode } from '../core/analysis.js';
 
 const $ = id => document.getElementById(id);
 const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
@@ -47,17 +48,18 @@ function clockBoundToFocus(clock = {}, focus = {}) {
 }
 
 function timingReady(state = {}) {
+  const operationMode = getOperationMode(state.analystPreferences?.operationMode || 'M1');
   const focus = state.diagnostics?.focusedAsset || {};
   const clock = state.diagnostics?.marketClock || {};
   const expAt = Number(state.platformControls?.expirationCheckedAt || state.platformControls?.observed?.observedAt?.expiration || 0);
   const expiration = expAt > 0 && Date.now() - expAt < 7000
     ? clean(state.platformControls?.observed?.expiration)
     : '';
-  return expiration === '60s'
+  return expiration === operationMode.expiration
     && clock.verified === true
     && clock.available !== false
     && ['trader-dom-countdown','network-server-cycle'].includes(clean(clock.source))
-    && normTf(clock.timeframe) === 'M1'
+    && normTf(clock.timeframe) === operationMode.timeframe
     && sameMarket(clock.asset, state.asset)
     && clockBoundToFocus(clock, focus)
     && Number(clock.at || 0) > 0
@@ -90,7 +92,10 @@ function guidance(state = {}) {
     return {
       tone: 'waiting',
       value: 'AGUARDANDO TEMPO CASATRADE',
-      hint: 'O score só aparece depois de M1, countdown real e expiração de 1 minuto estarem confirmados.'
+      hint: (() => {
+        const operationMode = getOperationMode(state.analystPreferences?.operationMode || 'M1');
+        return `O score só aparece depois de ${operationMode.timeframe}, countdown real e expiração de ${operationMode.expiration === '300s' ? '5 minutos' : '1 minuto'} estarem confirmados.`;
+      })()
     };
   }
   const technical = state.signal || {};
