@@ -4,6 +4,31 @@ const $ = id => document.getElementById(id);
 const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
 const clean = value => String(value ?? '').replace(/\s+/g, ' ').trim();
 
+function marketId(value = '') {
+  const raw = clean(value).toUpperCase();
+  if (!raw) return '';
+  const otc = /(?:\(|\b|[_-])OTC(?:\)|\b)?/.test(raw);
+  const match = raw.match(/\b([A-Z0-9]{2,20})\s*[\/_-]\s*([A-Z0-9]{2,12})/);
+  return match ? `${match[1]}/${match[2]}${otc ? ' (OTC)' : ''}` : '';
+}
+const sameMarket = (a, b) => !!marketId(a) && marketId(a) === marketId(b);
+
+function marketReady(state = {}) {
+  const session = state.diagnostics?.marketSession || {};
+  const focus = state.diagnostics?.focusedAsset || {};
+  const rows = (Array.isArray(state.candles) ? state.candles : [])
+    .filter(row => [row?.open,row?.high,row?.low,row?.close].every(value => num(value) != null));
+  return state.connection === 'online'
+    && session.dataReady === true
+    && !!state.asset
+    && sameMarket(session.confirmedAsset, state.asset)
+    && sameMarket(focus.asset, state.asset)
+    && focus.reliable === true
+    && focus.chartScoped === true
+    && num(state.price) != null
+    && rows.length >= 2;
+}
+
 function technicalDirection(state = {}) {
   const signal = state.signal || {};
   const ui = clean(signal.uiState).toUpperCase();
@@ -14,6 +39,13 @@ function technicalDirection(state = {}) {
 }
 
 function guidance(state = {}) {
+  if (!marketReady(state)) {
+    return {
+      tone: 'waiting',
+      value: 'AGUARDANDO DADOS',
+      hint: 'Confirmando ativo, preço e velas reais da CasaTrade antes de calcular o score.'
+    };
+  }
   const technical = state.signal || {};
   const decision = state.professionalDecision || {};
   const professionalUi = clean(decision.uiState).toUpperCase();
@@ -78,10 +110,11 @@ function guidance(state = {}) {
 }
 
 function render(state = {}) {
-  const technicalConfidence = assessEntryConfidence(state);
-  const decision = state.professionalDecision || {};
-  const technical = state.signal || {};
-  const scoreRaw = decision.score ?? technical.analysisScore ?? technical.score ?? technicalConfidence.score;
+  const ready = marketReady(state);
+  const technicalConfidence = ready ? assessEntryConfidence(state) : { score: 0 };
+  const decision = ready ? (state.professionalDecision || {}) : {};
+  const technical = ready ? (state.signal || {}) : {};
+  const scoreRaw = ready ? (decision.score ?? technical.analysisScore ?? technical.score ?? technicalConfidence.score) : 0;
   const score = Math.max(0, Math.min(100, Math.round(Number(scoreRaw) || 0)));
   const guide = guidance(state);
   const card = $('triggerCard');
