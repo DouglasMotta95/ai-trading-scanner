@@ -21,6 +21,20 @@ export function sameMarket(a, b) {
   return !!left && left === canonicalMarket(b);
 }
 
+export function confirmedMarket(state = {}) {
+  return canonicalMarket(
+    state?.diagnostics?.marketSession?.confirmedAsset
+    || state?.asset
+    || ''
+  );
+}
+
+export function shouldResetForFocusedAsset(state = {}, incomingAsset = '') {
+  const confirmed = confirmedMarket(state);
+  const incoming = canonicalMarket(incomingAsset);
+  return !!confirmed && !!incoming && confirmed !== incoming;
+}
+
 const finite = value => Number.isFinite(Number(value)) ? Number(value) : null;
 
 export function marketScaleCompatible(price, candles = [], maxRatio = 20) {
