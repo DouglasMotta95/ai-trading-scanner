@@ -89,6 +89,59 @@
     return fold(parts.join(' '));
   };
 
+  // CasaTrade tablet layouts expose several minute-like controls at the same
+  // time (candle period, chart range and expiration). A direct choice inside
+  // the candle-period menu is stronger than any loose M1/M5 token.
+  let explicitCandleTimeframe = null;
+  function rememberExplicitCandleTimeframe(value, source = 'candle-period-menu') {
+    const timeframe = normTf(value);
+    if (!timeframe) return null;
+    explicitCandleTimeframe = { value: timeframe, at: Date.now(), source };
+    globalThis.__ATS_EXPLICIT_CANDLE_TIMEFRAME__ = { ...explicitCandleTimeframe };
+    return explicitCandleTimeframe;
+  }
+  function explicitTimeframeSelection() {
+    const shared = globalThis.__ATS_EXPLICIT_CANDLE_TIMEFRAME__;
+    const value = normTf(shared?.value || explicitCandleTimeframe?.value || '');
+    if (!value) return null;
+    if (!explicitCandleTimeframe || explicitCandleTimeframe.value !== value) {
+      explicitCandleTimeframe = {
+        value,
+        at: Number(shared?.at || Date.now()),
+        source: clean(shared?.source || 'shared-candle-period-selection')
+      };
+    }
+    return explicitCandleTimeframe;
+  }
+  function candlePeriodContext(el) {
+    const parts = [];
+    let node = el;
+    for (let i = 0; node && i < 6; i += 1, node = node.parentElement) {
+      parts.push(clean([
+        textOf(node),
+        node.getAttribute?.('aria-label'),
+        node.getAttribute?.('title'),
+        node.getAttribute?.('data-testid'),
+        node.getAttribute?.('data-name')
+      ].filter(Boolean).join(' ')).slice(0, 700));
+    }
+    return fold(parts.join(' '));
+  }
+  function captureTimeframeInteraction(event) {
+    const path = typeof event?.composedPath === 'function' ? event.composedPath() : [event?.target];
+    for (const node of path) {
+      if (!(node instanceof Element)) continue;
+      const value = normTf(textOf(node));
+      if (!value) continue;
+      const context = candlePeriodContext(node);
+      if (!/periodo da vela|período da vela|candle period|candle interval|timeframe/.test(context)) continue;
+      rememberExplicitCandleTimeframe(value, 'candle-period-menu-click');
+      publishVisibleControls(true).catch(() => {});
+      try { globalThis.__ATS_FORCE_MARKET_CLOCK_SCAN__?.(); } catch {}
+      break;
+    }
+  }
+
   function amountCandidate() {
     const rows = [];
     for (const el of deepElements()) {
@@ -113,6 +166,10 @@
   }
 
   function timeframeCandidate() {
+    const explicit = explicitTimeframeSelection();
+    if (explicit?.value) {
+      return { el: null, value: explicit.value, score: 300, source: explicit.source || 'candle-period-menu-click' };
+    }
     const rows = [];
     for (const el of deepElements()) {
       if (!visible(el) || financialAction(el)) continue;
@@ -135,7 +192,8 @@
       rows.push({ el, value, score });
     }
     rows.sort((a, b) => b.score - a.score);
-    return rows[0] || null;
+    // A loose token such as "1m" or "5m" is not candle-period authority.
+    return rows[0]?.score >= 70 ? rows[0] : null;
   }
 
   function expirationCandidate() {
@@ -303,6 +361,9 @@
     };
     return { ok: !!(matched.amount && matched.timeframe && matched.expiration), desired, before, after, attempted, applied, matched };
   }
+
+  document.addEventListener('click', captureTimeframeInteraction, true);
+  document.addEventListener('change', captureTimeframeInteraction, true);
 
   const controlsObserver = new MutationObserver(() => {
     publishVisibleControls(false).catch(() => {});
