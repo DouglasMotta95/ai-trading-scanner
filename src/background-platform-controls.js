@@ -147,7 +147,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       // controls observer bypass the asset/session epoch guard and is a source
       // of cross-asset contamination. The market-session owner will perform the
       // authoritative reset when the focused chart confirms the new timeframe.
-      delete diagnostics.marketClock;
       diagnostics.timeframeTransition = {
         from: oldTf,
         to: reliableTf,
@@ -155,7 +154,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         source: observed.source
       };
     }
-    const effectiveTf = reliableTf || oldTf || null;
+    const clockTf = normTf(state.diagnostics?.marketClock?.timeframe);
+    const sessionTf = normTf(state.diagnostics?.marketSession?.timeframe);
+    const effectiveTf = clockTf || sessionTf || reliableTf || oldTf || null;
     const m1Ready = effectiveTf === 'M1';
     const expirationValid = reliableExpiration === '60s';
     diagnostics.expirationGuard = {
