@@ -35,6 +35,17 @@
       <div><b id="syncTitle">DESCONECTADO</b><span id="syncText">Abra a CasaTrade e toque em CONECTAR.</span></div>
       <span class="loading-dots" aria-hidden="true"><i></i><i></i><i></i></span>
       <button id="retryLiveRead" class="sync-retry" type="button" hidden>TENTAR NOVAMENTE</button>
+      <div id="userExpirationChoice" hidden>
+        <label for="userDeclaredExpiration">Expiração que estou usando na CasaTrade:</label>
+        <select id="userDeclaredExpiration" aria-label="Expiração que estou usando na CasaTrade">
+          <option value="" selected disabled>Selecione</option>
+          <option value="5s">5 seg</option>
+          <option value="15s">15 seg</option>
+          <option value="30s">30 seg</option>
+          <option value="60s">1 min</option>
+        </select>
+        <small id="userDeclaredExpirationStatus"></small>
+      </div>
       <button id="copyExpirationDiagnostic" class="sync-retry" type="button" hidden>Copiar diagnóstico de expiração</button>
     </section>
 
