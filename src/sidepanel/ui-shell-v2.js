@@ -39,6 +39,15 @@ function baseHandshake(state = {}) {
     && Date.now() - Number(state.lastSeen) < 7000;
 }
 
+function clockBoundToFocus(clock = {}, focus = {}) {
+  const sameFrame = Number(clock?.frameId) === Number(focus?.frameId)
+    && clean(clock?.frameHost).toLowerCase() === clean(focus?.frameHost).toLowerCase();
+  const boundControlFrame = clock?.crossFrameControl === true
+    && Number(clock?.boundFocusFrameId) === Number(focus?.frameId)
+    && clean(clock?.boundFocusFrameHost).toLowerCase() === clean(focus?.frameHost).toLowerCase();
+  return sameFrame || boundControlFrame;
+}
+
 function exactClockReady(state = {}) {
   if (!baseHandshake(state)) return false;
   const focus = state.diagnostics?.focusedAsset || null;
@@ -48,8 +57,7 @@ function exactClockReady(state = {}) {
     && clock?.role === 'candle-close'
     && EXACT_CLOCK_SOURCES.has(clean(clock?.source))
     && sameMarket(clock?.asset, state.asset)
-    && Number(clock?.frameId) === Number(focus?.frameId)
-    && clean(clock?.frameHost).toLowerCase() === clean(focus?.frameHost).toLowerCase()
+    && clockBoundToFocus(clock, focus)
     && Number(clock?.at || 0) > 0
     && Date.now() - Number(clock.at) < CLOCK_FRESH_MS
     && Number.isFinite(Number(clock?.secondsRemaining));
