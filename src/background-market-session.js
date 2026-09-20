@@ -1,6 +1,6 @@
 import { updateScannerState } from './services/scanner-state-atomic.js';
 import { shouldResetForFocusedAsset, validateMarketBundle } from './core/market-session-guard.js';
-import { MARKET_SWITCH_TIMING, isWithinSwitchGuard, protocolTakeoverAllowed, resyncSchedule } from './core/market-switch-timing.js';
+import { MARKET_SWITCH_TIMING, isWithinSwitchGuard, protocolTakeoverAllowed, realSelectionAgeMs, resyncSchedule, shouldRefreshVisualSelectionLock } from './core/market-switch-timing.js';
 
 const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
 const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
@@ -390,10 +390,12 @@ export async function applyFocus(message = {}, sender = {}) {
     const contradictsSelectionLock = selectionLockActive
       && !sameMarket(asset, selectionLock.asset);
     const protocolContradictsSelectionLock = incomingProtocolOnly && contradictsSelectionLock;
-    const oldFocusAgeMs = Number(old?.at || 0) > 0 ? now - Number(old.at) : Infinity;
-    const recentSelectionAgeMs = Number(old?.interactionAt || old?.at || 0) > 0
-      ? now - Number(old.interactionAt || old.at)
-      : Infinity;
+    const recentSelectionAgeMs = realSelectionAgeMs({ now, focus: old, selectionLock });
+    // Passive visual/chart-header heartbeats are not a user lock. If they keep
+    // repainting stale text after a real CasaTrade switch, a stable explicit
+    // protocol selection must be able to take over instead of waiting forever
+    // for old.at to become stale (it is refreshed every ~600ms).
+    const oldFocusAgeMs = recentSelectionAgeMs;
     const protocolCanTakeOver = incomingProtocolOnly && protocolTakeoverAllowed({
       oldFocusAgeMs,
       recentSelectionAgeMs,
@@ -547,8 +549,11 @@ export async function applyFocus(message = {}, sender = {}) {
       platformId: 'casatrade', platformName: 'CasaTrade', scanner: 'scanning',
       diagnostics: {
         ...(next.diagnostics || {}),
-        visualSelectionLock: authoritativeVisual
-          ? { asset, at: userSelected ? (interactionAt || now) : now, source: chartHeaderAuthoritative ? 'visible-chart-header' : 'user-selection' }
+        visualSelectionLock: shouldRefreshVisualSelectionLock({
+          userSelected,
+          source: clean(message.source)
+        })
+          ? { asset, at: interactionAt || now, source: 'user-selection' }
           : protocolCanTakeOver
             ? { asset, at: now, source: 'protocol-selected-fallback' }
             : (next.diagnostics?.visualSelectionLock || null),
