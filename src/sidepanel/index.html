@@ -146,6 +146,7 @@
           <label class="toggle-row" for="notificationToggle"><span><b>Notificações</b><small>Pré-sinal e decisão final.</small></span><input id="notificationToggle" type="checkbox" role="switch" aria-label="Notificações do sistema"></label>
           <label class="setting-row" for="alertLevel"><span><b>Som</b><small>Alerta somente nos momentos importantes.</small></span><select id="alertLevel" aria-label="Nível de som"><option value="off">Off</option><option value="discrete">Discreto</option><option value="strong">Forte</option></select></label>
           <label class="toggle-row" for="geminiToggle"><span><b>Gemini</b><small>Segunda leitura após confirmação técnica.</small></span><input id="geminiToggle" type="checkbox" role="switch" aria-label="Gemini"></label>
+          <label class="setting-row" for="signalSensitivityProfile"><span><b>Sensibilidade dos sinais</b><small>RÍGIDO mantém o comportamento anterior; MÉDIO é o padrão.</small></span><select id="signalSensitivityProfile" aria-label="Sensibilidade dos sinais"><option value="RIGIDO">RÍGIDO</option><option value="MEDIO" selected>MÉDIO</option><option value="SOLTO">SOLTO</option></select></label>
           <label class="setting-row expected-asset-setting" for="expectedAsset"><span><b>Ativo esperado</b><small>Opcional. Avisa quando você muda para outro instrumento.</small></span><input id="expectedAsset" type="text" placeholder="Ex.: AUD/CAD (OTC)" autocomplete="off"></label>
           <div class="asset-switch-history"><b>Trocas de ativo detectadas</b><div id="assetSwitchLog" class="asset-switch-log"><span>Nenhuma troca registrada.</span></div></div>
           <p class="fixed-strategy-note">A estratégia principal é fixa em M1 + expiração real de 1 minuto. A execução continua manual na CasaTrade.</p>
@@ -156,6 +157,8 @@
           <p id="licenseText" class="muted">Aguardando status do acesso.</p>
           <div id="activationBox" class="activation-box" hidden><input id="licenseKey" autocomplete="off" placeholder="Cole sua chave ATS"><button id="activateLicense" class="primary">ATIVAR</button></div>
           <button id="copyScannerDiagnostics" class="secondary" type="button">COPIAR DIAGNÓSTICO</button>
+          <button id="copySignalPerformance" class="secondary" type="button">COPIAR RELATÓRIO DE DESEMPENHO</button>
+          <button id="clearSignalPerformance" class="secondary" type="button">LIMPAR REGISTRO</button>
         </section>
       </div>
     </details>
