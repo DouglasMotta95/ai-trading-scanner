@@ -1,6 +1,4 @@
 import {
-  applyFocus as reportMarketFocus,
-  applyClock as reportMarketClock,
   repairMarketSessionIntegrity,
   marketSessionEpoch
 } from './background-market-session.js';
@@ -33,30 +31,6 @@ function senderMeta(sender = {}) {
   try { topHost = new URL(sender.tab?.url || '').hostname.toLowerCase(); } catch {}
   const embeddedTrader = sender.frameId !== 0 && traderHost(frameHost) && casaHost(topHost);
   return { trusted: !!sender.tab?.id && embeddedTrader, embeddedTrader, frameHost, topHost, frameId: sender.frameId };
-}
-
-async function applyVisualFocus(message = {}, sender = {}) {
-  const info = senderMeta(sender);
-  if (!info.trusted || message.chartScoped !== true || message.frameRole !== 'trader-frame') {
-    return { ok: true, ignored: true };
-  }
-  const asset = normAsset(message.asset);
-  if (!asset || message.reliable === false) return { ok: true, ignored: true };
-
-  // Integrity observes; the market-session owner performs epoch/reset/focus writes.
-  return reportMarketFocus({
-    ...message,
-    asset,
-    reliable: true,
-    chartScoped: true,
-    frameRole: 'trader-frame'
-  }, sender);
-}
-
-async function applyClock(message = {}, sender = {}) {
-  const info = senderMeta(sender);
-  if (!info.trusted) return { ok: true, ignored: true };
-  return reportMarketClock(message, sender);
 }
 
 function focusValid(state, now = Date.now()) {
@@ -145,13 +119,3 @@ try {
   });
 } catch {}
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message?.type === 'ATS_VISUAL_FOCUS_V2') {
-    applyVisualFocus(message, sender).then(state => sendResponse({ ok: true, state })).catch(error => sendResponse({ ok: false, error: String(error?.message || error) }));
-    return true;
-  }
-  if (message?.type === 'ATS_MARKET_CLOCK_V2') {
-    applyClock(message, sender).then(state => sendResponse({ ok: true, state })).catch(error => sendResponse({ ok: false, error: String(error?.message || error) }));
-    return true;
-  }
-});
