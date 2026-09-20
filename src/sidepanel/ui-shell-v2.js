@@ -77,7 +77,6 @@ function exactLiveTime(state = {}) {
   if (!exactClockReady(state)) return false;
   const clock = state.diagnostics?.marketClock || {};
   const operation = operationRequirement(state);
-  const operation = operationRequirement(state);
   const expirationAt = Number(state.platformControls?.expirationCheckedAt || state.platformControls?.observed?.observedAt?.expiration || 0);
   const expirationFresh = expirationAt > 0 && Date.now() - expirationAt < CONTROLS_FRESH_MS;
   const actualExpiration = expirationFresh ? clean(state.platformControls?.observed?.expiration) : '';
