@@ -1,5 +1,5 @@
 (() => {
-  if (globalThis.__ATS_EMBEDDED_FEED_BRIDGE__) return;
+  try { globalThis.__ATS_EMBEDDED_FEED_BRIDGE_RUNTIME__?.teardown?.(); } catch {}
   globalThis.__ATS_EMBEDDED_FEED_BRIDGE__ = true;
 
   const host = String(location.hostname || '').toLowerCase().replace(/\.$/, '');
@@ -192,7 +192,7 @@
     }
   }
 
-  window.addEventListener('message', event => {
+  const networkMessageHandler = event => {
     const data = event.data;
     if (!data || data.source !== 'ATS_NETWORK_PROBE' || data.type !== 'summary') return;
     const now = Date.now();
@@ -219,5 +219,13 @@
 
     sendMessage({ type: 'ATS_EMBEDDED_FEED', payload }).catch(() => {});
     maybePublishStructuredClock(payload).catch(() => {});
-  });
+  };
+  window.addEventListener('message', networkMessageHandler);
+
+  globalThis.__ATS_EMBEDDED_FEED_BRIDGE_RUNTIME__ = {
+    version: 'embedded-feed-bridge-restartable',
+    teardown() {
+      try { window.removeEventListener('message', networkMessageHandler); } catch {}
+    }
+  };
 })();
