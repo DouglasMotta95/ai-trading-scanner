@@ -4,13 +4,14 @@ import fs from 'node:fs';
 
 const read=p=>fs.readFileSync(new URL('../'+p,import.meta.url),'utf8');
 
-test('same-host sibling clock frame does not invalidate focused market identity',()=>{
+test('trusted sibling clock may cross CasaTrade frame hosts when market identity matches',()=>{
   const session=read('src/background-market-session.js');
   const start=session.indexOf('function clockMatchesFocus');
   const end=session.indexOf('function exactClock',start);
   const block=session.slice(start,end);
-  assert.match(block,/frameHost/);
+  assert.match(block,/sameMarket\(clock\.asset, focus\.asset\)/);
   assert.doesNotMatch(block,/clock\.frameId.*focus\.frameId/);
+  assert.doesNotMatch(block,/clock\.frameHost.*focus\.frameHost/);
 });
 
 test('clock frame difference alone does not trigger a session reset',()=>{
@@ -23,20 +24,22 @@ test('clock frame difference alone does not trigger a session reset',()=>{
   assert.doesNotMatch(block,/session\.frameId/);
 });
 
-test('central analyzer accepts trusted same-host clock from sibling frame',()=>{
+test('central analyzer accepts trusted cross-host clock for the same focused market',()=>{
   const background=read('src/background.js');
   const start=background.indexOf('function consolidatedSnapshot');
   const end=background.indexOf('function rawInputSignature',start);
   const block=background.slice(start,end);
-  assert.match(block,/clock\.frameHost/);
+  assert.match(block,/sameMarket\(clock\.asset, asset\)/);
   assert.doesNotMatch(block,/clock\.frameId.*focus\.frameId/);
+  assert.doesNotMatch(block,/clock\.frameHost.*focus\.frameHost/);
 });
 
-test('sidepanel readiness mirrors same-host sibling-frame rule',()=>{
+test('sidepanel readiness follows market identity instead of transport host equality',()=>{
   const app=read('src/sidepanel/app-v2.js');
   const start=app.indexOf('function clockBaseReady');
   const end=app.indexOf('function exactClockReady',start);
   const block=app.slice(start,end);
-  assert.match(block,/clock\.frameHost/);
+  assert.match(block,/sameMarket\(clock\.asset, state\.asset\)/);
   assert.doesNotMatch(block,/clock\.frameId.*focus\.frameId/);
+  assert.doesNotMatch(block,/clock\.frameHost.*focus\.frameHost/);
 });
