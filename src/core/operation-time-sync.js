@@ -2,6 +2,7 @@
   if (globalThis.__ATS_OPERATION_TIME_SYNC__) return;
 
   const EXACT_SOURCES = new Set(['trader-dom-countdown', 'network-server-cycle']);
+  const CLOCK_FRESH_MS = 8000;
   const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
 
   function normTf(value = '') {
@@ -126,7 +127,7 @@
       && sameMarket(clock.asset, state.asset)
       && Number(clock.at || 0) > 0
       && clockAge >= 0
-      && clockAge < 3200;
+      && clockAge < CLOCK_FRESH_MS;
 
     const freshVisibleTimeframe = timeframeAt > 0
       && timeframeAge >= 0
