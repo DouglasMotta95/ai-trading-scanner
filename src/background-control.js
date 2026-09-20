@@ -798,7 +798,7 @@ async function refreshTargetTab() {
   return { ok: true, tabId, controls: probed || null, state: probed?.state || await readScannerState() };
 }
 
-async function connectActiveTab() {
+async function connectActiveTab({ automatic = false } = {}) {
   let state = await readScannerState();
   const license = await recoverLicense(state);
   if (!activeLicense(license)) {
@@ -819,7 +819,17 @@ async function connectActiveTab() {
   }
 
   const next = await updateScannerState(current => {
-    const restartBase = clearUserDeclaredExpirationState(current);
+    const currentFocus = current.diagnostics?.focusedAsset || null;
+    const currentConfirmedAsset = current.asset || current.diagnostics?.marketSession?.asset || '';
+    const sameTabBeforeReconnect = Number(current.targetTabId) === Number(tab.id);
+    const sameConfirmedAsset = !!currentFocus?.asset
+      && currentFocus.reliable === true
+      && currentFocus.chartScoped === true
+      && currentFocus.trustedChartFrame === true
+      && sameAsset(currentFocus.asset, currentConfirmedAsset);
+    const preserveDeclaredExpiration = automatic === true && sameTabBeforeReconnect && sameConfirmedAsset;
+    const restartBase = preserveDeclaredExpiration ? current : clearUserDeclaredExpirationState(current);
+
     const sameTab = Number(restartBase.targetTabId) === Number(tab.id);
     const focus = restartBase.diagnostics?.focusedAsset || null;
     const focusFresh = Number(focus?.at || 0) > 0 && Date.now() - Number(focus.at) < 2500;
@@ -1011,8 +1021,13 @@ sidePanelSetBehavior({ openPanelOnActionClick: true }).catch(() => {});
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const type = String(message?.type || '');
 
-  if (type === 'ATS_CONNECT_ACTIVE_TAB' || type === 'ATS_REFRESH_MARKET') {
+  if (type === 'ATS_CONNECT_ACTIVE_TAB') {
     connectActiveTab().then(sendResponse).catch(error => sendResponse({ ok: false, error: String(error?.message || error) }));
+    return true;
+  }
+
+  if (type === 'ATS_REFRESH_MARKET') {
+    connectActiveTab({ automatic: true }).then(sendResponse).catch(error => sendResponse({ ok: false, error: String(error?.message || error) }));
     return true;
   }
 
