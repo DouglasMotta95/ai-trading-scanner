@@ -420,6 +420,7 @@
     } finally { busy = false; }
   }
 
+  globalThis.__ATS_FORCE_MARKET_CLOCK_SCAN__ = () => tick().catch(() => {});
   setInterval(tick, 650);
   tick();
 })();
