@@ -1,5 +1,6 @@
 import { processSnapshot, resetOrchestrator } from './core/orchestrator.js';
 import { readScannerState, updateScannerState } from './services/scanner-state-atomic.js';
+import { operatingTimeframeFromPreferences } from './core/operation-mode.js';
 
 // Single owner of technical analysis.
 // All acquisition modules only update scannerState. This loop coalesces those
@@ -36,7 +37,7 @@ const activeAccess = state => {
     || state?.diagnostics?.access?.state === 'owner_dev';
 };
 
-const operatingTimeframe = state => normTf(state?.analystPreferences?.operatingTimeframe) === 'M1' ? 'M1' : 'M5';
+const operatingTimeframe = state => operatingTimeframeFromPreferences(state?.analystPreferences);
 const expirationForTimeframe = tf => tf === 'M1' ? '60s' : '300s';
 const finalWindowForTimeframe = tf => tf === 'M1' ? 10 : 20;
 
@@ -129,9 +130,9 @@ function consolidatedSnapshot(state = {}) {
   if (!clock || clock.available === false || (!clock.verified && clock.operational !== true)) return null;
   if (!ALLOWED_CLOCK_SOURCES.has(clean(clock.source))) return null;
   if (!sameMarket(clock.asset, asset)) return null;
-  // Clock/feed may originate from a sibling frame on the same trusted
-  // CasaTrade host. Do not stall analysis on frame-id equality.
-  if (clean(clock.frameHost).toLowerCase() !== clean(focus.frameHost).toLowerCase()) return null;
+  // CasaTrade may split focus, feed and countdown across trusted sibling
+  // frames/hosts in the same tab. Asset identity + market-session epoch own
+  // the market; transport frame equality must not stall the central analysis.
   if (Number(clock.at || 0) <= 0 || Date.now() - Number(clock.at) > CLOCK_FRESH_MS) return null;
 
   const secondsRemaining = num(clock.secondsRemaining);
