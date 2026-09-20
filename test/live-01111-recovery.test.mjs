@@ -6,7 +6,7 @@ const read=p=>fs.readFileSync(new URL('../'+p,import.meta.url),'utf8');
 test('current build keeps canvas/network clock recovery probes packaged',()=>{
   const m=JSON.parse(read('manifest.json'));
   const scripts=m.content_scripts.flatMap(r=>r.js||[]);
-  assert.equal(m.version,'0.11.51');
+  assert.equal(m.version,'0.11.52');
   assert.ok(scripts.includes('src/content/canvas-countdown-probe.js'));
   assert.ok(scripts.includes('src/content/market-cycle-clock-v4.js'));
 });
