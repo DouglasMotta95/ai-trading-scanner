@@ -373,12 +373,61 @@
     return marker;
   }
 
+  let lastControlPublishKey = '';
+  let lastControlPublishAt = 0;
+
+  function publishRenderedControls(rows = [], now = Date.now()) {
+    const expirationRow = rows.filter(r => r.expiration)
+      .sort((a, b) => Number(b.at || 0) - Number(a.at || 0))[0] || null;
+    const timeframeRow = rows.filter(r => r.timeframe)
+      .sort((a, b) => Number(b.at || 0) - Number(a.at || 0))[0] || null;
+    const expiration = expirationRow?.expiration || null;
+    const timeframe = timeframeRow?.timeframe || null;
+    if (!expiration && !timeframe) return;
+
+    const key = `${expiration || ''}|${timeframe || ''}`;
+    if (key === lastControlPublishKey && now - lastControlPublishAt < 500) return;
+    lastControlPublishKey = key;
+    lastControlPublishAt = now;
+
+    window.postMessage({
+      source: 'ATS_NETWORK_PROBE',
+      type: 'summary',
+      payload: {
+        messages: { ws: 0, fetch: 0, xhr: 0 },
+        connections: { ws: 0 },
+        endpoints: [],
+        keys: [],
+        candidates: [],
+        candidateCount: 0,
+        recentCandles: {},
+        controls: {
+          expiration,
+          timeframe,
+          confidence: expiration ? 98 : 0,
+          timeframeConfidence: timeframe ? 90 : 0,
+          observedAt: now,
+          sourceKey: 'rendered-controls-independent'
+        },
+        feedQuality: 0,
+        parser: { renderedControls: true, frames: rows.length },
+        primaryTransport: 'rendered-controls',
+        privacy: 'Leitura local apenas dos controles renderizados de tempo da CasaTrade.'
+      }
+    }, '*');
+  }
+
   function aggregateAndPublish() {
     if (!isTop) return;
     const now = Date.now();
     for (const [id, row] of frameRows) if (!row || now - Number(row.at || 0) > 5000) frameRows.delete(id);
     const rows = [...frameRows.values()];
     if (!rows.length) return;
+
+    // Controls are independent from market-data acquisition. Never discard a
+    // visible "Expiração 5 seg / 1 min" just because asset/price came from a
+    // different network/iframe pipeline.
+    publishRenderedControls(rows, now);
 
     const assetRow = rows.filter(r => r.asset).sort((a, b) => b.assetScore - a.assetScore || b.at - a.at)[0] || null;
     const priceRow = rows.filter(r => r.price != null).sort((a, b) => b.priceScore - a.priceScore || b.at - a.at)[0] || null;
