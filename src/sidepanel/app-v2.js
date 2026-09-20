@@ -141,7 +141,6 @@ function clockBaseReady(state = {}) {
     && clock.available !== false
     && clock.role === 'candle-close'
     && sameMarket(clock.asset, state.asset)
-    && clean(clock.frameHost).toLowerCase() === clean(focus.frameHost).toLowerCase()
     && Number(clock.at || 0) > 0
     && Date.now() - Number(clock.at) < 3000
     && num(clock.secondsRemaining) != null;
