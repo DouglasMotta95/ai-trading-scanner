@@ -57,6 +57,8 @@
   const validOhlc = row => [row?.open, row?.high, row?.low, row?.close].every(value => Number.isFinite(Number(value)));
 
   let lastSentAt = 0;
+  let expirationThrottleDropCount = 0;
+  const expirationThrottleDiagnosticStartedAt = Date.now();
   let clockBusy = false;
   let clockProbe = null;
   let candleClockProbe = null;
@@ -196,7 +198,12 @@
     const data = event.data;
     if (!data || data.source !== 'ATS_NETWORK_PROBE' || data.type !== 'summary') return;
     const now = Date.now();
-    if (now - lastSentAt < 80) return;
+    if (now - lastSentAt < 80) {
+      try {
+        if (normalizeExp(data.payload?.controls?.expiration)) expirationThrottleDropCount += 1;
+      } catch {}
+      return;
+    }
     lastSentAt = now;
     const payload = data.payload || {};
 
@@ -232,10 +239,33 @@
   };
   window.addEventListener('message', networkMessageHandler);
 
+  const diagnosticMessageHandler = event => {
+    const data = event.data;
+    if (!data || data.source !== 'ATS_EXPIRATION_DIAGNOSTIC_REQUEST' || !data.requestId) return;
+    try {
+      window.postMessage({
+        source: 'ATS_EMBEDDED_FEED_DIAGNOSTIC_SNAPSHOT',
+        requestId: data.requestId,
+        payload: {
+          frame: {
+            href: String(location.href || ''),
+            isTop: window === window.top,
+            host
+          },
+          expirationThrottle80msDropCount: Number(expirationThrottleDropCount || 0),
+          startedAt: expirationThrottleDiagnosticStartedAt,
+          observedAt: Date.now()
+        }
+      }, '*');
+    } catch {}
+  };
+  window.addEventListener('message', diagnosticMessageHandler);
+
   globalThis.__ATS_EMBEDDED_FEED_BRIDGE_RUNTIME__ = {
     version: 'embedded-feed-bridge-restartable',
     teardown() {
       try { window.removeEventListener('message', networkMessageHandler); } catch {}
+      try { window.removeEventListener('message', diagnosticMessageHandler); } catch {}
     }
   };
 })();
