@@ -97,7 +97,7 @@ function expLabel(value = '') {
 }
 
 function normalizeOperatingTimeframe(value = '') {
-  return clean(value).toUpperCase() === 'M1' ? 'M1' : 'M5';
+  return clean(value).toUpperCase() === 'M5' ? 'M5' : 'M1';
 }
 function requiredExpirationForTimeframe(value = '') {
   return normalizeOperatingTimeframe(value) === 'M1' ? '60s' : '300s';
