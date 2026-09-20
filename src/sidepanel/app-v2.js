@@ -147,6 +147,15 @@ function sessionReady(state = {}) {
     && operationalClockReady(state);
 }
 
+function liveTimingReady(state = {}) {
+  if (!exactClockReady(state)) return false;
+  const clock = state.diagnostics?.marketClock || {};
+  const expiration = expirationObservation(state);
+  return expiration.fresh === true
+    && expiration.value === '60s'
+    && normTf(clock.timeframe) === 'M1';
+}
+
 function entryTimeReady(state = {}) {
   if (!exactClockReady(state)) return false;
   const clock = state.diagnostics?.marketClock || {};
@@ -240,6 +249,21 @@ function decisionModel(state = {}) {
   const pending = transitionAsset(state);
   if (pending) return { uiState: 'ANALYZING_MARKET', title: 'ATUALIZANDO ATIVO', text: `ATUALIZANDO PARA ${pending}`, sub: 'Limpando dados anteriores e confirmando preço + velas do novo ativo.', tone: 'waiting', reason: 'Troca de ativo em validação.', score: 0, actionable: false };
   if (!marketDataReady(state) || !focusReady(state)) return { uiState: 'ANALYZING_MARKET', title: 'AGUARDAR', text: 'AGUARDAR', sub: 'Confirmando ativo, preço e velas reais.', tone: 'waiting', reason: 'Identificando o gráfico atual da CasaTrade.', score: 0, actionable: false };
+
+  const timingReady = liveTimingReady(state);
+  if (!timingReady) {
+    const blocked = entryBlockReason(state);
+    return {
+      uiState: 'WAIT',
+      title: 'AGUARDAR',
+      text: 'AGUARDAR',
+      sub: blocked,
+      tone: 'waiting',
+      reason: blocked,
+      score: 0,
+      actionable: false
+    };
+  }
 
   const p = state.professionalDecision || {};
   const technical = state.signal || {};
@@ -413,7 +437,9 @@ function render(state = {}) {
   setText('decisionText', model.text);
   setText('decisionSubtext', model.sub);
   setText('signalReason', model.reason);
-  const setupLabel = clean(state.signal?.setup || state.signal?.regime?.type || '—') || '—';
+  const setupLabel = liveTimingReady(state)
+    ? (clean(state.signal?.setup || state.signal?.regime?.type || '—') || '—')
+    : '—';
   setText('setupType', /^analista$/i.test(setupLabel) ? '—' : setupLabel);
 
   const decisionCard = $('decisionCard');
