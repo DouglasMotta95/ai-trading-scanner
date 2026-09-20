@@ -2,17 +2,33 @@ import { assessAssetQuality } from '../core/asset-quality.js';
 
 const $ = id => document.getElementById(id);
 const clean = value => String(value ?? '').trim().toUpperCase();
+const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
+function marketId(value = '') {
+  const raw = clean(value);
+  if (!raw) return '';
+  const otc = /(?:\(|\b|[_-])OTC(?:\)|\b)?/.test(raw);
+  const match = raw.match(/\b([A-Z0-9]{2,20})\s*[\/_-]\s*([A-Z0-9]{2,12})/);
+  return match ? `${match[1]}/${match[2]}${otc ? ' (OTC)' : ''}` : '';
+}
+const sameMarket = (a, b) => !!marketId(a) && marketId(a) === marketId(b);
 
 function liveCurrentMarket(state = {}) {
-  const focus = state.diagnostics?.focusedAsset || null;
-  const asset = clean(state.asset);
-  const focused = clean(focus?.asset);
+  const focus = state.diagnostics?.focusedAsset || {};
+  const session = state.diagnostics?.marketSession || {};
   const seenAt = Number(state.lastSeen || 0);
-  return !!asset
+  const rows = (Array.isArray(state.candles) ? state.candles : [])
+    .filter(row => [row?.open,row?.high,row?.low,row?.close].every(value => num(value) != null));
+  return !!state.asset
     && state.connection === 'online'
+    && session.dataReady === true
+    && sameMarket(session.confirmedAsset, state.asset)
+    && sameMarket(focus.asset, state.asset)
+    && focus.reliable === true
+    && focus.chartScoped === true
+    && num(state.price) != null
+    && rows.length >= 2
     && seenAt > 0
-    && Date.now() - seenAt < 10000
-    && (!focused || focused === asset);
+    && Date.now() - seenAt < 10000;
 }
 
 function waitingQuality(state = {}) {
