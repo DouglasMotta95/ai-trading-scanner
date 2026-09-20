@@ -1,11 +1,8 @@
+import { getThresholds, getOperationMode } from './analysis.js';
 const clean = value => String(value ?? '').trim();
 const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
 
 export const FAST_DECISION = Object.freeze({
-  possibleScore: 44,
-  confirmScore: 58,
-  preSignalWindowSeconds: 30,
-  finalWindowSeconds: 10,
   confirmHits: 2,
   maxHitGapMs: 5000
 });
@@ -27,15 +24,15 @@ function directionOf(signal = {}) {
   return buy > sell ? 'BUY' : 'SELL';
 }
 
-function quality(signal = {}, direction = null) {
+function quality(signal = {}, direction = null, thresholds = getThresholds()) {
   if (!direction) return { strong: false, power: 0, reasons: [] };
   const a = signal.analytics || {};
   const buy = direction === 'BUY';
   const power = Number(buy ? a.buyPower : a.sellPower) || 0;
   const continuation = a.continuationDirection === direction && Number(a.continuationScore || 0) >= 55;
   const momentum = a.momentumDirection === direction && Number(a.momentumScore || 0) >= 40;
-  const rejection = a.rejectionDirection === direction && Number(a.rejectionStrength || 0) >= 50;
-  const strength = Number(a.currentStrength || 0) >= 62;
+  const rejection = a.rejectionDirection === direction && Number(a.rejectionStrength || 0) >= thresholds.rejectionStrength;
+  const strength = Number(a.currentStrength || 0) >= thresholds.candleStrength;
   const reasons = [];
   if (continuation) reasons.push('continuação');
   if (momentum) reasons.push('momentum');
@@ -126,6 +123,10 @@ function waitFinal(signal, score, reason = '') {
 
 export function fastLiveDecision(signal = {}, context = {}) {
   if (!signal || typeof signal !== 'object') return signal;
+  const thresholds = getThresholds(context.sensitivityProfile || 'MEDIO');
+  const operationMode = getOperationMode(context.operationMode || context.timeframe || 'M1');
+  const preSignalWindowSeconds = operationMode.timeframe === 'M5' ? 90 : 30;
+  const finalWindowSeconds = thresholds.entryWindowSeconds;
   if (signal.uiState === 'ENTER_BUY' || signal.uiState === 'ENTER_SELL' || signal.state === 'CONFIRM') return signal;
 
   const score = Number(signal.analysisScore ?? signal.score ?? 0);
@@ -140,17 +141,17 @@ export function fastLiveDecision(signal = {}, context = {}) {
     return waitFinal(signal, score, 'fechamento da vela em andamento');
   }
 
-  if (seconds > FAST_DECISION.preSignalWindowSeconds) {
+  if (seconds > preSignalWindowSeconds) {
     trackers.delete(key);
     directionTrackers.delete(key);
-    const text = `ANALISANDO VELA M1 • ${seconds}s — pré-sinal abre por volta de 30s.`;
+    const text = `ANALISANDO VELA ${operationMode.timeframe} • ${seconds}s — pré-sinal abre por volta de ${preSignalWindowSeconds}s.`;
     return { ...signal, state: 'WAIT', direction: null, diagnosis: 'WAIT', uiState: 'BUILDING_PATTERN', provisional: true, phase: 'BUILDING', reason: text, hint: text, fastDecision: true };
   }
 
-  if (!rawDirection || score < FAST_DECISION.possibleScore) {
+  if (!rawDirection || score < thresholds.possibleScore) {
     trackers.delete(key);
-    const text = `AGUARDAR • ${seconds}s — leitura ainda fraca (${Math.round(score)}/${FAST_DECISION.possibleScore}).`;
-    return { ...signal, state: 'WAIT', direction: null, diagnosis: 'WAIT', uiState: 'WAIT', provisional: true, phase: seconds <= FAST_DECISION.finalWindowSeconds ? 'FINAL' : 'LIVE', reason: text, hint: text, fastDecision: true };
+    const text = `AGUARDAR • ${seconds}s — leitura ainda fraca (${Math.round(score)}/${thresholds.possibleScore}).`;
+    return { ...signal, state: 'WAIT', direction: null, diagnosis: 'WAIT', uiState: 'WAIT', provisional: true, phase: seconds <= finalWindowSeconds ? 'FINAL' : 'LIVE', reason: text, hint: text, fastDecision: true };
   }
 
   const stabilized = stabilizeDirection(key, rawDirection, at, score);
@@ -175,14 +176,14 @@ export function fastLiveDecision(signal = {}, context = {}) {
     };
   }
   const direction = stabilized.direction;
-  const q = quality(signal, direction);
+  const q = quality(signal, direction, thresholds);
 
-  if (seconds > FAST_DECISION.finalWindowSeconds) {
+  if (seconds > finalWindowSeconds) {
     observe(key, direction, false, at);
     return possible(signal, direction, score, seconds, q);
   }
 
-  const strong = score >= FAST_DECISION.confirmScore && q.strong;
+  const strong = score >= thresholds.confirmScore && q.strong;
   const hits = observe(key, direction, strong, at);
   if (strong && hits >= FAST_DECISION.confirmHits) return enter(signal, direction, score, seconds, q);
 
