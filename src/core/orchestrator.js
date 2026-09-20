@@ -9,7 +9,8 @@ import { ANALYST_THRESHOLDS } from './analysis.js';
 // Price action/indicators remain in the legacy analyst. This wrapper owns exactly
 // one bounded decision for each target candle: ENTER BUY, ENTER SELL or WAIT.
 const CONFIRM_HITS = 2;
-const DECISION_HIT_GAP_MS = 2500;
+const DECISION_HIT_GAP_MS = 7000;
+const POSSIBLE_DROP_HITS = 2;
 const cycles = new Map();
 const wrapperCompletedDecisions = new Map();
 const WRAPPER_ROW_PREFIX = 'wrapper-cycle:';
@@ -100,6 +101,23 @@ function possibleQuality(signal = {}, direction = null, score = 0) {
   const stableDirection = clean(signal.stability?.possibleDirection).toUpperCase();
   const publishedDirection = clean(signal.direction).toUpperCase();
   return stableDirection === direction || (signal.state === 'WATCH' && publishedDirection === direction);
+}
+
+function possibleWithHysteresis(cycle, allowed, direction, at) {
+  if (allowed && direction) {
+    cycle.possibleDirection = direction;
+    cycle.possibleWeakHits = 0;
+    cycle.possibleLastStrongAt = at;
+    return true;
+  }
+  // One weak/throttled observation must not make POSSÍVEL disappear. Require
+  // two consecutive weak observations before dropping the candidate.
+  if (!cycle.possibleDirection) return false;
+  cycle.possibleWeakHits = Number(cycle.possibleWeakHits || 0) + 1;
+  if (cycle.possibleWeakHits < POSSIBLE_DROP_HITS) return true;
+  cycle.possibleDirection = null;
+  cycle.possibleWeakHits = 0;
+  return false;
 }
 
 function seedCycle(key, snapshot, signal, state = {}) {
@@ -283,7 +301,8 @@ export function processSnapshot(snapshot = {}, state = {}) {
   const at = num(snapshot.serverTime) ?? Date.now();
   const score = Number(signal.analysisScore ?? signal.score ?? 0);
   const direction = directionOf(signal);
-  const canShowPossible = possibleQuality(signal, direction, score);
+  const rawPossible = possibleQuality(signal, direction, score);
+  const canShowPossible = possibleWithHysteresis(cycle, rawPossible, direction, at);
   const recovered = resolveWrapperDecision(snapshot, result, key, state);
   const rolledLastConfirmed = newerDecision(newerDecision(result.lastConfirmed, latestWrapperCompleted(snapshot)), recovered);
 
