@@ -176,7 +176,9 @@ function renderShell(state = {}) {
   }
 
   const retry = $('retryLiveRead');
-  if (retry) retry.hidden = !(marketPending || expirationPending || failure);
+  // Expiration recovery is automatic now. Keep the manual retry only for a
+  // genuine market-acquisition or connection failure.
+  if (retry) retry.hidden = !(marketPending || failure);
 }
 async function connectNow() {
   const button = $('connectScanner');
@@ -213,6 +215,30 @@ async function refreshLiveReaders() {
   if (response?.ok && response?.state) {
     lastState = response.state;
     renderShell(lastState);
+  }
+}
+
+let controlProbeBusy = false;
+let lastControlProbeAt = 0;
+async function probePlatformControls() {
+  if (controlProbeBusy) return;
+  const state = lastState || {};
+  if (!activeLicense(state) || !state.targetTabId || state.scanner !== 'scanning') return;
+  const now = Date.now();
+  const expirationAt = Number(state.platformControls?.expirationCheckedAt || state.platformControls?.observed?.observedAt?.expiration || 0);
+  const expirationFresh = expirationAt > 0 && now - expirationAt < CONTROLS_FRESH_MS;
+  const interval = expirationFresh ? 2400 : 900;
+  if (now - lastControlProbeAt < interval) return;
+  lastControlProbeAt = now;
+  controlProbeBusy = true;
+  try {
+    const response = await chrome.runtime.sendMessage({ type: 'ATS_PROBE_PLATFORM_CONTROLS' }).catch(() => null);
+    if (response?.state) {
+      lastState = response.state;
+      renderShell(lastState);
+    }
+  } finally {
+    controlProbeBusy = false;
   }
 }
 
@@ -255,7 +281,10 @@ chrome.storage.onChanged.addListener(changes => {
 
 // Freshness is time-based; re-render even when Chrome storage is quiet so the
 // badge cannot remain CONECTADO with a stale clock.
-setInterval(() => renderShell(lastState), 500);
+setInterval(() => {
+  renderShell(lastState);
+  probePlatformControls().catch(() => {});
+}, 500);
 
 import(chrome.runtime.getURL('src/sidepanel/trial-ui.js')).catch(() => {});
 
