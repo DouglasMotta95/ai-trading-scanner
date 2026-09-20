@@ -272,6 +272,48 @@ function expirationDiagnosticText(response = {}) {
     ? executeErrors.map(error => `- ${error}`).join('\n')
     : '- Nenhum erro literal de executeScript registrado.';
 
+  const canvasLines = allFrames.length
+    ? allFrames.map(frame => {
+        const canvas = frame.canvasDiagnostic || null;
+        const bridge = frame.embeddedFeedDiagnostic || null;
+        const canvasFrame = canvas?.frame || {};
+        const intercepted = canvas?.intercepted || {};
+        const texts = Array.isArray(canvas?.recentCanvasText) ? canvas.recentCanvasText.slice(0, 40) : [];
+        const textLines = texts.length
+          ? texts.map((item, index) =>
+              `    [${index + 1}] idade=${Number(item.ageMs || 0)}ms | ${item.text || '[vazio]'}`
+            ).join('\n')
+          : '    [nenhum texto em recentCanvasText]';
+        const published = canvas?.publishRenderedControls || {};
+        const lastPayload = published.lastPayload || null;
+
+        return [
+          `FRAME executeScript=${frame.frameId ?? '—'}`,
+          'A) HOOK',
+          canvas
+            ? `  instalado=${canvas.hookInstalled === true ? 'sim' : 'não'} | frameId=${canvasFrame.frameId || '—'} | href=${canvasFrame.href || frame.href || '—'} | top=${canvasFrame.isTop === true ? 'sim' : 'não'} | contextos=${Array.isArray(canvas.hookedContexts) && canvas.hookedContexts.length ? canvas.hookedContexts.join(',') : '—'}`
+            : `  snapshot indisponível | erro=${frame.canvasDiagnosticError || '—'}`,
+          canvas
+            ? `  interceptadas total=${Number(intercepted.total || 0)} | fillText=${Number(intercepted.fillText || 0)} | strokeText=${Number(intercepted.strokeText || 0)} | últimos 6s=${Number(intercepted.last6s || 0)}`
+            : '',
+          'B) recentCanvasText — até 40 textos distintos',
+          textLines,
+          'C) PARSERS NO TEXTO CONCATENADO',
+          canvas
+            ? `  tamanho=${Number(canvas.concatenatedTextLength || 0)} | expirationFrom=${canvas.expirationFrom || 'null'} | timeframeFrom=${canvas.timeframeFrom || 'null'}`
+            : '  snapshot indisponível',
+          'D) publishRenderedControls()',
+          canvas
+            ? `  envios com expiração=${Number(published.expirationSendCount || 0)} | último=${lastPayload ? `expiration=${lastPayload.expiration || 'null'} confidence=${Number(lastPayload.confidence || 0)} sourceKey=${lastPayload.sourceKey || '—'} idade=${Number(lastPayload.ageMs || 0)}ms` : '[nenhum]'}`
+            : '  snapshot indisponível',
+          'E) THROTTLE 80ms — embedded-feed-bridge',
+          bridge
+            ? `  mensagens ATS_NETWORK_PROBE com controls.expiration descartadas=${Number(bridge.expirationThrottle80msDropCount || 0)}`
+            : `  snapshot indisponível | erro=${frame.embeddedFeedDiagnosticError || '—'}`
+        ].filter(Boolean).join('\n');
+      }).join('\n\n')
+    : '- Nenhum frame disponível para diagnóstico de canvas.';
+
   return [
     'AI Trading Scanner — diagnóstico de leitura de expiração',
     `Frames examinados: ${Number(response.frameCount || response.frames?.length || 0)}`,
@@ -304,7 +346,10 @@ function expirationDiagnosticText(response = {}) {
     'Os detalhes de cada documento estão listados junto de cada frame acima.',
     '',
     'D) ERROS LITERAIS DO executeScript / FRAMES AUSENTES',
-    errorLines
+    errorLines,
+    '',
+    '5. CANVAS',
+    canvasLines
   ].join('\n');
 }
 
