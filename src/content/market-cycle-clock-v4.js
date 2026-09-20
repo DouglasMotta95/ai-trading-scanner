@@ -221,7 +221,7 @@
         observedAt: now,
         text: candidate.text
       };
-      return now - domVerifiedAt < 3000 ? candidate : null;
+      return now - domVerifiedAt < 8000 ? candidate : null;
     }
 
     // Measure progression from the last DISTINCT second, not from the last
@@ -247,7 +247,7 @@
       text: candidate.text
     };
     if (progressed || rolled) domVerifiedAt = now;
-    return now - domVerifiedAt < 3000 ? candidate : null;
+    return now - domVerifiedAt < 8000 ? candidate : null;
   }
 
   function freshExactClock(state = {}, focus = null, cycleTf = null) {
@@ -260,7 +260,7 @@
     // Focus/feed/countdown can live in trusted sibling CasaTrade frames on
     // Android. Market identity + timeframe are authoritative; frame equality
     // is only a transport detail.
-    if (Date.now() - Number(clock.at || 0) >= 3000) return null;
+    if (Date.now() - Number(clock.at || 0) >= 8000) return null;
     return clock;
   }
 
@@ -397,7 +397,7 @@
       const boundaryClock = domClock ? null : currentStateBoundary(state, focus, cycleTf);
 
       if (!domClock && !boundaryClock && freshExactClock(state, focus, cycleTf)) return;
-      if (!domClock && !boundaryClock && Date.now() - canvasVerifiedAt < 3000) return;
+      if (!domClock && !boundaryClock && Date.now() - canvasVerifiedAt < 8000) return;
 
       // Preferred authority remains CasaTrade's visible progressing countdown.
       // When that token is not exposed on compact/tablet layouts, the timestamp
