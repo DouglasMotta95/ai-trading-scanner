@@ -207,6 +207,8 @@
     return true;
   }
 
+  globalThis.__ATS_FORCE_PLATFORM_CONTROL_SCAN__ = () => publishVisibleControls(true);
+
   async function read(seed = null) {
     const observed = seed || readDom();
     const state = await sendMessage({ type: 'ATS_GET_STATE' });
