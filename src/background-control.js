@@ -2,7 +2,7 @@ import { activateLicense, validateLicense, clearLicense, restoreCachedLicense } 
 import { readScannerState, updateScannerState } from './services/scanner-state-atomic.js';
 import { storageLocalGet, storageSessionGet, tabsQuery, sidePanelSetBehavior, scriptingExecuteScript } from './services/chrome-compat.js';
 import { detectPlatform } from './platforms/registry.js';
-import { clearMarketAuthorityState } from './background-market-session.js';
+import { clearMarketAuthorityState, clearUserDeclaredExpirationState } from './background-market-session.js';
 
 const DEFAULT_LICENSE = Object.freeze({
   status: 'unconfigured', plan: null, planLabel: null, dailyLimit: null, usedToday: 0,
@@ -815,17 +815,18 @@ async function connectActiveTab() {
   }
 
   const next = await updateScannerState(current => {
-    const sameTab = Number(current.targetTabId) === Number(tab.id);
-    const focus = current.diagnostics?.focusedAsset || null;
+    const restartBase = clearUserDeclaredExpirationState(current);
+    const sameTab = Number(restartBase.targetTabId) === Number(tab.id);
+    const focus = restartBase.diagnostics?.focusedAsset || null;
     const focusFresh = Number(focus?.at || 0) > 0 && Date.now() - Number(focus.at) < 2500;
-    const dataFresh = Number(current.lastSeen || 0) > 0 && Date.now() - Number(current.lastSeen) < 2500;
-    const preserveLive = sameTab && current.connection === 'online' && focusFresh && dataFresh
+    const dataFresh = Number(restartBase.lastSeen || 0) > 0 && Date.now() - Number(restartBase.lastSeen) < 2500;
+    const preserveLive = sameTab && restartBase.connection === 'online' && focusFresh && dataFresh
       && focus?.reliable === true && focus?.trustedChartFrame === true;
 
-    const diagnostics = { ...(current.diagnostics || {}) };
+    const diagnostics = { ...(restartBase.diagnostics || {}) };
     delete diagnostics.connectionError;
     const base = {
-      ...current,
+      ...restartBase,
       license,
       platformId: platform.id,
       platformName: platform.name,
@@ -990,11 +991,14 @@ async function setScanner(enabled = false) {
     }));
     return { ok: false, error: 'license_required', state: next };
   }
-  const next = await updateScannerState(current => ({
-    ...current,
-    scanner: enabled ? 'scanning' : 'idle',
-    ...(enabled ? {} : { signal: null, professionalDecision: null, tradeIntent: null })
-  }));
+  const next = await updateScannerState(current => {
+    const restartBase = enabled ? clearUserDeclaredExpirationState(current) : current;
+    return {
+      ...restartBase,
+      scanner: enabled ? 'scanning' : 'idle',
+      ...(enabled ? {} : { signal: null, professionalDecision: null, tradeIntent: null })
+    };
+  });
   return { ok: true, state: next };
 }
 
