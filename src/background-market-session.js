@@ -473,6 +473,11 @@ export async function applyClock(message = {}, sender = {}) {
     if (fallback && exactClock(state, info)) return state;
 
     if ((!exact && !fallback) || !validRemaining) {
+      const previousClock = exactClock(state, info);
+      // A probe can briefly miss the countdown node at candle rollover or while
+      // CasaTrade re-renders controls. Do not erase a still-fresh authoritative
+      // clock with that transient pending observation.
+      if (previousClock) return state;
       return {
         ...state,
         diagnostics: {
