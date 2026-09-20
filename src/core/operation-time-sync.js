@@ -86,31 +86,42 @@
       && focus.trustedChartFrame === true
       && sameMarket(focus.asset, state.asset);
 
-    const timeframeReady = timeframeAt > 0
-      && timeframeAge >= 0
-      && timeframeAge < 7000
-      && visibleTimeframe === config.timeframe;
-
-    const expirationReady = expirationAt > 0 && expiration === config.expiration;
-
-    const clockReady = focusReady
+    const clockBaseReady = focusReady
       && clock.available !== false
       && clock.verified === true
       && clean(clock.role) === 'candle-close'
       && EXACT_SOURCES.has(clean(clock.source))
       && sameMarket(clock.asset, state.asset)
-      && clockTimeframe === config.timeframe
-      && Number.isFinite(seconds)
-      && seconds >= 0
-      && seconds <= config.durationSeconds + 2
       && Number(clock.at || 0) > 0
       && clockAge >= 0
       && clockAge < 3200;
 
+    const freshVisibleTimeframe = timeframeAt > 0
+      && timeframeAge >= 0
+      && timeframeAge < 7000
+      ? visibleTimeframe
+      : null;
+    const visibleTimeframeContradiction = !!freshVisibleTimeframe && freshVisibleTimeframe !== config.timeframe;
+    // If CasaTrade's compact/mobile layout does not expose a separately
+    // readable candle-period control, an exact verified candle clock for M1/M5
+    // is also authoritative evidence of that candle period. A fresh visible
+    // contradictory control still wins and blocks the scanner.
+    const timeframeReady = !visibleTimeframeContradiction
+      && (freshVisibleTimeframe === config.timeframe
+        || (clockBaseReady && clockTimeframe === config.timeframe));
+
+    const expirationReady = expirationAt > 0 && expiration === config.expiration;
+
+    const clockReady = clockBaseReady
+      && clockTimeframe === config.timeframe
+      && Number.isFinite(seconds)
+      && seconds >= 0
+      && seconds <= config.durationSeconds + 2;
+
     let reason = '';
     if (!focusReady) reason = 'Confirmando o ativo real do gráfico.';
-    else if (!visibleTimeframe) reason = `Lendo o período real da vela (${config.timeframe}).`;
-    else if (!timeframeReady) reason = `Período da vela fora de sincronia: gráfico ${visibleTimeframe || '—'}, scanner ${config.timeframe}.`;
+    else if (!timeframeReady && visibleTimeframeContradiction) reason = `Período da vela fora de sincronia: gráfico ${freshVisibleTimeframe || '—'}, scanner ${config.timeframe}.`;
+    else if (!timeframeReady) reason = `Confirmando o período real da vela ${config.timeframe} pelo clock da CasaTrade.`;
     else if (!expiration) reason = `Lendo a expiração real da CasaTrade (${config.expiration}).`;
     else if (!expirationReady) reason = `Expiração fora de sincronia: CasaTrade ${expiration}, necessário ${config.expiration}.`;
     else if (!clockReady) reason = `Sincronizando o fechamento real da vela ${config.timeframe}.`;
@@ -123,7 +134,10 @@
       expirationReady,
       clockReady,
       desiredTimeframe: config.timeframe,
-      visibleTimeframe,
+      visibleTimeframe: freshVisibleTimeframe,
+      timeframeAuthority: freshVisibleTimeframe === config.timeframe ? 'visible-control'
+        : clockBaseReady && clockTimeframe === config.timeframe ? 'exact-candle-clock'
+          : null,
       clockTimeframe,
       expiration,
       requiredExpiration: config.expiration,
