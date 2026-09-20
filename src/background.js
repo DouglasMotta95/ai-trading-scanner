@@ -2,6 +2,7 @@ import { processSnapshot, resetOrchestrator } from './core/orchestrator.js';
 import { readScannerState, updateScannerState } from './services/scanner-state-atomic.js';
 import { operatingTimeframeFromPreferences } from './core/operation-mode.js';
 import './core/countdown-authority.js';
+import './core/operation-time-sync.js';
 
 // Single owner of technical analysis.
 // All acquisition modules only update scannerState. This loop coalesces those
@@ -136,13 +137,13 @@ function consolidatedSnapshot(state = {}) {
   // the market; transport frame equality must not stall the central analysis.
   if (Number(clock.at || 0) <= 0 || Date.now() - Number(clock.at) > CLOCK_FRESH_MS) return null;
 
-  const authoritative = globalThis.__ATS_COUNTDOWN_AUTHORITY__?.readAuthoritativeCountdown?.(state, Date.now()) || null;
-  if (!authoritative?.ready) return null;
-  const secondsRemaining = num(authoritative.secondsRemaining);
-  const timeframe = normTf(authoritative.timeframe);
+  const sync = globalThis.__ATS_OPERATION_TIME_SYNC__?.read?.(state, Date.now()) || null;
+  if (!sync?.ready) return null;
+  const secondsRemaining = num(sync.secondsRemaining);
+  const timeframe = normTf(sync.clockTimeframe);
   const desiredTimeframe = operatingTimeframe(state);
-  if (!timeframe || timeframe !== desiredTimeframe) return null;
-  const requiredExpiration = expirationForTimeframe(desiredTimeframe);
+  if (!timeframe || timeframe !== desiredTimeframe || sync.visibleTimeframe !== desiredTimeframe) return null;
+  const requiredExpiration = sync.requiredExpiration || expirationForTimeframe(desiredTimeframe);
   const candles = historyFor(state, asset);
   if (candles.length < 2) return null;
 
@@ -174,6 +175,7 @@ function consolidatedSnapshot(state = {}) {
     diagnostics: {
       capture: 'central-consolidated-state',
       clockQuality: 'exact',
+      operationTimeSync: sync,
       feedQuality: Number(state.diagnostics?.acquisition?.feedQuality || 0)
     }
   };
@@ -376,8 +378,11 @@ function acquisitionGaps(state = {}) {
     && Number(clock.at || 0) > 0
     && Date.now() - Number(clock.at) < CLOCK_FRESH_MS;
   if (!clockFresh) gaps.push('countdown');
-  // Expiration is no longer a product gate in the simplified signal flow.
-  return gaps;
+  const sync = globalThis.__ATS_OPERATION_TIME_SYNC__?.read?.(state, Date.now()) || null;
+  if (!sync?.timeframeReady) gaps.push('período da vela');
+  if (!sync?.expirationReady) gaps.push('expiração');
+  if (!sync?.clockReady && !gaps.includes('countdown')) gaps.push('countdown');
+  return [...new Set(gaps)];
 }
 
 async function recoverAcquisition() {
