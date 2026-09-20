@@ -4,6 +4,7 @@
   const PERFORMANCE_BUTTON_ID = 'copySignalPerformance';
   const CLEAR_PERFORMANCE_BUTTON_ID = 'clearSignalPerformance';
   const PERFORMANCE_KEY = 'atsSignalPerformanceLedgerV1';
+  const UI_PREF_KEY = 'atsScannerUiPreferences';
 
   const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
   const clean = (value, max = 180) => String(value ?? '').normalize('NFKC').replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
@@ -143,6 +144,7 @@
       platform: clean(state.platformId || state.platformName || ''),
       connection: clean(state.connection || ''),
       scanner: clean(state.scanner || ''),
+      operationMode: clean(state.analystPreferences?.operationMode || 'M1', 8),
       sensitivityProfile: clean(state.analystPreferences?.sensitivityLabel || state.analystPreferences?.sensitivityProfile || 'MÉDIO', 24),
       asset: clean(state.asset || focus.asset || ''),
       timeframe: clean(state.analysisTimeframe || state.timeframe || clock.timeframe || ''),
@@ -296,7 +298,7 @@
     }
     return [...groups.entries()]
       .sort((a, b) => String(a[0]).localeCompare(String(b[0]), 'pt-BR', { numeric: true }))
-      .map(([key, list]) => summaryLine(key, list, breakEven))
+      .map(([key, list]) => summaryLine(key, list, typeof breakEven === 'function' ? breakEven(list, key) : breakEven))
       .join('\n') || '[sem dados]';
   }
 
@@ -326,10 +328,13 @@
     return `${String(new Date(at).getHours()).padStart(2, '0')}:00`;
   }
 
-  function performanceReport(rows = [], state = {}) {
+  function performanceReport(rows = [], state = {}, uiPrefs = {}) {
     const safeRows = (Array.isArray(rows) ? rows : []).slice(-2000).map(row => ({
       type: row?.type === 'ENTER' ? 'ENTER' : 'POSSIBLE',
       result: ['WIN','LOSS','EMPATE','DRAW','INDETERMINADO'].includes(row?.result) ? row.result : null,
+      mode: clean(row?.mode || row?.timeframe || 'M1', 8).toUpperCase() === 'M5' ? 'M5' : 'M1',
+      timeframe: clean(row?.timeframe || '—', 8),
+      expiration: clean(row?.expiration || '—', 12),
       profile: clean(row?.profile || '—', 24),
       score: num(row?.score),
       secondsRemaining: num(row?.secondsRemaining),
@@ -338,11 +343,23 @@
       emittedAt: num(row?.emittedAt)
     }));
 
-    const payoutRaw = num(state?.accountMetrics?.payoutPct);
-    const payout = payoutRaw == null
-      ? 0.88
-      : Math.max(0, Math.min(2, payoutRaw > 2 ? payoutRaw / 100 : payoutRaw));
-    const breakEven = 1 / (1 + payout);
+    const normalizePayout = value => Math.max(1, Math.min(200, Number(value ?? 88) || 88)) / 100;
+    const payouts = {
+      M1: normalizePayout(uiPrefs?.payoutByMode?.M1),
+      M5: normalizePayout(uiPrefs?.payoutByMode?.M5)
+    };
+    const breakEvenByMode = {
+      M1: 1 / (1 + payouts.M1),
+      M5: 1 / (1 + payouts.M5)
+    };
+    const breakEvenForRows = list => {
+      const source = Array.isArray(list) ? list : [];
+      if (!source.length) {
+        const activeMode = clean(state.analystPreferences?.operationMode || 'M1').toUpperCase() === 'M5' ? 'M5' : 'M1';
+        return breakEvenByMode[activeMode];
+      }
+      return source.reduce((sum, row) => sum + breakEvenByMode[row.mode === 'M5' ? 'M5' : 'M1'], 0) / source.length;
+    };
     const emitted = safeRows.map(row => Number(row.emittedAt || 0)).filter(value => value > 0).sort((a,b) => a-b);
     const first = emitted[0] || null;
     const last = emitted.at(-1) || null;
@@ -353,31 +370,36 @@
     return [
       'AI Trading Scanner — RELATÓRIO DE DESEMPENHO DOS SINAIS',
       `Gerado em: ${new Date().toISOString()}`,
+      `Modo ativo: ${clean(state.analystPreferences?.operationMode || 'M1', 8)}`,
       `Perfil ativo: ${clean(state.analystPreferences?.sensitivityLabel || state.analystPreferences?.sensitivityProfile || 'MÉDIO', 24)}`,
-      `Payout usado: ${pct(payout)} | taxa de equilíbrio 1/(1+payout): ${pct(breakEven)}`,
+      `Payout M1: ${pct(payouts.M1)} | equilíbrio M1: ${pct(breakEvenByMode.M1)}`,
+      `Payout M5: ${pct(payouts.M5)} | equilíbrio M5: ${pct(breakEvenByMode.M5)}`,
       `Período coberto: ${first ? new Date(first).toISOString() : '—'} até ${last ? new Date(last).toISOString() : '—'}`,
       '',
       'TOTAIS POR TIPO',
-      summaryLine('ENTER', enter, breakEven),
-      summaryLine('POSSIBLE', possible, breakEven),
+      summaryLine('ENTER', enter, breakEvenForRows(enter)),
+      summaryLine('POSSIBLE', possible, breakEvenForRows(possible)),
+      '',
+      'POR MODO',
+      groupLines(safeRows, row => row.mode, list => breakEvenForRows(list)),
       '',
       'POR PERFIL',
-      groupLines(safeRows, row => row.profile, breakEven),
+      groupLines(safeRows, row => row.profile, list => breakEvenForRows(list)),
       '',
       'POR FAIXA DE SCORE',
-      groupLines(safeRows, scoreBand, breakEven),
+      groupLines(safeRows, scoreBand, list => breakEvenForRows(list)),
       '',
       'POR SEGUNDOS RESTANTES NA EMISSÃO',
-      groupLines(safeRows, secondsBand, breakEven),
+      groupLines(safeRows, secondsBand, list => breakEvenForRows(list)),
       '',
       'POR DIREÇÃO',
-      groupLines(safeRows, row => row.direction, breakEven),
+      groupLines(safeRows, row => row.direction, list => breakEvenForRows(list)),
       '',
       'POR ATIVO',
-      groupLines(safeRows, row => row.asset, breakEven),
+      groupLines(safeRows, row => row.asset, list => breakEvenForRows(list)),
       '',
       'POR HORA DO DIA',
-      groupLines(safeRows, hourBand, breakEven),
+      groupLines(safeRows, hourBand, list => breakEvenForRows(list)),
       '',
       'Observação: EMPATE e INDETERMINADO ficam fora do denominador da taxa de acerto.'
     ].join('\n');
@@ -392,11 +414,11 @@
     button.textContent = 'GERANDO…';
     try {
       const [stored, stateReply] = await Promise.all([
-        chrome.storage.local.get(PERFORMANCE_KEY).catch(() => ({})),
+        chrome.storage.local.get([PERFORMANCE_KEY, UI_PREF_KEY]).catch(() => ({})),
         message({ type: 'ATS_READ_SCANNER_STATE' })
       ]);
       const rows = Array.isArray(stored?.[PERFORMANCE_KEY]?.rows) ? stored[PERFORMANCE_KEY].rows : [];
-      const report = performanceReport(rows, stateReply?.state || {});
+      const report = performanceReport(rows, stateReply?.state || {}, stored?.[UI_PREF_KEY] || {});
       const ok = await writeText(report);
       button.textContent = ok ? 'COPIADO ✓' : 'FALHA AO COPIAR';
     } catch {
