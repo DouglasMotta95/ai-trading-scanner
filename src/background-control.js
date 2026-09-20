@@ -1,6 +1,6 @@
 import { activateLicense, validateLicense, clearLicense, restoreCachedLicense } from './services/license.js';
 import { readScannerState, updateScannerState } from './services/scanner-state-atomic.js';
-import { storageLocalGet, storageSessionGet, tabsQuery, sidePanelSetBehavior } from './services/chrome-compat.js';
+import { storageLocalGet, storageSessionGet, tabsQuery, sidePanelSetBehavior, scriptingExecuteScript } from './services/chrome-compat.js';
 import { detectPlatform } from './platforms/registry.js';
 import { clearMarketAuthorityState } from './background-market-session.js';
 
@@ -139,6 +139,235 @@ async function activePlatformTab() {
   return { tab: tab?.id ? tab : null, platform };
 }
 
+function inspectCasaTradeControlsDirect() {
+  const clean0 = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
+  const fold0 = value => clean0(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const visible0 = el => {
+    try {
+      if (!el || !(el instanceof Element)) return false;
+      const r = el.getBoundingClientRect();
+      const s = getComputedStyle(el);
+      return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden' && Number(s.opacity || 1) > 0;
+    } catch { return false; }
+  };
+  const roots = [document], seen = new Set(), elements = [];
+  while (roots.length && elements.length < 12000) {
+    const root = roots.shift();
+    if (!root || seen.has(root)) continue;
+    seen.add(root);
+    let rows = [];
+    try { rows = [...root.querySelectorAll('*')]; } catch {}
+    for (const el of rows) {
+      elements.push(el);
+      if (elements.length >= 12000) break;
+      try { if (el.shadowRoot) roots.push(el.shadowRoot); } catch {}
+    }
+  }
+
+  const parts = [];
+  try { parts.push(document.body?.innerText || document.body?.textContent || ''); } catch {}
+  const candidates = [];
+  const tfRows = [];
+
+  const normExp0 = value => {
+    const s = fold0(value).replace(/\s+/g, '');
+    let m = s.match(/^(\d{1,4})(?:s|seg|segundo|segundos)$/); if (m) return `${Number(m[1])}s`;
+    m = s.match(/^(\d{1,3})(?:m|min|minuto|minutos)$/); if (m) return `${Number(m[1]) * 60}s`;
+    m = s.match(/^(\d{1,2}):(\d{2})$/); if (m) return `${Number(m[1]) * 60 + Number(m[2])}s`;
+    return null;
+  };
+  const normTf0 = value => {
+    const s = clean0(value).toUpperCase().replace(/\s+/g, '');
+    let m = s.match(/^M(\d{1,3})$/); if (m) return `M${Number(m[1])}`;
+    m = s.match(/^(\d{1,3})(?:M|MIN)$/); if (m) return `M${Number(m[1])}`;
+    return null;
+  };
+
+  for (const el of elements) {
+    if (!visible0(el)) continue;
+    let own = '';
+    try {
+      own = clean0(
+        el.getAttribute?.('aria-valuetext')
+        || el.getAttribute?.('aria-label')
+        || el.getAttribute?.('title')
+        || el.getAttribute?.('data-value')
+        || (el instanceof HTMLInputElement || el instanceof HTMLSelectElement ? (el.value || el.selectedOptions?.[0]?.textContent || '') : '')
+        || el.innerText
+        || el.textContent
+        || ''
+      );
+    } catch {}
+    if (!own || own.length > 180) continue;
+
+    let parent = '';
+    try { parent = clean0(el.parentElement?.innerText || el.parentElement?.textContent || ''); } catch {}
+    const local = clean0(`${own} ${parent}`).slice(0, 420);
+    const folded = fold0(local);
+
+    if (/expira|expiry|expiration|duracao|duration/.test(folded)) {
+      const direct = local.match(/(?:expira(?:ção|cao)?|expiry|expiration|duracao|duração|duration)[^0-9]{0,60}(\d{1,4})\s*(s|seg|segundo|segundos|m|min|minuto|minutos)\b/i);
+      const token = direct || local.match(/\b(\d{1,4})\s*(s|seg|segundo|segundos|m|min|minuto|minutos)\b/i);
+      if (token) {
+        const expiration = normExp0(`${token[1]}${token[2]}`);
+        if (expiration) {
+          let score = direct ? 120 : 85;
+          if (/expira|expiry|expiration/.test(fold0(own))) score += 25;
+          try {
+            const r = el.getBoundingClientRect();
+            if (r.right > innerWidth * .65) score += 10;
+          } catch {}
+          candidates.push({ expiration, score, text: local.slice(0,120) });
+        }
+      }
+    }
+
+    const tf = normTf0(own);
+    if (tf) {
+      let score = 5;
+      let flags = '';
+      try { flags = `${el.className || ''} ${el.getAttribute?.('aria-selected') || ''} ${el.getAttribute?.('aria-current') || ''} ${el.getAttribute?.('data-state') || ''}`; } catch {}
+      if (/true|active|selected|current|checked/i.test(flags)) score += 80;
+      if (/vela|candle|timeframe|periodo|gr[aá]fico/.test(folded)) score += 30;
+      tfRows.push({ timeframe: tf, score });
+    }
+
+    parts.push(own);
+  }
+
+  const page = clean0(parts.join(' ')).slice(0, 300000);
+  const pageExp = page.match(/(?:expira(?:ção|cao)?|expiry|expiration|duracao|duração|duration)[^0-9]{0,80}(\d{1,4})\s*(s|seg|segundo|segundos|m|min|minuto|minutos)\b/i);
+  if (pageExp) {
+    const expiration = normExp0(`${pageExp[1]}${pageExp[2]}`);
+    if (expiration) candidates.push({ expiration, score: 100, text: 'page-expiration-label' });
+  }
+
+  candidates.sort((a,b) => b.score - a.score);
+  tfRows.sort((a,b) => b.score - a.score);
+  return {
+    expiration: candidates[0]?.expiration || null,
+    expirationConfidence: Number(candidates[0]?.score || 0),
+    timeframe: tfRows[0]?.timeframe || null,
+    timeframeConfidence: Number(tfRows[0]?.score || 0),
+    evidence: candidates[0]?.text || null,
+    observedAt: Date.now(),
+    host: String(location.hostname || '').toLowerCase(),
+    isTop: window === window.top
+  };
+}
+
+async function probePlatformControlsDirect(tabId) {
+  if (!tabId) return { ok: false, error: 'target_tab_missing' };
+  let rows = [];
+  try {
+    rows = await scriptingExecuteScript({
+      target: { tabId: Number(tabId), allFrames: true },
+      func: inspectCasaTradeControlsDirect,
+      world: 'ISOLATED'
+    }) || [];
+  } catch {
+    try {
+      rows = await scriptingExecuteScript({
+        target: { tabId: Number(tabId), allFrames: true },
+        func: inspectCasaTradeControlsDirect
+      }) || [];
+    } catch (error) {
+      return { ok: false, error: String(error?.message || error) };
+    }
+  }
+
+  const results = rows.map(row => ({
+    frameId: Number.isFinite(Number(row?.frameId)) ? Number(row.frameId) : null,
+    ...(row?.result || {})
+  })).filter(row => row && (row.expiration || row.timeframe));
+
+  const exp = results.filter(row => row.expiration)
+    .sort((a,b) => Number(b.expirationConfidence || 0) - Number(a.expirationConfidence || 0)
+      || Number(b.isTop === true) - Number(a.isTop === true))[0] || null;
+  const tf = results.filter(row => row.timeframe)
+    .sort((a,b) => Number(b.timeframeConfidence || 0) - Number(a.timeframeConfidence || 0))[0] || null;
+
+  if (!exp && !tf) return { ok: false, error: 'controls_not_found', frames: results.length };
+
+  const now = Date.now();
+  const next = await updateScannerState(state => {
+    if (Number(state.targetTabId || 0) && Number(state.targetTabId) !== Number(tabId)) return state;
+    const previous = state.platformControls?.observed || {};
+    const expiration = exp?.expiration || previous.expiration || null;
+    const timeframe = tf?.timeframe || previous.timeframe || null;
+    const observedAt = {
+      ...(previous.observedAt || {}),
+      ...(exp?.expiration ? { expiration: now } : {}),
+      ...(tf?.timeframe ? { timeframe: now } : {})
+    };
+    const confidence = {
+      ...(previous.confidence || {}),
+      ...(exp?.expiration ? { expiration: Math.max(100, Number(exp.expirationConfidence || 0)) } : {}),
+      ...(tf?.timeframe ? { timeframe: Math.max(70, Number(tf.timeframeConfidence || 0)) } : {})
+    };
+    const observed = {
+      ...previous,
+      expiration,
+      timeframe,
+      source: 'background-direct-dom',
+      observedAt,
+      confidence
+    };
+    const diagnostics = { ...(state.diagnostics || {}) };
+    const effectiveTf = clean(state.diagnostics?.marketClock?.timeframe || state.diagnostics?.marketSession?.timeframe || state.analysisTimeframe || state.timeframe || timeframe).toUpperCase();
+    const expirationReady = expiration === '60s' && effectiveTf === 'M1';
+    diagnostics.expirationGuard = {
+      ...(diagnostics.expirationGuard || {}),
+      required: '60s',
+      actual: expiration,
+      ready: expirationReady,
+      validForM1: expirationReady,
+      reason: !expiration
+        ? 'Expiração real da CasaTrade ainda não confirmada.'
+        : expiration !== '60s'
+          ? 'Ajuste a expiração da CasaTrade para 1 minuto'
+          : effectiveTf !== 'M1'
+            ? 'Ajuste o timeframe da CasaTrade para M1.'
+            : 'Expiração ao vivo de 1 minuto confirmada pela CasaTrade.',
+      at: now,
+      source: 'background-direct-dom'
+    };
+    diagnostics.platformTime = {
+      ...(diagnostics.platformTime || {}),
+      timeframe: effectiveTf || timeframe || null,
+      expiration,
+      source: 'background-direct-dom',
+      ready: expirationReady,
+      at: now
+    };
+    return {
+      ...state,
+      ...(expiration ? { expiration, targetExpiration: expiration } : {}),
+      platformControls: {
+        ...(state.platformControls || {}),
+        observed,
+        checkedAt: now,
+        expirationCheckedAt: exp?.expiration ? now : Number(state.platformControls?.expirationCheckedAt || 0),
+        timeframeCheckedAt: tf?.timeframe ? now : Number(state.platformControls?.timeframeCheckedAt || 0),
+        frameId: exp?.frameId ?? tf?.frameId ?? state.platformControls?.frameId ?? null,
+        source: 'background-direct-dom',
+        aligned: effectiveTf === 'M1' && expiration === '60s',
+        liveAuthority: true
+      },
+      diagnostics
+    };
+  });
+
+  return {
+    ok: true,
+    expiration: exp?.expiration || null,
+    timeframe: tf?.timeframe || null,
+    frameId: exp?.frameId ?? tf?.frameId ?? null,
+    evidence: exp?.evidence || null,
+    state: next
+  };
+}
+
 async function recoverLicense(state = {}, force = false) {
   if (!force && activeLicense(state.license)) return state.license;
 
@@ -173,7 +402,8 @@ async function refreshTargetTab() {
   if (!tabId) return { ok: false, error: 'target_tab_missing', state };
   const injected = await injectModern(tabId);
   if (!injected) return { ok: false, error: 'runtime_injection_failed', state: await readScannerState() };
-  return { ok: true, tabId, state: await readScannerState() };
+  const probed = await probePlatformControlsDirect(tabId).catch(() => null);
+  return { ok: true, tabId, controls: probed || null, state: probed?.state || await readScannerState() };
 }
 
 async function connectActiveTab() {
@@ -255,9 +485,10 @@ async function connectActiveTab() {
     }));
     return { ok: false, error: 'runtime_injection_failed', platform: { id: platform.id, name: platform.name }, tabId: tab.id, state: failed };
   }
+  const probed = await probePlatformControlsDirect(tab.id).catch(() => null);
   const connectedAt = Number(next.diagnostics?.target?.connectedAt || Date.now());
   scheduleConnectionTimeout(tab.id, connectedAt);
-  return { ok: true, platform: { id: platform.id, name: platform.name }, tabId: tab.id, state: await readScannerState() || next };
+  return { ok: true, platform: { id: platform.id, name: platform.name }, tabId: tab.id, controls: probed || null, state: probed?.state || await readScannerState() || next };
 }
 
 async function activate(key = '') {
@@ -391,6 +622,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (type === 'ATS_REFRESH_TARGET_TAB') {
     refreshTargetTab().then(sendResponse).catch(error => sendResponse({ ok: false, error: String(error?.message || error) }));
+    return true;
+  }
+
+  if (type === 'ATS_PROBE_PLATFORM_CONTROLS') {
+    readScannerState().then(state => probePlatformControlsDirect(Number(state.targetTabId || 0)))
+      .then(sendResponse)
+      .catch(error => sendResponse({ ok: false, error: String(error?.message || error) }));
     return true;
   }
 
