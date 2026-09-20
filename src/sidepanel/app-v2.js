@@ -523,13 +523,15 @@ function render(state = {}) {
   const retry = $('retryLiveRead');
   if (retry) {
     const age = sessionAgeMs(state);
-    const expirationTimedOut = freshMarket && !actualExp && age >= 4000;
     const marketTimedOut = activeLicense(state)
       && !!state.targetTabId
       && state.scanner === 'scanning'
       && !freshMarket
       && age >= 4000;
-    retry.hidden = !(expirationTimedOut || marketTimedOut);
+    // Expiration is recovered automatically by ATS_PROBE_PLATFORM_CONTROLS.
+    // Do not surface a manual retry button just because the expiration reader
+    // has not answered yet.
+    retry.hidden = !marketTimedOut;
   }
 
   renderOhlc(freshMarket ? state : {});
