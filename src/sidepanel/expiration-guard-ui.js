@@ -38,6 +38,11 @@
   let preferred = null;
   let latestState = null;
 
+  function requiredExpiration(state = latestState || {}) {
+    const timeframe = clean(state.analystPreferences?.operationMode || 'M1').toUpperCase() === 'M5' ? 'M5' : 'M1';
+    return normExp(state.analystPreferences?.operationExpiration || state.diagnostics?.expirationGuard?.required || (timeframe === 'M5' ? '300s' : '60s'));
+  }
+
   function applyGuard() {
     const state = latestState || {};
     const actual = normExp(state.platformControls?.observed?.expiration || '');
@@ -51,20 +56,19 @@
       return;
     }
 
-    const differs = !!preferred && actual !== preferred;
-    status.className = `expiration-guard-status ${differs ? 'info' : 'ok'}`;
+    const required = requiredExpiration(state);
+    const differs = !!required && actual !== required;
+    status.className = `expiration-guard-status ${differs ? 'warn' : 'ok'}`;
     status.textContent = differs
-      ? `CASATRADE AO VIVO: ${label(actual)} • preferência salva: ${label(preferred)}. O tempo ao vivo prevalece.`
-      : preferred
-        ? `CASATRADE AO VIVO: ${label(actual)} • igual à preferência.`
-        : `CASATRADE AO VIVO: ${label(actual)} • seguindo a plataforma automaticamente.`;
+      ? `CASATRADE AO VIVO: ${label(actual)} • modo exige ${label(required)}.`
+      : `CASATRADE AO VIVO: ${label(actual)} • compatível com o modo ativo.`;
   }
 
   async function syncPreference(value) {
     const requested = String(value || '').toUpperCase() === 'AUTO' ? null : normExp(value);
-    // Legacy 30s/2m/5m preferences are invalid for the fixed M1 strategy.
-    // Migrate them to AUTO instead of showing a contradictory saved value.
-    preferred = requested === '60s' ? '60s' : null;
+    const required = requiredExpiration();
+    // This legacy preference UI may only mirror the active operation mode.
+    preferred = requested === required ? required : null;
     select.value = preferred || 'AUTO';
     await storageSet({ [PREF_KEY]: { preferredExpiration: preferred } });
     await send({ type: 'ATS_SET_ANALYST_PREFERENCES', preferredExpiration: preferred });
