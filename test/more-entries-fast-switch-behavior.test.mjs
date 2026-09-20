@@ -15,8 +15,12 @@ function score38Candles() {
   directions.forEach((direction, index) => {
     const open = price;
     const close = direction === 'BUY' ? open + .25 : direction === 'SELL' ? open - .25 : open;
-    const high = index === 0 ? open + 1.4 : Math.max(open, close) + .375;
-    const low = index === 0 ? open - .6 : Math.min(open, close) - .375;
+    const high = index === 0 ? open + 1.4
+      : index === 8 ? open + 1.2
+        : Math.max(open, close) + .375;
+    const low = index === 0 ? open - .6
+      : index === 8 ? open
+        : Math.min(open, close) - .375;
     rows.push({ time: BASE + index * minute, open, high, low, close, timeframe: 'M1' });
     price = close;
   });
