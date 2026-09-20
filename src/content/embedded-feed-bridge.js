@@ -61,6 +61,7 @@
   let clockProbe = null;
   let candleClockProbe = null;
   let lastClockSentAt = 0;
+  let lastPayload = null;
 
   function candleRowsFor(payload = {}, asset = '') {
     const recent = payload?.recentCandles && typeof payload.recentCandles === 'object' ? payload.recentCandles : {};
@@ -192,13 +193,21 @@
     }
   }
 
+  globalThis.__ATS_FORCE_EMBEDDED_FEED_REPLAY__ = () => {
+    if (!lastPayload) return false;
+    sendMessage({ type: 'ATS_EMBEDDED_FEED', payload: lastPayload }).catch(() => {});
+    maybePublishStructuredClock(lastPayload).catch(() => {});
+    return true;
+  };
+
   window.addEventListener('message', event => {
     const data = event.data;
     if (!data || data.source !== 'ATS_NETWORK_PROBE' || data.type !== 'summary') return;
+    const payload = data.payload || {};
+    lastPayload = payload;
     const now = Date.now();
     if (now - lastSentAt < 80) return;
     lastSentAt = now;
-    const payload = data.payload || {};
 
     const networkExpiration = normalizeExp(payload.controls?.expiration);
     const networkExpirationConfidence = Number(payload.controls?.confidence || 0);
