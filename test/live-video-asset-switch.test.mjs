@@ -26,7 +26,11 @@ test('asset or timeframe switch clears every operational field that could leak t
     assert.ok(reset.includes(field), `missing reset field: ${field}`);
   }
   assert.match(reset, /marketClock: null/);
-  assert.match(reset, /resetOrchestrator\(\)/);
+  assert.doesNotMatch(reset, /resetOrchestrator\(\)/);
+
+  const central = read('src/background.js');
+  assert.match(central, /Single owner of technical analysis/);
+  assert.match(central, /if \(lastMarketKey && lastMarketKey !== marketKey\) resetOrchestrator\(\)/);
 });
 
 test('runtime trusts only CasaTrade-owned charts or legacy trader frames under a CasaTrade top tab', () => {
