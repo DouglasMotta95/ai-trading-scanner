@@ -232,10 +232,6 @@ export function clearMarketAuthorityState(state = {}, extra = {}) {
 }
 
 export function resetForSession(state = {}, { asset, timeframe = null, info, reason, source }) {
-  // A market/timeframe transition invalidates every in-memory decision cycle.
-  // Without this, a locked/possible signal from the previous instrument can
-  // survive even after scannerState has been cleared.
-  resetOrchestrator();
   const previous = state.diagnostics?.marketSession || {};
   const epoch = nextEpoch(previous);
   const now = Date.now();
@@ -297,6 +293,14 @@ export function resetForSession(state = {}, { asset, timeframe = null, info, rea
       acquisition: { stage: 'syncing_session', reason, at: now }
     }
   };
+}
+
+function transitionSession(state = {}, options = {}) {
+  // A market/timeframe transition invalidates every in-memory decision cycle.
+  // Keep resetForSession pure for deterministic tests; runtime transitions use
+  // this wrapper so a locked/possible signal can never cross instruments.
+  resetOrchestrator();
+  return resetForSession(state, options);
 }
 function clockRecord(message = {}, info = {}, asset = '', timeframe = null, secondsRemaining = null) {
   const verified = message.verified === true;
@@ -418,7 +422,7 @@ export async function applyFocus(message = {}, sender = {}) {
     const changed = assetChanged || traderHandoff || (!old && frameChanged);
     let next = state;
     if (changed || (state.asset && !sameMarket(state.asset, asset))) {
-      next = resetForSession(state, {
+      next = transitionSession(state, {
         asset, info, source: clean(message.source || 'visible-chart'),
         reason: assetChanged
           ? `Ativo ${asset} confirmado no gráfico. Sincronizando a sessão ao vivo.`
@@ -502,7 +506,7 @@ export async function applyClock(message = {}, sender = {}) {
       || Number(session.frameId) !== Number(info.frameId) || clean(session.frameHost).toLowerCase() !== info.frameHost;
     let next = state;
     if (sessionChanged) {
-      next = resetForSession(state, {
+      next = transitionSession(state, {
         asset, timeframe, info, source: exact ? 'exact-candle-clock' : 'fallback-candle-clock',
         reason: exact
           ? `Sessão ${asset} • ${timeframe || '—'} sincronizada ao fechamento real da vela.`
@@ -744,7 +748,7 @@ export async function repairMarketSessionIntegrity(observedState = {}) {
     const mismatch = (current.asset && !sameMarket(current.asset, session.asset))
       || (current.analysisTimeframe && session.timeframe && normTf(current.analysisTimeframe) !== normTf(session.timeframe));
     if (!mismatch) return current;
-    return resetForSession(current, {
+    return transitionSession(current, {
       asset: normAsset(focus.asset),
       timeframe: normTf(session.timeframe),
       info: { frameId: focus.frameId, frameHost: clean(focus.frameHost).toLowerCase() },
@@ -766,7 +770,7 @@ chrome.storage.onChanged.addListener(changes => {
     || (state.analysisTimeframe && session.timeframe && normTf(state.analysisTimeframe) !== normTf(session.timeframe));
   if (!mismatch) return;
   repairing = true;
-  updateScannerState(current => resetForSession(current, {
+  updateScannerState(current => transitionSession(current, {
     asset: normAsset(focus.asset), timeframe: normTf(session.timeframe),
     info: { frameId: focus.frameId, frameHost: clean(focus.frameHost).toLowerCase() },
     source: 'session-integrity', reason: 'Dado atrasado de outra sessão foi bloqueado.'
