@@ -219,8 +219,12 @@
   }
 
   function timeframeFrom(text) {
-    const m = String(text || '').match(/(?:^|\s)(M(?:1|2|5|15|30)|(?:1|2|5|15|30)\s*(?:m|min))(?:\s|$)/i);
-    return normalizeTf(m?.[1]) || null;
+    const source = String(text || '');
+    // Generic "1m/5m" tokens are ambiguous on CasaTrade because chart range,
+    // visible-history and expiration controls can use the same units. Only a
+    // value attached to candle-period semantics may become the operational TF.
+    const labeled = source.match(/(?:PER[IÍ]ODO\s+DA\s+VELA|CANDLE\s+PERIOD|CANDLE\s+INTERVAL|TIMEFRAME)[^0-9M]{0,48}(M(?:1|2|5|15|30)|(?:1|2|5|15|30)\s*(?:m|min))/i);
+    return normalizeTf(labeled?.[1]) || null;
   }
 
   function expirationFrom(text) {
