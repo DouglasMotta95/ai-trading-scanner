@@ -64,8 +64,8 @@ test('video 14809: platform stays connected while selected asset is resynchroniz
 
 test('video 14809: build version is unique so 0.11.26 cache cannot be reused', () => {
   const manifest = JSON.parse(read('manifest.json'));
-  assert.equal(manifest.version, '0.11.56');
-  assert.equal(manifest.version_name, '0.11.56-video14980-asset-expiration-fix');
+  assert.equal(manifest.version, '0.11.57');
+  assert.equal(manifest.version_name, '0.11.57-video15013-m5-timeframe-authority');
 });
 
 test('video 14809: central technical analysis owner remains single', () => {
