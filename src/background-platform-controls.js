@@ -166,23 +166,8 @@ function mergeObserved(previous = {}, incoming = {}) {
 
 function analystPrefs(state = {}, message = {}) {
   const current = state.analystPreferences || {};
-  const sync = globalThis.__ATS_OPERATION_TIME_SYNC__;
-  const operatingTimeframe = sync?.operatingTimeframe?.(
-    message.operatingTimeframe || current.operatingTimeframe || 'M1'
-  ) || 'M1';
-  const config = sync?.configFor?.(operatingTimeframe) || {
-    timeframe: operatingTimeframe,
-    expiration: operatingTimeframe === 'M5' ? '300s' : '60s'
-  };
-  return {
-    ...current,
-    mode: 'A_PLUS',
-    operatingTimeframe: config.timeframe,
-    holdSeconds: 3,
-    geminiEnabled: message.geminiEnabled == null ? current.geminiEnabled !== false : message.geminiEnabled !== false,
-    preferredExpiration: normExp(message.preferredExpiration || '') || config.expiration,
-    updatedAt: Date.now()
-  };
+  const mapped = globalThis.__ATS_OPERATION_TIME_SYNC__?.preferencesFromMessage?.(current, message) || current;
+  return { ...mapped, updatedAt: Date.now() };
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
