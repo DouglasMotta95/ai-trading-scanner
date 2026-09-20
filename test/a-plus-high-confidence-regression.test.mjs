@@ -60,10 +60,10 @@ test('profiles map M1->M5/1min and M5->M15/5min', () => {
 });
 
 test('A+ refuses candidate without enough operational/context history', () => {
-  const candles = trendCandles({ count: 10 });
+  const candles = trendCandles({ count: 4 });
   const result = assessHighConfidence({
     candles,
-    currentCandle: { ...candles.at(-1), time: BASE + 10 * 60_000 },
+    currentCandle: { ...candles.at(-1), time: BASE + 4 * 60_000 },
     signal: signal('BUY'),
     direction: 'BUY',
     operatingTimeframe: 'M1',
