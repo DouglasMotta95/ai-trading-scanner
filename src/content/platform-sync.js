@@ -122,9 +122,13 @@
       if (!value) continue;
       const r = el.getBoundingClientRect();
       const local = localContext(el);
+      // Chart range / visible history / zoom can also show tokens such as 1m or
+      // 5m. Those controls change what the user sees, not the candle period.
+      if (/chart range|range do grafico|range do gráfico|faixa do grafico|faixa do gráfico|visualizacao|visualização|view range|visible range|zoom|history range|historico visivel|histórico visível/.test(local)) continue;
       let score = 0;
       if (el.getAttribute?.('aria-selected') === 'true' || /active|selected|current/i.test(String(el.className || ''))) score += 90;
-      if (/vela|timeframe|candle|periodo/.test(local)) score += 35;
+      if (/periodo da vela|período da vela|candle period|candle interval|timeframe/.test(local)) score += 70;
+      else if (/vela|candle|periodo|período/.test(local)) score += 20;
       if (r.left < innerWidth * .38) score += 25;
       if (r.top > innerHeight * .15 && r.top < innerHeight * .9) score += 10;
       if (/expira|expiry|duration/.test(local)) score -= 40;
