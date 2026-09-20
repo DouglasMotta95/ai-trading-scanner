@@ -347,6 +347,10 @@
       at,
       source: 'user-selected-transition'
     });
+    // MAIN-world market readers cannot see isolated-world globals. Publish the
+    // explicit chart selection through window messaging so stale frame rows are
+    // deprioritized immediately instead of waiting several seconds to age out.
+    try { window.postMessage({ source: 'ATS_VISUAL_ASSET_SWITCH', asset, at }, '*'); } catch {}
     lastPublished = asset;
     lastPublishedAt = at;
     candidate = asset;
@@ -411,7 +415,7 @@
     }, delay);
   }
 
-  const observer = new MutationObserver(() => schedulePublish(160, false));
+  const observer = new MutationObserver(() => schedulePublish(90, false));
   try { observer.observe(document.documentElement, { subtree: true, childList: true, attributes: true, characterData: true }); } catch {}
   const noteInteraction = event => {
     const asset = touchedAsset(event);
@@ -420,7 +424,7 @@
       noteInteractionHint(asset, now);
     }
     invalidateElements();
-    schedulePublish(70, true);
+    schedulePublish(20, true);
   };
   document.addEventListener('pointerup', noteInteraction, true);
   document.addEventListener('touchend', noteInteraction, true);
