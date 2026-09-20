@@ -4,7 +4,7 @@
 
   const host = String(location.hostname || '').toLowerCase().replace(/\.$/, '');
   const allowed = value => value === 'casatrade.com' || value.endsWith('.casatrade.com') || value === 'casatrade.io' || value.endsWith('.casatrade.io') || value === 'casatraders.online' || value.endsWith('.casatraders.online') || value === 'ivcasatraders.online' || value.endsWith('.ivcasatraders.online');
-  if (!allowed(host) || window !== window.top) return;
+  if (!allowed(host)) return;
   const sendMessage = globalThis.__ATS_SEND_MESSAGE__;
   if (typeof sendMessage !== 'function') return;
 
