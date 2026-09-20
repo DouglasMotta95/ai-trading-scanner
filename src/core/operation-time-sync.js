@@ -52,6 +52,34 @@
     };
   }
 
+  function authoritativeExpiration(state = {}) {
+    const controls = state?.platformControls || {};
+    const observed = controls?.observed || {};
+    const observedValue = normExp(observed.expiration);
+    const observedAt = Number(observed?.observedAt?.expiration || controls.expirationCheckedAt || 0);
+    if (controls.liveAuthority === true && observedValue && observedAt > 0) {
+      return { value: observedValue, at: observedAt, source: clean(controls.source || observed.source || 'platform-controls') };
+    }
+
+    const guard = state?.diagnostics?.expirationGuard || {};
+    const guardValue = normExp(guard.actual);
+    const guardAt = Number(guard.at || 0);
+    const guardSource = clean(guard.source || '');
+    if (guardValue && guardAt > 0 && guardSource === 'background-direct-expiration-probe') {
+      return { value: guardValue, at: guardAt, source: guardSource };
+    }
+
+    const platformTime = state?.diagnostics?.platformTime || {};
+    const platformValue = normExp(platformTime.expiration);
+    const platformAt = Number(platformTime.at || 0);
+    const platformSource = clean(platformTime.source || '');
+    if (platformValue && platformAt > 0 && platformSource === 'background-direct-expiration-probe') {
+      return { value: platformValue, at: platformAt, source: platformSource };
+    }
+
+    return { value: null, at: 0, source: null };
+  }
+
   function sameMarket(a, b) {
     const normalize = value => {
       const raw = clean(value).toUpperCase();
@@ -71,9 +99,10 @@
     const focus = state?.diagnostics?.focusedAsset || {};
 
     const timeframeAt = Number(controls?.observedAt?.timeframe || state?.platformControls?.timeframeCheckedAt || 0);
-    const expirationAt = Number(controls?.observedAt?.expiration || state?.platformControls?.expirationCheckedAt || 0);
+    const expirationAuthority = authoritativeExpiration(state);
+    const expirationAt = Number(expirationAuthority.at || 0);
     const visibleTimeframe = normTf(controls.timeframe);
-    const expiration = normExp(controls.expiration);
+    const expiration = normExp(expirationAuthority.value);
     const clockTimeframe = normTf(clock.timeframe);
     const seconds = Number(clock.secondsRemaining);
     const clockAge = Number(now) - Number(clock.at || 0);
@@ -140,6 +169,7 @@
           : null,
       clockTimeframe,
       expiration,
+      expirationAuthority: expirationAuthority.source,
       requiredExpiration: config.expiration,
       secondsRemaining: clockReady ? seconds : null,
       contextTimeframe: config.contextTimeframe,
@@ -155,6 +185,7 @@
     operatingTimeframe,
     configFor,
     preferencesFromMessage,
+    authoritativeExpiration,
     read
   });
 })();
