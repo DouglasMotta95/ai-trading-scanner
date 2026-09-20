@@ -58,7 +58,7 @@ function safeObserved(snapshot = {}) {
   };
 }
 
-function mergeObserved(previous = {}, incoming = {}) {
+function mergeObserved(previous = {}, incoming = {}, previousExpirationSource = '') {
   const oldConfidence = previous.confidence || {};
   const next = {
     amount: previous.amount ?? null,
@@ -77,13 +77,163 @@ function mergeObserved(previous = {}, incoming = {}) {
     const previousStale = !previousAt || Date.now() - previousAt >= 7000;
     const newer = incomingAt > previousAt;
     const notOlder = incomingAt >= previousAt;
-    if (value != null && (next[field] == null || previousStale || (newer && score >= Math.max(55, oldScore - 15)) || (notOlder && score >= oldScore - 2))) {
+    const realOverridesDeclared = field === 'expiration'
+      && previousExpirationSource === 'user-declared'
+      && clean(incoming.source) !== 'user-declared';
+    if (value != null && (realOverridesDeclared || next[field] == null || previousStale || (newer && score >= Math.max(55, oldScore - 15)) || (notOlder && score >= oldScore - 2))) {
       next[field] = value;
       next.confidence[field] = score;
       next.observedAt[field] = incomingAt || Date.now();
     }
   }
   return next;
+}
+
+const USER_DECLARED_EXPIRATIONS = new Set(['5s','15s','30s','60s']);
+const USER_DECLARED_FRESH_OFFSET_MS = 10 * 365 * 24 * 60 * 60 * 1000;
+
+function expLabel(value = '') {
+  const exp = normExp(value);
+  if (!exp) return '—';
+  const seconds = Number(exp.replace(/\D/g, ''));
+  return seconds % 60 === 0 ? `${seconds / 60} min` : `${seconds} seg`;
+}
+
+function expirationContext(state = {}, observed = {}, expirationSource = '') {
+  const now = Date.now();
+  const declared = normExp(state.platformControls?.userDeclaredExpiration || '');
+  let realExpiration = normExp(state.platformControls?.realExpiration || '');
+  let realExpirationAt = Number(state.platformControls?.realExpirationAt || 0);
+  let realExpirationSource = clean(state.platformControls?.realExpirationSource || '');
+
+  const observedAt = Number(observed.observedAt?.expiration || 0);
+  const observedExpiration = normExp(observed.expiration || '');
+  const observedSource = clean(expirationSource || state.platformControls?.expirationSource || observed.source || '');
+  const observedIsReal = observedExpiration
+    && observedSource
+    && observedSource !== 'user-declared'
+    && observedAt > 0
+    && now - observedAt < 7000;
+
+  if (observedIsReal) {
+    realExpiration = observedExpiration;
+    realExpirationAt = observedAt;
+    realExpirationSource = observedSource;
+  }
+
+  const realFresh = !!realExpiration && realExpirationAt > 0 && now - realExpirationAt < 7000;
+  const divergence = !!(realFresh && declared && realExpiration !== declared);
+  const actual = realFresh ? realExpiration : declared || null;
+  const source = realFresh ? (realExpirationSource || 'real') : declared ? 'user-declared' : null;
+
+  return {
+    declared,
+    realExpiration: realFresh ? realExpiration : null,
+    realExpirationAt: realFresh ? realExpirationAt : 0,
+    realExpirationSource: realFresh ? (realExpirationSource || 'real') : '',
+    realFresh,
+    divergence,
+    actual,
+    source
+  };
+}
+
+function applyExpirationAuthority(state = {}, observedInput = {}, expirationSource = '') {
+  const now = Date.now();
+  const authority = expirationContext(state, observedInput, expirationSource);
+  const observed = {
+    ...observedInput,
+    observedAt: { ...(observedInput.observedAt || {}) },
+    confidence: { ...(observedInput.confidence || {}) }
+  };
+
+  let storedExpirationSource = authority.source || clean(expirationSource || observed.source || '');
+  let expirationCheckedAt = Number(observed.observedAt?.expiration || 0);
+
+  if (authority.divergence) {
+    observed.expiration = null;
+    observed.observedAt.expiration = 0;
+    observed.confidence.expiration = 0;
+    expirationCheckedAt = 0;
+  } else if (!authority.realFresh && authority.declared) {
+    const declaredAt = now + USER_DECLARED_FRESH_OFFSET_MS;
+    observed.expiration = authority.declared;
+    observed.observedAt.expiration = declaredAt;
+    observed.confidence.expiration = 0;
+    observed.source = 'user-declared';
+    storedExpirationSource = 'user-declared';
+    expirationCheckedAt = declaredAt;
+  } else if (authority.realFresh) {
+    observed.expiration = authority.realExpiration;
+    observed.observedAt.expiration = authority.realExpirationAt;
+    storedExpirationSource = authority.realExpirationSource;
+    expirationCheckedAt = authority.realExpirationAt;
+  }
+
+  const actualTimeframeAt = Number(observed.observedAt?.timeframe || 0);
+  const actualTimeframe = actualTimeframeAt > 0 && now - actualTimeframeAt < 7000
+    ? normTf(observed.timeframe)
+    : null;
+  const oldTf = normTf(state.analysisTimeframe || state.timeframe);
+  const reliableTf = actualTimeframe && Number(observed.confidence?.timeframe || 0) >= 18 ? actualTimeframe : null;
+  const clockTf = normTf(state.diagnostics?.marketClock?.timeframe);
+  const sessionTf = normTf(state.diagnostics?.marketSession?.timeframe);
+  const effectiveTf = clockTf || sessionTf || reliableTf || oldTf || null;
+  const m1Ready = effectiveTf === 'M1';
+  const expirationValid = authority.actual === '60s';
+  const ready = !!authority.actual && m1Ready && expirationValid && !authority.divergence;
+  const preferred = normExp(state.analystPreferences?.preferredExpiration || state.executionPreferences?.expiration || '');
+
+  const reason = authority.divergence
+    ? `Divergência de expiração: CasaTrade confirmou ${expLabel(authority.realExpiration)}, mas você informou ${expLabel(authority.declared)}. Ajuste antes de entrar.`
+    : !m1Ready
+      ? 'Ajuste o timeframe da CasaTrade para M1.'
+      : !authority.actual
+        ? 'Expiração real da CasaTrade ainda não confirmada.'
+        : !expirationValid
+          ? 'Ajuste a expiração da CasaTrade para 1 minuto'
+          : authority.source === 'user-declared'
+            ? 'Expiração de 1 minuto informada por você, não verificada.'
+            : 'Expiração ao vivo de 1 minuto confirmada pela CasaTrade.';
+
+  const diagnostics = { ...(state.diagnostics || {}) };
+  diagnostics.expirationGuard = {
+    ...(diagnostics.expirationGuard || {}),
+    preferred,
+    required: '60s',
+    actual: authority.actual,
+    source: authority.source,
+    verified: authority.realFresh,
+    userDeclared: authority.declared,
+    real: authority.realExpiration,
+    divergence: authority.divergence,
+    label: authority.source === 'user-declared' ? 'informada por você, não verificada' : authority.source ? 'confirmada pela CasaTrade' : 'pendente',
+    ready,
+    validForM1: ready,
+    matchesPreference: !preferred || !authority.actual || preferred === authority.actual,
+    reason,
+    at: now
+  };
+  diagnostics.platformTime = {
+    ...(diagnostics.platformTime || {}),
+    timeframe: effectiveTf,
+    expiration: authority.actual,
+    source: authority.source,
+    ready,
+    at: now
+  };
+
+  return {
+    observed,
+    diagnostics,
+    authority,
+    effectiveTf,
+    reliableTf,
+    expirationCheckedAt,
+    timeframeCheckedAt: actualTimeframeAt,
+    expirationSource: storedExpirationSource,
+    ready
+  };
 }
 
 function analystPrefs(state = {}, message = {}) {
@@ -118,6 +268,57 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message?.type === 'ATS_SET_USER_DECLARED_EXPIRATION') {
+    const declared = normExp(message.expiration || '');
+    if (!USER_DECLARED_EXPIRATIONS.has(declared)) {
+      sendResponse({ ok: false, error: 'invalid_user_declared_expiration' });
+      return false;
+    }
+
+    updateScannerState(state => {
+      const now = Date.now();
+      const previousControls = state.platformControls || {};
+      const previousObserved = previousControls.observed || {};
+      const currentSource = clean(previousControls.expirationSource || previousObserved.source || '');
+      const seededState = {
+        ...state,
+        platformControls: {
+          ...previousControls,
+          userDeclaredExpiration: declared,
+          userDeclaredAt: now
+        }
+      };
+      const resolved = applyExpirationAuthority(seededState, previousObserved, currentSource);
+
+      return {
+        ...seededState,
+        expiration: resolved.authority.divergence ? null : resolved.authority.actual,
+        targetExpiration: resolved.authority.divergence ? null : resolved.authority.actual,
+        platformControls: {
+          ...seededState.platformControls,
+          observed: resolved.observed,
+          checkedAt: now,
+          expirationCheckedAt: resolved.expirationCheckedAt,
+          timeframeCheckedAt: resolved.timeframeCheckedAt,
+          source: resolved.authority.source,
+          expirationSource: resolved.expirationSource,
+          expirationVerified: resolved.authority.realFresh,
+          liveAuthority: resolved.authority.realFresh,
+          aligned: resolved.ready,
+          realExpiration: resolved.authority.realExpiration || previousControls.realExpiration || null,
+          realExpirationAt: resolved.authority.realExpirationAt || Number(previousControls.realExpirationAt || 0),
+          realExpirationSource: resolved.authority.realExpirationSource || clean(previousControls.realExpirationSource || '')
+        },
+        diagnostics: resolved.diagnostics
+      };
+    }).then(state => sendResponse({
+      ok: true,
+      state,
+      expirationGuard: state.diagnostics?.expirationGuard || null
+    })).catch(error => sendResponse({ ok: false, error: String(error?.message || error) }));
+    return true;
+  }
+
   if (message?.type !== 'ATS_PLATFORM_CONTROLS_OBSERVED') return false;
   if (!trusted(sender)) { sendResponse({ ok: false, error: 'untrusted_sender' }); return false; }
   const tabId = Number(sender.tab?.id || 0);
@@ -125,82 +326,69 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   updateScannerState(state => {
     if (Number(state.targetTabId || 0) && Number(state.targetTabId) !== tabId) return state;
-    const previous = state.platformControls?.observed || {};
-    const observed = mergeObserved(previous, incoming);
-    const expirationAt = Number(observed.observedAt?.expiration || 0);
-    const timeframeAt = Number(observed.observedAt?.timeframe || 0);
-    const expirationFresh = expirationAt > 0 && Date.now() - expirationAt < 7000;
-    const timeframeFresh = timeframeAt > 0 && Date.now() - timeframeAt < 7000;
-    // Restore the proven v0.11.27 expiration behavior: once a normalized
-    // expiration value is fresh, accept it. Source-specific confidence belongs
-    // to the readers; this owner must not turn a visible "1 min" back into
-    // PENDING because of a second arbitrary threshold.
-    const actualExpiration = expirationFresh ? observed.expiration || null : null;
-    const actualTimeframe = timeframeFresh ? observed.timeframe || null : null;
-    const preferred = normExp(state.analystPreferences?.preferredExpiration || state.executionPreferences?.expiration || '');
-    const oldTf = normTf(state.analysisTimeframe || state.timeframe);
-    const reliableTf = actualTimeframe && Number(observed.confidence?.timeframe || 0) >= 18 ? actualTimeframe : null;
-    const timeframeChanged = !!oldTf && !!reliableTf && oldTf !== reliableTf;
 
-    const diagnostics = { ...(state.diagnostics || {}) };
+    const previousControls = state.platformControls || {};
+    const previous = previousControls.observed || {};
+    const previousExpirationSource = clean(previousControls.expirationSource || previous.source || '');
+    const observedRaw = mergeObserved(previous, incoming, previousExpirationSource);
+
+    let realExpiration = normExp(previousControls.realExpiration || '');
+    let realExpirationAt = Number(previousControls.realExpirationAt || 0);
+    let realExpirationSource = clean(previousControls.realExpirationSource || '');
+
+    if (incoming.expiration && clean(incoming.source) !== 'user-declared') {
+      realExpiration = incoming.expiration;
+      realExpirationAt = Number(incoming.observedAt?.expiration || Date.now());
+      realExpirationSource = clean(incoming.source || 'real');
+    }
+
+    const seededState = {
+      ...state,
+      platformControls: {
+        ...previousControls,
+        realExpiration,
+        realExpirationAt,
+        realExpirationSource
+      }
+    };
+
+    const incomingExpirationSource = incoming.expiration && clean(incoming.source) !== 'user-declared'
+      ? clean(incoming.source)
+      : previousExpirationSource;
+    const resolved = applyExpirationAuthority(seededState, observedRaw, incomingExpirationSource);
+
+    const oldTf = normTf(state.analysisTimeframe || state.timeframe);
+    const timeframeChanged = !!oldTf && !!resolved.reliableTf && oldTf !== resolved.reliableTf;
     if (timeframeChanged) {
-      // Keep marketSession ownership intact. Deleting it here lets an unrelated
-      // controls observer bypass the asset/session epoch guard and is a source
-      // of cross-asset contamination. The market-session owner will perform the
-      // authoritative reset when the focused chart confirms the new timeframe.
-      diagnostics.timeframeTransition = {
+      resolved.diagnostics.timeframeTransition = {
         from: oldTf,
-        to: reliableTf,
+        to: resolved.reliableTf,
         at: Date.now(),
-        source: observed.source
+        source: observedRaw.source
       };
     }
-    const clockTf = normTf(state.diagnostics?.marketClock?.timeframe);
-    const sessionTf = normTf(state.diagnostics?.marketSession?.timeframe);
-    const effectiveTf = clockTf || sessionTf || reliableTf || oldTf || null;
-    const m1Ready = effectiveTf === 'M1';
-    const expirationValid = actualExpiration === '60s';
-    diagnostics.expirationGuard = {
-      preferred,
-      required: '60s',
-      actual: actualExpiration,
-      ready: !!actualExpiration && m1Ready && expirationValid,
-      validForM1: m1Ready && expirationValid,
-      matchesPreference: !preferred || !actualExpiration || preferred === actualExpiration,
-      reason: !m1Ready
-        ? 'Ajuste o timeframe da CasaTrade para M1.'
-        : !actualExpiration
-          ? 'Expiração real da CasaTrade ainda não confirmada.'
-          : !expirationValid
-            ? 'Ajuste a expiração da CasaTrade para 1 minuto'
-            : 'Expiração ao vivo de 1 minuto confirmada pela CasaTrade.',
-      at: Date.now()
-    };
-    diagnostics.platformTime = {
-      timeframe: effectiveTf,
-      expiration: actualExpiration,
-      source: observed.source,
-      ready: m1Ready && expirationValid,
-      at: Date.now()
-    };
 
     return {
-      ...state,
-      // Platform controls report timeframe but do not own market-session fields.
-      // The focused chart + candle clock are the only authority allowed to move
-      // timeframe/analysisTimeframe or clear price/candle history.
-      ...(actualExpiration ? { expiration: actualExpiration, targetExpiration: actualExpiration } : {}),
+      ...seededState,
+      expiration: resolved.authority.divergence ? null : resolved.authority.actual,
+      targetExpiration: resolved.authority.divergence ? null : resolved.authority.actual,
       platformControls: {
-        observed,
+        ...seededState.platformControls,
+        observed: resolved.observed,
         checkedAt: Date.now(),
-        expirationCheckedAt: expirationAt,
-        timeframeCheckedAt: timeframeAt,
+        expirationCheckedAt: resolved.expirationCheckedAt,
+        timeframeCheckedAt: resolved.timeframeCheckedAt,
         frameId: Number(sender.frameId || 0),
-        source: observed.source,
-        aligned: (reliableTf || oldTf) === 'M1' && actualExpiration === '60s',
-        liveAuthority: true
+        source: resolved.authority.source,
+        expirationSource: resolved.expirationSource,
+        expirationVerified: resolved.authority.realFresh,
+        liveAuthority: resolved.authority.realFresh,
+        aligned: resolved.ready,
+        realExpiration: resolved.authority.realExpiration || realExpiration || null,
+        realExpirationAt: resolved.authority.realExpirationAt || realExpirationAt || 0,
+        realExpirationSource: resolved.authority.realExpirationSource || realExpirationSource || ''
       },
-      diagnostics
+      diagnostics: resolved.diagnostics
     };
   }).then(state => sendResponse({
     ok: true,
