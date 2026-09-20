@@ -73,7 +73,7 @@ function consolidatedSnapshot(state = {}) {
   const secondsRemaining = num(sync.secondsRemaining);
   const timeframe = normTf(sync.clockTimeframe);
   const desiredTimeframe = operatingTimeframe(state);
-  if (!timeframe || timeframe !== desiredTimeframe || sync.visibleTimeframe !== desiredTimeframe) return null;
+  if (!timeframe || timeframe !== desiredTimeframe || sync.timeframeReady !== true) return null;
   const requiredExpiration = sync.requiredExpiration || expirationForTimeframe(desiredTimeframe);
   const candles = historyFor(state, asset);
   if (candles.length < 2) return null;
