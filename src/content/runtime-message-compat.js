@@ -1,5 +1,7 @@
 (() => {
-  if (globalThis.__ATS_RUNTIME_MESSAGE_COMPAT__) return;
+  // Always refresh this bridge on reinjection. Android/Quetta can keep the
+  // isolated page world alive after an unpacked-extension reload; reusing the
+  // old closure would keep chrome.runtime.sendMessage bound to a stale runtime.
   globalThis.__ATS_RUNTIME_MESSAGE_COMPAT__ = true;
 
   const runtime = globalThis.chrome?.runtime;
