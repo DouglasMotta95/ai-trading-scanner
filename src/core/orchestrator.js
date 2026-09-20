@@ -8,18 +8,19 @@ import { ANALYST_THRESHOLDS } from './analysis.js';
 
 // Price action/indicators remain in the legacy analyst. This wrapper owns exactly
 // one bounded decision for each target candle: ENTER BUY, ENTER SELL or WAIT.
-const CONFIRM_HITS = 1;
+const CONFIRM_HITS = 2;
 const DECISION_HIT_GAP_MS = 6000;
-const POSSIBLE_CONFIRM_HITS = 1;
-const POSSIBLE_HIT_GAP_MS = 6000;
+const POSSIBLE_CONFIRM_HITS = 2;
+const POSSIBLE_HIT_GAP_MS = 8000;
 const OPPOSITE_SWITCH_HITS = 3;
 const OPPOSITE_MIN_HOLD_MS = 4000;
 const OPPOSITE_SCORE_MARGIN = 8;
 const OPPOSITE_STALE_MS = 5000;
-const FINAL_CANDIDATE_MIN_AGE_MS = 750;
+const FINAL_CANDIDATE_MIN_AGE_MS = 500;
 const cycles = new Map();
 const wrapperCompletedDecisions = new Map();
 const WRAPPER_ROW_PREFIX = 'wrapper-cycle:';
+const POSSIBLE_RELEASE_SCORE = 55;
 
 const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
 const clean = value => String(value ?? '').trim();
@@ -40,7 +41,7 @@ function timeframeMs(value = 'M1') {
 function decisionWindows(snapshot = {}, signal = {}) {
   const timeframe = clean(snapshot.analysisTimeframe || snapshot.timeframe || signal.timeframe || 'M1').toUpperCase();
   const duration = Math.max(2, Math.round(timeframeMs(timeframe) / 1000));
-  // M1 product contract: pre-signal at ~30s, final decision at ~10s,
+  // M1/M5 product contract: pre-signal at ~30s, final decision starts at ~15s,
   // and settle as WAIT near the close if no setup confirms.
   if (timeframe === 'M1' || timeframe === 'M5') return { pre: 30, decision: 15, skip: 4, duration, timeframe };
 
@@ -137,7 +138,7 @@ function observeStablePossible(cycle, signal = {}, at = Date.now()) {
   const rawScore = Number(signal.analysisScore ?? signal.score ?? 0);
   const pattern = patternEvidence(signal, rawDirection);
   const qualifies = ['BUY','SELL'].includes(rawDirection)
-    && rawScore >= ANALYST_THRESHOLDS.possibleScore
+    && rawScore >= POSSIBLE_RELEASE_SCORE
     && pattern.identified;
 
   if (!cycle.possibleDirection) {
