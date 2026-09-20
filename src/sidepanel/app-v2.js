@@ -113,6 +113,15 @@ function focusReady(state = {}) {
     && Date.now() - Number(focus.at) < 5500;
 }
 
+function clockBoundToFocus(clock = {}, focus = {}) {
+  const sameFrame = Number(clock.frameId) === Number(focus.frameId)
+    && clean(clock.frameHost).toLowerCase() === clean(focus.frameHost).toLowerCase();
+  const boundControlFrame = clock.crossFrameControl === true
+    && Number(clock.boundFocusFrameId) === Number(focus.frameId)
+    && clean(clock.boundFocusFrameHost).toLowerCase() === clean(focus.frameHost).toLowerCase();
+  return sameFrame || boundControlFrame;
+}
+
 function clockBaseReady(state = {}) {
   const clock = state.diagnostics?.marketClock || {};
   const focus = state.diagnostics?.focusedAsset || {};
@@ -120,8 +129,7 @@ function clockBaseReady(state = {}) {
     && clock.available !== false
     && clock.role === 'candle-close'
     && sameMarket(clock.asset, state.asset)
-    && Number(clock.frameId) === Number(focus.frameId)
-    && clean(clock.frameHost).toLowerCase() === clean(focus.frameHost).toLowerCase()
+    && clockBoundToFocus(clock, focus)
     && Number(clock.at || 0) > 0
     && Date.now() - Number(clock.at) < 3000
     && num(clock.secondsRemaining) != null;
