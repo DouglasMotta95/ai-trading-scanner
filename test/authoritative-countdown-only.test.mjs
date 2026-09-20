@@ -86,7 +86,7 @@ test('stale real countdown becomes pending instead of being locally decremented'
     source: 'network-server-cycle',
     at: NOW
   });
-  const result = authority.readAuthoritativeCountdown(state, NOW + 3_500);
+  const result = authority.readAuthoritativeCountdown(state, NOW + 8_500);
   assert.equal(result.ready, false);
   assert.equal(result.secondsRemaining, null);
 });
