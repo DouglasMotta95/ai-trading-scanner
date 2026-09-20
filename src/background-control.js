@@ -3,6 +3,7 @@ import { readScannerState, updateScannerState } from './services/scanner-state-a
 import { storageLocalGet, storageSessionGet, tabsQuery, sidePanelSetBehavior } from './services/chrome-compat.js';
 import { detectPlatform } from './platforms/registry.js';
 import { clearMarketAuthorityState, applyFocus as applyMarketFocus } from './background-market-session.js';
+import './core/operation-time-sync.js';
 
 const DEFAULT_LICENSE = Object.freeze({
   status: 'unconfigured', plan: null, planLabel: null, dailyLimit: null, usedToday: 0,
@@ -832,6 +833,8 @@ function exactTradeReady(state = {}) {
   if (!['ENTER_BUY','ENTER_SELL'].includes(ui)) return false;
   if (!state.asset || !sameAsset(focus.asset, state.asset)) return false;
   if (focus.reliable !== true || focus.chartScoped !== true || focus.trustedChartFrame !== true) return false;
+  const operationSync = globalThis.__ATS_OPERATION_TIME_SYNC__?.read?.(state, Date.now()) || null;
+  if (!operationSync?.ready) return false;
   return true;
 }
 
