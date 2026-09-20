@@ -1,5 +1,6 @@
 import { updateScannerState } from './services/scanner-state-atomic.js';
-import { getThresholds } from './core/analysis.js';
+import { getThresholds, getOperationMode } from './core/analysis.js';
+import { clearUserDeclaredExpirationState } from './background-market-session.js';
 
 const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
 const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
@@ -90,7 +91,7 @@ function mergeObserved(previous = {}, incoming = {}, previousExpirationSource = 
   return next;
 }
 
-const USER_DECLARED_EXPIRATIONS = new Set(['5s','15s','30s','60s']);
+const USER_DECLARED_EXPIRATIONS = new Set(['5s','15s','30s','60s','300s']);
 const USER_DECLARED_FRESH_OFFSET_MS = 10 * 365 * 24 * 60 * 60 * 1000;
 
 function expLabel(value = '') {
@@ -180,28 +181,30 @@ function applyExpirationAuthority(state = {}, observedInput = {}, expirationSour
   const clockTf = normTf(state.diagnostics?.marketClock?.timeframe);
   const sessionTf = normTf(state.diagnostics?.marketSession?.timeframe);
   const effectiveTf = clockTf || sessionTf || reliableTf || oldTf || null;
-  const m1Ready = effectiveTf === 'M1';
-  const expirationValid = authority.actual === '60s';
-  const ready = !!authority.actual && m1Ready && expirationValid && !authority.divergence;
+  const operationMode = getOperationMode(state.analystPreferences?.operationMode || 'M1');
+  const modeReady = effectiveTf === operationMode.timeframe;
+  const expirationValid = authority.actual === operationMode.expiration;
+  const ready = !!authority.actual && modeReady && expirationValid && !authority.divergence;
   const preferred = normExp(state.analystPreferences?.preferredExpiration || state.executionPreferences?.expiration || '');
+  const expirationLabel = operationMode.expiration === '300s' ? '5 minutos' : '1 minuto';
 
   const reason = authority.divergence
     ? `Divergência de expiração: CasaTrade confirmou ${expLabel(authority.realExpiration)}, mas você informou ${expLabel(authority.declared)}. Ajuste antes de entrar.`
-    : !m1Ready
-      ? 'Ajuste o timeframe da CasaTrade para M1.'
+    : !modeReady
+      ? `Ajuste o timeframe da CasaTrade para ${operationMode.timeframe}.`
       : !authority.actual
         ? 'Expiração real da CasaTrade ainda não confirmada.'
         : !expirationValid
-          ? 'Ajuste a expiração da CasaTrade para 1 minuto'
+          ? `Ajuste a expiração da CasaTrade para ${expirationLabel}`
           : authority.source === 'user-declared'
-            ? 'Expiração de 1 minuto informada por você, não verificada.'
-            : 'Expiração ao vivo de 1 minuto confirmada pela CasaTrade.';
+            ? `Expiração de ${expirationLabel} informada por você, não verificada.`
+            : `Expiração ao vivo de ${expirationLabel} confirmada pela CasaTrade.`;
 
   const diagnostics = { ...(state.diagnostics || {}) };
   diagnostics.expirationGuard = {
     ...(diagnostics.expirationGuard || {}),
     preferred,
-    required: '60s',
+    required: operationMode.expiration,
     actual: authority.actual,
     source: authority.source,
     verified: authority.realFresh,
@@ -210,7 +213,9 @@ function applyExpirationAuthority(state = {}, observedInput = {}, expirationSour
     divergence: authority.divergence,
     label: authority.source === 'user-declared' ? 'informada por você, não verificada' : authority.source ? 'confirmada pela CasaTrade' : 'pendente',
     ready,
-    validForM1: ready,
+    validForM1: operationMode.timeframe === 'M1' ? ready : false,
+    validForMode: ready,
+    operationMode: operationMode.timeframe,
     matchesPreference: !preferred || !authority.actual || preferred === authority.actual,
     reason,
     at: now
@@ -240,9 +245,11 @@ function applyExpirationAuthority(state = {}, observedInput = {}, expirationSour
 function analystPrefs(state = {}, message = {}) {
   const current = state.analystPreferences || {};
   const thresholds = getThresholds(message.sensitivityProfile ?? current.sensitivityProfile ?? 'MEDIO');
+  const operationMode = getOperationMode(message.operationMode ?? current.operationMode ?? 'M1');
   return {
     ...current,
     mode: 'NORMAL',
+    operationMode: operationMode.timeframe,
     sensitivityProfile: thresholds.profile,
     sensitivityLabel: thresholds.label,
     holdSeconds: thresholds.holdSeconds,
@@ -254,8 +261,16 @@ function analystPrefs(state = {}, message = {}) {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === 'ATS_SET_ANALYST_PREFERENCES') {
-    updateScannerState(state => ({ ...state, analystPreferences: analystPrefs(state, message) }))
-      .then(state => sendResponse({ ok: true, analystPreferences: state.analystPreferences }))
+    updateScannerState(state => {
+      const currentMode = getOperationMode(state.analystPreferences?.operationMode || 'M1');
+      const nextPreferences = analystPrefs(state, message);
+      const nextMode = getOperationMode(nextPreferences.operationMode);
+      const base = currentMode.timeframe !== nextMode.timeframe
+        ? clearUserDeclaredExpirationState(state)
+        : state;
+      return { ...base, analystPreferences: analystPrefs(base, message) };
+    })
+      .then(state => sendResponse({ ok: true, analystPreferences: state.analystPreferences, state }))
       .catch(error => sendResponse({ ok: false, error: String(error?.message || error) }));
     return true;
   }
