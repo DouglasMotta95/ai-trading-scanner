@@ -305,6 +305,102 @@ function expirationDiagnosticText(response = {}) {
       ? `real | source=${activeExpirationSource} | valor=${activeExpirationGuard.actual || '—'} | verificada=${activeExpirationGuard.verified === true ? 'sim' : 'não'}`
       : 'nenhuma fonte ativa';
 
+  const scannerClock = lastState?.diagnostics?.marketClock || null;
+  const scannerFocus = lastState?.diagnostics?.focusedAsset || null;
+  const scannerCandles = Array.isArray(lastState?.candles) ? lastState.candles : [];
+  const nowForDiagnostics = Date.now();
+
+  const timestampAge = value => {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n <= 0) return null;
+    const ms = n < 1e11 ? n * 1000 : n;
+    return Math.max(0, nowForDiagnostics - ms);
+  };
+
+  const marketClockLine = scannerClock
+    ? [
+        `source=${clean(scannerClock.source || '—')}`,
+        `verified=${scannerClock.verified === true}`,
+        `available=${scannerClock.available !== false}`,
+        `role=${clean(scannerClock.role || '—')}`,
+        `secondsRemaining=${Number.isFinite(Number(scannerClock.secondsRemaining)) ? Number(scannerClock.secondsRemaining) : '—'}`,
+        `mode=${clean(scannerClock.mode || '—')}`,
+        `idade=${Number(scannerClock.at || 0) > 0 ? Math.max(0, nowForDiagnostics - Number(scannerClock.at)) : '—'}ms`
+      ].join(' | ')
+    : '[nulo]';
+
+  const focusedAssetLine = scannerFocus
+    ? [
+        `asset=${clean(scannerFocus.asset || '—')}`,
+        `reliable=${scannerFocus.reliable === true}`,
+        `chartScoped=${scannerFocus.chartScoped === true}`,
+        `trustedChartFrame=${scannerFocus.trustedChartFrame === true}`,
+        `frameHost=${clean(scannerFocus.frameHost || '—')}`,
+        `idade=${Number(scannerFocus.at || 0) > 0 ? Math.max(0, nowForDiagnostics - Number(scannerFocus.at)) : '—'}ms`
+      ].join(' | ')
+    : '[nulo]';
+
+  const bridgeHosts = allFrames
+    .map(frame => clean(frame.embeddedFeedDiagnostic?.frame?.host || ''))
+    .filter(Boolean);
+  const bridgeHostLine = bridgeHosts.length ? [...new Set(bridgeHosts)].join(', ') : '[snapshot indisponível]';
+
+  const candlesWithTimestamp = scannerCandles.filter(row => (row?.time ?? row?.timestamp) != null).length;
+  const lastThreeCandles = scannerCandles.slice(-3);
+  const candleLines = lastThreeCandles.length
+    ? lastThreeCandles.map((item, index) => {
+        const rawTs = item?.time ?? item?.timestamp ?? null;
+        const ageMs = timestampAge(rawTs);
+        return `  [${scannerCandles.length - lastThreeCandles.length + index + 1}] timestampRaw=${rawTs ?? '—'} | open=${item?.open ?? '—'} | high=${item?.high ?? '—'} | low=${item?.low ?? '—'} | close=${item?.close ?? '—'} | idade=${ageMs == null ? '—' : ageMs + 'ms'}`;
+      }).join('\n')
+    : '  [nenhuma vela]';
+
+  const bridgeDiagnosticLines = allFrames.length
+    ? allFrames.map(frame => {
+        const bridge = frame.embeddedFeedDiagnostic || null;
+        if (!bridge) return `- frame=${frame.frameId ?? '—'} | snapshot indisponível | erro=${frame.embeddedFeedDiagnosticError || '—'}`;
+        const clockDiag = bridge.maybePublishStructuredClock || {};
+        const reasons = clockDiag.reasons || {};
+        const candidates = Array.isArray(bridge.lastSummaryCandidates) ? bridge.lastSummaryCandidates.slice(0, 5) : [];
+        const candidateLines = candidates.length
+          ? candidates.map((candidate, index) =>
+              `    [${index + 1}] asset=${clean(candidate.asset || '—')} | timeframe=${clean(candidate.timeframe || '—')} | timestampRaw=${candidate.timestamp ?? '—'} | confidence=${Number(candidate.confidence || 0)} | selected=${candidate.selected === true} | observedAt=${candidate.observedAt ?? '—'}`
+            ).join('\n')
+          : '    [nenhum candidate no último summary]';
+        return [
+          `- frame=${frame.frameId ?? '—'} | host=${clean(bridge.frame?.host || '—')}`,
+          `  summaries recebidos=${Number(bridge.summaryReceived || 0)} | candidates com timestamp=${Number(bridge.candidatesWithTimestamp || 0)}`,
+          '  candidates do último summary:',
+          candidateLines,
+          `  maybePublishStructuredClock: chamadas=${Number(clockDiag.calls || 0)} | retornos cedo=${Number(clockDiag.earlyReturns || 0)} | ATS_MARKET_CLOCK_V2 enviados=${Number(clockDiag.marketClockV2Sent || 0)}`,
+          `  motivos: focus não confiável=${Number(reasons.focusNotReliable || 0)} | frameHost diferente=${Number(reasons.frameHostMismatch || 0)} | sem candidate=${Number(reasons.noCandidate || 0)} | sem serverTime=${Number(reasons.noServerTime || 0)} | |agora-serverTime|>7000=${Number(reasons.serverTimeDriftOver7000 || 0)} | confidence<55=${Number(reasons.confidenceUnder55 || 0)} | count<2=${Number(reasons.countUnder2 || 0)} | boundary nulo=${Number(reasons.boundaryNull || 0)}`
+        ].join('\n');
+      }).join('\n')
+    : '- Nenhum frame disponível.';
+
+  const networkDiagnosticLines = allFrames.length
+    ? allFrames.map(frame => {
+        const network = frame.networkDiagnostic || null;
+        if (!network) return `- frame=${frame.frameId ?? '—'} | snapshot indisponível | erro=${frame.networkDiagnosticError || '—'}`;
+        const ws = network.transport?.ws || {};
+        const fetchStats = network.transport?.fetch || {};
+        const xhr = network.transport?.xhr || {};
+        const endpoints = Array.isArray(network.endpoints) ? network.endpoints.slice(0, 5) : [];
+        const endpointLines = endpoints.length
+          ? endpoints.map((endpoint, index) => `    [${index + 1}] ${endpoint}`).join('\n')
+          : '    [nenhuma conexão registrada]';
+        return [
+          `- frame=${frame.frameId ?? '—'} | host=${clean(network.frame?.host || '—')}`,
+          `  ws: vistas=${Number(ws.seen || 0)} | reconhecidas candle=${Number(ws.candle || 0)} | reconhecidas preço=${Number(ws.price || 0)}`,
+          `  fetch: vistas=${Number(fetchStats.seen || 0)} | reconhecidas candle=${Number(fetchStats.candle || 0)} | reconhecidas preço=${Number(fetchStats.price || 0)}`,
+          `  xhr: vistas=${Number(xhr.seen || 0)} | reconhecidas candle=${Number(xhr.candle || 0)} | reconhecidas preço=${Number(xhr.price || 0)}`,
+          `  websocket frames: texto=${Number(network.wsFrames?.text || 0)} | binário=${Number(network.wsFrames?.binary || 0)}`,
+          '  host+path — até 5:',
+          endpointLines
+        ].join('\n');
+      }).join('\n')
+    : '- Nenhum frame disponível.';
+
   const canvasLines = allFrames.length
     ? allFrames.map(frame => {
         const canvas = frame.canvasDiagnostic || null;
@@ -383,7 +479,26 @@ function expirationDiagnosticText(response = {}) {
     errorLines,
     '',
     '5. CANVAS',
-    canvasLines
+    canvasLines,
+    '',
+    '6. RELÓGIO DA VELA E FEED',
+    '',
+    'A) state.diagnostics.marketClock',
+    marketClockLine,
+    '',
+    'B) state.diagnostics.focusedAsset / embedded-feed-bridge',
+    focusedAssetLine,
+    `embedded-feed-bridge host=${bridgeHostLine}`,
+    '',
+    'C) state.candles',
+    `quantidade total=${scannerCandles.length} | com timestamp=${candlesWithTimestamp}`,
+    candleLines,
+    '',
+    'D) embedded-feed-bridge',
+    bridgeDiagnosticLines,
+    '',
+    'E) network-probe',
+    networkDiagnosticLines
   ].join('\n');
 }
 
