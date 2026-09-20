@@ -26,3 +26,27 @@ export function protocolTakeoverAllowed({
   if (isWithinSwitchGuard(recentSelectionAgeMs, MARKET_SWITCH_TIMING.recentSelectionProtectionMs)) return false;
   return true;
 }
+
+export function realSelectionAgeMs({
+  now = Date.now(),
+  focus = null,
+  selectionLock = null
+} = {}) {
+  const current = Number(now);
+  const focusInteractionAt = focus?.interactionHint === true
+    ? Number(focus?.interactionAt || 0)
+    : 0;
+  const lockAt = selectionLock?.source === 'user-selection'
+    ? Number(selectionLock?.at || 0)
+    : 0;
+  const protectedAt = Math.max(focusInteractionAt, lockAt);
+  if (!Number.isFinite(current) || !Number.isFinite(protectedAt) || protectedAt <= 0 || current < protectedAt) return Infinity;
+  return current - protectedAt;
+}
+
+export function shouldRefreshVisualSelectionLock({
+  userSelected = false,
+  source = ''
+} = {}) {
+  return userSelected === true || String(source || '').trim() === 'user-selected-transition';
+}
