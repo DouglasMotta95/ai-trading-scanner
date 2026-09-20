@@ -1,5 +1,6 @@
 import { updateScannerState } from './services/scanner-state-atomic.js';
 import { validateMarketBundle } from './core/market-session-guard.js';
+import { MARKET_SWITCH_TIMING, isWithinSwitchGuard, resyncSchedule } from './core/market-switch-timing.js';
 
 const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
 const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
@@ -18,6 +19,29 @@ const FOCUS_FRESH_MS = 5000;
 const EXACT_CLOCK_SOURCES = new Set(['trader-dom-countdown', 'network-server-cycle']);
 const FALLBACK_CLOCK_SOURCE = 'platform-cycle-derived';
 const FALLBACK_MIN_CONFIDENCE = 50;
+
+let lastResyncEpoch = -1;
+
+function forceMarketEpochResync(tabId, epoch, asset = '') {
+  const id = Number(tabId);
+  const sessionEpoch = Number(epoch);
+  if (!Number.isInteger(id) || id <= 0 || !Number.isFinite(sessionEpoch) || sessionEpoch <= 0) return;
+  if (lastResyncEpoch === sessionEpoch) return;
+  lastResyncEpoch = sessionEpoch;
+
+  for (const delay of resyncSchedule()) {
+    setTimeout(() => {
+      try {
+        chrome.tabs?.sendMessage?.(id, {
+          type: 'ATS_FORCE_MARKET_RESYNC',
+          epoch: sessionEpoch,
+          asset
+        }, () => void chrome.runtime?.lastError);
+      } catch {}
+      globalThis.__ATS_SCHEDULE_CENTRAL_ANALYSIS__?.(true);
+    }, delay);
+  }
+}
 
 function normAsset(value = '') {
   const raw = clean(value).toUpperCase();
@@ -331,7 +355,7 @@ export async function applyFocus(message = {}, sender = {}) {
   if (!info.trusted || message.chartScoped !== true || message.reliable !== true || !['trader-frame', 'casa-chart-frame'].includes(role)) return null;
   const asset = normAsset(message.asset);
   if (!asset) return null;
-  return updateScannerState(state => {
+  const nextState = await updateScannerState(state => {
     if (!licenseActive(state)) return;
     if (state.targetTabId && state.targetTabId !== info.tabId) return;
 
@@ -348,7 +372,7 @@ export async function applyFocus(message = {}, sender = {}) {
       && message.explicit === true
       && message.chartScoped === true;
     const authoritativeVisual = userSelected || chartHeaderAuthoritative;
-    const oldFresh = Number(old?.at || 0) > 0 && now - Number(old.at) < 2600;
+    const oldFresh = Number(old?.at || 0) > 0 && isWithinSwitchGuard(now - Number(old.at), MARKET_SWITCH_TIMING.staleFocusProtectionMs);
     const oldEmbeddedTrader = old?.embeddedTrader === true;
     const incomingExplicit = message.explicit === true;
     const incomingStable = Number(message.stableFor || 0) >= 220 || Number(message.samples || 0) >= 3;
@@ -365,7 +389,7 @@ export async function applyFocus(message = {}, sender = {}) {
     const recentVisualSelection = old?.visual !== false
       && old?.interactionHint === true
       && Number(old?.interactionAt || old?.at || 0) > 0
-      && now - Number(old.interactionAt || old.at) < 8000;
+      && isWithinSwitchGuard(now - Number(old.interactionAt || old.at), MARKET_SWITCH_TIMING.recentSelectionProtectionMs);
     const selectionLock = state.diagnostics?.visualSelectionLock || null;
     // Once the user explicitly selects a market, passive readers may confirm
     // that same market but may not replace it. The lock changes only on the
@@ -538,6 +562,13 @@ export async function applyFocus(message = {}, sender = {}) {
       }
     };
   });
+  const session = nextState?.diagnostics?.marketSession || {};
+  if (session.transitioning === true
+      && sameMarket(session.pendingAsset || session.asset, asset)
+      && Number(session.epoch || 0) > 0) {
+    forceMarketEpochResync(info.tabId, session.epoch, asset);
+  }
+  return nextState;
 }
 
 export async function applyClock(message = {}, sender = {}) {
@@ -634,7 +665,7 @@ export async function applyClock(message = {}, sender = {}) {
 export async function applyFeed(payload = {}, sender = {}) {
   const info = senderMeta(sender);
   if (!info.trusted) return null;
-  return updateScannerState(state => {
+  const nextState = await updateScannerState(state => {
     if (!licenseActive(state)) return;
     if (state.targetTabId && state.targetTabId !== info.tabId) return;
     const focus = state.diagnostics?.focusedAsset || null;
@@ -728,6 +759,10 @@ export async function applyFeed(payload = {}, sender = {}) {
       }
     };
   });
+  if (nextState?.diagnostics?.marketSession?.dataReady === true) {
+    globalThis.__ATS_SCHEDULE_CENTRAL_ANALYSIS__?.(true);
+  }
+  return nextState;
 }
 
 function observedCurrentCandle(state = {}, price, clock = null) {
