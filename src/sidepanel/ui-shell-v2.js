@@ -105,13 +105,17 @@ function renderShell(state = {}) {
 
   const expirationAt = Number(state.platformControls?.expirationCheckedAt || state.platformControls?.observed?.observedAt?.expiration || 0);
   const expirationFresh = expirationAt > 0 && Date.now() - expirationAt < CONTROLS_FRESH_MS;
-  const expiration = expirationFresh ? clean(state.platformControls?.observed?.expiration) : '';
+  const expirationGuard = state.diagnostics?.expirationGuard || {};
+  const declaredExpiration = clean(state.platformControls?.userDeclaredExpiration || expirationGuard.userDeclared || '');
+  const expirationSource = clean(expirationGuard.source || state.platformControls?.expirationSource || '');
+  const expirationDivergence = expirationGuard.divergence === true;
+  const expiration = clean(expirationGuard.actual || (expirationFresh ? state.platformControls?.observed?.expiration : '') || '');
   const expirationWrong = dataConnected && !!expiration && expiration !== '60s';
   const sessionStartedAt = Number(session.startedAt || state.diagnostics?.target?.connectedAt || 0);
   const sessionAge = sessionStartedAt > 0 ? Date.now() - sessionStartedAt : 0;
   const panelAge = Math.max(0, Date.now() - PANEL_OPENED_AT);
   const expirationWaitAge = sessionAge > 0 ? Math.min(sessionAge, panelAge) : panelAge;
-  const expirationPending = dataConnected && !expiration && expirationWaitAge >= 1500;
+  const expirationPending = dataConnected && !expiration && !declaredExpiration && !expirationDivergence && expirationWaitAge >= 1500;
   const marketPending = !dataConnected
     && !switching
     && activeLicense(state)
@@ -129,9 +133,11 @@ function renderShell(state = {}) {
         ? 'FALHA AO CONECTAR'
         : marketPending
           ? 'CASATRADE VINCULADA — LEITURA PENDENTE'
-          : expirationPending
-            ? 'CONECTADO — EXPIRAÇÃO PENDENTE'
-            : connected && expirationWrong
+          : expirationDivergence
+            ? 'CONECTADO — DIVERGÊNCIA DE EXPIRAÇÃO'
+            : expirationPending
+              ? 'CONECTADO — EXPIRAÇÃO PENDENTE'
+              : connected && expirationWrong
             ? 'CONECTADO — AJUSTE A EXPIRAÇÃO'
             : tradeReady
               ? 'CONECTADO — PRONTO PARA ANALISAR'
@@ -151,9 +157,11 @@ function renderShell(state = {}) {
       : failure
         || (marketPending
           ? 'Os leitores ainda não confirmaram ativo, preço e velas. Toque em TENTAR NOVAMENTE para reinjetar sem recarregar a CasaTrade.'
-          : expirationPending
-            ? 'EXPIRAÇÃO PENDENTE — não foi possível confirmar o valor real; toque em TENTAR NOVAMENTE.'
-            : connected && expirationWrong
+          : expirationDivergence
+            ? clean(expirationGuard.reason || 'A expiração lida da CasaTrade diverge do valor informado. Entrada bloqueada.')
+            : expirationPending
+              ? 'EXPIRAÇÃO PENDENTE — a CasaTrade não expõe esse valor para leitura. Informe abaixo a expiração que você está usando.'
+              : connected && expirationWrong
             ? 'Ajuste a expiração da CasaTrade para 1 minuto.'
             : tradeReady
               ? `${state.asset} • M1 • countdown e expiração confirmados pela CasaTrade.`
@@ -180,8 +188,25 @@ function renderShell(state = {}) {
   // genuine market-acquisition or connection failure.
   if (retry) retry.hidden = !(marketPending || failure);
 
+  const expirationChoice = $('userExpirationChoice');
+  const expirationSelect = $('userDeclaredExpiration');
+  const expirationStatus = $('userDeclaredExpirationStatus');
+  const showExpirationChoice = expirationPending || expirationSource === 'user-declared' || expirationDivergence;
+  if (expirationChoice) expirationChoice.hidden = !showExpirationChoice;
+  if (expirationSelect) {
+    const storedValue = declaredExpiration || '';
+    if (expirationSelect.value !== storedValue) expirationSelect.value = storedValue;
+  }
+  if (expirationStatus) {
+    expirationStatus.textContent = expirationDivergence
+      ? clean(expirationGuard.reason || 'Divergência entre a leitura real e o valor informado.')
+      : expirationSource === 'user-declared'
+        ? 'informada por você, não verificada'
+        : '';
+  }
+
   const expirationDiagnostic = $('copyExpirationDiagnostic');
-  if (expirationDiagnostic) expirationDiagnostic.hidden = !expirationPending;
+  if (expirationDiagnostic) expirationDiagnostic.hidden = !expirationPending && expirationSource !== 'user-declared' && !expirationDivergence;
 }
 async function connectNow() {
   const button = $('connectScanner');
@@ -272,6 +297,14 @@ function expirationDiagnosticText(response = {}) {
     ? executeErrors.map(error => `- ${error}`).join('\n')
     : '- Nenhum erro literal de executeScript registrado.';
 
+  const activeExpirationGuard = lastState?.diagnostics?.expirationGuard || {};
+  const activeExpirationSource = clean(activeExpirationGuard.source || lastState?.platformControls?.expirationSource || '');
+  const activeExpirationSourceLine = activeExpirationSource === 'user-declared'
+    ? `informada por você (user-declared) | valor=${activeExpirationGuard.actual || lastState?.platformControls?.userDeclaredExpiration || '—'} | verificada=não`
+    : activeExpirationSource
+      ? `real | source=${activeExpirationSource} | valor=${activeExpirationGuard.actual || '—'} | verificada=${activeExpirationGuard.verified === true ? 'sim' : 'não'}`
+      : 'nenhuma fonte ativa';
+
   const canvasLines = allFrames.length
     ? allFrames.map(frame => {
         const canvas = frame.canvasDiagnostic || null;
@@ -320,6 +353,7 @@ function expirationDiagnosticText(response = {}) {
     `Frame selecionado: ${row.frameId ?? '—'} | host=${row.host || '—'} | top=${row.isTop === true ? 'sim' : 'não'}`,
     `Seletor selecionado: ${row.selectedSelector || 'nenhum'}`,
     `Falha final: ${row.failureReason || response.error || '—'}`,
+    `Fonte de expiração ativa: ${activeExpirationSourceLine}`,
     '',
     '1. OUTERHTML DO CONTAINER (~3000 caracteres no máximo)',
     row.containerOuterHTML || '[não localizado]',
@@ -446,6 +480,18 @@ $('geminiToggle')?.addEventListener('change', event => {
 $('connectScanner')?.addEventListener('click', () => connectNow().catch(() => {}));
 $('retryLiveRead')?.addEventListener('click', () => refreshLiveReaders().catch(() => {}));
 $('copyExpirationDiagnostic')?.addEventListener('click', () => copyExpirationDiagnostic().catch(() => {}));
+$('userDeclaredExpiration')?.addEventListener('change', async event => {
+  const expiration = clean(event.currentTarget?.value || '');
+  if (!expiration) return;
+  const response = await chrome.runtime.sendMessage({
+    type: 'ATS_SET_USER_DECLARED_EXPIRATION',
+    expiration
+  }).catch(() => null);
+  if (response?.state) {
+    lastState = response.state;
+    renderShell(lastState);
+  }
+});
 $('activateLicense')?.addEventListener('click', () => {
   const button = $('activateLicense');
   button?.classList.add('loading');
