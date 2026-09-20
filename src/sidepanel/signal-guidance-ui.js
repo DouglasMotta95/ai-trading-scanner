@@ -37,6 +37,15 @@ function normTf(value = '') {
   return match && Number(match[1]) > 0 ? `M${Number(match[1])}` : null;
 }
 
+function clockBoundToFocus(clock = {}, focus = {}) {
+  const sameFrame = Number(clock.frameId) === Number(focus.frameId)
+    && clean(clock.frameHost).toLowerCase() === clean(focus.frameHost).toLowerCase();
+  const boundControlFrame = clock.crossFrameControl === true
+    && Number(clock.boundFocusFrameId) === Number(focus.frameId)
+    && clean(clock.boundFocusFrameHost).toLowerCase() === clean(focus.frameHost).toLowerCase();
+  return sameFrame || boundControlFrame;
+}
+
 function timingReady(state = {}) {
   const focus = state.diagnostics?.focusedAsset || {};
   const clock = state.diagnostics?.marketClock || {};
@@ -50,8 +59,7 @@ function timingReady(state = {}) {
     && ['trader-dom-countdown','network-server-cycle'].includes(clean(clock.source))
     && normTf(clock.timeframe) === 'M1'
     && sameMarket(clock.asset, state.asset)
-    && Number(clock.frameId) === Number(focus.frameId)
-    && clean(clock.frameHost).toLowerCase() === clean(focus.frameHost).toLowerCase()
+    && clockBoundToFocus(clock, focus)
     && Number(clock.at || 0) > 0
     && Date.now() - Number(clock.at) < 3200
     && num(clock.secondsRemaining) != null;
