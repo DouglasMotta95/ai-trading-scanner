@@ -50,6 +50,7 @@ function kickLiveReaders() {
   try { globalThis.__ATS_FORCE_ALIAS_FOCUS_SCAN__?.(); } catch {}
   try { globalThis.__ATS_FORCE_FOCUS_SCAN__?.(); } catch {}
   try { globalThis.__ATS_FORCE_UI_CONTROL_SCAN__?.(); } catch {}
+  try { globalThis.__ATS_FORCE_PLATFORM_SYNC_READ__?.(); } catch {}
   try { globalThis.__ATS_FORCE_EXPIRATION_SCAN__?.(); } catch {}
   try { globalThis.__ATS_FORCE_CHART_PRICE_SCAN__?.(); } catch {}
   try { globalThis.__ATS_FORCE_MARKET_CLOCK_SCAN__?.(); } catch {}
@@ -103,6 +104,8 @@ async function inject(tabId) {
     'src/content/focused-asset-v2.js',
     'src/content/focused-asset-alias-bridge.js',
     'src/content/chart-frame-market-reader.js',
+    'src/content/embedded-feed-bridge.js',
+    'src/content/platform-sync.js',
     'src/content/market-cycle-clock-v4.js',
     'src/content/casatrade-expiration-probe.js'
   ]);
