@@ -288,7 +288,9 @@
       const state = response?.state || null;
       const focus = state?.diagnostics?.focusedAsset || null;
       if (!focus?.asset || focus.reliable !== true || focus.chartScoped !== true || focus.trustedChartFrame !== true) return;
-      if (String(focus.frameHost || '').toLowerCase() !== host) return;
+      const sameFocusFrame = String(focus.frameHost || '').toLowerCase() === host;
+      const casaControlFrame = casaHost(host) && window === window.top;
+      if (!sameFocusFrame && !casaControlFrame) return;
       if (lastCanvasAsset && lastCanvasAsset !== focus.asset) { lastCanvas = null; canvasVerifiedAt = 0; }
       lastCanvasAsset = focus.asset;
       const expirationAt = Number(state.platformControls?.expirationCheckedAt || state.platformControls?.observed?.observedAt?.expiration || 0);
@@ -335,7 +337,9 @@
       if (!state?.license || !['active','valid'].includes(String(state.license.status || '').toLowerCase())) return;
       const focus = state.diagnostics?.focusedAsset || null;
       if (!focus?.asset || focus.reliable !== true || focus.chartScoped !== true || focus.trustedChartFrame !== true) return;
-      if (String(focus.frameHost || '').toLowerCase() !== host) return;
+      const sameFocusFrame = String(focus.frameHost || '').toLowerCase() === host;
+      const casaControlFrame = casaHost(host) && window === window.top;
+      if (!sameFocusFrame && !casaControlFrame) return;
 
       const expirationAt = Number(state.platformControls?.expirationCheckedAt || state.platformControls?.observed?.observedAt?.expiration || 0);
       const expirationFresh = expirationAt > 0 && Date.now() - expirationAt < 7000;
@@ -357,13 +361,21 @@
         secondsRemaining: domClock.seconds, expiration, available: true, verified: true, operational: true,
         clockRole: 'candle-close', clockSource: 'trader-dom-countdown',
         clockMode: domClock.chartScoped ? 'chart-geometry-exact' : 'dom-exact',
-        clockText: domClock.text, clockToken: domClock.token, confidence: 99, frameHost: host, at: Date.now()
+        clockText: domClock.text, clockToken: domClock.token, confidence: 99, frameHost: host,
+        crossFrameControl: casaControlFrame && !sameFocusFrame,
+        boundFocusFrameId: Number(focus.frameId),
+        boundFocusFrameHost: String(focus.frameHost || '').toLowerCase(),
+        at: Date.now()
       } : {
         type: 'ATS_MARKET_CLOCK_V2', asset: focus.asset, timeframe: cycleTf,
         secondsRemaining: null, expiration, available: false, verified: false, operational: false,
         clockRole: 'candle-close', clockSource: 'casatrade-clock-pending', clockMode: 'waiting-authoritative-clock',
         clockText: 'Aguardando countdown real da CasaTrade', clockToken: '',
-        confidence: 0, frameHost: host, at: Date.now()
+        confidence: 0, frameHost: host,
+        crossFrameControl: casaControlFrame && !sameFocusFrame,
+        boundFocusFrameId: Number(focus.frameId),
+        boundFocusFrameHost: String(focus.frameHost || '').toLowerCase(),
+        at: Date.now()
       };
       const key = `${payload.asset}|${cycleTf}|${payload.secondsRemaining}|${payload.available}|${payload.verified}|${payload.clockMode}`;
       if (key === lastKey && Date.now() - lastAt < 700) return;
