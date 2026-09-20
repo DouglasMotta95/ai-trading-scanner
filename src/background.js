@@ -189,6 +189,7 @@ function observeSignalPerformance(state = {}) {
   const lastCandle = (Array.isArray(state.candles) ? state.candles : []).at(-1) || null;
   const signature = JSON.stringify([
     emission?.id || null,
+    emission?.type || null,
     candleTimestamp(lastCandle),
     state.asset || null,
     state.diagnostics?.marketSession?.epoch || 0
