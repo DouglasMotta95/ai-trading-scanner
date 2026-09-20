@@ -4,7 +4,7 @@ import {
   serializeCompletedDecisions as legacySerializeCompletedDecisions,
   restoreCompletedDecisions as legacyRestoreCompletedDecisions
 } from './orchestrator-legacy.js';
-import { ANALYST_THRESHOLDS } from './analysis.js';
+import { getThresholds } from './analysis.js';
 
 // Price action/indicators remain in the legacy analyst. This wrapper owns exactly
 // one bounded decision for each target candle: ENTER BUY, ENTER SELL or WAIT.
@@ -31,12 +31,12 @@ function timeframeMs(value = 'M1') {
   return 60_000;
 }
 
-function decisionWindows(snapshot = {}, signal = {}) {
+function decisionWindows(snapshot = {}, signal = {}, thresholds = getThresholds()) {
   const timeframe = clean(snapshot.analysisTimeframe || snapshot.timeframe || signal.timeframe || 'M1').toUpperCase();
   const duration = Math.max(2, Math.round(timeframeMs(timeframe) / 1000));
   // M1 product contract: pre-signal at ~30s, final decision at ~10s,
   // and settle as WAIT near the close if no setup confirms.
-  if (timeframe === 'M1') return { pre: 30, decision: 10, skip: 4, duration, timeframe };
+  if (timeframe === 'M1') return { pre: 30, decision: thresholds.entryWindowSeconds, skip: 4, duration, timeframe };
 
   // Longer/shorter candles keep proportional windows.
   const pre = Math.max(2, Math.min(duration - 1, 60, Math.round(duration * .50)));
@@ -61,21 +61,22 @@ function targetStartOf(snapshot = {}, signal = {}) {
   return num(signal.targetStart) ?? (sampleAt + Math.max(0, seconds) * 1000);
 }
 
-function decisionQuality(signal = {}, direction = null) {
+function decisionQuality(signal = {}, direction = null, thresholds = getThresholds()) {
   if (!direction) return { qualifies: false, setup: null };
   const score = Number(signal.analysisScore ?? signal.score ?? 0);
-  if (score < ANALYST_THRESHOLDS.confirmScore) return { qualifies: false, setup: null };
+  if (score < thresholds.confirmScore) return { qualifies: false, setup: null };
 
   const analytics = signal.analytics || {};
   const power = Number(direction === 'BUY' ? analytics.buyPower : analytics.sellPower) || 0;
+  if (power < 50) return { qualifies: false, setup: null };
   const currentStrength = Number(analytics.currentStrength || 0);
   const rejectionStrength = Number(analytics.rejectionStrength || 0);
   const directionalRejection = analytics.rejectionDirection === direction
-    || Number(direction === 'BUY' ? analytics.rejectionBuy : analytics.rejectionSell) >= ANALYST_THRESHOLDS.rejectionStrength;
+    || Number(direction === 'BUY' ? analytics.rejectionBuy : analytics.rejectionSell) >= thresholds.rejectionStrength;
   const continuation = analytics.continuationDirection === direction && Number(analytics.continuationScore || 0) >= 55;
   const momentum = analytics.momentumDirection === direction && Number(analytics.momentumScore || 0) >= 40;
-  const strongCandle = currentStrength >= ANALYST_THRESHOLDS.candleStrength;
-  const rejection = directionalRejection && rejectionStrength >= ANALYST_THRESHOLDS.rejectionStrength;
+  const strongCandle = currentStrength >= thresholds.candleStrength;
+  const rejection = directionalRejection && rejectionStrength >= thresholds.rejectionStrength;
   const regime = String(signal.regime?.type || '').toLowerCase();
 
   // Setup-specific gates increase useful frequency without lowering the approved
@@ -96,8 +97,11 @@ function decisionQuality(signal = {}, direction = null) {
   return { qualifies: !!matched, setup: matched?.name || null };
 }
 
-function possibleQuality(signal = {}, direction = null, score = 0) {
-  if (!direction || Number(score) < ANALYST_THRESHOLDS.possibleScore) return false;
+function possibleQuality(signal = {}, direction = null, score = 0, thresholds = getThresholds()) {
+  if (!direction || Number(score) < thresholds.possibleScore) return false;
+  const analytics = signal.analytics || {};
+  const power = Number(direction === 'BUY' ? analytics.buyPower : analytics.sellPower) || 0;
+  if (power < 50) return false;
   const stableDirection = clean(signal.stability?.possibleDirection).toUpperCase();
   const publishedDirection = clean(signal.direction).toUpperCase();
   return stableDirection === direction || (signal.state === 'WATCH' && publishedDirection === direction);
@@ -290,19 +294,20 @@ function resolveWrapperDecision(snapshot = {}, result = {}, currentKey = '', sta
 }
 
 export function processSnapshot(snapshot = {}, state = {}) {
+  const thresholds = getThresholds(state.analystPreferences?.sensitivityProfile || 'MEDIO');
   const result = legacyProcessSnapshot(snapshot, state);
   const signal = result?.signal;
   if (!signal) return result;
   const secondsRemaining = num(signal.secondsRemaining);
   if (secondsRemaining == null) return result;
 
-  const windows = decisionWindows(snapshot, signal);
+  const windows = decisionWindows(snapshot, signal, thresholds);
   const key = cycleKey(snapshot, signal);
   const cycle = seedCycle(key, snapshot, signal, state);
   const at = num(snapshot.serverTime) ?? Date.now();
   const score = Number(signal.analysisScore ?? signal.score ?? 0);
   const direction = directionOf(signal);
-  const rawPossible = possibleQuality(signal, direction, score);
+  const rawPossible = possibleQuality(signal, direction, score, thresholds);
   const possibleDirection = possibleWithHysteresis(cycle, rawPossible, direction, at);
   const canShowPossible = !!possibleDirection;
   const recovered = resolveWrapperDecision(snapshot, result, key, state);
@@ -336,7 +341,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
     return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, decisionCycle: { ...cycle }, decisionTrace: trace };
   }
 
-  const quality = decisionQuality(signal, direction);
+  const quality = decisionQuality(signal, direction, thresholds);
   const stable = observeDecision(cycle, direction, quality.qualifies, at);
   if (quality.qualifies) cycle.setup = quality.setup;
   if (stable) {
