@@ -55,11 +55,11 @@ function marketDataReady(state = {}) {
     && rows.length >= 2;
 }
 function expirationObservation(state = {}) {
-  const controls = state.platformControls || {};
-  const at = Number(controls.expirationCheckedAt || controls.observed?.observedAt?.expiration || 0);
-  const value = normExp(controls.observed?.expiration);
+  const authority = globalThis.__ATS_OPERATION_TIME_SYNC__?.authoritativeExpiration?.(state) || null;
+  const value = normExp(authority?.value);
+  const at = Number(authority?.at || 0);
   const fresh = at > 0 && !!value;
-  return { value, fresh, at, ageMs: at > 0 ? Date.now() - at : Infinity };
+  return { value, fresh, at, source: authority?.source || null, ageMs: at > 0 ? Date.now() - at : Infinity };
 }
 function sessionAgeMs(state = {}) {
   const at = Number(sessionInfo(state).startedAt || state.diagnostics?.target?.connectedAt || 0);
@@ -222,11 +222,17 @@ function decisionModel(state = {}) {
 
   const operationSync = operationTimeSync(state);
   if (!operationSync?.ready) {
+    const flags = [
+      `ATIVO ${operationSync?.focusReady ? 'OK' : '…'}`,
+      `VELA ${operationSync?.timeframeReady ? 'OK' : '…'}`,
+      `EXP ${operationSync?.expirationReady ? 'OK' : '…'}`,
+      `CLOCK ${operationSync?.clockReady ? 'OK' : '…'}`
+    ].join(' • ');
     return {
       uiState: 'ANALYZING_MARKET',
       title: 'SINCRONIZANDO',
       text: 'SINCRONIZANDO TEMPOS',
-      sub: operationSync?.reason || 'Confirmando período da vela, expiração e fechamento.',
+      sub: `${flags} — ${operationSync?.reason || 'Confirmando período da vela, expiração e fechamento.'}`,
       tone: 'waiting',
       reason: operationSync?.reason || 'Sincronizando os tempos reais da CasaTrade.',
       score: 0,
