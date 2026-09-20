@@ -35,6 +35,8 @@
   const localCandles = new Map();
   let lastAppScanAt = 0;
   let appCandidates = [];
+  let preferredAsset = '';
+  let preferredAssetAt = 0;
 
   const clean = v => String(v ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
   const num = v => {
@@ -80,6 +82,11 @@
     const m = s.match(/^([A-Z0-9]{2,16})\/([A-Z0-9]{2,12})$/);
     if (!m || !QUOTES.includes(m[2])) return '';
     return `${m[1]}/${m[2]}${otc ? ' (OTC)' : ''}`;
+  };
+
+  const sameAsset = (a, b) => {
+    const left = canonicalAsset(a);
+    return !!left && left === canonicalAsset(b);
   };
 
   const assetRegex = /\b(?:[A-Z0-9]{2,16}\s*[\/_-]\s*(?:USDT|USDC|USD|EUR|GBP|JPY|AUD|CAD|CHF|NZD|BRL|BTC|ETH)|[A-Z]{6})(?:\s*\(\s*OTC\s*\)|\s+OTC)?/gi;
@@ -251,7 +258,7 @@
 
   function scanAppState() {
     const now = Date.now();
-    if (now - lastAppScanAt < 900) return appCandidates;
+    if (now - lastAppScanAt < 300) return appCandidates;
     lastAppScanAt = now;
 
     const roots = [];
@@ -381,16 +388,31 @@
     const rows = [...frameRows.values()];
     if (!rows.length) return;
 
-    const assetRow = rows.filter(r => r.asset).sort((a, b) => b.assetScore - a.assetScore || b.at - a.at)[0] || null;
-    const priceRow = rows.filter(r => r.price != null).sort((a, b) => b.priceScore - a.priceScore || b.at - a.at)[0] || null;
+    const assetRows = rows.filter(r => r.asset);
+    const preferenceFresh = !!preferredAsset && now - Number(preferredAssetAt || 0) < 1800;
+    const preferredRow = preferenceFresh
+      ? assetRows.filter(row => sameAsset(row.asset, preferredAsset))
+        .sort((a, b) => Number(b.selected === true) - Number(a.selected === true) || b.at - a.at || b.assetScore - a.assetScore)[0] || null
+      : null;
+    const assetRow = preferredRow || assetRows
+      .sort((a, b) => Number(b.selected === true) - Number(a.selected === true) || b.assetScore - a.assetScore || b.at - a.at)[0] || null;
     const asset = assetRow?.asset || null;
+    if (!asset) return;
+
+    const matchingRows = rows.filter(row => !row.asset || sameAsset(row.asset, asset));
+    const priceRow = matchingRows.filter(r => r.price != null)
+      .sort((a, b) => Number(b.selected === true) - Number(a.selected === true) || b.priceScore - a.priceScore || b.at - a.at)[0] || null;
+    // During the short explicit-switch guard never reuse a quote from the old
+    // instrument just to keep the UI populated. Wait for the new asset's real
+    // quote instead; ticks arrive every 250 ms.
+    if (preferenceFresh && !priceRow) return;
     const price = num(priceRow?.price);
-    if (!asset || price == null) return;
+    if (price == null) return;
 
     const buy = num(priceRow?.buy) ?? price;
     const sell = num(priceRow?.sell) ?? price;
-    const timeframe = rows.map(r => r.timeframe).find(Boolean) || 'M1';
-    const expiration = rows.map(r => r.expiration).find(Boolean) || null;
+    const timeframe = matchingRows.map(r => r.timeframe).find(Boolean) || 'M1';
+    const expiration = matchingRows.map(r => r.expiration).find(Boolean) || null;
 
     updateCandle(asset, price, timeframe);
     const marker = ensureMarker();
@@ -455,6 +477,16 @@
       postObservation(obs);
     }
   }
+
+  window.addEventListener('message', event => {
+    if (event.data?.source !== 'ATS_VISUAL_ASSET_SWITCH') return;
+    const asset = canonicalAsset(event.data?.asset || '');
+    if (!asset) return;
+    preferredAsset = asset;
+    preferredAssetAt = Number(event.data?.at || Date.now());
+    lastAppScanAt = 0;
+    try { tick(); } catch {}
+  });
 
   if (isTop) {
     window.addEventListener('message', event => {
