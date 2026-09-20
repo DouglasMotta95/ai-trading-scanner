@@ -1,5 +1,5 @@
 import { readScannerState, updateScannerState } from './services/scanner-state-atomic.js';
-import { getThresholds } from './core/analysis.js';
+import { getThresholds, getOperationMode } from './core/analysis.js';
 
 // Product policy layer. The technical engine can keep collecting evidence with an
 // estimated clock, but the user-facing decision is never promoted while CasaTrade
@@ -7,7 +7,7 @@ import { getThresholds } from './core/analysis.js';
 const EXACT_CLOCK_SOURCES = new Set(['trader-dom-countdown', 'network-server-cycle']);
 const CLOCK_FRESH_MS = 3000;
 const FOCUS_FRESH_MS = 5500;
-const DEFAULT_PREFS = Object.freeze({ mode: 'NORMAL', geminiEnabled: true, sensitivityProfile: 'MEDIO', preferredExpiration: null });
+const DEFAULT_PREFS = Object.freeze({ mode: 'NORMAL', geminiEnabled: true, sensitivityProfile: 'MEDIO', operationMode: 'M1', preferredExpiration: null });
 
 const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
 const text = value => String(value ?? '').trim();
@@ -52,9 +52,12 @@ const normExp = value => {
 function preferences(state = {}) {
   const raw = state.analystPreferences || {};
   const thresholds = getThresholds(raw.sensitivityProfile || DEFAULT_PREFS.sensitivityProfile);
+  const operationMode = getOperationMode(raw.operationMode || DEFAULT_PREFS.operationMode);
   return {
     mode: 'NORMAL',
     geminiEnabled: raw.geminiEnabled !== false,
+    operationMode: operationMode.timeframe,
+    operation: operationMode,
     sensitivityProfile: thresholds.profile,
     sensitivityLabel: thresholds.label,
     thresholds,
@@ -88,34 +91,38 @@ export function exactCasaTradeTime(state = {}) {
   if (Date.now() - Number(clock.at || 0) >= CLOCK_FRESH_MS) return { ready: false, reason: 'Relógio da CasaTrade ficou desatualizado.' };
   if (num(clock.secondsRemaining) == null) return { ready: false, reason: 'Countdown da CasaTrade indisponível.' };
 
+  const operationMode = getOperationMode(state.analystPreferences?.operationMode || 'M1');
   const liveTf = normTf(clock.timeframe);
   const stateTf = normTf(state.analysisTimeframe || state.timeframe);
   const controlTf = normTf(state.platformControls?.observed?.timeframe);
   if (!liveTf) return { ready: false, reason: 'Timeframe real ainda não foi confirmado.' };
-  if (liveTf !== 'M1') return { ready: false, reason: 'Ajuste o timeframe da CasaTrade para M1.' };
+  if (liveTf !== operationMode.timeframe) return { ready: false, reason: `Ajuste o timeframe da CasaTrade para ${operationMode.timeframe}.` };
   if (stateTf && liveTf !== stateTf) return { ready: false, reason: 'Timeframe interno divergiu do gráfico.' };
   if (controlTf && liveTf !== controlTf) return { ready: false, reason: 'Timeframe visível divergiu do clock da vela.' };
-  return { ready: true, timeframe: liveTf, secondsRemaining: Number(clock.secondsRemaining), source: clock.source };
+  return { ready: true, timeframe: liveTf, secondsRemaining: Number(clock.secondsRemaining), source: clock.source, operationMode: operationMode.timeframe };
 }
 
 export function CasaTradeExpiration(state = {}, timeframe = null) {
+  const operationMode = getOperationMode(state.analystPreferences?.operationMode || 'M1');
   const controls = state.platformControls || {};
   const expirationAt = Number(controls.expirationCheckedAt || controls.observed?.observedAt?.expiration || 0);
   const fresh = expirationAt > 0 && Date.now() - expirationAt < 7000;
   const observed = fresh ? normExp(controls.observed?.expiration) : null;
   const startedAt = Number(state.diagnostics?.marketSession?.startedAt || state.diagnostics?.target?.connectedAt || 0);
   const waiting = startedAt > 0 && Date.now() - startedAt < 5000;
+  const expirationLabel = operationMode.expiration === '300s' ? '5 minutos' : '1 minuto';
   if (!observed || !fresh) return {
     ready: false,
     actual: null,
+    required: operationMode.expiration,
     reason: waiting
       ? 'Lendo expiração real da CasaTrade'
-      : 'Não foi possível ler a expiração — verifique o seletor na CasaTrade'
+      : 'Não foi possível ler a expiração — informe a expiração no campo do topo do painel'
   };
-  if (normTf(timeframe || state.analysisTimeframe || state.timeframe) === 'M1' && observed !== '60s') {
-    return { ready: false, actual: observed, required: '60s', reason: 'Ajuste a expiração da CasaTrade para 1 minuto' };
+  if (normTf(timeframe || state.analysisTimeframe || state.timeframe) === operationMode.timeframe && observed !== operationMode.expiration) {
+    return { ready: false, actual: observed, required: operationMode.expiration, reason: `Ajuste a expiração da CasaTrade para ${expirationLabel}` };
   }
-  return { ready: true, actual: observed, required: '60s', reason: 'Expiração de 1 minuto lida diretamente da CasaTrade.' };
+  return { ready: true, actual: observed, required: operationMode.expiration, reason: `Expiração de ${expirationLabel} confirmada para o modo ${operationMode.timeframe}.` };
 }
 
 function completeCandles(state = {}) {
@@ -183,6 +190,7 @@ function baseDecision(state = {}) {
   const possibleScore = pref.thresholds.possibleScore;
   const finalScore = pref.thresholds.finalScore;
   const entryWindowSeconds = pref.thresholds.entryWindowSeconds;
+  const preSignalWindowSeconds = pref.operation.timeframe === 'M5' ? 90 : 30;
   const directionalPower = Number(direction === 'BUY' ? signal.analytics?.buyPower : signal.analytics?.sellPower) || 0;
   const mandatoryPowerReady = directionalPower >= 50;
   const technicalCandidate = ['POSSIBLE_BUY', 'POSSIBLE_SELL', 'ENTER_BUY', 'ENTER_SELL'].includes(ui);
@@ -190,6 +198,7 @@ function baseDecision(state = {}) {
 
   const common = {
     profile: pref.mode,
+    operationMode: pref.operationMode,
     sensitivityProfile: pref.sensitivityProfile,
     sensitivityLabel: pref.sensitivityLabel,
     holdSeconds: pref.holdSeconds,
@@ -217,8 +226,8 @@ function baseDecision(state = {}) {
   }
 
   const seconds = Number(time.secondsRemaining);
-  if (!Number.isFinite(seconds) || seconds > 30) {
-    return { ...common, uiState: 'BUILDING_PATTERN', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: 'Analisando a vela M1 atual. O pré-sinal abre por volta de 30s restantes.' };
+  if (!Number.isFinite(seconds) || seconds > preSignalWindowSeconds) {
+    return { ...common, uiState: 'BUILDING_PATTERN', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: `Analisando a vela ${pref.operation.timeframe} atual. O pré-sinal abre por volta de ${preSignalWindowSeconds}s restantes.` };
   }
   if (seconds <= 0) {
     return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: 'AGUARDAR — fechamento da vela em andamento.' };
@@ -238,7 +247,7 @@ function baseDecision(state = {}) {
 
   // Expiration is an execution gate, not a technical-analysis gate. Keep the
   // directional POSSIBLE state visible when the pattern exists, but never make
-  // it actionable until the real CasaTrade control confirms M1 + 60 seconds.
+  // it actionable until the CasaTrade timing/expiration matches the active operation mode.
   if (!expiration.ready) {
     return {
       ...common,
@@ -295,6 +304,7 @@ function signature(value = {}) {
     direction: value.direction || null,
     actionable: !!value.actionable,
     profile: value.profile || null,
+    operationMode: value.operationMode || null,
     sensitivityProfile: value.sensitivityProfile || null,
     sensitivityLabel: value.sensitivityLabel || null,
     holdSeconds: value.holdSeconds || null,
