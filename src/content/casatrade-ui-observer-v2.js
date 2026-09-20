@@ -1,5 +1,5 @@
 (() => {
-  if (globalThis.__ATS_CASATRADE_UI_OBSERVER_V2__) return;
+  try { globalThis.__ATS_CASATRADE_UI_OBSERVER_V2_RUNTIME__?.teardown?.(); } catch {}
   globalThis.__ATS_CASATRADE_UI_OBSERVER_V2__ = true;
 
   const host = String(location.hostname || '').toLowerCase().replace(/\.$/, '');
@@ -191,9 +191,23 @@
     if (timer) return;
     timer = setTimeout(() => { timer = 0; scan().catch(() => {}); }, delay);
   };
-  new MutationObserver(() => schedule(140)).observe(document.documentElement, { subtree: true, childList: true, characterData: true, attributes: true });
-  document.addEventListener('input', () => schedule(20), true);
-  document.addEventListener('click', () => schedule(60), true);
-  setInterval(() => schedule(0), 1200);
+  const observer = new MutationObserver(() => schedule(140));
+  observer.observe(document.documentElement, { subtree: true, childList: true, characterData: true, attributes: true });
+  const inputHandler = () => schedule(20);
+  const clickHandler = () => schedule(60);
+  document.addEventListener('input', inputHandler, true);
+  document.addEventListener('click', clickHandler, true);
+  const intervalId = setInterval(() => schedule(0), 1200);
+  globalThis.__ATS_FORCE_UI_CONTROL_SCAN__ = () => schedule(0);
+  globalThis.__ATS_CASATRADE_UI_OBSERVER_V2_RUNTIME__ = {
+    version: 'casatrade-ui-observer-v2-restartable',
+    teardown() {
+      try { observer.disconnect(); } catch {}
+      try { document.removeEventListener('input', inputHandler, true); } catch {}
+      try { document.removeEventListener('click', clickHandler, true); } catch {}
+      try { clearInterval(intervalId); } catch {}
+      if (timer) { try { clearTimeout(timer); } catch {} }
+    }
+  };
   schedule(120);
 })();
