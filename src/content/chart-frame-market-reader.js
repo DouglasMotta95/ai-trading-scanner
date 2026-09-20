@@ -1,5 +1,5 @@
 (() => {
-  if (globalThis.__ATS_CHART_FRAME_MARKET_READER__) return;
+  try { globalThis.__ATS_CHART_FRAME_MARKET_READER_RUNTIME__?.teardown?.(); } catch {}
   globalThis.__ATS_CHART_FRAME_MARKET_READER__ = true;
 
   const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
@@ -171,6 +171,13 @@
     }
   }
 
-  setInterval(tick, 400);
+  const intervalId = setInterval(tick, 400);
+  globalThis.__ATS_FORCE_CHART_PRICE_SCAN__ = () => tick();
+  globalThis.__ATS_CHART_FRAME_MARKET_READER_RUNTIME__ = {
+    version: 'chart-frame-market-reader-restartable',
+    teardown() {
+      try { clearInterval(intervalId); } catch {}
+    }
+  };
   tick();
 })();
