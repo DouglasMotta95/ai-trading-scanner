@@ -17,8 +17,6 @@ const licenseActive = state => {
 const CLOCK_FRESH_MS = 3000;
 const FOCUS_FRESH_MS = 5000;
 const EXACT_CLOCK_SOURCES = new Set(['trader-dom-countdown', 'network-server-cycle']);
-const FALLBACK_CLOCK_SOURCE = 'platform-cycle-derived';
-const FALLBACK_MIN_CONFIDENCE = 50;
 
 let lastResyncEpoch = -1;
 
@@ -187,14 +185,7 @@ function exactClock(state = {}, info = null) {
 }
 
 function usableClock(state = {}, info = null) {
-  const clock = clockMatchesFocus(state, info);
-  if (!clock) return null;
-  if (clock.verified === true && EXACT_CLOCK_SOURCES.has(clean(clock.source))) return clock;
-  const fallback = clock.verified !== true
-    && clock.operational === true
-    && clean(clock.source) === FALLBACK_CLOCK_SOURCE
-    && Number(clock.confidence || 0) >= FALLBACK_MIN_CONFIDENCE;
-  return fallback ? clock : null;
+  return exactClock(state, info);
 }
 
 function nextEpoch(previous = {}) {
@@ -593,9 +584,6 @@ export async function applyClock(message = {}, sender = {}) {
   const source = clean(message.clockSource);
   const exact = message.verified === true && message.available !== false && clean(message.clockRole) === 'candle-close'
     && EXACT_CLOCK_SOURCES.has(source);
-  const fallback = message.verified !== true && message.available !== false && message.operational === true
-    && clean(message.clockRole) === 'candle-close' && source === FALLBACK_CLOCK_SOURCE
-    && Number(message.confidence || 0) >= FALLBACK_MIN_CONFIDENCE;
   const validRemaining = secondsRemaining != null && secondsRemaining >= 0 && (!duration || secondsRemaining <= duration + 2);
 
   return updateScannerState(state => {
@@ -604,11 +592,7 @@ export async function applyClock(message = {}, sender = {}) {
     if (!focus?.asset || !sameMarket(focus.asset, asset) || clean(focus.frameHost).toLowerCase() !== info.frameHost) return;
     if (state.targetTabId && Number(state.targetTabId) !== Number(info.tabId)) return;
 
-    // A fallback may keep the analyst moving, but it must never replace a fresh
-    // exact CasaTrade clock that is already authoritative for this same frame.
-    if (fallback && exactClock(state, info)) return state;
-
-    if ((!exact && !fallback) || !validRemaining) {
+    if (!exact || !validRemaining) {
       // Do not let a transient "pending" sample erase an exact CasaTrade clock
       // that is still fresh for this same focused frame. The next exact sample
       // can refresh it; only a genuinely stale clock is allowed to become pending.
@@ -633,10 +617,8 @@ export async function applyClock(message = {}, sender = {}) {
     let next = state;
     if (sessionChanged) {
       next = resetForSession(state, {
-        asset, timeframe, info, source: exact ? 'exact-candle-clock' : 'fallback-candle-clock',
-        reason: exact
-          ? `Sessão ${asset} • ${timeframe || '—'} sincronizada ao fechamento real da vela.`
-          : `Sessão ${asset} • ${timeframe || '—'} em leitura ao vivo com clock temporário de contingência.`
+        asset, timeframe, info, source: 'exact-candle-clock',
+        reason: `Sessão ${asset} • ${timeframe || '—'} sincronizada ao fechamento real da vela.`
       });
     }
 
@@ -662,10 +644,8 @@ export async function applyClock(message = {}, sender = {}) {
         acquisition: {
           ...(next.diagnostics?.acquisition || {}),
           stage: next.price != null ? 'diagnosing_next_candle' : 'syncing_price',
-          reason: exact
-            ? 'Relógio exato da vela sincronizado com a CasaTrade.'
-            : 'Relógio exato indisponível; análise ao vivo continua com clock temporário identificado como estimado.',
-          clockQuality: exact ? 'exact' : 'fallback', at: Date.now()
+          reason: 'Relógio exato da vela sincronizado com a CasaTrade.',
+          clockQuality: 'exact', at: Date.now()
         }
       }
     };
