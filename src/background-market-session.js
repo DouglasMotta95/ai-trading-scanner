@@ -699,7 +699,10 @@ export async function applyFeed(payload = {}, sender = {}) {
         candidateAsset: mismatch.asset,
         price: mismatch.price,
         candles: mismatchHistory,
-        requireCandles: true
+        // This path does not accept/promote the new market yet; it only
+        // quarantines stale old-market data. A strong fresh selected quote is
+        // sufficient to say the old price must no longer be shown.
+        requireCandles: false
       });
       if (mismatchBundle.ok) {
         const session = state.diagnostics?.marketSession || {};
