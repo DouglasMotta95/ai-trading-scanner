@@ -233,6 +233,45 @@ function expirationDiagnosticText(response = {}) {
       }).join('\n')
     : '- Nenhum seletor pôde ser registrado.';
 
+  const targetTab = response.targetTab || {};
+  const casaTradeTabs = Array.isArray(response.casaTradeTabs) ? response.casaTradeTabs : [];
+  const allFrames = Array.isArray(response.frames) ? response.frames : [];
+  const executeErrors = Array.isArray(response.executeScriptErrors) ? response.executeScriptErrors : [];
+
+  const tabLine = response.targetTab
+    ? `id=${targetTab.id ?? '—'} | url=${targetTab.url || '—'} | active=${targetTab.active === true} | discarded=${targetTab.discarded === true} | status=${targetTab.status || '—'} | windowId=${targetTab.windowId ?? '—'}`
+    : `[aba alvo indisponível]${response.targetTabError ? ` erro=${response.targetTabError}` : ''}`;
+
+  const casaTabLines = casaTradeTabs.length
+    ? casaTradeTabs.map(tab =>
+        `- id=${tab.id ?? '—'} | url=${tab.url || '—'} | active=${tab.active === true} | discarded=${tab.discarded === true} | windowId=${tab.windowId ?? '—'}`
+      ).join('\n')
+    : '- Nenhuma aba com host contendo "casatrade" foi retornada.';
+
+  const frameLines = allFrames.length
+    ? allFrames.map(frame => {
+        const words = frame.wordPresence || {};
+        const ctx = frame.documentContext || {};
+        const iframes = Array.isArray(ctx.iframes) ? ctx.iframes : [];
+        const iframeLines = iframes.length
+          ? iframes.map((item, index) =>
+              `    iframe[${index}] src=${item.src || '[vazio]'} | sandbox=${item.sandbox || '[vazio]'} | id=${item.id || '[vazio]'} | class=${item.className || '[vazio]'} | size=${Number(item.width || 0)}x${Number(item.height || 0)} | contentDocumentAcessível=${item.contentDocumentAccessible === true}`
+            ).join('\n')
+          : '    [nenhum iframe neste documento]';
+
+        return [
+          `- frameId=${frame.frameId ?? '—'} | href=${frame.href || '—'} | isTop=${frame.isTop === true} | visibilityState=${frame.visibilityState || '—'} | title=${frame.title || '—'} | body.innerText.length=${Number(frame.bodyInnerTextLength || 0)}`,
+          `  palavras: expira=${words.expira === true} | valor=${words.valor === true} | comprar=${words.comprar === true} | vender=${words.vender === true} | lucro=${words.lucro === true}`,
+          `  documento: iframes=${Number(ctx.iframeCount || 0)} | shadowRoot_aberto=${Number(ctx.openShadowRootCount || 0)} | canvas=${Number(ctx.canvasCount || 0)}`,
+          iframeLines
+        ].join('\n');
+      }).join('\n')
+    : '- Nenhum frame retornado pelo executeScript.';
+
+  const errorLines = executeErrors.length
+    ? executeErrors.map(error => `- ${error}`).join('\n')
+    : '- Nenhum erro literal de executeScript registrado.';
+
   return [
     'AI Trading Scanner — diagnóstico de leitura de expiração',
     `Frames examinados: ${Number(response.frameCount || response.frames?.length || 0)}`,
@@ -247,7 +286,25 @@ function expirationDiagnosticText(response = {}) {
     row.rawText || '[nenhum texto cru localizado]',
     '',
     '3. SELETORES TENTADOS E MOTIVO DA FALHA',
-    selectorLines
+    selectorLines,
+    '',
+    '4. CONTEXTO DA PÁGINA',
+    '',
+    'A) ABA ALVO',
+    tabLine,
+    '',
+    'TODAS AS ABAS COM HOST CONTENDO "casatrade"',
+    casaTabLines,
+    '',
+    'B) FRAMES RETORNADOS PELO executeScript',
+    `Frames retornados=${Number(response.frameCount || allFrames.length)} | esperado no mínimo=${Number(response.expectedFrameCountAtLeast || 0)}`,
+    frameLines,
+    '',
+    'C) IFRAMES / SHADOW DOM / CANVAS',
+    'Os detalhes de cada documento estão listados junto de cada frame acima.',
+    '',
+    'D) ERROS LITERAIS DO executeScript / FRAMES AUSENTES',
+    errorLines
   ].join('\n');
 }
 
