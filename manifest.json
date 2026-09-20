@@ -122,6 +122,7 @@
         "src/content/embedded-feed-bridge.js",
         "src/content/platform-sync.js",
         "src/content/casatrade-ui-observer-v2.js",
+        "src/content/market-clock-math.js",
         "src/content/market-cycle-clock-v4.js",
         "src/content/market-clock-projector.js",
         "src/content/casatrade-expiration-probe.js",
