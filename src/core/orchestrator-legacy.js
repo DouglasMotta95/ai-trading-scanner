@@ -1,5 +1,5 @@
 import { CandleBuilder, TIMEFRAMES } from './candles.js';
-import { analyzeCandles, ANALYST_THRESHOLDS } from './analysis.js';
+import { analyzeCandles, getThresholds } from './analysis.js';
 import { marketRegime } from './market-regime.js';
 
 const builders = new Map();
@@ -107,8 +107,8 @@ function trackerFor(key, bucket, at) {
   return tracker;
 }
 
-function observePossible(tracker, direction, score, at) {
-  const qualifies = ['BUY', 'SELL'].includes(direction) && Number(score) >= ANALYST_THRESHOLDS.possibleScore;
+function observePossible(tracker, direction, score, at, thresholds) {
+  const qualifies = ['BUY', 'SELL'].includes(direction) && Number(score) >= thresholds.possibleScore;
   if (qualifies) {
     const sameCandidate = tracker.candidateDirection === direction
       && tracker.lastCandidateAt != null
@@ -156,13 +156,13 @@ function observePossible(tracker, direction, score, at) {
   return tracker.publishedDirection;
 }
 
-function confirmationQuality(result = {}, direction = null) {
+function confirmationQuality(result = {}, direction = null, thresholds = getThresholds()) {
   if (!direction || !result?.recent?.ready) return false;
   const metrics = result.analytics || result.recent?.metrics || {};
   const directionalPower = direction === 'BUY' ? Number(metrics.buyPower || 0) : Number(metrics.sellPower || 0);
-  const candleStrong = Number(metrics.currentStrength || 0) >= ANALYST_THRESHOLDS.candleStrength;
+  const candleStrong = Number(metrics.currentStrength || 0) >= thresholds.candleStrength;
   const rejected = result.recent?.rejection === direction
-    && Number(metrics.rejectionStrength || 0) >= ANALYST_THRESHOLDS.rejectionStrength;
+    && Number(metrics.rejectionStrength || 0) >= thresholds.rejectionStrength;
   const broke = result.recent?.breakout === direction;
   const continuation = result.recent?.continuationDirection === direction
     && Number(result.recent?.continuationScore || 0) >= 60;
@@ -172,13 +172,13 @@ function confirmationQuality(result = {}, direction = null) {
   return directionalPower >= 50 && (candleStrong || rejected || broke || continuation || trendAligned);
 }
 
-function rangeOverrideQuality(result = {}, direction = null) {
+function rangeOverrideQuality(result = {}, direction = null, thresholds = getThresholds()) {
   if (!direction || !result?.recent?.ready) return false;
   const metrics = result.analytics || result.recent?.metrics || {};
   const directionalPower = direction === 'BUY' ? Number(metrics.buyPower || 0) : Number(metrics.sellPower || 0);
   const broke = result.recent?.breakout === direction;
   const rejected = result.recent?.rejection === direction
-    && Number(metrics.rejectionStrength || 0) >= ANALYST_THRESHOLDS.rejectionStrength;
+    && Number(metrics.rejectionStrength || 0) >= thresholds.rejectionStrength;
   const continuation = result.recent?.continuationDirection === direction
     && Number(result.recent?.continuationScore || 0) >= 68
     && metrics.momentumDirection === direction
@@ -186,10 +186,10 @@ function rangeOverrideQuality(result = {}, direction = null) {
   return directionalPower >= 50 && (broke || rejected || continuation);
 }
 
-function observeConfirmation(tracker, result, direction, score, at) {
+function observeConfirmation(tracker, result, direction, score, at, thresholds) {
   const qualifies = tracker.publishedDirection === direction
-    && Number(score) >= ANALYST_THRESHOLDS.confirmScore
-    && confirmationQuality(result, direction);
+    && Number(score) >= thresholds.confirmScore
+    && confirmationQuality(result, direction, thresholds);
   if (!qualifies) {
     tracker.confirmDirection = null;
     tracker.confirmHits = 0;
@@ -246,7 +246,7 @@ function baseSignal({
     hint: reason,
     reason,
     candleCount,
-    warmup: { current: candleCount, required: ANALYST_THRESHOLDS.minimumClosedCandles },
+    warmup: { current: candleCount, required: thresholds.minimumClosedCandles },
     timeframe,
     targetExpiration: expiration,
     secondsRemaining,
@@ -302,6 +302,7 @@ function stabilitySnapshot(tracker = {}) {
 }
 
 export function processSnapshot(snapshot = {}, state = {}) {
+  const thresholds = getThresholds(state.analystPreferences?.sensitivityProfile || 'MEDIO');
   const price = num(snapshot.price);
   if (!snapshot.asset || price == null) {
     return {
@@ -335,7 +336,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
   const current = currentFromSnapshot(snapshot.candles, currentBucket, tfMs, analysisTimeframe, price) || shot.current;
   const combined = current ? [...closed.slice(-9), current] : closed.slice(-10);
   const indicatorHistory = current ? [...closed, current] : closed;
-  const liveResult = analyzeCandles(combined, indicatorHistory);
+  const liveResult = analyzeCandles(combined, indicatorHistory, thresholds.profile);
   const regime = marketRegime(closed);
   const candleCount = closed.length;
 
@@ -351,7 +352,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
   const score = Number(liveResult.score || 0);
   const expiration = snapshot.targetExpiration || state.targetExpiration || snapshot.expiration || state.expiration || null;
   const tracker = trackerFor(key, currentBucket, sampleAt);
-  const possibleDirection = observePossible(tracker, direction, score, sampleAt);
+  const possibleDirection = observePossible(tracker, direction, score, sampleAt, thresholds);
   const common = {
     timeframe: analysisTimeframe,
     expiration,
@@ -394,7 +395,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
     finalDecisions.delete(key);
   }
 
-  if (candleCount < ANALYST_THRESHOLDS.minimumClosedCandles || !current) {
+  if (candleCount < thresholds.minimumClosedCandles || !current) {
     return {
       candles: closed,
       currentCandle: current || null,
@@ -404,7 +405,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
         state: 'SEARCHING',
         phase: 'HISTORY',
         uiState: 'ANALYZING_MARKET',
-        reason: `Analisando mercado atual • ${candleCount}/${ANALYST_THRESHOLDS.minimumClosedCandles} velas fechadas reais.`
+        reason: `Analisando mercado atual • ${candleCount}/${thresholds.minimumClosedCandles} velas fechadas reais.`
       })
     };
   }
@@ -431,14 +432,14 @@ export function processSnapshot(snapshot = {}, state = {}) {
     };
   }
 
-  if (secondsRemaining <= 10) {
-    const rangeBlocked = regime?.type === 'range' && !rangeOverrideQuality(liveResult, direction);
+  if (secondsRemaining <= thresholds.entryWindowSeconds) {
+    const rangeBlocked = regime?.type === 'range' && !rangeOverrideQuality(liveResult, direction, thresholds);
     if (rangeBlocked) {
       tracker.confirmDirection = null;
       tracker.confirmHits = 0;
       tracker.lastConfirmAt = null;
     }
-    const canConfirm = !rangeBlocked && observeConfirmation(tracker, liveResult, direction, score, sampleAt);
+    const canConfirm = !rangeBlocked && observeConfirmation(tracker, liveResult, direction, score, sampleAt, thresholds);
     if (canConfirm) {
       const latestDecision = {
         bucket: currentBucket,
