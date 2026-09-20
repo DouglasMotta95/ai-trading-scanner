@@ -34,7 +34,7 @@
       && sameAsset(focus.asset, state.asset)
       && clock.verified === true
       && clean(clock.role) === 'candle-close'
-      && clean(clock.source) === 'trader-dom-countdown'
+      && ['trader-dom-countdown','network-server-cycle'].includes(clean(clock.source))
       && sameAsset(clock.asset, state.asset)
       && clockBoundToFocus(clock, focus)
       && Date.now() - Number(clock.at || 0) < 2200
