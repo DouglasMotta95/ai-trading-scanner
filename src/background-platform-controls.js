@@ -1,4 +1,5 @@
 import { updateScannerState } from './services/scanner-state-atomic.js';
+import { getThresholds } from './core/analysis.js';
 
 const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
 const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
@@ -238,10 +239,13 @@ function applyExpirationAuthority(state = {}, observedInput = {}, expirationSour
 
 function analystPrefs(state = {}, message = {}) {
   const current = state.analystPreferences || {};
+  const thresholds = getThresholds(message.sensitivityProfile ?? current.sensitivityProfile ?? 'MEDIO');
   return {
     ...current,
     mode: 'NORMAL',
-    holdSeconds: 3,
+    sensitivityProfile: thresholds.profile,
+    sensitivityLabel: thresholds.label,
+    holdSeconds: thresholds.holdSeconds,
     geminiEnabled: message.geminiEnabled == null ? current.geminiEnabled !== false : message.geminiEnabled !== false,
     preferredExpiration: null,
     updatedAt: Date.now()
