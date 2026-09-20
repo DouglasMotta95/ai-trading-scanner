@@ -1,5 +1,7 @@
 import { processSnapshot, resetOrchestrator } from './core/orchestrator.js';
 import { readScannerState, updateScannerState } from './services/scanner-state-atomic.js';
+import { resolveSignalHistory, signalPerformance } from './core/signal-outcomes.js';
+import { track as telemetryEvent } from './services/telemetry.js';
 
 // Single owner of technical analysis.
 // All acquisition modules only update scannerState. This loop coalesces those
@@ -91,6 +93,53 @@ function consolidatedSnapshot(state = {}) {
   };
 }
 
+function signalRecordId(asset, timeframe, targetStart, direction) {
+  return [marketId(asset), clean(timeframe).toUpperCase(), Number(targetStart || 0), clean(direction).toUpperCase()].join('|');
+}
+
+function reconcileSignalHistory(state = {}, next = {}, snapshot = {}) {
+  let rows = Array.isArray(state.signalHistory) ? state.signalHistory.slice(-99) : [];
+  const signal = next.signal || {};
+  const direction = clean(signal.direction || next.decisionCycle?.direction).toUpperCase();
+  const targetStart = num(signal.targetStart ?? next.decisionCycle?.targetStart);
+  const timeframe = normTf(snapshot.analysisTimeframe || snapshot.timeframe || signal.timeframe);
+  const confirmed = signal.state === 'CONFIRM'
+    || ['ENTER_BUY', 'ENTER_SELL'].includes(clean(signal.uiState).toUpperCase());
+
+  if (confirmed && ['BUY', 'SELL'].includes(direction) && targetStart != null && timeframe) {
+    const id = signalRecordId(snapshot.asset, timeframe, targetStart, direction);
+    if (!rows.some(row => row?.id === id)) {
+      rows.push({
+        id,
+        asset: snapshot.asset,
+        timeframe,
+        direction,
+        targetStart,
+        score: num(signal.analysisScore ?? signal.score),
+        setup: signal.setup || null,
+        createdAt: Date.now(),
+        entryPrice: null,
+        exitPrice: null,
+        result: null,
+        status: 'pending'
+      });
+    }
+  }
+
+  const outcome = resolveSignalHistory(rows, {
+    asset: snapshot.asset,
+    candles: snapshot.candles,
+    serverTime: snapshot.serverTime
+  });
+  rows = outcome.rows.slice(-100);
+  return {
+    rows,
+    resolved: outcome.resolved,
+    captured: outcome.captured,
+    performance: signalPerformance(rows)
+  };
+}
+
 function rawInputSignature(state = {}, snapshot = null) {
   if (!snapshot) return '';
   const clock = state.diagnostics?.marketClock || {};
@@ -140,6 +189,7 @@ async function runCentralAnalysis(force = false) {
   }
   analysisRunning = true;
   let needsConfirmationFollowup = false;
+  let resolvedForTelemetry = [];
   try {
     await updateScannerState(current => {
       const snapshot = consolidatedSnapshot(current);
@@ -197,14 +247,44 @@ async function runCentralAnalysis(force = false) {
         }
       };
 
+      const history = reconcileSignalHistory(current, next, snapshot);
+      resolvedForTelemetry = history.resolved;
+      const nextWithHistory = {
+        ...next,
+        signalHistory: history.rows,
+        performance: history.performance,
+        diagnostics: {
+          ...(next.diagnostics || {}),
+          outcomes: {
+            pending: history.performance.pending,
+            resolved: history.performance.resolved,
+            lastCapturedAt: history.captured.at(-1)?.entryCapturedAt || null,
+            lastResolvedAt: history.resolved.at(-1)?.resolvedAt || null
+          }
+        }
+      };
+
       const seconds = num(snapshot.secondsRemaining);
-      const locked = clean(next.decisionCycle?.locked).toUpperCase();
-      const confirmed = next.signal?.state === 'CONFIRM' || ['ENTER_BUY', 'ENTER_SELL'].includes(clean(next.signal?.uiState).toUpperCase());
+      const locked = clean(nextWithHistory.decisionCycle?.locked).toUpperCase();
+      const confirmed = nextWithHistory.signal?.state === 'CONFIRM' || ['ENTER_BUY', 'ENTER_SELL'].includes(clean(nextWithHistory.signal?.uiState).toUpperCase());
       needsConfirmationFollowup = seconds != null && seconds > 0 && seconds <= 10 && !confirmed && locked !== 'WAIT';
-      return next;
+      return nextWithHistory;
     });
   } finally {
     analysisRunning = false;
+  }
+
+  for (const row of resolvedForTelemetry) {
+    telemetryEvent('signal_resolved', {
+      id: row.id,
+      asset: row.asset,
+      timeframe: row.timeframe,
+      direction: row.direction,
+      targetStart: row.targetStart,
+      entryPrice: row.entryPrice,
+      exitPrice: row.exitPrice,
+      result: row.result
+    }).catch(() => {});
   }
 
   if (pendingAfterRun) {
