@@ -1,5 +1,5 @@
 (() => {
-  if (globalThis.__ATS_FOCUSED_ASSET_ALIAS_BRIDGE__) return;
+  try { globalThis.__ATS_FOCUSED_ASSET_ALIAS_RUNTIME__?.teardown?.(); } catch {}
   globalThis.__ATS_FOCUSED_ASSET_ALIAS_BRIDGE__ = true;
 
   const host = String(location.hostname || '').toLowerCase().replace(/\.$/, '');
@@ -98,6 +98,16 @@
     return rect.top >= 0 && rect.top <= Math.max(220, innerHeight * .46) && rect.left < innerWidth * .88;
   }
 
+  function chartHeaderGeometry(el, text = '') {
+    const rect = el?.getBoundingClientRect?.();
+    if (!rect || !text || text.length > 48) return false;
+    return rect.top >= Math.max(90, innerHeight * .18)
+      && rect.top <= Math.max(260, innerHeight * .50)
+      && rect.left >= 0
+      && rect.left <= innerWidth * .42
+      && rect.width <= innerWidth * .46;
+  }
+
   let recentInteraction = { asset: '', at: 0 };
   let lastSent = { asset: '', at: 0 };
 
@@ -152,12 +162,14 @@
       if (!asset) continue;
       const isSelected = selected(el);
       const interacted = recentInteraction.asset === asset && Date.now() - recentInteraction.at < 3500;
-      const directHeader = !!direct && text.length <= 48 && upperChartArea(el) && !looksLikeListContext(el);
+      const geometricHeader = !!direct && chartHeaderGeometry(el, text);
+      const directHeader = !!direct && text.length <= 48
+        && ((upperChartArea(el) && !looksLikeListContext(el)) || geometricHeader);
       // Passive "asset-like" text is not enough. This prevents an old symbol
       // still visible in a drawer/header from replacing the selected chart.
       if (!isSelected && !interacted && !directHeader) continue;
       let score = strongContext ? 500 : 0;
-      if (directHeader) score += 720;
+      if (directHeader) score += geometricHeader ? 1100 : 720;
       if (isSelected) score += 900;
       if (interacted) score += 1200;
       if (text.length <= 24) score += 80;
@@ -183,7 +195,21 @@
   document.addEventListener('pointerup', note, true);
   document.addEventListener('touchend', note, true);
   document.addEventListener('click', note, true);
-  new MutationObserver(() => setTimeout(scanVisibleAlias, 120)).observe(document.documentElement, { subtree: true, childList: true, characterData: true, attributes: true });
-  setInterval(scanVisibleAlias, 900);
-  setTimeout(scanVisibleAlias, 300);
+  const observer = new MutationObserver(() => setTimeout(scanVisibleAlias, 120));
+  observer.observe(document.documentElement, { subtree: true, childList: true, characterData: true, attributes: true });
+  const intervalId = setInterval(scanVisibleAlias, 900);
+  const bootTimer = setTimeout(scanVisibleAlias, 300);
+
+  globalThis.__ATS_FORCE_ALIAS_FOCUS_SCAN__ = () => scanVisibleAlias();
+  globalThis.__ATS_FOCUSED_ASSET_ALIAS_RUNTIME__ = {
+    version: 'focused-asset-alias-restartable',
+    teardown() {
+      try { observer.disconnect(); } catch {}
+      try { document.removeEventListener('pointerup', note, true); } catch {}
+      try { document.removeEventListener('touchend', note, true); } catch {}
+      try { document.removeEventListener('click', note, true); } catch {}
+      try { clearInterval(intervalId); } catch {}
+      try { clearTimeout(bootTimer); } catch {}
+    }
+  };
 })();
