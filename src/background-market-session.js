@@ -1,3 +1,4 @@
+import { resetOrchestrator } from './core/orchestrator.js';
 import { updateScannerState } from './services/scanner-state-atomic.js';
 import { validateMarketBundle } from './core/market-session-guard.js';
 
@@ -231,6 +232,10 @@ export function clearMarketAuthorityState(state = {}, extra = {}) {
 }
 
 export function resetForSession(state = {}, { asset, timeframe = null, info, reason, source }) {
+  // A market/timeframe transition invalidates every in-memory decision cycle.
+  // Without this, a locked/possible signal from the previous instrument can
+  // survive even after scannerState has been cleared.
+  resetOrchestrator();
   const previous = state.diagnostics?.marketSession || {};
   const epoch = nextEpoch(previous);
   const now = Date.now();
