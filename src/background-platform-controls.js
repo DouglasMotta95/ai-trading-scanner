@@ -131,11 +131,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const timeframeAt = Number(observed.observedAt?.timeframe || 0);
     const expirationFresh = expirationAt > 0 && Date.now() - expirationAt < 7000;
     const timeframeFresh = timeframeAt > 0 && Date.now() - timeframeAt < 7000;
-    const observedExpiration = expirationFresh ? observed.expiration || null : null;
+    // Restore the proven v0.11.27 expiration behavior: once a normalized
+    // expiration value is fresh, accept it. Source-specific confidence belongs
+    // to the readers; this owner must not turn a visible "1 min" back into
+    // PENDING because of a second arbitrary threshold.
+    const actualExpiration = expirationFresh ? observed.expiration || null : null;
     const actualTimeframe = timeframeFresh ? observed.timeframe || null : null;
-    const reliableExpiration = observedExpiration && Number(observed.confidence?.expiration || 0) >= 55
-      ? observedExpiration
-      : null;
     const preferred = normExp(state.analystPreferences?.preferredExpiration || state.executionPreferences?.expiration || '');
     const oldTf = normTf(state.analysisTimeframe || state.timeframe);
     const reliableTf = actualTimeframe && Number(observed.confidence?.timeframe || 0) >= 18 ? actualTimeframe : null;
@@ -158,17 +159,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const sessionTf = normTf(state.diagnostics?.marketSession?.timeframe);
     const effectiveTf = clockTf || sessionTf || reliableTf || oldTf || null;
     const m1Ready = effectiveTf === 'M1';
-    const expirationValid = reliableExpiration === '60s';
+    const expirationValid = actualExpiration === '60s';
     diagnostics.expirationGuard = {
       preferred,
       required: '60s',
-      actual: reliableExpiration,
-      ready: !!reliableExpiration && m1Ready && expirationValid,
+      actual: actualExpiration,
+      ready: !!actualExpiration && m1Ready && expirationValid,
       validForM1: m1Ready && expirationValid,
-      matchesPreference: !preferred || !reliableExpiration || preferred === reliableExpiration,
+      matchesPreference: !preferred || !actualExpiration || preferred === actualExpiration,
       reason: !m1Ready
         ? 'Ajuste o timeframe da CasaTrade para M1.'
-        : !reliableExpiration
+        : !actualExpiration
           ? 'Expiração real da CasaTrade ainda não confirmada.'
           : !expirationValid
             ? 'Ajuste a expiração da CasaTrade para 1 minuto'
@@ -177,7 +178,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     };
     diagnostics.platformTime = {
       timeframe: effectiveTf,
-      expiration: reliableExpiration,
+      expiration: actualExpiration,
       source: observed.source,
       ready: m1Ready && expirationValid,
       at: Date.now()
@@ -188,7 +189,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       // Platform controls report timeframe but do not own market-session fields.
       // The focused chart + candle clock are the only authority allowed to move
       // timeframe/analysisTimeframe or clear price/candle history.
-      ...(reliableExpiration ? { expiration: reliableExpiration, targetExpiration: reliableExpiration } : {}),
+      ...(actualExpiration ? { expiration: actualExpiration, targetExpiration: actualExpiration } : {}),
       platformControls: {
         observed,
         checkedAt: Date.now(),
@@ -196,7 +197,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         timeframeCheckedAt: timeframeAt,
         frameId: Number(sender.frameId || 0),
         source: observed.source,
-        aligned: (reliableTf || oldTf) === 'M1' && reliableExpiration === '60s',
+        aligned: (reliableTf || oldTf) === 'M1' && actualExpiration === '60s',
         liveAuthority: true
       },
       diagnostics
