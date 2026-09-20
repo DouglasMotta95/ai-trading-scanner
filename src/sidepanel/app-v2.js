@@ -422,9 +422,17 @@ function render(state = {}) {
   else setSourceState('assetSource', 'STALE', 'stale', 'Ativo ainda não confirmado.');
 
   if (actualExp) {
-    setText('heroExpiration', actualExp === '60s' ? '1 min ✓' : expLabel(actualExp));
-    setText('expiration', actualExp === '60s' ? '1 min ✓' : expLabel(actualExp));
-    setSourceState('expirationSource', 'REAL', 'real', 'Expiração relida diretamente do controle da CasaTrade.');
+    const expirationGuardSource = clean(state.diagnostics?.expirationGuard?.source || '');
+    if (expirationGuardSource === 'user-declared') {
+      const informedLabel = `${expLabel(actualExp)} (informada)`;
+      setText('heroExpiration', informedLabel);
+      setText('expiration', informedLabel);
+      setSourceState('expirationSource', 'INFORMADA', 'estimated', 'Informada por você, não verificada pela CasaTrade');
+    } else {
+      setText('heroExpiration', actualExp === '60s' ? '1 min ✓' : expLabel(actualExp));
+      setText('expiration', actualExp === '60s' ? '1 min ✓' : expLabel(actualExp));
+      setSourceState('expirationSource', 'REAL', 'real', 'Expiração relida diretamente do controle da CasaTrade.');
+    }
   } else {
     setText('heroExpiration', 'PENDENTE');
     setText('expiration', 'PENDENTE');
