@@ -42,9 +42,9 @@ function snap(bucket, seconds, rows, extra = {}) {
   }, { connection: 'online' });
 }
 
-test('current manifest is the v0.11.52 M5 clock state stability build', () => {
-  assert.equal(manifest.version, '0.11.52');
-  assert.equal(manifest.version_name, '0.11.52-time-sync-entry-ready');
+test('current manifest is the v0.11.53 M5 clock state stability build', () => {
+  assert.equal(manifest.version, '0.11.53');
+  assert.equal(manifest.version_name, '0.11.53-next-candle-result-journal');
   assert.equal(manifest.manifest_version, 3);
 });
 
