@@ -1,4 +1,5 @@
 import { readScannerState, updateScannerState } from './services/scanner-state-atomic.js';
+import { getThresholds } from './core/analysis.js';
 
 // Product policy layer. The technical engine can keep collecting evidence with an
 // estimated clock, but the user-facing decision is never promoted while CasaTrade
@@ -6,7 +7,7 @@ import { readScannerState, updateScannerState } from './services/scanner-state-a
 const EXACT_CLOCK_SOURCES = new Set(['trader-dom-countdown', 'network-server-cycle']);
 const CLOCK_FRESH_MS = 3000;
 const FOCUS_FRESH_MS = 5500;
-const DEFAULT_PREFS = Object.freeze({ mode: 'NORMAL', geminiEnabled: true, holdSeconds: 3, preferredExpiration: null });
+const DEFAULT_PREFS = Object.freeze({ mode: 'NORMAL', geminiEnabled: true, sensitivityProfile: 'MEDIO', preferredExpiration: null });
 
 const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
 const text = value => String(value ?? '').trim();
@@ -50,10 +51,14 @@ const normExp = value => {
 
 function preferences(state = {}) {
   const raw = state.analystPreferences || {};
+  const thresholds = getThresholds(raw.sensitivityProfile || DEFAULT_PREFS.sensitivityProfile);
   return {
     mode: 'NORMAL',
     geminiEnabled: raw.geminiEnabled !== false,
-    holdSeconds: 3,
+    sensitivityProfile: thresholds.profile,
+    sensitivityLabel: thresholds.label,
+    thresholds,
+    holdSeconds: thresholds.holdSeconds,
     preferredExpiration: null
   };
 }
@@ -127,14 +132,14 @@ function signalDirection(signal = {}) {
   return ['BUY', 'SELL'].includes(direction) ? direction : null;
 }
 
-function confluence(signal = {}, direction = null) {
+function confluence(signal = {}, direction = null, thresholds = getThresholds()) {
   if (!direction) return { count: 0, factors: [] };
   const a = signal.analytics || {};
   const factors = [];
   const power = Number(direction === 'BUY' ? a.buyPower : a.sellPower) || 0;
   if (power >= 50) factors.push(direction === 'BUY' ? 'poder comprador' : 'poder vendedor');
-  if (Number(a.currentStrength || 0) >= 62) factors.push('força da vela');
-  if (text(a.rejectionDirection).toUpperCase() === direction && Number(a.rejectionStrength || 0) >= 50) factors.push('rejeição');
+  if (Number(a.currentStrength || 0) >= thresholds.candleStrength) factors.push('força da vela');
+  if (text(a.rejectionDirection).toUpperCase() === direction && Number(a.rejectionStrength || 0) >= thresholds.rejectionStrength) factors.push('rejeição');
   if (text(a.continuationDirection).toUpperCase() === direction && Number(a.continuationScore || 0) >= 60) factors.push('continuação');
   if (text(a.momentumDirection).toUpperCase() === direction && Number(a.momentumScore || 0) >= 45) factors.push('momentum');
   const setup = text(signal.setup).toLowerCase();
@@ -169,19 +174,24 @@ function baseDecision(state = {}) {
   const score = Number(signal.analysisScore ?? signal.score ?? 0) || 0;
   const ui = text(signal.uiState).toUpperCase();
   const cycle = cycleKey(state, signal);
-  const factors = confluence(signal, direction);
+  const factors = confluence(signal, direction, pref.thresholds);
   // NORMAL already passed the technical engine's own quality gates. Requiring
   // another independent confluence count here was suppressing valid POSSIBLE/
   // ENTER decisions and leaving the product stuck on AGUARDAR. Only A+ applies
   // this extra presentation-policy filter.
   const additionalConfluenceReady = true;
-  const possibleScore = 44;
-  const finalScore = 58;
+  const possibleScore = pref.thresholds.possibleScore;
+  const finalScore = pref.thresholds.finalScore;
+  const entryWindowSeconds = pref.thresholds.entryWindowSeconds;
+  const directionalPower = Number(direction === 'BUY' ? signal.analytics?.buyPower : signal.analytics?.sellPower) || 0;
+  const mandatoryPowerReady = directionalPower >= 50;
   const technicalCandidate = ['POSSIBLE_BUY', 'POSSIBLE_SELL', 'ENTER_BUY', 'ENTER_SELL'].includes(ui);
   const technicalFinal = ['ENTER_BUY', 'ENTER_SELL'].includes(ui);
 
   const common = {
     profile: pref.mode,
+    sensitivityProfile: pref.sensitivityProfile,
+    sensitivityLabel: pref.sensitivityLabel,
     holdSeconds: pref.holdSeconds,
     cycleKey: cycle,
     score,
@@ -214,7 +224,7 @@ function baseDecision(state = {}) {
     return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: 'AGUARDAR — fechamento da vela em andamento.' };
   }
 
-  if (!technicalCandidate || !direction || score < possibleScore || !additionalConfluenceReady) {
+  if (!technicalCandidate || !direction || score < possibleScore || !mandatoryPowerReady || !additionalConfluenceReady) {
     return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: 'AGUARDAR — motor técnico ainda não liberou um candidato.' };
   }
 
@@ -223,7 +233,7 @@ function baseDecision(state = {}) {
   const possibleSince = sameCandidate && Number(previous.possibleSince || 0) > 0 ? Number(previous.possibleSince) : now;
   const holdMs = pref.holdSeconds * 1000;
   const heldFor = Math.max(0, now - possibleSince);
-  const finalQuality = technicalFinal && score >= finalScore && additionalConfluenceReady;
+  const finalQuality = technicalFinal && score >= finalScore && mandatoryPowerReady && additionalConfluenceReady;
   const reason = shortReason(direction, factors.factors, signal.reason);
 
   // Expiration is an execution gate, not a technical-analysis gate. Keep the
@@ -242,7 +252,7 @@ function baseDecision(state = {}) {
     };
   }
 
-  if (seconds > 10) {
+  if (seconds > entryWindowSeconds) {
     return {
       ...common,
       uiState: direction === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL',
@@ -285,6 +295,8 @@ function signature(value = {}) {
     direction: value.direction || null,
     actionable: !!value.actionable,
     profile: value.profile || null,
+    sensitivityProfile: value.sensitivityProfile || null,
+    sensitivityLabel: value.sensitivityLabel || null,
     holdSeconds: value.holdSeconds || null,
     cycleKey: value.cycleKey || null,
     score: value.score || 0,
