@@ -1,5 +1,5 @@
 (() => {
-  if (globalThis.__ATS_PROTOCOL_FOCUS__) return;
+  try { globalThis.__ATS_PROTOCOL_FOCUS_RUNTIME__?.teardown?.(); } catch {}
   globalThis.__ATS_PROTOCOL_FOCUS__ = true;
 
   const host = String(location.hostname || '').toLowerCase().replace(/\.$/, '');
@@ -50,7 +50,7 @@
 
   let lastAsset = '';
   let lastAt = 0;
-  window.addEventListener('message', event => {
+  const protocolMessageHandler = event => {
     const data = event.data;
     if (!data || data.source !== 'ATS_NETWORK_PROBE' || data.type !== 'summary') return;
     const rows = (Array.isArray(data.payload?.candidates) ? data.payload.candidates : [])
@@ -77,5 +77,12 @@
       reliable: true, visual: false, explicit: true, chartScoped: true, chartFound: true,
       frameHost: host, frameRole, source: 'protocol-selected', at: now
     }).catch(() => {});
-  });
+  };
+  window.addEventListener('message', protocolMessageHandler);
+  globalThis.__ATS_PROTOCOL_FOCUS_RUNTIME__ = {
+    version: 'focused-asset-protocol-restartable',
+    teardown() {
+      try { window.removeEventListener('message', protocolMessageHandler); } catch {}
+    }
+  };
 })();
