@@ -316,7 +316,11 @@
         secondsRemaining: seconds, expiration, available: true, verified: true, operational: true,
         clockRole: 'candle-close', clockSource: 'trader-dom-countdown', clockMode: 'canvas-visible-countdown',
         clockText: clean(payload.text || `${seconds}s`), clockToken: clean(payload.text || `${seconds}s`), confidence: 99,
-        frameHost: host, at: Date.now()
+        frameHost: host,
+        crossFrameControl: casaControlFrame && !sameFocusFrame,
+        boundFocusFrameId: Number(focus.frameId),
+        boundFocusFrameHost: String(focus.frameHost || '').toLowerCase(),
+        at: Date.now()
       });
     } finally { canvasBusy = false; }
   }
