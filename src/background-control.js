@@ -858,7 +858,7 @@ async function manualIntent(direction = '') {
 }
 
 function normalizeOperatingTimeframe(value = '') {
-  return clean(value).toUpperCase() === 'M1' ? 'M1' : 'M5';
+  return clean(value).toUpperCase() === 'M5' ? 'M5' : 'M1';
 }
 function expirationForOperatingTimeframe(value = '') {
   return normalizeOperatingTimeframe(value) === 'M1' ? '60s' : '300s';
