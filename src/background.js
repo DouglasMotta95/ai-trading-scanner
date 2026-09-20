@@ -299,7 +299,9 @@ readScannerState().then(observeState).catch(() => {});
 const HEALTH_CHECK_MS = 1000;
 const RECOVERY_AFTER_MS = 4500;
 const RECOVERY_COOLDOWN_MS = 10000;
+const CONTROL_RECOVERY_COOLDOWN_MS = 1500;
 let lastRecoveryAt = 0;
+let lastControlRecoveryAt = 0;
 
 function acquisitionGaps(state = {}) {
   const gaps = [];
@@ -332,6 +334,15 @@ async function recoverAcquisition() {
 
   const gaps = acquisitionGaps(state);
   if (!gaps.length) return;
+
+  if ((gaps.includes('período da vela') || gaps.includes('expiração') || gaps.includes('countdown') || gaps.includes('ativo'))
+      && Date.now() - lastControlRecoveryAt >= CONTROL_RECOVERY_COOLDOWN_MS) {
+    const refreshControls = globalThis.__ATS_FORCE_LIVE_CONTROL_READ__;
+    if (typeof refreshControls === 'function') {
+      lastControlRecoveryAt = Date.now();
+      await refreshControls(Number(state.targetTabId)).catch(() => false);
+    }
+  }
 
   await updateScannerState(current => ({
     ...current,
