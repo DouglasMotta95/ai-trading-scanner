@@ -34,9 +34,11 @@ function timeframeMs(value = 'M1') {
 function decisionWindows(snapshot = {}, signal = {}, thresholds = getThresholds()) {
   const timeframe = clean(snapshot.analysisTimeframe || snapshot.timeframe || signal.timeframe || 'M1').toUpperCase();
   const duration = Math.max(2, Math.round(timeframeMs(timeframe) / 1000));
-  // M1 product contract: pre-signal at ~30s, final decision at ~10s,
-  // and settle as WAIT near the close if no setup confirms.
-  if (timeframe === 'M1') return { pre: 30, decision: thresholds.entryWindowSeconds, skip: 4, duration, timeframe };
+  // Operation contract: final decision window stays in absolute seconds from
+  // the sensitivity profile. Only the pre-signal window differs by mode.
+  if (timeframe === 'M1' || timeframe === 'M5') {
+    return { pre: timeframe === 'M5' ? 90 : 30, decision: thresholds.entryWindowSeconds, skip: 4, duration, timeframe };
+  }
 
   // Longer/shorter candles keep proportional windows.
   const pre = Math.max(2, Math.min(duration - 1, 60, Math.round(duration * .50)));
