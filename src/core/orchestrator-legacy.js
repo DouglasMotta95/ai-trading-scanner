@@ -246,7 +246,7 @@ function baseSignal({
     hint: reason,
     reason,
     candleCount,
-    warmup: { current: candleCount, required: thresholds.minimumClosedCandles },
+    warmup: { current: candleCount, required: getThresholds().minimumClosedCandles },
     timeframe,
     targetExpiration: expiration,
     secondsRemaining,
