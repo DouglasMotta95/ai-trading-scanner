@@ -1,5 +1,5 @@
 import { updateScannerState } from './services/scanner-state-atomic.js';
-import { validateMarketBundle } from './core/market-session-guard.js';
+import { shouldResetForFocusedAsset, validateMarketBundle } from './core/market-session-guard.js';
 import { MARKET_SWITCH_TIMING, isWithinSwitchGuard, protocolTakeoverAllowed, resyncSchedule } from './core/market-switch-timing.js';
 
 const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
@@ -362,7 +362,8 @@ export async function applyFocus(message = {}, sender = {}) {
     const old = state.diagnostics?.focusedAsset || null;
     const incomingEmbeddedTrader = traderHost(info.frameHost);
     const incomingCasaFrame = casaHost(info.frameHost);
-    const assetChanged = !!old?.asset && !sameMarket(old.asset, asset);
+    const focusAssetChanged = !!old?.asset && !sameMarket(old.asset, asset);
+    const confirmedAssetChanged = shouldResetForFocusedAsset(state, asset);
     const frameChanged = !!old && (Number(old.frameId) !== Number(info.frameId) || clean(old.frameHost).toLowerCase() !== info.frameHost);
     const interactionAt = Number(message.interactionAt || message.at || 0);
     const userSelected = message.interactionHint === true && interactionAt > 0 && now - interactionAt < 8000;
@@ -414,7 +415,7 @@ export async function applyFocus(message = {}, sender = {}) {
     // but may never replace a fresh reliable visual focus with another asset.
     // This also neutralizes stale content scripts that survived an unpacked
     // extension reload and still announce an older/ambiguous market.
-    if (assetChanged && incomingProtocolOnly && freshVisualFocus && !protocolCanTakeOver) {
+    if (focusAssetChanged && incomingProtocolOnly && freshVisualFocus && !protocolCanTakeOver) {
       return {
         ...state,
         diagnostics: {
@@ -433,7 +434,7 @@ export async function applyFocus(message = {}, sender = {}) {
     // few seconds. Never let that non-visual source roll the current visible
     // transition back to the old market. This is the guard against mixing
     // USO/USD price/history into a newly selected AUD/CAD session.
-    if (assetChanged && !authoritativeVisual && contradictsSelectionLock && !protocolCanTakeOver) {
+    if (focusAssetChanged && !authoritativeVisual && contradictsSelectionLock && !protocolCanTakeOver) {
       return {
         ...state,
         diagnostics: {
@@ -449,7 +450,7 @@ export async function applyFocus(message = {}, sender = {}) {
       };
     }
 
-    if (assetChanged && incomingProtocolOnly && !protocolCanTakeOver && (transitionProtectsCurrentFocus || recentVisualSelection || protocolContradictsSelectionLock)) {
+    if (focusAssetChanged && incomingProtocolOnly && !protocolCanTakeOver && (transitionProtectsCurrentFocus || recentVisualSelection || protocolContradictsSelectionLock)) {
       return {
         ...state,
         diagnostics: {
@@ -469,7 +470,7 @@ export async function applyFocus(message = {}, sender = {}) {
 
     // A passive symbol change from the same frame must prove stability before it
     // can replace a fresh selected market. User interaction/explicit selection wins immediately.
-    if (assetChanged && oldFresh && !authoritativeVisual && !incomingExplicit && !incomingStable) {
+    if (focusAssetChanged && oldFresh && !authoritativeVisual && !incomingExplicit && !incomingStable) {
       return {
         ...state,
         diagnostics: {
@@ -484,7 +485,7 @@ export async function applyFocus(message = {}, sender = {}) {
 
     // Hidden/inactive CasaTrade market frames can stay alive and keep publishing
     // their old symbol. They must never roll the visible user-selected chart back.
-    if (assetChanged && frameChanged && oldFresh && !authoritativeVisual && !incomingExplicit && !incomingStable) {
+    if (focusAssetChanged && frameChanged && oldFresh && !authoritativeVisual && !incomingExplicit && !incomingStable) {
       return {
         ...state,
         diagnostics: {
@@ -500,7 +501,7 @@ export async function applyFocus(message = {}, sender = {}) {
     // The same asset is often visible in the CasaTrade shell and the embedded
     // trader frame at the same time. Once the embedded trader owns the live clock,
     // shell heartbeats must not keep resetting the market session.
-    if (!assetChanged && frameChanged && oldEmbeddedTrader && incomingCasaFrame && !authoritativeVisual) {
+    if (!focusAssetChanged && frameChanged && oldEmbeddedTrader && incomingCasaFrame && !authoritativeVisual) {
       return state;
     }
 
@@ -508,11 +509,11 @@ export async function applyFocus(message = {}, sender = {}) {
     // IMPORTANT: a shell -> trader frame handoff is NOT a market switch. It must
     // never call resetForSession(), because doing so clears the current candle
     // candidate and can flip POSSÍVEL VENDA -> POSSÍVEL COMPRA within seconds.
-    const traderHandoff = !assetChanged && frameChanged && !oldEmbeddedTrader && incomingEmbeddedTrader;
+    const traderHandoff = !focusAssetChanged && frameChanged && !oldEmbeddedTrader && incomingEmbeddedTrader;
     let next = state;
 
     // Only a REAL asset change may reset market/session analysis state.
-    if (assetChanged) {
+    if (confirmedAssetChanged) {
       next = resetForSession(state, {
         asset, info, source: clean(message.source || (authoritativeVisual ? 'user-selected-transition' : 'visible-chart')),
         reason: authoritativeVisual
@@ -561,7 +562,7 @@ export async function applyFocus(message = {}, sender = {}) {
             ? { asset, at: now, source: 'protocol-selected-fallback' }
             : (next.diagnostics?.visualSelectionLock || null),
         focusedAsset: {
-          asset, at: now, stableSince: assetChanged ? now : previousStableSince,
+          asset, at: now, stableSince: focusAssetChanged ? now : previousStableSince,
           score: Number(message.score || 0), samples: Number(message.samples || 0), reliable: true,
           visual: message.visual !== false, explicit: message.explicit === true, chartScoped: true,
           interactionHint: userSelected,
