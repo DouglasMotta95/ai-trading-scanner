@@ -59,6 +59,25 @@
   let lastSentAt = 0;
   let expirationThrottleDropCount = 0;
   const expirationThrottleDiagnosticStartedAt = Date.now();
+  const feedDiagnostic = {
+    summaryReceived: 0,
+    candidatesWithTimestamp: 0,
+    lastSummaryCandidates: [],
+    maybeClockCalls: 0,
+    maybeClockEarlyReturns: 0,
+    maybeClockReasons: {
+      focusNotReliable: 0,
+      frameHostMismatch: 0,
+      noCandidate: 0,
+      noServerTime: 0,
+      serverTimeDriftOver7000: 0,
+      confidenceUnder55: 0,
+      countUnder2: 0,
+      boundaryNull: 0
+    },
+    marketClockV2Sent: 0
+  };
+  let lastBoundaryDiagnosticReason = null;
   let clockBusy = false;
   let clockProbe = null;
   let candleClockProbe = null;
@@ -74,22 +93,24 @@
   }
 
   function structuredCandleBoundary(payload = {}, state = {}, focus = null, candidate = null) {
-    if (!focus?.asset) return null;
+    lastBoundaryDiagnosticReason = null;
+    if (!focus?.asset) { lastBoundaryDiagnosticReason = 'boundaryNull'; return null; }
     const rows = candleRowsFor(payload, focus.asset);
     const latest = rows.at(-1) || null;
-    if (!latest) { candleClockProbe = null; return null; }
+    if (!latest) { candleClockProbe = null; lastBoundaryDiagnosticReason = 'boundaryNull'; return null; }
 
     const timeframe = normalizeTf(candidate?.timeframe || latest?.timeframe || state.analysisTimeframe || state.timeframe);
     const duration = durationSeconds(timeframe);
     const openAt = normalizeTime(latest?.time ?? latest?.timestamp);
     const now = Date.now();
-    if (!timeframe || !duration || !openAt) { candleClockProbe = null; return null; }
+    if (!timeframe || !duration || !openAt) { candleClockProbe = null; lastBoundaryDiagnosticReason = 'boundaryNull'; return null; }
 
     const durationMs = duration * 1000;
     // Only the candle that is demonstrably open right now may become a clock anchor.
     // A closed historical candle is rejected instead of being shifted forward by guesswork.
     if (openAt > now + 1500 || now < openAt - 1500 || now >= openAt + durationMs + 1200) {
       candleClockProbe = null;
+      lastBoundaryDiagnosticReason = 'boundaryNull';
       return null;
     }
 
@@ -101,11 +122,14 @@
       ? Math.min(8, Number(previous.count || 1) + 1)
       : 1;
     candleClockProbe = { asset: marketId(focus.asset), timeframe, openAt, observedAt: now, count };
-    if (count < 2) return null;
+    if (count < 2) { lastBoundaryDiagnosticReason = 'countUnder2'; return null; }
 
     const remainingMs = openAt + durationMs - now;
     const secondsRemaining = Math.max(0, Math.min(duration, Math.ceil(remainingMs / 1000)));
-    if (!Number.isFinite(secondsRemaining) || secondsRemaining < 0 || secondsRemaining > duration) return null;
+    if (!Number.isFinite(secondsRemaining) || secondsRemaining < 0 || secondsRemaining > duration) {
+      lastBoundaryDiagnosticReason = 'boundaryNull';
+      return null;
+    }
     return { timeframe, secondsRemaining, openAt, count };
   }
 
@@ -115,6 +139,7 @@
     const now = Date.now();
     if (now - lastClockSentAt < 300) return true;
     lastClockSentAt = now;
+    feedDiagnostic.marketClockV2Sent += 1;
     await sendMessage({
       type: 'ATS_MARKET_CLOCK_V2', asset: focus.asset, timeframe: boundary.timeframe,
       secondsRemaining: boundary.secondsRemaining,
@@ -128,14 +153,23 @@
   }
 
   async function maybePublishStructuredClock(payload = {}) {
+    feedDiagnostic.maybeClockCalls += 1;
     if (clockBusy) return;
     clockBusy = true;
     try {
       const response = await sendMessage({ type: 'ATS_READ_SCANNER_STATE' });
       const state = response?.state || null;
       const focus = state?.diagnostics?.focusedAsset || null;
-      if (!focus?.asset || focus.reliable !== true || focus.chartScoped !== true || focus.trustedChartFrame !== true) return;
-      if (String(focus.frameHost || '').toLowerCase() !== host) return;
+      if (!focus?.asset || focus.reliable !== true || focus.chartScoped !== true || focus.trustedChartFrame !== true) {
+        feedDiagnostic.maybeClockEarlyReturns += 1;
+        feedDiagnostic.maybeClockReasons.focusNotReliable += 1;
+        return;
+      }
+      if (String(focus.frameHost || '').toLowerCase() !== host) {
+        feedDiagnostic.maybeClockEarlyReturns += 1;
+        feedDiagnostic.maybeClockReasons.frameHostMismatch += 1;
+        return;
+      }
 
       const currentClock = state?.diagnostics?.marketClock || null;
       if (currentClock?.verified === true && currentClock?.source === 'trader-dom-countdown'
@@ -147,11 +181,15 @@
           || Number(b?.confidence || 0) - Number(a?.confidence || 0)
           || Number(b?.observedAt || 0) - Number(a?.observedAt || 0));
       const candidate = rows[0] || null;
+      if (!candidate) feedDiagnostic.maybeClockReasons.noCandidate += 1;
       const serverTime = normalizeTime(candidate?.timestamp);
+      if (candidate && !serverTime) feedDiagnostic.maybeClockReasons.noServerTime += 1;
       const timeframe = normalizeTf(candidate?.timeframe || state.analysisTimeframe || state.timeframe);
       const duration = durationSeconds(timeframe);
       const confidence = Number(candidate?.confidence || 0);
       const now = Date.now();
+      if (candidate && serverTime && Math.abs(now - serverTime) > 7000) feedDiagnostic.maybeClockReasons.serverTimeDriftOver7000 += 1;
+      if (candidate && confidence < 55) feedDiagnostic.maybeClockReasons.confidenceUnder55 += 1;
 
       // Preferred path: a genuinely advancing near-real server timestamp.
       if (serverTime && timeframe && duration && confidence >= 55 && Math.abs(now - serverTime) <= 7000) {
@@ -170,6 +208,7 @@
           let secondsRemaining = Math.ceil((durationMs - elapsed) / 1000);
           if (!Number.isFinite(secondsRemaining) || secondsRemaining <= 0 || secondsRemaining > duration) secondsRemaining = duration;
           lastClockSentAt = now;
+          feedDiagnostic.marketClockV2Sent += 1;
           await sendMessage({
             type: 'ATS_MARKET_CLOCK_V2', asset: focus.asset, timeframe, secondsRemaining,
             expiration: state.targetExpiration || state.expiration || candidate?.expiration || null,
@@ -180,6 +219,7 @@
           });
           return;
         }
+        if (count < 2) feedDiagnostic.maybeClockReasons.countUnder2 += 1;
       } else {
         clockProbe = null;
       }
@@ -188,7 +228,12 @@
       // server timestamp. When the newest OHLC row is the candle that is provably open now,
       // its start + timeframe is an exact candle-close boundary. Two live observations are
       // required before publishing it; historical rows are never rolled forward by modulo.
-      await publishCandleBoundaryClock(payload, state, focus, candidate);
+      const boundaryPublished = await publishCandleBoundaryClock(payload, state, focus, candidate);
+      if (!boundaryPublished) {
+        feedDiagnostic.maybeClockEarlyReturns += 1;
+        const reason = lastBoundaryDiagnosticReason === 'countUnder2' ? 'countUnder2' : 'boundaryNull';
+        feedDiagnostic.maybeClockReasons[reason] += 1;
+      }
     } finally {
       clockBusy = false;
     }
@@ -197,6 +242,17 @@
   const networkMessageHandler = event => {
     const data = event.data;
     if (!data || data.source !== 'ATS_NETWORK_PROBE' || data.type !== 'summary') return;
+    feedDiagnostic.summaryReceived += 1;
+    const diagnosticCandidates = Array.isArray(data.payload?.candidates) ? data.payload.candidates : [];
+    feedDiagnostic.candidatesWithTimestamp += diagnosticCandidates.filter(row => row?.timestamp != null).length;
+    feedDiagnostic.lastSummaryCandidates = diagnosticCandidates.slice(0, 5).map(row => ({
+      asset: clean(row?.asset || ''),
+      timeframe: clean(row?.timeframe || ''),
+      timestamp: row?.timestamp ?? null,
+      confidence: Number(row?.confidence || 0),
+      selected: row?.selected === true,
+      observedAt: Number(row?.observedAt || 0)
+    }));
     const now = Date.now();
     if (now - lastSentAt < 80) {
       try {
@@ -253,6 +309,15 @@
             host
           },
           expirationThrottle80msDropCount: Number(expirationThrottleDropCount || 0),
+          summaryReceived: Number(feedDiagnostic.summaryReceived || 0),
+          candidatesWithTimestamp: Number(feedDiagnostic.candidatesWithTimestamp || 0),
+          lastSummaryCandidates: feedDiagnostic.lastSummaryCandidates.slice(0, 5),
+          maybePublishStructuredClock: {
+            calls: Number(feedDiagnostic.maybeClockCalls || 0),
+            earlyReturns: Number(feedDiagnostic.maybeClockEarlyReturns || 0),
+            reasons: { ...feedDiagnostic.maybeClockReasons },
+            marketClockV2Sent: Number(feedDiagnostic.marketClockV2Sent || 0)
+          },
           startedAt: expirationThrottleDiagnosticStartedAt,
           observedAt: Date.now()
         }
