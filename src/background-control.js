@@ -257,7 +257,7 @@ function inspectCasaTradeControlsDirect() {
 }
 
 
-function inspectExpirationDiagnostic() {
+async function inspectExpirationDiagnostic() {
   const clean0 = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
   const fold0 = value => clean0(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
   const visible0 = el => {
@@ -442,6 +442,38 @@ function inspectExpirationDiagnostic() {
   let canvasCount = 0;
   try { canvasCount = document.querySelectorAll('canvas').length; } catch {}
 
+  const diagnosticRequestId = `ats-exp-diag-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const diagnosticSnapshots = await new Promise(resolve => {
+    let canvas = null;
+    let bridge = null;
+    let settled = false;
+
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      try { window.removeEventListener('message', onDiagnosticMessage); } catch {}
+      resolve({ canvas, bridge });
+    };
+
+    const onDiagnosticMessage = event => {
+      const data = event.data;
+      if (!data || data.requestId !== diagnosticRequestId) return;
+      if (data.source === 'ATS_CANVAS_DIAGNOSTIC_SNAPSHOT') canvas = data.payload || null;
+      if (data.source === 'ATS_EMBEDDED_FEED_DIAGNOSTIC_SNAPSHOT') bridge = data.payload || null;
+      if (canvas && bridge) finish();
+    };
+
+    try { window.addEventListener('message', onDiagnosticMessage); } catch {}
+    try {
+      window.postMessage({
+        source: 'ATS_EXPIRATION_DIAGNOSTIC_REQUEST',
+        requestId: diagnosticRequestId
+      }, '*');
+    } catch {}
+
+    setTimeout(finish, 220);
+  });
+
   return {
     host: String(location.hostname || '').toLowerCase(),
     href: String(location.href || '').slice(0, 300),
@@ -456,6 +488,10 @@ function inspectExpirationDiagnostic() {
       openShadowRootCount,
       canvasCount
     },
+    canvasDiagnostic: diagnosticSnapshots.canvas,
+    canvasDiagnosticError: diagnosticSnapshots.canvas ? '' : 'ATS_CANVAS_DIAGNOSTIC_SNAPSHOT não respondeu dentro de 220 ms',
+    embeddedFeedDiagnostic: diagnosticSnapshots.bridge,
+    embeddedFeedDiagnosticError: diagnosticSnapshots.bridge ? '' : 'ATS_EMBEDDED_FEED_DIAGNOSTIC_SNAPSHOT não respondeu dentro de 220 ms',
     selectedSelector,
     rawText: rawText || containerText || '',
     containerOuterHTML: outerHTML,
