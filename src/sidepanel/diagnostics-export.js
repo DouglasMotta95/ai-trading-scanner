@@ -35,23 +35,28 @@
   }));
 
   function ensureUi() {
-    if (document.getElementById(BUTTON_ID)) return;
-    const card = document.querySelector('.preferences-card');
-    if (!card) return;
-    const row = document.createElement('div');
-    row.style.cssText = 'display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px;padding-top:12px;border-top:1px solid rgba(255,255,255,.06)';
-    const button = document.createElement('button');
-    button.id = BUTTON_ID;
-    button.type = 'button';
-    button.textContent = 'COPIAR DIAGNÓSTICO';
-    button.style.cssText = 'border:1px solid rgba(126,222,196,.28);background:rgba(126,222,196,.08);color:#bff4e5;border-radius:10px;padding:10px 12px;font:800 11px system-ui;letter-spacing:.5px;cursor:pointer';
-    const status = document.createElement('small');
-    status.id = STATUS_ID;
-    status.textContent = 'Sem chaves, tokens ou dados de login.';
-    status.style.cssText = 'color:#718599;font:600 10px system-ui';
-    row.append(button, status);
-    card.appendChild(row);
-    button.addEventListener('click', copyDiagnostics);
+    let button = document.getElementById(BUTTON_ID);
+    if (!button) {
+      const card = document.querySelector('.preferences-card');
+      if (!card) return;
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px;padding-top:12px;border-top:1px solid rgba(255,255,255,.06)';
+      button = document.createElement('button');
+      button.id = BUTTON_ID;
+      button.type = 'button';
+      button.textContent = 'COPIAR DIAGNÓSTICO';
+      button.style.cssText = 'border:1px solid rgba(126,222,196,.28);background:rgba(126,222,196,.08);color:#bff4e5;border-radius:10px;padding:10px 12px;font:800 11px system-ui;letter-spacing:.5px;cursor:pointer';
+      const status = document.createElement('small');
+      status.id = STATUS_ID;
+      status.textContent = 'Sem chaves, tokens ou dados de login.';
+      status.style.cssText = 'color:#718599;font:600 10px system-ui';
+      row.append(button, status);
+      card.appendChild(row);
+    }
+    if (button.dataset.atsDiagnosticsOwner !== 'export') {
+      button.dataset.atsDiagnosticsOwner = 'export';
+      button.addEventListener('click', copyDiagnostics);
+    }
   }
 
   function message(payload) {
@@ -72,6 +77,24 @@
         finish(null);
       }
     });
+  }
+
+  const FORBIDDEN_DIAGNOSTIC_KEY = /(?:license[_-]?key|key[_-]?license|atsclienttoken|cookies?|tokens?|headers?|authorization|bearer|secret|password)/i;
+
+  function stripSensitive(value) {
+    if (Array.isArray(value)) return value.map(stripSensitive).filter(item => item !== undefined);
+    if (!value || typeof value !== 'object') {
+      if (typeof value !== 'string') return value;
+      const text = String(value);
+      if (/\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+\/-]+=*/i.test(text)) return '[redacted]';
+      return text;
+    }
+    const out = {};
+    for (const [key, child] of Object.entries(value)) {
+      if (FORBIDDEN_DIAGNOSTIC_KEY.test(key)) continue;
+      out[key] = stripSensitive(child);
+    }
+    return out;
   }
 
   function sanitizeState(state = {}, manual = null) {
@@ -223,11 +246,11 @@
         message({ type: 'ATS_READ_SCANNER_STATE' }),
         message({ type: 'ATS_GET_MANUAL_TRADE_LEDGER' })
       ]);
-      const report = sanitizeState(stateReply?.state || {}, manualReply?.ok ? manualReply : null);
+      const report = stripSensitive(sanitizeState(stateReply?.state || {}, manualReply?.ok ? manualReply : null));
       const text = `AI Trading Scanner — diagnóstico seguro\n${JSON.stringify(report, null, 2)}`;
       const ok = await writeText(text);
       if (status) status.textContent = ok ? 'DIAGNÓSTICO COPIADO — pode colar no chat.' : 'Não consegui copiar automaticamente.';
-      if (button) button.textContent = ok ? 'COPIADO ✓' : 'TENTAR NOVAMENTE';
+      if (button) button.textContent = ok ? 'COPIADO ✓' : 'FALHA AO COPIAR';
       setTimeout(() => { if (button) button.textContent = 'COPIAR DIAGNÓSTICO'; }, 2200);
     } finally {
       if (button) button.disabled = false;
