@@ -223,7 +223,7 @@ function inspectCasaTradeControlsDirect() {
     }
 
     const tf = normTf0(own);
-    if (tf) {
+    if (tf && !/expira|expiry|expiration|duracao|duration/.test(folded)) {
       let score = 5;
       let flags = '';
       try { flags = `${el.className || ''} ${el.getAttribute?.('aria-selected') || ''} ${el.getAttribute?.('aria-current') || ''} ${el.getAttribute?.('data-state') || ''}`; } catch {}
