@@ -179,6 +179,9 @@ function renderShell(state = {}) {
   // Expiration recovery is automatic now. Keep the manual retry only for a
   // genuine market-acquisition or connection failure.
   if (retry) retry.hidden = !(marketPending || failure);
+
+  const expirationDiagnostic = $('copyExpirationDiagnostic');
+  if (expirationDiagnostic) expirationDiagnostic.hidden = !expirationPending;
 }
 async function connectNow() {
   const button = $('connectScanner');
@@ -215,6 +218,83 @@ async function refreshLiveReaders() {
   if (response?.ok && response?.state) {
     lastState = response.state;
     renderShell(lastState);
+  }
+}
+
+function expirationDiagnosticText(response = {}) {
+  const row = response.best || response.frames?.[0] || {};
+  const attempts = Array.isArray(row.selectorAttempts) ? row.selectorAttempts : [];
+  const selectorLines = attempts.length
+    ? attempts.map(item => {
+        const found = Number(item.found || 0);
+        const visible = Number(item.visible || 0);
+        const matches = item.expirationTextMatches == null ? '' : ` | texto-expiração=${Number(item.expirationTextMatches || 0)}`;
+        return `- ${item.selector || '—'} | encontrados=${found} | visíveis=${visible}${matches} | motivo=${item.reason || '—'}`;
+      }).join('\n')
+    : '- Nenhum seletor pôde ser registrado.';
+
+  return [
+    'AI Trading Scanner — diagnóstico de leitura de expiração',
+    `Frames examinados: ${Number(response.frameCount || response.frames?.length || 0)}`,
+    `Frame selecionado: ${row.frameId ?? '—'} | host=${row.host || '—'} | top=${row.isTop === true ? 'sim' : 'não'}`,
+    `Seletor selecionado: ${row.selectedSelector || 'nenhum'}`,
+    `Falha final: ${row.failureReason || response.error || '—'}`,
+    '',
+    '1. OUTERHTML DO CONTAINER (~3000 caracteres no máximo)',
+    row.containerOuterHTML || '[não localizado]',
+    '',
+    '2. TEXTO CRU ENCONTRADO NO CAMPO',
+    row.rawText || '[nenhum texto cru localizado]',
+    '',
+    '3. SELETORES TENTADOS E MOTIVO DA FALHA',
+    selectorLines
+  ].join('\n');
+}
+
+async function copyExpirationDiagnostic() {
+  const button = $('copyExpirationDiagnostic');
+  if (!button || button.dataset.busy === '1') return;
+  button.dataset.busy = '1';
+  button.disabled = true;
+  const original = button.textContent;
+  button.textContent = 'Coletando…';
+  try {
+    const response = await chrome.runtime.sendMessage({ type: 'ATS_GET_EXPIRATION_DIAGNOSTIC' }).catch(error => ({
+      ok: false,
+      error: String(error?.message || error || 'background_no_response'),
+      frames: []
+    }));
+    const text = expirationDiagnosticText(response || {});
+    let copied = false;
+    try {
+      await navigator.clipboard.writeText(text);
+      copied = true;
+    } catch {}
+    if (!copied) {
+      try {
+        const area = document.createElement('textarea');
+        area.value = text;
+        area.setAttribute('readonly', '');
+        area.style.cssText = 'position:fixed;left:-9999px;top:0';
+        document.body.append(area);
+        area.select();
+        copied = document.execCommand('copy');
+        area.remove();
+      } catch {}
+    }
+    button.textContent = copied ? 'Diagnóstico copiado' : 'Falha ao copiar';
+    setTimeout(() => {
+      button.textContent = original;
+      button.disabled = false;
+      delete button.dataset.busy;
+    }, 1800);
+  } catch {
+    button.textContent = 'Falha ao copiar';
+    setTimeout(() => {
+      button.textContent = original;
+      button.disabled = false;
+      delete button.dataset.busy;
+    }, 1800);
   }
 }
 
@@ -263,6 +343,7 @@ $('geminiToggle')?.addEventListener('change', event => {
 
 $('connectScanner')?.addEventListener('click', () => connectNow().catch(() => {}));
 $('retryLiveRead')?.addEventListener('click', () => refreshLiveReaders().catch(() => {}));
+$('copyExpirationDiagnostic')?.addEventListener('click', () => copyExpirationDiagnostic().catch(() => {}));
 $('activateLicense')?.addEventListener('click', () => {
   const button = $('activateLicense');
   button?.classList.add('loading');
