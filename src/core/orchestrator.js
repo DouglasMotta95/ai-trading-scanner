@@ -108,16 +108,17 @@ function possibleWithHysteresis(cycle, allowed, direction, at) {
     cycle.possibleDirection = direction;
     cycle.possibleWeakHits = 0;
     cycle.possibleLastStrongAt = at;
-    return true;
+    return direction;
   }
-  // One weak/throttled observation must not make POSSÍVEL disappear. Require
-  // two consecutive weak observations before dropping the candidate.
-  if (!cycle.possibleDirection) return false;
+  // One weak/throttled observation must not make POSSÍVEL disappear. Preserve
+  // the last confirmed candidate direction for one weak sample, then drop it
+  // only after a second consecutive weak observation.
+  if (!cycle.possibleDirection) return null;
   cycle.possibleWeakHits = Number(cycle.possibleWeakHits || 0) + 1;
-  if (cycle.possibleWeakHits < POSSIBLE_DROP_HITS) return true;
+  if (cycle.possibleWeakHits < POSSIBLE_DROP_HITS) return cycle.possibleDirection;
   cycle.possibleDirection = null;
   cycle.possibleWeakHits = 0;
-  return false;
+  return null;
 }
 
 function seedCycle(key, snapshot, signal, state = {}) {
@@ -302,7 +303,8 @@ export function processSnapshot(snapshot = {}, state = {}) {
   const score = Number(signal.analysisScore ?? signal.score ?? 0);
   const direction = directionOf(signal);
   const rawPossible = possibleQuality(signal, direction, score);
-  const canShowPossible = possibleWithHysteresis(cycle, rawPossible, direction, at);
+  const possibleDirection = possibleWithHysteresis(cycle, rawPossible, direction, at);
+  const canShowPossible = !!possibleDirection;
   const recovered = resolveWrapperDecision(snapshot, result, key, state);
   const rolledLastConfirmed = newerDecision(newerDecision(result.lastConfirmed, latestWrapperCompleted(snapshot)), recovered);
 
@@ -318,7 +320,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
     return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: nextSignal, decisionCycle: { ...cycle } };
   }
   if (secondsRemaining > windows.decision) {
-    const nextSignal = canShowPossible ? possibleSignal(signal, windows, direction, score) : signal;
+    const nextSignal = canShowPossible ? possibleSignal(signal, windows, possibleDirection, score) : signal;
     return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: nextSignal, decisionCycle: { ...cycle } };
   }
 
@@ -362,7 +364,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
 
   cycles.set(key, cycle);
   const nextSignal = canShowPossible
-    ? possibleSignal(signal, windows, direction, score)
+    ? possibleSignal(signal, windows, possibleDirection, score)
     : decidingSignal(signal, windows);
   return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: nextSignal, decisionCycle: { ...cycle } };
 }
