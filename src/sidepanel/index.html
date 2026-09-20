@@ -22,7 +22,7 @@
     <header class="topbar compact-topbar">
       <div class="brand-lockup">
         <span class="brand-orb" aria-hidden="true"><i></i></span>
-        <div><span class="eyebrow">AI TRADING SCANNER</span><h1 id="scannerModeTitle">A+ M5 AO VIVO</h1></div>
+        <div><span class="eyebrow">AI TRADING SCANNER</span><h1 id="scannerModeTitle">A+ M1 AO VIVO</h1></div>
       </div>
       <div class="top-status">
         <button id="connectScanner" class="connect-btn" type="button"><span class="connect-dot"></span><b id="connectScannerText">CONECTAR</b></button>
@@ -41,7 +41,7 @@
       <div><span>ATIVO <small id="assetSource" class="source-state stale">STALE</small></span><b id="asset">—</b></div>
       <div><span>TF REAL</span><b id="timeframe">—</b></div>
       <div><span>VELA</span><b id="heroCountdown">—</b></div>
-      <div><span>EXPIRAÇÃO</span><b id="heroExpirationPlan">5 min</b></div>
+      <div><span>EXPIRAÇÃO</span><b id="heroExpirationPlan">1 min</b></div>
     </section>
     <p id="timeframeModeWarning" class="expected-asset-warning" hidden></p>
     <p id="expectedAssetWarning" class="expected-asset-warning" hidden></p>
@@ -80,7 +80,7 @@
           <strong id="triggerValue">AGUARDANDO DADOS</strong>
           <p id="triggerHint">Preço, estrutura, momentum e rejeição serão consolidados aqui.</p>
           <div class="analysis-status-meta">
-            <span>ENTRADA FINAL <b id="analysisEntryWindow">~20s</b></span>
+            <span>ENTRADA FINAL <b id="analysisEntryWindow">~10s</b></span>
           </div>
           <small id="confidenceNote">A+ filtra estrutura, suporte/resistência, price action, momentum, volatilidade e estabilidade. Não representa garantia de resultado.</small>
         </div>
@@ -127,17 +127,17 @@
           <div class="section-head"><div><span class="eyebrow">MODO OPERACIONAL</span><h2>Scanner A+ M1 / M5</h2></div><span class="badge ok">ALTA CONFIANÇA</span></div>
           <label class="setting-row" for="operatingTimeframe"><span><b>Timeframe de operação</b><small>M1 usa contexto M5; M5 usa contexto M15.</small></span><select id="operatingTimeframe" aria-label="Timeframe de operação"><option value="M1">M1 • expiração 1 min</option><option value="M5">M5 • expiração 5 min</option></select></label>
           <div class="fixed-strategy">
-            <span><b id="strategyTf">M5</b><small>operação</small></span>
-            <span><b id="strategyContext">M15</b><small>contexto</small></span>
-            <span><b id="strategyExpiration">5 min</b><small>expiração</small></span>
-            <span><b id="strategyEntryWindow">~20 s</b><small>entrada final</small></span>
+            <span><b id="strategyTf">M1</b><small>operação</small></span>
+            <span><b id="strategyContext">M5</b><small>contexto</small></span>
+            <span><b id="strategyExpiration">1 min</b><small>expiração</small></span>
+            <span><b id="strategyEntryWindow">~10 s</b><small>entrada final</small></span>
           </div>
           <label class="toggle-row" for="notificationToggle"><span><b>Notificações</b><small>Pré-sinal e decisão final.</small></span><input id="notificationToggle" type="checkbox" role="switch" aria-label="Notificações do sistema"></label>
           <label class="setting-row" for="alertLevel"><span><b>Som</b><small>Alerta somente nos momentos importantes.</small></span><select id="alertLevel" aria-label="Nível de som"><option value="off">Off</option><option value="discrete">Discreto</option><option value="strong">Forte</option></select></label>
           <label class="toggle-row" for="geminiToggle"><span><b>Gemini</b><small>Segunda leitura após confirmação técnica.</small></span><input id="geminiToggle" type="checkbox" role="switch" aria-label="Gemini"></label>
           <label class="setting-row expected-asset-setting" for="expectedAsset"><span><b>Ativo esperado</b><small>Opcional. Avisa quando você muda para outro instrumento.</small></span><input id="expectedAsset" type="text" placeholder="Ex.: AUD/CAD (OTC)" autocomplete="off"></label>
           <div class="asset-switch-history"><b>Trocas de ativo detectadas</b><div id="assetSwitchLog" class="asset-switch-log"><span>Nenhuma troca registrada.</span></div></div>
-          <p id="strategyNote" class="fixed-strategy-note">M5 operacional + contexto M15. A entrada é na próxima vela de 5 minutos, com expiração manual de 5 minutos.</p>
+          <p id="strategyNote" class="fixed-strategy-note">M1 operacional + contexto M5. A entrada é na próxima vela de 1 minuto, com expiração manual de 1 minuto.</p>
         </section>
 
         <section id="licenseCard" class="card license-card">
