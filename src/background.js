@@ -1,6 +1,7 @@
 import { processSnapshot, resetOrchestrator } from './core/orchestrator.js';
 import { readScannerState, updateScannerState } from './services/scanner-state-atomic.js';
 import { operatingTimeframeFromPreferences } from './core/operation-mode.js';
+import './core/countdown-authority.js';
 
 // Single owner of technical analysis.
 // All acquisition modules only update scannerState. This loop coalesces those
@@ -8,7 +9,7 @@ import { operatingTimeframeFromPreferences } from './core/operation-mode.js';
 const ANALYSIS_CADENCE_MS = 650;
 const BURST_COALESCE_MS = 80;
 const CLOCK_FRESH_MS = 3200;
-const ALLOWED_CLOCK_SOURCES = new Set(['trader-dom-countdown', 'network-server-cycle', 'platform-cycle-derived']);
+const ALLOWED_CLOCK_SOURCES = new Set(['trader-dom-countdown', 'network-server-cycle']);
 
 const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
 const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
@@ -127,7 +128,7 @@ function consolidatedSnapshot(state = {}) {
   const clock = state.diagnostics?.marketClock || null;
   if (!asset || price == null || !focus?.asset || !sameMarket(focus.asset, asset)) return null;
   if (focus.reliable !== true || focus.chartScoped !== true || focus.trustedChartFrame !== true) return null;
-  if (!clock || clock.available === false || (!clock.verified && clock.operational !== true)) return null;
+  if (!clock || clock.available === false || clock.verified !== true) return null;
   if (!ALLOWED_CLOCK_SOURCES.has(clean(clock.source))) return null;
   if (!sameMarket(clock.asset, asset)) return null;
   // CasaTrade may split focus, feed and countdown across trusted sibling
@@ -135,9 +136,10 @@ function consolidatedSnapshot(state = {}) {
   // the market; transport frame equality must not stall the central analysis.
   if (Number(clock.at || 0) <= 0 || Date.now() - Number(clock.at) > CLOCK_FRESH_MS) return null;
 
-  const secondsRemaining = num(clock.secondsRemaining);
-  if (secondsRemaining == null || secondsRemaining < 0) return null;
-  const timeframe = normTf(clock.timeframe || state.analysisTimeframe || state.timeframe);
+  const authoritative = globalThis.__ATS_COUNTDOWN_AUTHORITY__?.readAuthoritativeCountdown?.(state, Date.now()) || null;
+  if (!authoritative?.ready) return null;
+  const secondsRemaining = num(authoritative.secondsRemaining);
+  const timeframe = normTf(authoritative.timeframe);
   const desiredTimeframe = operatingTimeframe(state);
   if (!timeframe || timeframe !== desiredTimeframe) return null;
   const requiredExpiration = expirationForTimeframe(desiredTimeframe);
@@ -171,7 +173,7 @@ function consolidatedSnapshot(state = {}) {
     },
     diagnostics: {
       capture: 'central-consolidated-state',
-      clockQuality: clock.verified === true ? 'exact' : 'fallback',
+      clockQuality: 'exact',
       feedQuality: Number(state.diagnostics?.acquisition?.feedQuality || 0)
     }
   };
