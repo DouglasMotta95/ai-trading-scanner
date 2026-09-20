@@ -4,8 +4,8 @@ import { readScannerState, updateScannerState } from './services/scanner-state-a
 // Single owner of technical analysis.
 // All acquisition modules only update scannerState. This loop coalesces those
 // updates and is the only runtime path allowed to invoke the technical orchestrator.
-const ANALYSIS_CADENCE_MS = 650;
-const BURST_COALESCE_MS = 80;
+const ANALYSIS_CADENCE_MS = 350;
+const BURST_COALESCE_MS = 50;
 const CLOCK_FRESH_MS = 3200;
 const ALLOWED_CLOCK_SOURCES = new Set(['trader-dom-countdown', 'network-server-cycle', 'platform-cycle-derived']);
 
@@ -230,7 +230,7 @@ async function runCentralAnalysis(force = false) {
       const seconds = num(snapshot.secondsRemaining);
       const locked = clean(next.decisionCycle?.locked).toUpperCase();
       const confirmed = next.signal?.state === 'CONFIRM' || ['ENTER_BUY', 'ENTER_SELL'].includes(clean(next.signal?.uiState).toUpperCase());
-      needsConfirmationFollowup = seconds != null && seconds > 0 && seconds <= 10 && !confirmed && locked !== 'WAIT';
+      needsConfirmationFollowup = seconds != null && seconds > 0 && seconds <= 15 && !confirmed && locked !== 'WAIT';
       return next;
     });
   } finally {
