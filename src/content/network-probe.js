@@ -30,11 +30,36 @@
     parse: { frames: 0, decoded: 0, candidates: 0, candles: 0, binary: 0 }
   };
 
+  // Diagnostic-only counters. These do not participate in parsing, ranking,
+  // publishing, throttling, or any market decision.
+  const networkDiagnostic = {
+    startedAt: Date.now(),
+    transport: {
+      ws: { seen: 0, candle: 0, price: 0 },
+      fetch: { seen: 0, candle: 0, price: 0 },
+      xhr: { seen: 0, candle: 0, price: 0 }
+    },
+    endpoints: new Set(),
+    wsFrames: { text: 0, binary: 0 }
+  };
+
   const now = () => Date.now();
   const trimSet = (set, max) => { while (set.size > max) set.delete(set.values().next().value); };
   const safeUrl = u => {
     try { const x = new URL(String(u || ''), location.href); return x.origin + x.pathname; }
     catch { return ''; }
+  };
+  const safeHostPath = u => {
+    try {
+      const x = new URL(String(u || ''), location.href);
+      return `${x.host}${x.pathname}`.slice(0, 240);
+    } catch { return ''; }
+  };
+  const rememberDiagnosticEndpoint = (transport, url) => {
+    const endpoint = safeHostPath(url);
+    if (!endpoint) return;
+    networkDiagnostic.endpoints.add(`${transport}:${endpoint}`);
+    trimSet(networkDiagnostic.endpoints, 24);
   };
   const num = v => {
     if (typeof v === 'number' && Number.isFinite(v)) return v;
@@ -371,11 +396,19 @@
     }, 220);
   };
 
-  const record = (transport, url, data) => {
+  const record = (transport, url, data, countSeen = true) => {
     if (stats.messages[transport] != null) stats.messages[transport]++;
+    if (countSeen && networkDiagnostic.transport[transport]) networkDiagnostic.transport[transport].seen += 1;
+    rememberDiagnosticEndpoint(transport, url);
     const endpoint = safeUrl(url); if (endpoint) stats.endpoints.add(`${transport}:${endpoint}`);
     trimSet(stats.endpoints, 120);
+    const beforeCandidates = Number(stats.parse.candidates || 0);
+    const beforeCandles = Number(stats.parse.candles || 0);
     scan(data, { transport, endpoint });
+    if (networkDiagnostic.transport[transport]) {
+      if (Number(stats.parse.candidates || 0) > beforeCandidates) networkDiagnostic.transport[transport].price += 1;
+      if (Number(stats.parse.candles || 0) > beforeCandles) networkDiagnostic.transport[transport].candle += 1;
+    }
     flushTimer();
   };
 
@@ -384,11 +417,18 @@
     const Wrapped = function(url, protocols) {
       const ws = protocols === undefined ? new Native(url) : new Native(url, protocols);
       stats.connections.ws++;
+      rememberDiagnosticEndpoint('ws', url);
       const endpoint = safeUrl(url); if (endpoint) stats.endpoints.add(`ws:${endpoint}`);
       flushTimer();
       ws.addEventListener('message', e => {
-        if (typeof e.data === 'string') record('ws', url, e.data);
-        else toText(e.data).then(t => { if (t) record('ws', url, t); }).catch(() => {});
+        networkDiagnostic.transport.ws.seen += 1;
+        if (typeof e.data === 'string') {
+          networkDiagnostic.wsFrames.text += 1;
+          record('ws', url, e.data, false);
+        } else {
+          networkDiagnostic.wsFrames.binary += 1;
+          toText(e.data).then(t => { if (t) record('ws', url, t, false); }).catch(() => {});
+        }
       });
       ws.addEventListener('close', () => { stats.connections.ws = Math.max(0, stats.connections.ws - 1); flushTimer(); }, { once: true });
       return ws;
@@ -431,6 +471,34 @@
       return send.apply(this, args);
     };
   }
+
+  const diagnosticMessageHandler = event => {
+    const data = event.data;
+    if (!data || data.source !== 'ATS_EXPIRATION_DIAGNOSTIC_REQUEST' || !data.requestId) return;
+    try {
+      window.postMessage({
+        source: 'ATS_NETWORK_DIAGNOSTIC_SNAPSHOT',
+        requestId: data.requestId,
+        payload: {
+          frame: {
+            href: String(location.href || ''),
+            isTop: window === window.top,
+            host: String(location.hostname || '').toLowerCase()
+          },
+          transport: {
+            ws: { ...networkDiagnostic.transport.ws },
+            fetch: { ...networkDiagnostic.transport.fetch },
+            xhr: { ...networkDiagnostic.transport.xhr }
+          },
+          endpoints: [...networkDiagnostic.endpoints].slice(0, 5),
+          wsFrames: { ...networkDiagnostic.wsFrames },
+          startedAt: networkDiagnostic.startedAt,
+          observedAt: Date.now()
+        }
+      }, '*');
+    } catch {}
+  };
+  window.addEventListener('message', diagnosticMessageHandler);
 
   window.postMessage({ source: 'ATS_NETWORK_PROBE', type: 'ready', payload: { ready: true } }, '*');
 })();
