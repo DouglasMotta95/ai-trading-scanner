@@ -14,3 +14,15 @@ export function isWithinSwitchGuard(ageMs = Infinity, limitMs = MARKET_SWITCH_TI
 export function resyncSchedule() {
   return [0, MARKET_SWITCH_TIMING.resyncKickMs, MARKET_SWITCH_TIMING.resyncFollowupMs];
 }
+
+export function protocolTakeoverAllowed({
+  oldFocusAgeMs = Infinity,
+  recentSelectionAgeMs = Infinity,
+  incomingExplicit = false,
+  incomingStable = false
+} = {}) {
+  if (!incomingExplicit || !incomingStable) return false;
+  if (isWithinSwitchGuard(oldFocusAgeMs, MARKET_SWITCH_TIMING.staleFocusProtectionMs)) return false;
+  if (isWithinSwitchGuard(recentSelectionAgeMs, MARKET_SWITCH_TIMING.recentSelectionProtectionMs)) return false;
+  return true;
+}
