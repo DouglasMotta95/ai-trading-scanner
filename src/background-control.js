@@ -3,6 +3,7 @@ import { readScannerState, updateScannerState } from './services/scanner-state-a
 import { storageLocalGet, storageSessionGet, tabsQuery, sidePanelSetBehavior, scriptingExecuteScript } from './services/chrome-compat.js';
 import { detectPlatform } from './platforms/registry.js';
 import { clearMarketAuthorityState, clearUserDeclaredExpirationState } from './background-market-session.js';
+import { getOperationMode } from './core/analysis.js';
 
 const DEFAULT_LICENSE = Object.freeze({
   status: 'unconfigured', plan: null, planLabel: null, dailyLimit: null, usedToday: 0,
@@ -706,21 +707,25 @@ async function probePlatformControlsDirect(tabId) {
       confidence
     };
     const diagnostics = { ...(state.diagnostics || {}) };
+    const operationMode = getOperationMode(state.analystPreferences?.operationMode || 'M1');
     const effectiveTf = clean(state.diagnostics?.marketClock?.timeframe || state.diagnostics?.marketSession?.timeframe || state.analysisTimeframe || state.timeframe || timeframe).toUpperCase();
-    const expirationReady = expiration === '60s' && effectiveTf === 'M1';
+    const expirationReady = expiration === operationMode.expiration && effectiveTf === operationMode.timeframe;
+    const expirationLabel = operationMode.expiration === '300s' ? '5 minutos' : '1 minuto';
     diagnostics.expirationGuard = {
       ...(diagnostics.expirationGuard || {}),
-      required: '60s',
+      required: operationMode.expiration,
       actual: expiration,
       ready: expirationReady,
-      validForM1: expirationReady,
+      validForM1: operationMode.timeframe === 'M1' ? expirationReady : false,
+      validForMode: expirationReady,
+      operationMode: operationMode.timeframe,
       reason: !expiration
         ? 'Expiração real da CasaTrade ainda não confirmada.'
-        : expiration !== '60s'
-          ? 'Ajuste a expiração da CasaTrade para 1 minuto'
-          : effectiveTf !== 'M1'
-            ? 'Ajuste o timeframe da CasaTrade para M1.'
-            : 'Expiração ao vivo de 1 minuto confirmada pela CasaTrade.',
+        : expiration !== operationMode.expiration
+          ? `Ajuste a expiração da CasaTrade para ${expirationLabel}`
+          : effectiveTf !== operationMode.timeframe
+            ? `Ajuste o timeframe da CasaTrade para ${operationMode.timeframe}.`
+            : `Expiração ao vivo de ${expirationLabel} confirmada pela CasaTrade.`,
       at: now,
       source: 'background-direct-dom'
     };
@@ -743,7 +748,7 @@ async function probePlatformControlsDirect(tabId) {
         timeframeCheckedAt: tf?.timeframe ? now : Number(state.platformControls?.timeframeCheckedAt || 0),
         frameId: exp?.frameId ?? tf?.frameId ?? state.platformControls?.frameId ?? null,
         source: 'background-direct-dom',
-        aligned: effectiveTf === 'M1' && expiration === '60s',
+        aligned: effectiveTf === operationMode.timeframe && expiration === operationMode.expiration,
         liveAuthority: true
       },
       diagnostics
