@@ -488,8 +488,13 @@ function render(state = {}) {
 
   const retry = $('retryLiveRead');
   if (retry) {
-    const expirationTimedOut = dataLive && !actualExp && sessionAgeMs(state) >= 5000;
-    const marketTimedOut = !!pending && sessionAgeMs(state) >= 8000;
+    const age = sessionAgeMs(state);
+    const expirationTimedOut = freshMarket && !actualExp && age >= 4000;
+    const marketTimedOut = activeLicense(state)
+      && !!state.targetTabId
+      && state.scanner === 'scanning'
+      && !freshMarket
+      && age >= 4000;
     retry.hidden = !(expirationTimedOut || marketTimedOut);
   }
 
