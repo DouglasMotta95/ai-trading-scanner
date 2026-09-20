@@ -29,6 +29,14 @@ const marketId = value => {
   return pair ? `${pair[1]}/${pair[2]}${otc ? ' (OTC)' : ''}` : raw;
 };
 const sameMarket = (a, b) => !!marketId(a) && marketId(a) === marketId(b);
+const clockBoundToFocus = (clock = {}, focus = {}) => {
+  const sameFrame = Number(clock.frameId) === Number(focus.frameId)
+    && clean(clock.frameHost).toLowerCase() === clean(focus.frameHost).toLowerCase();
+  const boundControlFrame = clock.crossFrameControl === true
+    && Number(clock.boundFocusFrameId) === Number(focus.frameId)
+    && clean(clock.boundFocusFrameHost).toLowerCase() === clean(focus.frameHost).toLowerCase();
+  return sameFrame || boundControlFrame;
+};
 const activeAccess = state => {
   const status = clean(state?.license?.status).toLowerCase();
   return ['active', 'valid'].includes(status)
@@ -56,8 +64,7 @@ function consolidatedSnapshot(state = {}) {
   if (!clock || clock.available === false || (!clock.verified && clock.operational !== true)) return null;
   if (!ALLOWED_CLOCK_SOURCES.has(clean(clock.source))) return null;
   if (!sameMarket(clock.asset, asset)) return null;
-  if (Number(clock.frameId) !== Number(focus.frameId)) return null;
-  if (clean(clock.frameHost).toLowerCase() !== clean(focus.frameHost).toLowerCase()) return null;
+  if (!clockBoundToFocus(clock, focus)) return null;
   if (Number(clock.at || 0) <= 0 || Date.now() - Number(clock.at) > CLOCK_FRESH_MS) return null;
 
   const secondsRemaining = num(clock.secondsRemaining);
