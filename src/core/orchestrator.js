@@ -42,10 +42,15 @@ function timeframeMs(value = 'M1') {
 function decisionWindows(snapshot = {}, signal = {}, thresholds = getThresholds()) {
   const timeframe = clean(snapshot.analysisTimeframe || snapshot.timeframe || signal.timeframe || 'M1').toUpperCase();
   const duration = Math.max(2, Math.round(timeframeMs(timeframe) / 1000));
-  // Operation contract: pre-signal is concentrated in the final ~30s for both
-  // M1 and M5; the final decision stays at 10-15s via the active profile.
-  if (timeframe === 'M1' || timeframe === 'M5') {
-    return { pre: 30, decision: thresholds.entryWindowSeconds, skip: 4, duration, timeframe };
+  // Operation contract: keep the ~30s preparation window, but make the final
+  // confirmation much closer to candle close so the decision reflects the
+  // latest CasaTrade price action. Leave a small late cutoff so the 2-hit
+  // confirmation still has time to complete without publishing at the turn.
+  if (timeframe === 'M1') {
+    return { pre: 30, decision: 5, skip: 1, duration, timeframe };
+  }
+  if (timeframe === 'M5') {
+    return { pre: 30, decision: 8, skip: 2, duration, timeframe };
   }
 
   // Longer/shorter candles keep proportional windows.
