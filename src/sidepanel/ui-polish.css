@@ -8,6 +8,11 @@
 .signal-quick-meta small{font-size:6px;color:#6f8fa4;letter-spacing:.07em;font-weight:900}
 .signal-quick-meta b{font-size:9px;color:#e2f2fb;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
+.signal-fixed-notes{display:grid;gap:3px;margin-top:5px}
+.signal-fixed-notes p{margin:0;padding:5px 7px;border:1px solid #17364b;border-radius:8px;background:#071621;color:#8fa9ba;font-size:8px;line-height:1.35}
+.signal-fixed-notes #signalExpirationReminder{border-color:#5c4d1f;background:#191609;color:#e6cc72;font-weight:850}
+.signal-fixed-notes p[hidden]{display:none!important}
+
 .market-chart-panel{border:1px solid #17364b;border-radius:12px;background:#07131f;overflow:hidden}
 .market-chart-panel>summary{list-style:none;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 11px;font-size:9px;font-weight:950;color:#d8e9f3}
 .market-chart-panel>summary::-webkit-details-marker{display:none}
@@ -34,7 +39,8 @@
 /* Full mode: keep every tool available but avoid duplicate live status on the main flow. */
 body[data-panel-mode="full"] #operationalPulse{display:block}
 body[data-panel-mode="full"] .market-chart-panel{display:block}
-body[data-panel-mode="full"] .signal-quick-meta{display:none}
+body[data-panel-mode="full"] .signal-quick-meta,
+body[data-panel-mode="full"] .signal-fixed-notes{display:none}
 
 /* Signal mode: one-screen operational view. */
 body[data-panel-mode="signal"] .compact-shell{max-width:620px;gap:6px;padding:6px 7px 10px}
