@@ -58,8 +58,8 @@ test('keeps M1 as POSSIBLE before the 5 second final window', () => {
 test('confirms M5 only inside the 8 second final window', () => {
   resetFastLiveDecision();
   const signal = base({ score: 74, analysisScore: 74, secondsRemaining: 7 });
-  const first = fastLiveDecision(signal, { asset: 'AUD/CAD (OTC)', timeframe: 'M5', operationMode: 'M5', serverTime: 160000 });
-  const second = fastLiveDecision(signal, { asset: 'AUD/CAD (OTC)', timeframe: 'M5', operationMode: 'M5', serverTime: 161000 });
+  const first = fastLiveDecision(signal, { asset: 'AUD/CAD (OTC)', timeframe: 'M5', operationMode: 'M5', targetStart: 200000, serverTime: 160000 });
+  const second = fastLiveDecision(signal, { asset: 'AUD/CAD (OTC)', timeframe: 'M5', operationMode: 'M5', targetStart: 200000, serverTime: 161000 });
   assert.equal(first.uiState, 'POSSIBLE_SELL');
   assert.equal(second.uiState, 'ENTER_SELL');
   assert.equal(second.state, 'CONFIRM');
