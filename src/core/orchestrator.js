@@ -117,11 +117,10 @@ function decisionQuality(signal = {}, direction = null, thresholds = getThreshol
     ];
     const matched = setups.find(item => item.ok) || null;
     return {
-      // SIMPLES deliberately has one final gate: stable direction + final score
-      // + directional power. The setup checks remain diagnostic context instead
-      // of becoming a second hidden veto after POSSÍVEL was already published.
-      qualifies: commonReady,
-      setup: matched ? matched.name : 'direção + score + poder',
+      // SIMPLES uses the same explicit final gate as the central/live-fast path:
+      // direction + final score + directional power + at least one setup.
+      qualifies: commonReady && !!matched,
+      setup: matched?.name || null,
       checks: setups,
       mode,
       commonReady,
@@ -435,6 +434,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
       setups: quality.checks || []
     },
     technicalFinal,
+    relogio_verificado: state.diagnostics?.marketClock?.verified === true,
     mandatoryPowerReady: power >= 50,
     secondsRemaining,
     updatedAt: at
