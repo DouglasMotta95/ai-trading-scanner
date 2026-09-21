@@ -75,7 +75,7 @@ function render(state = {}) {
     return;
   }
 
-  if (!ai.status) {
+  if (!ai.status || ai.status === 'waiting') {
     setTop('IA EM ESPERA');
     setText(title, 'AGUARDANDO O SCANNER');
     setText(badge, 'EM ESPERA');
