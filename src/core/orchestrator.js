@@ -16,7 +16,7 @@ const OPPOSITE_SWITCH_HITS = 3;
 const OPPOSITE_MIN_HOLD_MS = 4000;
 const OPPOSITE_SCORE_MARGIN = 8;
 const OPPOSITE_STALE_MS = 5000;
-const FINAL_CANDIDATE_MIN_AGE_MS = 1000;
+const FINAL_CANDIDATE_MIN_AGE_MS = 3000;
 const cycles = new Map();
 const wrapperCompletedDecisions = new Map();
 const WRAPPER_ROW_PREFIX = 'wrapper-cycle:';
@@ -43,7 +43,7 @@ function decisionWindows(snapshot = {}, signal = {}) {
   const duration = Math.max(2, Math.round(timeframeMs(timeframe) / 1000));
   // M1 product contract: pre-signal at ~30s, final decision at ~10s,
   // and settle as WAIT near the close if no setup confirms.
-  if (timeframe === 'M1') return { pre: 30, decision: 15, skip: 4, duration, timeframe };
+  if (timeframe === 'M1') return { pre: 30, decision: 10, skip: 4, duration, timeframe };
 
   // Longer/shorter candles keep proportional windows.
   const pre = Math.max(2, Math.min(duration - 1, 60, Math.round(duration * .50)));
@@ -118,14 +118,14 @@ function decisionQuality(signal = {}, direction = null) {
     return { qualifies: false, setup: null, blocker: 'exhaustion-risk' };
   }
 
-  // Focused v0.11.43 hotfix: once the technical engine already has score >= 58
-  // and a real directional pattern, do not require several extra confirmations
-  // simultaneously. Keep the hard exhaustion/counter-trend protections.
+  // Minimal release path: score >= 58 plus directional technical evidence is
+  // enough for a final decision. Keep the existing exhaustion and counter-trend
+  // protections, but do not require several independent confirmations at once.
   const identifiedSetup = inferSetup(signal, direction) || clean(signal.setup || '');
   const relaxedEvidence = rejection || continuation || momentum || strongBreakout
     || (power >= 45 && currentStrength >= 45);
-  if (identifiedSetup && relaxedEvidence && (!counterTrend || rejection)) {
-    return { qualifies: true, setup: identifiedSetup, blocker: null };
+  if (relaxedEvidence && (!counterTrend || rejection)) {
+    return { qualifies: true, setup: identifiedSetup || 'padrão direcional', blocker: null };
   }
 
   const setups = regime === 'range'
@@ -191,8 +191,7 @@ function inferSetup(signal = {}, direction = null) {
 function observeStablePossible(cycle, signal = {}, at = Date.now()) {
   const rawDirection = directionOf(signal);
   const rawScore = Number(signal.analysisScore ?? signal.score ?? 0);
-  const possibleSetup = inferSetup(signal, rawDirection) || clean(signal.setup || '');
-  const qualifies = ['BUY','SELL'].includes(rawDirection) && rawScore >= POSSIBLE_RELEASE_SCORE && !!possibleSetup;
+  const qualifies = ['BUY','SELL'].includes(rawDirection) && rawScore >= POSSIBLE_RELEASE_SCORE;
 
   if (!cycle.possibleDirection) {
     if (!qualifies) {
