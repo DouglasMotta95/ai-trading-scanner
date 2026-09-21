@@ -140,9 +140,9 @@ test('five simulated minutes allow AGUARDAR/POSSIBLE to reach ENTER when a valid
 
   for (let i = 0; i < 5; i += 1) {
     const bucket = base + i * minute;
-    const first = processSnapshot(snap(bucket, 50_000, 10), { connection: 'online' });
+    const first = processSnapshot(snap(bucket, 55_000, 5), { connection: 'online' });
     states.push(first.signal?.uiState);
-    const second = processSnapshot(snap(bucket, 51_000, 9), { connection: 'online', ...first });
+    const second = processSnapshot(snap(bucket, 56_000, 4), { connection: 'online', ...first });
     states.push(second.signal?.uiState);
     if (second.signal?.state === 'CONFIRM') { confirmed = second; break; }
   }
