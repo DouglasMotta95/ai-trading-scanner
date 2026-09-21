@@ -4,8 +4,8 @@ import { readScannerState, updateScannerState } from './services/scanner-state-a
 // Single owner of technical analysis.
 // All acquisition modules only update scannerState. This loop coalesces those
 // updates and is the only runtime path allowed to invoke the technical orchestrator.
-const ANALYSIS_CADENCE_MS = 350;
-const BURST_COALESCE_MS = 50;
+const ANALYSIS_CADENCE_MS = 450;
+const BURST_COALESCE_MS = 80;
 const CLOCK_FRESH_MS = 3200;
 const ALLOWED_CLOCK_SOURCES = new Set(['trader-dom-countdown', 'network-server-cycle', 'platform-cycle-derived']);
 
