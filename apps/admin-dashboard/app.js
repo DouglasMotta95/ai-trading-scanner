@@ -142,7 +142,15 @@ function renderClients() {
   $$('[data-client-reset]').forEach(b => b.onclick = () => openModal('reset', b.dataset.clientReset));
 }
 function renderSystem(health, authStatus) {
-  $('#systemHealth').innerHTML = [['API',health.ok ? 'ONLINE' : 'OFFLINE'],['Autenticação',health.adminAuthConfigured ? 'ATIVA' : 'NÃO CONFIGURADA'],['Licenças carregadas',health.licenses ?? 0],['Versão',health.version || metrics.version || '—']].map(([a,b]) => `<div class="system-row"><span>${esc(a)}</span><b>${esc(b)}</b></div>`).join('');
+  $('#systemHealth').innerHTML = [['API',health.ok ? 'ONLINE' : 'OFFLINE'],['Autenticação',health.adminAuthConfigured ? 'ATIVA' : 'NÃO CONFIGURADA'],['Licenças carregadas',health.licenses ?? 0],['Backend',health.version || metrics.version || '—']].map(([a,b]) => `<div class="system-row"><span>${esc(a)}</span><b>${esc(b)}</b></div>`).join('');
+  const product = $('#productReadiness');
+  if (product) product.innerHTML = [
+    ['Extensão publicada', health.extensionLatestVersion ? `v${health.extensionLatestVersion}` : '—'],
+    ['Download oficial', health.extensionDownloadConfigured ? 'ATIVO' : 'PENDENTE'],
+    ['E-mail', health.emailDeliveryConfigured ? 'ATIVO' : 'PENDENTE'],
+    ['Pagamento', health.paymentsConfigured ? 'ATIVO' : 'PENDENTE'],
+    ['Login Google', health.googleConfigured ? 'ATIVO' : 'PENDENTE']
+  ].map(([a,b]) => `<div class="system-row"><span>${esc(a)}</span><b>${esc(b)}</b></div>`).join('');
   $('#sessionInfo').textContent = `Sessão segura lembrada por até ${authStatus.sessionDays || 30} dias.`;
 }
 

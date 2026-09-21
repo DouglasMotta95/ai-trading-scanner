@@ -2,10 +2,11 @@ import http from 'node:http';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const VERSION = '0.10.2';
+const VERSION = '0.11.46';
 const PORT = Number(process.env.PORT || 8787);
 const API_KEY = process.env.ATS_API_KEY || '';
 const ADMIN_KEY = process.env.ATS_ADMIN_KEY || API_KEY;
@@ -43,6 +44,9 @@ const PUBLIC_BASE_URL = String(process.env.PUBLIC_BASE_URL || '').replace(/\/$/,
 const CASA_TRADE_URL = String(process.env.CASA_TRADE_URL || '').trim();
 const SUPPORT_WHATSAPP = String(process.env.SUPPORT_WHATSAPP || '5535991429262').replace(/\D/g, '');
 const EXTENSION_DOWNLOAD_URL = String(process.env.EXTENSION_DOWNLOAD_URL || '').trim();
+const EXTENSION_LATEST_VERSION = String(process.env.EXTENSION_LATEST_VERSION || '0.11.46').trim();
+const EXTENSION_ROOT = path.resolve(__dirname, '../..');
+let extensionZipCache = null;
 const SALES_PRICES = {
   starter: Number(process.env.SALES_STARTER_PRICE || 79.90),
   pro: Number(process.env.SALES_PRO_PRICE || 149.90),
@@ -176,6 +180,86 @@ function serveFile(res, root, file, type) {
   try {
     const data = fs.readFileSync(path.join(root, file));
     res.writeHead(200, { ...SECURITY_HEADERS, 'content-type': type, 'cache-control': 'no-store, max-age=0' });
+    res.end(data);
+    return true;
+  } catch {
+    return false;
+  }
+}
+const CRC32_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+    table[n] = c >>> 0;
+  }
+  return table;
+})();
+function crc32(buffer) {
+  let c = 0xffffffff;
+  for (const byte of buffer) c = CRC32_TABLE[(c ^ byte) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+function dosStamp(date = new Date()) {
+  const year = Math.max(1980, date.getFullYear());
+  const time = (date.getHours() << 11) | (date.getMinutes() << 5) | Math.floor(date.getSeconds() / 2);
+  const day = ((year - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate();
+  return { time, day };
+}
+function extensionFiles() {
+  const rows = [{ name: 'manifest.json', path: path.join(EXTENSION_ROOT, 'manifest.json') }];
+  const walk = (dir, prefix) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name), rel = `${prefix}/${entry.name}`;
+      if (entry.isDirectory()) walk(full, rel);
+      else if (entry.isFile()) rows.push({ name: rel.replace(/^\//, ''), path: full });
+    }
+  };
+  walk(path.join(EXTENSION_ROOT, 'src'), 'src');
+  return rows;
+}
+function buildExtensionZip() {
+  if (extensionZipCache?.version === EXTENSION_LATEST_VERSION) return extensionZipCache.data;
+  const local = [], central = [];
+  let offset = 0;
+  const stamp = dosStamp();
+  for (const file of extensionFiles()) {
+    const name = Buffer.from(file.name.replace(/\\/g, '/'));
+    const raw = fs.readFileSync(file.path);
+    const compressed = zlib.deflateRawSync(raw, { level: 9 });
+    const crc = crc32(raw);
+    const head = Buffer.alloc(30);
+    head.writeUInt32LE(0x04034b50, 0); head.writeUInt16LE(20, 4); head.writeUInt16LE(0, 6); head.writeUInt16LE(8, 8);
+    head.writeUInt16LE(stamp.time, 10); head.writeUInt16LE(stamp.day, 12); head.writeUInt32LE(crc, 14);
+    head.writeUInt32LE(compressed.length, 18); head.writeUInt32LE(raw.length, 22); head.writeUInt16LE(name.length, 26); head.writeUInt16LE(0, 28);
+    local.push(head, name, compressed);
+    const c = Buffer.alloc(46);
+    c.writeUInt32LE(0x02014b50, 0); c.writeUInt16LE(20, 4); c.writeUInt16LE(20, 6); c.writeUInt16LE(0, 8); c.writeUInt16LE(8, 10);
+    c.writeUInt16LE(stamp.time, 12); c.writeUInt16LE(stamp.day, 14); c.writeUInt32LE(crc, 16);
+    c.writeUInt32LE(compressed.length, 20); c.writeUInt32LE(raw.length, 24); c.writeUInt16LE(name.length, 28);
+    c.writeUInt16LE(0, 30); c.writeUInt16LE(0, 32); c.writeUInt16LE(0, 34); c.writeUInt16LE(0, 36); c.writeUInt32LE(0, 38); c.writeUInt32LE(offset, 42);
+    central.push(c, name);
+    offset += head.length + name.length + compressed.length;
+  }
+  const centralData = Buffer.concat(central);
+  const end = Buffer.alloc(22);
+  const count = central.length / 2;
+  end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(0, 4); end.writeUInt16LE(0, 6); end.writeUInt16LE(count, 8); end.writeUInt16LE(count, 10);
+  end.writeUInt32LE(centralData.length, 12); end.writeUInt32LE(offset, 16); end.writeUInt16LE(0, 20);
+  const data = Buffer.concat([...local, centralData, end]);
+  extensionZipCache = { version: EXTENSION_LATEST_VERSION, data };
+  return data;
+}
+function serveExtensionPackage(res) {
+  try {
+    const data = buildExtensionZip();
+    res.writeHead(200, {
+      ...SECURITY_HEADERS,
+      'content-type': 'application/zip',
+      'content-length': data.length,
+      'content-disposition': `attachment; filename="ai-trading-scanner-v${EXTENSION_LATEST_VERSION}.zip"`,
+      'cache-control': 'public, max-age=300'
+    });
     res.end(data);
     return true;
   } catch {
@@ -339,6 +423,7 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost'), pathname = url.pathname;
   try {
     if (pathname === '/' || pathname === '/app/' || pathname === '/app') return serveFile(res, CUSTOMER_DIR, 'index.html', 'text/html; charset=utf-8') || json(req, res, 404, { error: 'customer_ui_missing' });
+    if (pathname === '/download/extension' && req.method === 'GET') return serveExtensionPackage(res) || json(req, res, 404, { error: 'extension_package_missing' });
     if (pathname === '/customer.css') return serveFile(res, CUSTOMER_DIR, 'styles.css', 'text/css; charset=utf-8') || json(req, res, 404, { error: 'not_found' });
     if (pathname === '/customer.js') return serveFile(res, CUSTOMER_DIR, 'app.js', 'text/javascript; charset=utf-8') || json(req, res, 404, { error: 'not_found' });
     if (pathname === '/terms') return serveFile(res, CUSTOMER_DIR, 'terms.html', 'text/html; charset=utf-8') || json(req, res, 404, { error: 'not_found' });
@@ -350,8 +435,8 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/admin/') return serveAdminIndex(res) || json(req, res, 404, { error: 'admin_not_found' });
     const adminAssets = { 'app.js': 'text/javascript; charset=utf-8', 'ops.js': 'text/javascript; charset=utf-8', 'styles.css': 'text/css; charset=utf-8', 'ops.css': 'text/css; charset=utf-8', 'crm.css': 'text/css; charset=utf-8', 'live.css': 'text/css; charset=utf-8' }, adminAsset = pathname.match(/^\/admin\/([^/]+)$/);
     if (adminAsset && adminAssets[adminAsset[1]]) return serveFile(res, ADMIN_DIR, adminAsset[1], adminAssets[adminAsset[1]]) || json(req, res, 404, { error: 'admin_asset_not_found' });
-    if (pathname === '/health' && req.method === 'GET') return json(req, res, 200, { ok: true, service: 'ats-api', version: VERSION, time: now(), authConfigured: !!API_KEY, adminAuthConfigured: !!ADMIN_KEY, licenses: licenses.size, storage: 'json', dataDir: DATA_DIR, gateway: 'secure-client-telemetry', operations: true, sales: true, customerAccounts: true, paymentsConfigured: PAYMENTS_CONFIGURED, emailDeliveryConfigured: !!(RESEND_API_KEY && EMAIL_FROM), googleConfigured: !!GOOGLE_CLIENT_ID, lifetimePlan: true });
-    if (pathname === '/v1/public/config' && req.method === 'GET') return json(req, res, 200, { product: 'AI Trading Scanner', version: VERSION, plans: publicPlans(), googleClientId: GOOGLE_CLIENT_ID || null, emailDeliveryConfigured: !!(RESEND_API_KEY && EMAIL_FROM), paymentsConfigured: PAYMENTS_CONFIGURED, supportWhatsapp: SUPPORT_WHATSAPP, casaTradeUrl: CASA_TRADE_URL || null, extensionDownloadUrl: EXTENSION_DOWNLOAD_URL || null });
+    if (pathname === '/health' && req.method === 'GET') return json(req, res, 200, { ok: true, service: 'ats-api', version: VERSION, extensionLatestVersion: EXTENSION_LATEST_VERSION, extensionDownloadConfigured: !!EXTENSION_DOWNLOAD_URL || (fs.existsSync(path.join(EXTENSION_ROOT, 'manifest.json')) && fs.existsSync(path.join(EXTENSION_ROOT, 'src'))), time: now(), authConfigured: !!API_KEY, adminAuthConfigured: !!ADMIN_KEY, licenses: licenses.size, storage: 'json', dataDir: DATA_DIR, gateway: 'secure-client-telemetry', operations: true, sales: true, customerAccounts: true, paymentsConfigured: PAYMENTS_CONFIGURED, emailDeliveryConfigured: !!(RESEND_API_KEY && EMAIL_FROM), googleConfigured: !!GOOGLE_CLIENT_ID, lifetimePlan: true });
+    if (pathname === '/v1/public/config' && req.method === 'GET') return json(req, res, 200, { product: 'AI Trading Scanner', version: VERSION, extensionLatestVersion: EXTENSION_LATEST_VERSION, plans: publicPlans(), googleClientId: GOOGLE_CLIENT_ID || null, emailDeliveryConfigured: !!(RESEND_API_KEY && EMAIL_FROM), paymentsConfigured: PAYMENTS_CONFIGURED, supportWhatsapp: SUPPORT_WHATSAPP, casaTradeUrl: CASA_TRADE_URL || 'https://casatrade.com/', extensionDownloadUrl: EXTENSION_DOWNLOAD_URL || `${baseUrl(req)}/download/extension` });
 
     if (pathname.startsWith('/v1/customer/') && !rate(req, `customer:${pathname}`)) return json(req, res, 429, { error: 'too_many_attempts' });
     if (pathname === '/v1/customer/signup' && req.method === 'POST') { if (!rate(req, 'signup', 5, 3600000)) return json(req, res, 429, { error: 'too_many_attempts' }); const b = await readBody(req), email = cleanEmail(b.email), name = cleanName(b.name), password = String(b.password || ''); if (!isObj(b) || !only(b, ['name', 'email', 'password']) || !validEmail(email) || name.length < 2 || password.length < 8) return json(req, res, 422, { error: 'invalid_signup' }); if (customerState.accounts.some(a => a.email === email)) return json(req, res, 409, { error: 'email_in_use' }); const h = hashPassword(password), account = { id: crypto.randomUUID(), name, email, emailVerified: false, passwordHash: h.hash, passwordSalt: h.salt, createdAt: now(), updatedAt: now(), currentLicenseKey: null, trialClaimedAt: null, commercialPlan: null }; customerState.accounts.push(account); saveCustomerState(); const delivery = await sendVerification(req, account); return json(req, res, 201, { ok: true, verificationRequired: true, emailDeliveryConfigured: delivery.configured, emailSent: delivery.sent, emailError: delivery.error || null }); }
