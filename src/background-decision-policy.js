@@ -164,9 +164,15 @@ function shortReason(direction, factors = [], fallback = '') {
 }
 
 function cycleKey(state = {}, signal = {}) {
+  // The orchestrator already owns a stable candle-cycle key. Reuse it here so
+  // possibleSince/hold cannot restart when signal.targetStart jitters by a few
+  // hundred milliseconds as the live countdown updates.
+  const technicalCycleKey = text(state.decisionCycle?.key);
+  if (technicalCycleKey) return technicalCycleKey;
+
   const asset = marketId(state.asset || '');
   const timeframe = normTf(state.analysisTimeframe || state.timeframe || signal.timeframe) || 'UNCONFIRMED';
-  const target = num(signal.targetStart) ?? num(state.decisionCycle?.targetStart) ?? num(state.diagnostics?.marketClock?.closeAt);
+  const target = num(state.diagnostics?.marketClock?.closeAt) ?? num(state.decisionCycle?.targetStart) ?? num(signal.targetStart);
   return `${asset}|${timeframe}|${target == null ? 'pending' : Math.round(target / 1000) * 1000}`;
 }
 

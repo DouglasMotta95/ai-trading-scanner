@@ -10,7 +10,9 @@ import { getThresholds } from './analysis.js';
 // one bounded decision for each target candle: ENTER BUY, ENTER SELL or WAIT.
 const CONFIRM_HITS = 2;
 const DECISION_HIT_GAP_MS = 7000;
+const DECISION_WEAK_HOLD_MS = 2500;
 const POSSIBLE_DROP_HITS = 2;
+const POSSIBLE_WEAK_HOLD_MS = 2500;
 const cycles = new Map();
 const wrapperCompletedDecisions = new Map();
 const WRAPPER_ROW_PREFIX = 'wrapper-cycle:';
@@ -290,17 +292,23 @@ function possibleWithHysteresis(cycle, allowed, direction, at) {
   if (allowed && direction) {
     cycle.possibleDirection = direction;
     cycle.possibleWeakHits = 0;
+    cycle.possibleWeakSince = null;
     cycle.possibleLastStrongAt = at;
     return direction;
   }
-  // One weak/throttled observation must not make POSSÍVEL disappear. Preserve
-  // the last confirmed candidate direction for one weak sample, then drop it
-  // only after a second consecutive weak observation.
+  // Live CasaTrade ticks can briefly weaken for a few hundred milliseconds.
+  // Do not erase a valid POSSÍVEL just because two fast samples were weak.
+  // The weak state must be both repeated and sustained for 2.5s.
   if (!cycle.possibleDirection) return null;
   cycle.possibleWeakHits = Number(cycle.possibleWeakHits || 0) + 1;
-  if (cycle.possibleWeakHits < POSSIBLE_DROP_HITS) return cycle.possibleDirection;
+  if (!(Number(cycle.possibleWeakSince || 0) > 0)) cycle.possibleWeakSince = at;
+  const weakForMs = Math.max(0, at - Number(cycle.possibleWeakSince || at));
+  if (cycle.possibleWeakHits < POSSIBLE_DROP_HITS || weakForMs < POSSIBLE_WEAK_HOLD_MS) {
+    return cycle.possibleDirection;
+  }
   cycle.possibleDirection = null;
   cycle.possibleWeakHits = 0;
+  cycle.possibleWeakSince = null;
   return null;
 }
 
@@ -311,7 +319,7 @@ function seedCycle(key, snapshot, signal, state = {}) {
   if (!cycle) {
     cycle = {
       key, targetStart: targetStartOf(snapshot, signal), candidateDirection: null,
-      confirmHits: 0, lastHitAt: null, locked: null, direction: null, score: 0,
+      confirmHits: 0, lastHitAt: null, decisionWeakSince: null, locked: null, direction: null, score: 0,
       setup: null, reason: null, decidedAt: null, resolved: false
     };
   }
@@ -321,9 +329,22 @@ function seedCycle(key, snapshot, signal, state = {}) {
 
 function observeDecision(cycle, direction, qualifies, at) {
   if (!qualifies || !direction) {
+    const hasCandidate = ['BUY', 'SELL'].includes(cycle.candidateDirection)
+      && Number(cycle.confirmHits || 0) > 0
+      && cycle.lastHitAt != null;
+    const sameOrTemporarilyMissingDirection = !direction || direction === cycle.candidateDirection;
+    if (hasCandidate && sameOrTemporarilyMissingDirection) {
+      if (!(Number(cycle.decisionWeakSince || 0) > 0)) cycle.decisionWeakSince = at;
+      const weakForMs = Math.max(0, at - Number(cycle.decisionWeakSince || at));
+      if (weakForMs < DECISION_WEAK_HOLD_MS
+        && at - Number(cycle.lastHitAt) <= DECISION_HIT_GAP_MS) {
+        return false;
+      }
+    }
     cycle.candidateDirection = null;
     cycle.confirmHits = 0;
     cycle.lastHitAt = null;
+    cycle.decisionWeakSince = null;
     return false;
   }
   const same = cycle.candidateDirection === direction
@@ -332,6 +353,7 @@ function observeDecision(cycle, direction, qualifies, at) {
   cycle.candidateDirection = direction;
   cycle.confirmHits = same ? Number(cycle.confirmHits || 0) + 1 : 1;
   cycle.lastHitAt = at;
+  cycle.decisionWeakSince = null;
   return cycle.confirmHits >= CONFIRM_HITS;
 }
 
