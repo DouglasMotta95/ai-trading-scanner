@@ -39,7 +39,10 @@ export async function installationId() {
 export async function clientToken() {
   const x = await storageLocalGet([CLIENT_TOKEN_KEY, CLIENT_TOKEN_EXP_KEY]);
   if (!x[CLIENT_TOKEN_KEY]) return '';
-  if (x[CLIENT_TOKEN_EXP_KEY] && Number(x[CLIENT_TOKEN_EXP_KEY]) <= Date.now()) return '';
+  if (x[CLIENT_TOKEN_EXP_KEY] && Number(x[CLIENT_TOKEN_EXP_KEY]) <= Date.now()) {
+    await storageLocalRemove([CLIENT_TOKEN_KEY, CLIENT_TOKEN_EXP_KEY]);
+    return '';
+  }
   return String(x[CLIENT_TOKEN_KEY]);
 }
 

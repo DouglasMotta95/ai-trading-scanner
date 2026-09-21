@@ -6,8 +6,10 @@ const CLOCK_FRESH_MS = 3200;
 const CONTROLS_FRESH_MS = 7000;
 const PANEL_OPENED_AT = Date.now();
 const PERFORMANCE_KEY = 'atsSignalPerformanceLedgerV1';
+const TELEMETRY_STATUS_KEY = 'atsTelemetryStatus';
 const PUBLIC_CONFIG_URL = 'https://ats-control-center-v07-production.up.railway.app/v1/public/config';
 let performanceRows = [];
+let telemetryStatus = {};
 let latestPublishedVersion = '';
 
 const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
@@ -180,11 +182,11 @@ function ensureOperationalPulseUi() {
       .operational-pulse{margin-top:10px;padding:14px;border:1px solid #17324a;border-radius:16px;background:linear-gradient(180deg,#081625,#07111d)}
       .operational-pulse-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
       .operational-pulse-head b{font-size:12px;letter-spacing:.08em}.operational-pulse-head span{font-size:10px;color:#7f9bb0}
-      .operational-pulse-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+      .operational-pulse-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
       .operational-pulse-grid div{padding:10px;border-radius:12px;background:#0b1c2b;border:1px solid #17344a;text-align:center}
       .operational-pulse-grid small{display:block;color:#6f8ea5;font-size:9px;letter-spacing:.06em}.operational-pulse-grid b{display:block;margin-top:3px;font-size:18px}
       .operational-blocker{margin:10px 0 0;padding:10px 11px;border-radius:12px;background:#091723;color:#9bb4c6;font-size:11px;line-height:1.45}
-      .operational-blocker strong{color:#dcebf6}.version-notice{margin:8px 0 0;padding:9px 11px;border:1px solid #6b5220;border-radius:12px;background:#1a160b;color:#f5d98b;display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:10px}
+      .operational-blocker strong{color:#dcebf6}.operational-backend{display:block;margin-top:7px;color:#69879b;font-size:9px;letter-spacing:.05em}.operational-backend.ok{color:#72d7b2}.operational-backend.warn{color:#e0b66c}.version-notice{margin:8px 0 0;padding:9px 11px;border:1px solid #6b5220;border-radius:12px;background:#1a160b;color:#f5d98b;display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:10px}
       .version-notice button{border:1px solid #80682b;background:#2a220e;color:#ffe6a0;border-radius:9px;padding:7px 9px;font-weight:700}
     `;
     document.head.append(style);
@@ -198,8 +200,10 @@ function ensureOperationalPulseUi() {
       <div><small>CANDIDATOS RECENTES</small><b id="funnelCandidates">0</b></div>
       <div><small>POSSÍVEIS HOJE</small><b id="funnelPossible">0</b></div>
       <div><small>ENTRADAS HOJE</small><b id="funnelEntries">0</b></div>
+      <div><small>RESTAM NO PLANO</small><b id="funnelRemaining">—</b></div>
     </div>
     <p id="currentBlocker" class="operational-blocker"><strong>STATUS:</strong> aguardando dados do scanner.</p>
+    <small id="backendPulse" class="operational-backend">BACKEND: aguardando heartbeat</small>
   `;
   decision.insertAdjacentElement('afterend', root);
   return root;
@@ -219,7 +223,35 @@ function renderOperationalPulse(state = {}) {
   if ($('funnelCandidates')) $('funnelCandidates').textContent = String(uniqueCandidates);
   if ($('funnelPossible')) $('funnelPossible').textContent = String(todayRows.length);
   if ($('funnelEntries')) $('funnelEntries').textContent = String(entries);
-  if ($('funnelMode')) $('funnelMode').textContent = normalizeConfirmationMode(state?.analystPreferences?.confirmationMode);
+  const license = state.license || {};
+  const finiteRemaining = [license.remainingToday, license.remainingTotal]
+    .filter(value => value != null && Number.isFinite(Number(value)))
+    .map(Number);
+  const remaining = license.devMode === true || clean(license.plan).toUpperCase() === 'OWNER_DEV'
+    ? '∞'
+    : finiteRemaining.length ? String(Math.max(0, Math.min(...finiteRemaining))) : '∞';
+  if ($('funnelRemaining')) $('funnelRemaining').textContent = remaining;
+  if ($('funnelMode')) {
+    const plan = clean(license.planLabel || license.plan || '').toUpperCase();
+    $('funnelMode').textContent = [normalizeConfirmationMode(state?.analystPreferences?.confirmationMode), plan].filter(Boolean).join(' • ');
+  }
+
+  const backend = $('backendPulse');
+  if (backend) {
+    const lastOk = Number(telemetryStatus.lastSyncSuccess || 0);
+    const age = lastOk > 0 ? Math.max(0, Date.now() - lastOk) : null;
+    const error = clean(telemetryStatus.lastSyncError || '');
+    if (age != null && age < 15000 && !error) {
+      backend.className = 'operational-backend ok';
+      backend.textContent = `BACKEND: ONLINE • heartbeat há ${Math.max(0, Math.round(age / 1000))}s`;
+    } else if (error) {
+      backend.className = 'operational-backend warn';
+      backend.textContent = `BACKEND: sincronização pendente • ${error}`;
+    } else {
+      backend.className = 'operational-backend';
+      backend.textContent = 'BACKEND: aguardando heartbeat';
+    }
+  }
   const professional = state.professionalDecision || {}, technical = state.signal || {}, lastTrace = traces.at(-1) || {};
   let status = clean(professional.reason || lastTrace.finalBlockMessage || technical.reason || 'Aguardando leitura técnica.');
   if (professional.actionable === true || ['ENTER_BUY','ENTER_SELL'].includes(clean(professional.uiState).toUpperCase())) {
@@ -231,8 +263,9 @@ function renderOperationalPulse(state = {}) {
 }
 
 async function loadPerformanceRows() {
-  const stored = await chrome.storage.local.get(PERFORMANCE_KEY).catch(() => ({}));
+  const stored = await chrome.storage.local.get([PERFORMANCE_KEY, TELEMETRY_STATUS_KEY]).catch(() => ({}));
   performanceRows = Array.isArray(stored?.[PERFORMANCE_KEY]?.rows) ? stored[PERFORMANCE_KEY].rows : [];
+  telemetryStatus = stored?.[TELEMETRY_STATUS_KEY] || {};
   renderOperationalPulse(lastState || {});
 }
 
@@ -828,6 +861,10 @@ chrome.storage.onChanged.addListener(changes => {
   }
   if (changes[PERFORMANCE_KEY]) {
     performanceRows = Array.isArray(changes[PERFORMANCE_KEY].newValue?.rows) ? changes[PERFORMANCE_KEY].newValue.rows : [];
+    renderOperationalPulse(lastState);
+  }
+  if (changes[TELEMETRY_STATUS_KEY]) {
+    telemetryStatus = changes[TELEMETRY_STATUS_KEY].newValue || {};
     renderOperationalPulse(lastState);
   }
 });
