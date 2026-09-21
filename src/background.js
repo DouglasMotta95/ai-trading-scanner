@@ -1,6 +1,6 @@
 import { processSnapshot, resetOrchestrator } from './core/orchestrator.js';
 import { readScannerState, updateScannerState } from './services/scanner-state-atomic.js';
-import { resolveSignalHistory, signalPerformance, resolveSignalOutcome } from './core/signal-outcomes.js';
+import { resolveSignalHistory, signalPerformance, resolveSignalOutcome, diagnoseSignalOutcomePending } from './core/signal-outcomes.js';
 import { getThresholds, getOperationMode } from './core/analysis.js';
 import { storageLocalGet, storageLocalSet } from './services/chrome-compat.js';
 import { track as telemetryEvent, heartbeat as telemetryHeartbeat } from './services/telemetry.js';
@@ -52,6 +52,143 @@ const candleTimestamp = row => {
   return Number.isFinite(value) && value > 0 ? value : null;
 };
 
+function performanceTimeframeMs(value = 'M1') {
+  const tf = normTf(value) || 'M1';
+  if (tf.startsWith('S')) return Math.max(1, Number(tf.slice(1))) * 1000;
+  if (tf.startsWith('M')) return Math.max(1, Number(tf.slice(1))) * 60_000;
+  if (tf.startsWith('H')) return Math.max(1, Number(tf.slice(1))) * 3_600_000;
+  return 60_000;
+}
+
+function performanceTargetBucket(targetStart, timeframe = 'M1') {
+  const value = num(targetStart);
+  if (value == null) return null;
+  const tfMs = performanceTimeframeMs(timeframe);
+  return Math.round(value / tfMs) * tfMs;
+}
+
+function median(values = []) {
+  const rows = values.filter(Number.isFinite).sort((a, b) => a - b);
+  if (!rows.length) return null;
+  const middle = Math.floor(rows.length / 2);
+  return rows.length % 2 ? rows[middle] : (rows[middle - 1] + rows[middle]) / 2;
+}
+
+function closedM1ForShadow(state = {}, now = Date.now()) {
+  const rows = historyFor(state, state.asset)
+    .map(row => ({ ...row, __time: candleTimestamp(row) }))
+    .filter(row => row.__time != null)
+    .sort((a, b) => a.__time - b.__time);
+
+  const unique = [...new Map(rows.map(row => [row.__time, row])).values()];
+  const diffs = [];
+  for (let index = 1; index < unique.length; index += 1) {
+    const diff = unique[index].__time - unique[index - 1].__time;
+    if (diff >= 30_000 && diff <= 120_000) diffs.push(diff);
+  }
+  const cadence = median(diffs);
+  if (cadence == null || cadence < 45_000 || cadence > 90_000) return [];
+
+  return unique.filter(row => row.__time + 60_000 <= now);
+}
+
+function aggregateClosedM5(m1Rows = [], now = Date.now()) {
+  const groups = new Map();
+  for (const row of m1Rows) {
+    const time = Number(row?.__time ?? candleTimestamp(row));
+    if (!Number.isFinite(time)) continue;
+    const bucket = Math.floor(time / 300_000) * 300_000;
+    if (bucket + 300_000 > now) continue;
+    const group = groups.get(bucket) || new Map();
+    group.set(Math.floor(time / 60_000) * 60_000, row);
+    groups.set(bucket, group);
+  }
+
+  return [...groups.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .filter(([, group]) => group.size >= 5)
+    .map(([time, group]) => {
+      const rows = [...group.values()].sort((a, b) => Number(a.__time) - Number(b.__time)).slice(0, 5);
+      return {
+        time,
+        open: num(rows[0]?.open),
+        high: Math.max(...rows.map(row => Number(row.high))),
+        low: Math.min(...rows.map(row => Number(row.low))),
+        close: num(rows.at(-1)?.close)
+      };
+    })
+    .filter(row => [row.open, row.high, row.low, row.close].every(value => num(value) != null));
+}
+
+function emaLast(values = [], period = 5) {
+  const rows = values.map(num).filter(value => value != null);
+  if (!rows.length) return null;
+  const alpha = 2 / (period + 1);
+  let value = rows[0];
+  for (let index = 1; index < rows.length; index += 1) value = rows[index] * alpha + value * (1 - alpha);
+  return value;
+}
+
+function kaufmanEfficiency(values = []) {
+  const rows = values.map(num).filter(value => value != null).slice(-20);
+  if (rows.length < 20) return null;
+  const change = Math.abs(rows.at(-1) - rows[0]);
+  let volatility = 0;
+  for (let index = 1; index < rows.length; index += 1) volatility += Math.abs(rows[index] - rows[index - 1]);
+  return volatility > 0 ? change / volatility : 0;
+}
+
+function shadowMeasurements(state = {}, direction = '') {
+  const now = Date.now();
+  const m1 = closedM1ForShadow(state, now);
+  const m5 = aggregateClosedM5(m1, now);
+  const side = clean(direction).toUpperCase();
+  let fM5 = 'NEUTRO';
+  let fExtremo = 'NEUTRO';
+
+  if (m5.length >= 12) {
+    const closes = m5.map(row => Number(row.close));
+    const ema5 = emaLast(closes, 5);
+    const ema10 = emaLast(closes, 10);
+    if (ema5 != null && ema10 != null && ema5 !== ema10) {
+      const trend = ema5 > ema10 ? 'BUY' : 'SELL';
+      fM5 = trend === side ? 'PASSA' : 'FALHA';
+    }
+  }
+
+  let percentB = null;
+  if (m1.length >= 20) {
+    const closes = m1.slice(-20).map(row => Number(row.close));
+    const mean = closes.reduce((sum, value) => sum + value, 0) / closes.length;
+    const variance = closes.reduce((sum, value) => sum + (value - mean) ** 2, 0) / closes.length;
+    const deviation = Math.sqrt(variance);
+    const upper = mean + 2 * deviation;
+    const lower = mean - 2 * deviation;
+    const width = upper - lower;
+    const price = num(state.price);
+    if (price != null && width > 0) {
+      percentB = (price - lower) / width;
+      if (side === 'BUY') fExtremo = percentB < 0.85 ? 'PASSA' : 'FALHA';
+      else if (side === 'SELL') fExtremo = percentB > 0.15 ? 'PASSA' : 'FALHA';
+    }
+  }
+
+  const erM1 = kaufmanEfficiency(m1.map(row => row.close));
+  const erM5 = kaufmanEfficiency(m5.map(row => row.close));
+  const suggestion = erM1 != null && erM5 != null && Math.abs(erM5 - erM1) >= 0.10
+    ? (erM5 > erM1 ? 'M5' : 'M1')
+    : 'SEM_DIFERENCA_CLARA';
+
+  return {
+    f_m5: fM5,
+    f_extremo: fExtremo,
+    f_extremo_percentB: percentB,
+    er_m1: erM1,
+    er_m5: erM5,
+    sugestao_timeframe: suggestion
+  };
+}
+
 function performanceEmission(state = {}) {
   const signal = state.signal || {};
   const professional = state.professionalDecision || {};
@@ -88,9 +225,12 @@ function performanceEmission(state = {}) {
   const power = Number(direction === 'BUY' ? analytics.buyPower : analytics.sellPower) || 0;
   if (power < 50) return null;
 
-  const targetStart = num(signal.targetStart ?? state.decisionCycle?.targetStart);
+  const rawTargetStart = num(signal.targetStart ?? state.decisionCycle?.targetStart);
+  if (rawTargetStart == null) return null;
+  const targetStart = performanceTargetBucket(rawTargetStart, operationMode.timeframe);
   if (targetStart == null) return null;
 
+  const shadow = shadowMeasurements(state, direction);
   const thresholds = getThresholds(state.analystPreferences?.sensitivityProfile || 'MEDIO');
   const emittedAt = Date.now();
   const score = num(professional.score ?? signal.analysisScore ?? signal.score) ?? 0;
@@ -115,6 +255,12 @@ function performanceEmission(state = {}) {
     profileKey: thresholds.profile,
     confirmation: clean(state.analystPreferences?.confirmationMode).toUpperCase() === 'EXIGENTE' ? 'EXIGENTE' : 'SIMPLES',
     targetStart: Number(targetStart),
+    f_m5: shadow.f_m5,
+    f_extremo: shadow.f_extremo,
+    f_extremo_percentB: shadow.f_extremo_percentB,
+    er_m1: shadow.er_m1,
+    er_m5: shadow.er_m5,
+    sugestao_timeframe: shadow.sugestao_timeframe,
     entryPrice: null,
     exitPrice: null,
     result: null,
@@ -167,15 +313,21 @@ async function updateSignalPerformanceLedger(state = {}) {
 
     const rowMode = getOperationMode(row.mode || row.timeframe || 'M1');
     const durationMs = rowMode.durationSeconds * 1000;
-    const due = now >= Number(row.targetStart || 0) + durationMs;
-    if (due && performanceFeedAdvancedPastTarget(candles, row.targetStart, durationMs)) {
+    const target = performanceTargetBucket(row.targetStart, row.timeframe || row.mode || 'M1') ?? Number(row.targetStart || 0);
+    const threeCandlesLater = target + durationMs * 3;
+    const feedAdvancedThree = performanceFeedAdvancedPastTarget(candles, target, durationMs * 3);
+    if (now >= threeCandlesLater && feedAdvancedThree) {
       changed = true;
+      const reason = diagnoseSignalOutcomePending(row, candles);
       return {
         ...row,
+        resultPendingAfter3: true,
+        resultPendingReason: reason,
+        resultPendingCheckedAt: now,
         result: 'INDETERMINADO',
         status: 'resolved',
         resolvedAt: now,
-        outcomeBasis: 'target_candle_data_unavailable'
+        outcomeBasis: 'target_candle_data_unavailable_after_3'
       };
     }
     return row;
@@ -318,8 +470,9 @@ function reconcileSignalHistory(state = {}, next = {}, snapshot = {}) {
   const created = [];
   const signal = next.signal || {};
   const direction = clean(signal.direction || next.decisionCycle?.direction).toUpperCase();
-  const targetStart = num(signal.targetStart ?? next.decisionCycle?.targetStart);
+  const rawTargetStart = num(signal.targetStart ?? next.decisionCycle?.targetStart);
   const timeframe = normTf(snapshot.analysisTimeframe || snapshot.timeframe || signal.timeframe);
+  const targetStart = rawTargetStart == null || !timeframe ? rawTargetStart : performanceTargetBucket(rawTargetStart, timeframe);
   const technicalConfirmed = signal.state === 'CONFIRM'
     || ['ENTER_BUY', 'ENTER_SELL'].includes(clean(signal.uiState).toUpperCase());
   const professional = state.professionalDecision || {};
