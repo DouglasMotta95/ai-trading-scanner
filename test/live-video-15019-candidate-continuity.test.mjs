@@ -33,7 +33,7 @@ test('15019 continuity remains intact in v0.11.46 persistent-candidate build', (
   assert.match(panel, /7\. BLOQUEIO DO CANDIDATO/);
   assert.match(orchestrator, /CANDIDATE_PERSISTENCE_MIN_SCORE = 55/);
   assert.match(orchestrator, /CANDIDATE_PERSISTENCE_MIN_RATIO = 0\.70/);
-  assert.match(orchestrator, /CANDIDATE_PERSISTENCE_MIN_SAMPLES = 4/);
+  assert.match(orchestrator, /CANDIDATE_PERSISTENCE_MIN_SAMPLES = 4/);\n  assert.match(orchestrator, /CANDIDATE_PERSISTENCE_MAX_GAP_MS = 8000/);
   assert.match(orchestrator, /phase: armed \? 'ARMED' : 'POSSIBLE'/);
   assert.match(orchestrator, /decisionWindowSamples: 0/);
   assert.match(orchestrator, /Number\(cycle\.decisionWindowSamples \|\| 0\) >= 2/);
