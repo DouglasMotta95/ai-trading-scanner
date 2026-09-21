@@ -13,8 +13,20 @@ test('visible CasaTrade chart remains the authoritative asset source on owned or
   assert.match(focused, /reliable: true/);
   assert.match(focused, /pointerup/);
   assert.match(focused, /touchend/);
+  assert.match(focused, /schedulePublish\(260, false\)/);
+  assert.match(focused, /setInterval\(\(\) => schedulePublish\(0, false\), 450\)/);
+  assert.match(focused, /setTimeout\(\(\) => \{ invalidateElements\(\); publish\(true\); \}, 80\)/);
   assert.match(market, /message\?\.type === 'ATS_VISUAL_FOCUS_V2'/);
   assert.match(market, /if \(!info\.trusted \|\| message\.chartScoped !== true \|\| message\.reliable !== true/);
+});
+
+test('panel boot never paints a pre-boot asset snapshot while fresh visual focus is pending', () => {
+  const panel = read('src/sidepanel/app-v2.js');
+  assert.match(panel, /function focusConfirmedThisPanel\(state = \{\}\)/);
+  assert.match(panel, /at >= PANEL_OPENED_AT/);
+  assert.match(panel, /bootAwaitingFocus/);
+  assert.match(panel, /ATS_REFRESH_MARKET/);
+  assert.match(panel, /ATUALIZANDO…/);
 });
 
 test('asset or timeframe switch clears every operational field that could leak the previous market', () => {
