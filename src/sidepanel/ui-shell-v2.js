@@ -457,6 +457,83 @@ function expirationDiagnosticText(response = {}) {
       }).join('\n\n')
     : '- Nenhum frame disponível para diagnóstico de canvas.';
 
+
+  const candidateBlocker = lastState?.diagnostics?.candidateBlocker || {};
+  const currentCandidateCycle = candidateBlocker.current || null;
+  const candidateCycleHistory = Array.isArray(candidateBlocker.history) ? candidateBlocker.history.slice(-20) : [];
+  const currentPolicy = lastState?.professionalDecision?.candidateBlockerPolicy
+    ? {
+        ...lastState.professionalDecision.candidateBlockerPolicy,
+        finalBlockMessage: clean(lastState?.professionalDecision?.reason || '')
+      }
+    : null;
+  const tf = value => value === true ? 'true' : value === false ? 'false' : '—';
+  const compactReason = value => clean(value || '—').replace(/\s+/g, ' ');
+
+  const setupDiagnosticText = row => {
+    const setups = row?.decisionQuality?.setups || {};
+    const one = (label, value) => `${label}=${tf(value?.ok)}(${compactReason(value?.reason)})`;
+    return [
+      one('rejeição', setups.rejection),
+      one('continuação', setups.continuation),
+      one('momentum', setups.momentum),
+      one('confluência forte', setups.strongConfluence),
+      one('range/rejeição', setups.rangeRejection),
+      one('range/continuação', setups.rangeContinuation)
+    ].join(' | ');
+  };
+
+  const policyDiagnosticText = (policy, fallbackReason = '') => {
+    if (!policy) return 'policy=[sem snapshot]';
+    const window = policy.secondsVsWindow || {};
+    return [
+      `technicalCandidate=${tf(policy.technicalCandidate)}`,
+      `technicalFinal=${tf(policy.technicalFinal)}`,
+      `mandatoryPowerReady=${tf(policy.mandatoryPowerReady)}`,
+      `expiration.ready=${tf(policy.expirationReady)}`,
+      `time.ready=${tf(policy.timeReady)}`,
+      `segundos=${policy.secondsRemaining ?? window.secondsRemaining ?? '—'}`,
+      `pré-janela=${policy.preSignalWindowSeconds ?? '—'}`,
+      `janela-final=${policy.entryWindowSeconds ?? '—'}`,
+      `dentro-pré=${tf(window.insidePreSignal)}`,
+      `dentro-final=${tf(window.insideEntryWindow)}`,
+      `bloqueio=${compactReason(policy.finalBlockMessage || fallbackReason)}`
+    ].join(' | ');
+  };
+
+  const currentCandidateLines = currentCandidateCycle
+    ? (() => {
+        const metrics = currentCandidateCycle.metrics || {};
+        const possible = currentCandidateCycle.possibleQuality || {};
+        const policy = currentCandidateCycle.policy || currentPolicy;
+        return [
+          `Ciclo=${currentCandidateCycle.cycleKey || '—'} | targetStart=${currentCandidateCycle.targetStart ?? '—'} | ativo=${currentCandidateCycle.asset || '—'} | TF=${currentCandidateCycle.timeframe || '—'}`,
+          `A) uiState=${currentCandidateCycle.uiState || '—'} | state=${currentCandidateCycle.state || '—'} | direção publicada=${currentCandidateCycle.publishedDirection || '—'} | direção candidata=${currentCandidateCycle.candidateDirection || '—'} | score=${currentCandidateCycle.score ?? '—'} | menor secondsRemaining=${currentCandidateCycle.minSecondsRemaining ?? '—'} | regime=${currentCandidateCycle.regime || '—'}`,
+          `B) buyPower=${metrics.buyPower ?? '—'} | sellPower=${metrics.sellPower ?? '—'} | power candidato=${metrics.candidatePower ?? '—'} | currentStrength=${metrics.currentStrength ?? '—'} | rejectionStrength=${metrics.rejectionStrength ?? '—'} | continuationScore=${metrics.continuationScore ?? '—'} | momentumScore=${metrics.momentumScore ?? '—'}`,
+          `C) direção existe=${tf(possible.directionExists)} | score>=possibleScore(${possible.possibleScore ?? '—'})=${tf(possible.scoreReady)} | power>=50=${tf(possible.powerReady)} | stability.possibleDirection===direção=${tf(possible.stabilityMatches)} | WATCH+direção publicada igual=${tf(possible.watchPublishedMatches)} | possibleQuality final=${tf(possible.allowed)}`,
+          `D) ${setupDiagnosticText(currentCandidateCycle)}`,
+          `E) ${policyDiagnosticText(policy, currentCandidateCycle.reason)}`
+        ].join('\n');
+      })()
+    : '[ciclo atual ainda sem snapshot de bloqueio]';
+
+  const candidateHistoryLines = candidateCycleHistory.length
+    ? candidateCycleHistory.slice().reverse().map((row, index) => {
+        const metrics = row?.metrics || {};
+        const possible = row?.possibleQuality || {};
+        const close = row?.resultAtClose || {};
+        const policy = row?.policy || null;
+        return [
+          `[${index + 1}] ciclo=${row?.cycleKey || '—'} | fechamento ui=${close.uiState || row?.uiState || '—'} state=${close.state || row?.state || '—'} dir=${close.direction || row?.publishedDirection || '—'} score=${close.score ?? row?.score ?? '—'} | minSec=${row?.minSecondsRemaining ?? '—'} | regime=${row?.regime || '—'}`,
+          `A{uiState=${row?.uiState || '—'},state=${row?.state || '—'},pub=${row?.publishedDirection || '—'},score=${row?.score ?? '—'},minSec=${row?.minSecondsRemaining ?? '—'},regime=${row?.regime || '—'}}`,
+          `B{buy=${metrics.buyPower ?? '—'},sell=${metrics.sellPower ?? '—'},candidatePower=${metrics.candidatePower ?? '—'},strength=${metrics.currentStrength ?? '—'},rejection=${metrics.rejectionStrength ?? '—'},continuation=${metrics.continuationScore ?? '—'},momentum=${metrics.momentumScore ?? '—'}}`,
+          `C{dir=${tf(possible.directionExists)},score=${tf(possible.scoreReady)},power=${tf(possible.powerReady)},stability=${tf(possible.stabilityMatches)},watchPublished=${tf(possible.watchPublishedMatches)},final=${tf(possible.allowed)}}`,
+          `D{${setupDiagnosticText(row)}}`,
+          `E{${policyDiagnosticText(policy, close.reason || row?.reason)}}`
+        ].join(' | ');
+      }).join('\n')
+    : '[nenhum ciclo fechado registrado ainda]';
+
   return [
     'AI Trading Scanner — diagnóstico de leitura de expiração',
     `Frames examinados: ${Number(response.frameCount || response.frames?.length || 0)}`,
@@ -514,7 +591,15 @@ function expirationDiagnosticText(response = {}) {
     bridgeDiagnosticLines,
     '',
     'E) network-probe',
-    networkDiagnosticLines
+    networkDiagnosticLines,
+    '',
+    '7. BLOQUEIO DO CANDIDATO',
+    '',
+    'CICLO ATUAL',
+    currentCandidateLines,
+    '',
+    'ÚLTIMOS 20 CICLOS DE VELA — RESULTADO NO FECHAMENTO',
+    candidateHistoryLines
   ].join('\n');
 }
 

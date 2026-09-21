@@ -109,6 +109,183 @@ function possibleQuality(signal = {}, direction = null, score = 0, thresholds = 
   return stableDirection === direction || (signal.state === 'WATCH' && publishedDirection === direction);
 }
 
+
+function possibleQualityTelemetry(signal = {}, direction = null, score = 0, thresholds = getThresholds()) {
+  const analytics = signal.analytics || {};
+  const power = Number(direction === 'BUY' ? analytics.buyPower : direction === 'SELL' ? analytics.sellPower : 0) || 0;
+  const stableDirection = clean(signal.stability?.possibleDirection).toUpperCase();
+  const publishedDirection = clean(signal.direction).toUpperCase();
+  const conditions = {
+    directionExists: ['BUY', 'SELL'].includes(direction),
+    scoreReady: Number(score) >= thresholds.possibleScore,
+    powerReady: power >= 50,
+    stabilityMatches: !!direction && stableDirection === direction,
+    watchPublishedMatches: !!direction && signal.state === 'WATCH' && publishedDirection === direction
+  };
+  return {
+    ...conditions,
+    possibleScore: thresholds.possibleScore,
+    power,
+    allowed: conditions.directionExists
+      && conditions.scoreReady
+      && conditions.powerReady
+      && (conditions.stabilityMatches || conditions.watchPublishedMatches)
+  };
+}
+
+function decisionQualityTelemetry(signal = {}, direction = null, thresholds = getThresholds()) {
+  const score = Number(signal.analysisScore ?? signal.score ?? 0);
+  const analytics = signal.analytics || {};
+  const power = Number(direction === 'BUY' ? analytics.buyPower : direction === 'SELL' ? analytics.sellPower : 0) || 0;
+  const currentStrength = Number(analytics.currentStrength || 0);
+  const rejectionStrength = Number(analytics.rejectionStrength || 0);
+  const directionalRejection = !!direction && (analytics.rejectionDirection === direction
+    || Number(direction === 'BUY' ? analytics.rejectionBuy : analytics.rejectionSell) >= thresholds.rejectionStrength);
+  const continuation = !!direction && analytics.continuationDirection === direction && Number(analytics.continuationScore || 0) >= 55;
+  const momentum = !!direction && analytics.momentumDirection === direction && Number(analytics.momentumScore || 0) >= 40;
+  const strongCandle = currentStrength >= thresholds.candleStrength;
+  const rejection = directionalRejection && rejectionStrength >= thresholds.rejectionStrength;
+  const regime = String(signal.regime?.type || '').toLowerCase();
+  const globalFailures = [];
+  if (!direction) globalFailures.push('direção ausente');
+  if (score < thresholds.confirmScore) globalFailures.push(`score ${score}<${thresholds.confirmScore}`);
+  if (power < 50) globalFailures.push(`power ${power}<50`);
+
+  const evaluate = (applies, checks = []) => {
+    const failures = [...globalFailures];
+    if (!applies) failures.push(`não aplicável no regime ${regime || 'unknown'}`);
+    for (const check of checks) if (!check.ok) failures.push(check.reason);
+    return { ok: applies && failures.length === 0, reason: failures.length ? failures.join('; ') : 'OK' };
+  };
+
+  return {
+    confirmScore: thresholds.confirmScore,
+    candleStrengthThreshold: thresholds.candleStrength,
+    rejectionStrengthThreshold: thresholds.rejectionStrength,
+    global: {
+      directionExists: ['BUY', 'SELL'].includes(direction),
+      scoreReady: score >= thresholds.confirmScore,
+      powerReady: power >= 50
+    },
+    setups: {
+      rejection: evaluate(regime !== 'range', [
+        { ok: power >= 48, reason: `power ${power}<48` },
+        { ok: rejection, reason: `rejeição insuficiente/direção divergente (strength=${rejectionStrength}, mínimo=${thresholds.rejectionStrength})` }
+      ]),
+      continuation: evaluate(regime !== 'range', [
+        { ok: power >= 50, reason: `power ${power}<50` },
+        { ok: continuation, reason: `continuação ausente/divergente ou score<55 (score=${Number(analytics.continuationScore || 0)})` }
+      ]),
+      momentum: evaluate(regime !== 'range', [
+        { ok: power >= 50, reason: `power ${power}<50` },
+        { ok: strongCandle, reason: `currentStrength ${currentStrength}<${thresholds.candleStrength}` },
+        { ok: momentum, reason: `momentum ausente/divergente ou score<40 (score=${Number(analytics.momentumScore || 0)})` }
+      ]),
+      strongConfluence: evaluate(regime !== 'range', [
+        { ok: power >= 48, reason: `power ${power}<48` },
+        { ok: score >= 68, reason: `score ${score}<68` },
+        { ok: momentum, reason: `momentum ausente/divergente ou score<40 (score=${Number(analytics.momentumScore || 0)})` },
+        { ok: strongCandle || continuation, reason: `sem vela forte nem continuação (strength=${currentStrength}, continuation=${Number(analytics.continuationScore || 0)})` }
+      ]),
+      rangeRejection: evaluate(regime === 'range', [
+        { ok: power >= 52, reason: `power ${power}<52` },
+        { ok: rejection, reason: `rejeição insuficiente/direção divergente (strength=${rejectionStrength}, mínimo=${thresholds.rejectionStrength})` }
+      ]),
+      rangeContinuation: evaluate(regime === 'range', [
+        { ok: power >= 55, reason: `power ${power}<55` },
+        { ok: score >= 64, reason: `score ${score}<64` },
+        { ok: continuation, reason: `continuação ausente/divergente ou score<55 (score=${Number(analytics.continuationScore || 0)})` },
+        { ok: momentum, reason: `momentum ausente/divergente ou score<40 (score=${Number(analytics.momentumScore || 0)})` }
+      ])
+    }
+  };
+}
+
+function candidateBlockerMeasured(result = {}, snapshot = {}, state = {}, thresholds, key, cycle, rawSignal = {}) {
+  const outputSignal = result?.signal || rawSignal || {};
+  const direction = directionOf(rawSignal);
+  const score = Number(rawSignal.analysisScore ?? rawSignal.score ?? 0);
+  const analytics = rawSignal.analytics || {};
+  const seconds = num(rawSignal.secondsRemaining) ?? num(snapshot.secondsRemaining);
+  const previousDiagnostic = state.diagnostics?.candidateBlocker || {};
+  let history = Array.isArray(previousDiagnostic.history) ? previousDiagnostic.history.slice(-20) : [];
+  const previousCurrent = previousDiagnostic.current || null;
+
+  if (previousCurrent?.cycleKey && previousCurrent.cycleKey !== key) {
+    const closed = {
+      ...previousCurrent,
+      closedAt: num(snapshot.serverTime) ?? Date.now(),
+      resultAtClose: {
+        uiState: previousCurrent.uiState || null,
+        state: previousCurrent.state || null,
+        direction: previousCurrent.publishedDirection || null,
+        score: previousCurrent.score ?? null,
+        reason: previousCurrent.reason || null
+      }
+    };
+    history = [...history.filter(row => row?.cycleKey !== closed.cycleKey), closed].slice(-20);
+  }
+
+  const sameCyclePrevious = previousCurrent?.cycleKey === key ? previousCurrent : null;
+  const previousMin = num(sameCyclePrevious?.minSecondsRemaining);
+  const minSecondsRemaining = seconds == null
+    ? previousMin
+    : previousMin == null ? seconds : Math.min(previousMin, seconds);
+  const publishedDirection = ['BUY', 'SELL'].includes(clean(outputSignal.direction).toUpperCase())
+    ? clean(outputSignal.direction).toUpperCase()
+    : null;
+  const policySource = state.professionalDecision?.candidateBlockerPolicy || null;
+  const policy = policySource && (!policySource.cycleKey || policySource.cycleKey === key)
+    ? {
+        ...policySource,
+        finalBlockMessage: clean(state.professionalDecision?.reason || '')
+      }
+    : null;
+
+  const current = {
+    cycleKey: key,
+    targetStart: num(cycle?.targetStart),
+    asset: clean(snapshot.asset || ''),
+    timeframe: clean(snapshot.analysisTimeframe || snapshot.timeframe || rawSignal.timeframe || ''),
+    firstObservedAt: num(sameCyclePrevious?.firstObservedAt) ?? (num(snapshot.serverTime) ?? Date.now()),
+    lastObservedAt: num(snapshot.serverTime) ?? Date.now(),
+    uiState: clean(outputSignal.uiState || ''),
+    rawUiState: clean(rawSignal.uiState || ''),
+    state: clean(outputSignal.state || ''),
+    publishedDirection,
+    candidateDirection: direction,
+    score,
+    minSecondsRemaining,
+    regime: clean(rawSignal.regime?.type || 'unknown'),
+    metrics: {
+      buyPower: Number(analytics.buyPower || 0),
+      sellPower: Number(analytics.sellPower || 0),
+      candidatePower: Number(direction === 'BUY' ? analytics.buyPower : direction === 'SELL' ? analytics.sellPower : 0) || 0,
+      currentStrength: Number(analytics.currentStrength || 0),
+      rejectionStrength: Number(analytics.rejectionStrength || 0),
+      continuationScore: Number(analytics.continuationScore || 0),
+      momentumScore: Number(analytics.momentumScore || 0)
+    },
+    possibleQuality: possibleQualityTelemetry(rawSignal, direction, score, thresholds),
+    decisionQuality: decisionQualityTelemetry(rawSignal, direction, thresholds),
+    policy,
+    locked: cycle?.locked || null,
+    reason: clean(outputSignal.reason || rawSignal.reason || '')
+  };
+
+  return {
+    ...result,
+    diagnostics: {
+      ...(result?.diagnostics || {}),
+      candidateBlocker: {
+        current,
+        history,
+        updatedAt: current.lastObservedAt
+      }
+    }
+  };
+}
+
 function possibleWithHysteresis(cycle, allowed, direction, at) {
   if (allowed && direction) {
     cycle.possibleDirection = direction;
@@ -314,21 +491,22 @@ export function processSnapshot(snapshot = {}, state = {}) {
   const canShowPossible = !!possibleDirection;
   const recovered = resolveWrapperDecision(snapshot, result, key, state);
   const rolledLastConfirmed = newerDecision(newerDecision(result.lastConfirmed, latestWrapperCompleted(snapshot)), recovered);
+  const measured = output => candidateBlockerMeasured(output, snapshot, state, thresholds, key, cycle, signal);
 
   if (cycle.locked === 'ENTER') {
-    return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: enterSignal(signal, cycle, cycle.direction, Math.max(score, Number(cycle.score || 0)), cycle.reason), decisionCycle: { ...cycle } };
+    return measured({ ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: enterSignal(signal, cycle, cycle.direction, Math.max(score, Number(cycle.score || 0)), cycle.reason), decisionCycle: { ...cycle } });
   }
   if (cycle.locked === 'WAIT') {
-    return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: waitSignal(signal, cycle.reason || 'AGUARDAR — padrão não confirmou a tempo.'), decisionCycle: { ...cycle } };
+    return measured({ ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: waitSignal(signal, cycle.reason || 'AGUARDAR — padrão não confirmou a tempo.'), decisionCycle: { ...cycle } });
   }
 
   if (secondsRemaining > windows.pre) {
     const nextSignal = signal.state === 'WATCH' || signal.provisional ? buildingSignal(signal, windows) : signal;
-    return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: nextSignal, decisionCycle: { ...cycle } };
+    return measured({ ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: nextSignal, decisionCycle: { ...cycle } });
   }
   if (secondsRemaining > windows.decision) {
     const nextSignal = canShowPossible ? possibleSignal(signal, windows, possibleDirection, score) : signal;
-    return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: nextSignal, decisionCycle: { ...cycle } };
+    return measured({ ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: nextSignal, decisionCycle: { ...cycle } });
   }
 
   if (signal.state === 'CONFIRM' && ['BUY', 'SELL'].includes(signal.direction)) {
@@ -340,7 +518,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
     cycle.decidedAt = at;
     cycles.set(key, cycle);
     const trace = appendTrace(state, { key, targetStart: cycle.targetStart, decision: 'ENTER', direction: cycle.direction, score: cycle.score, setup: cycle.setup, reason: cycle.reason, decidedAt: at });
-    return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, decisionCycle: { ...cycle }, decisionTrace: trace };
+    return measured({ ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, decisionCycle: { ...cycle }, decisionTrace: trace });
   }
 
   const quality = decisionQuality(signal, direction, thresholds);
@@ -354,7 +532,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
     cycle.decidedAt = at;
     cycles.set(key, cycle);
     const trace = appendTrace(state, { key, targetStart: cycle.targetStart, decision: 'ENTER', direction, score, setup: cycle.setup, reason: cycle.reason, decidedAt: at });
-    return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: enterSignal(signal, cycle, direction, score, cycle.reason), decisionCycle: { ...cycle }, decisionTrace: trace };
+    return measured({ ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: enterSignal(signal, cycle, direction, score, cycle.reason), decisionCycle: { ...cycle }, decisionTrace: trace });
   }
 
   if (secondsRemaining <= windows.skip) {
@@ -366,7 +544,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
     cycle.decidedAt = at;
     cycles.set(key, cycle);
     const trace = appendTrace(state, { key, targetStart: cycle.targetStart, decision: 'WAIT', direction: null, score, setup: cycle.setup, reason: cycle.reason, decidedAt: at });
-    return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: waitSignal(signal, cycle.reason), decisionCycle: { ...cycle }, decisionTrace: trace };
+    return measured({ ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: waitSignal(signal, cycle.reason), decisionCycle: { ...cycle }, decisionTrace: trace });
   }
 
   cycles.set(key, cycle);
