@@ -37,7 +37,6 @@
 
   let preferred = null;
   let latestState = null;
-  let lastGuardSignature = '';
 
   function requiredExpiration(state = latestState || {}) {
     const timeframe = clean(state.analystPreferences?.operationMode || 'M1').toUpperCase() === 'M5' ? 'M5' : 'M1';
@@ -47,24 +46,22 @@
   function applyGuard() {
     const state = latestState || {};
     const actual = normExp(state.platformControls?.observed?.expiration || '');
-    const checkedAt = Number(state.platformControls?.expirationCheckedAt || state.platformControls?.observed?.observedAt?.expiration || state.platformControls?.checkedAt || 0);
-    const fresh = checkedAt > 0 && Date.now() - checkedAt < 7000;
-    const required = requiredExpiration(state);
-    const differs = !!required && !!actual && actual !== required;
-    const nextClass = !actual || !fresh ? 'expiration-guard-status warn' : `expiration-guard-status ${differs ? 'warn' : 'ok'}`;
-    const nextText = !actual || !fresh
-      ? 'AGUARDANDO EXPIRAÇÃO REAL DA CASATRADE — entrada bloqueada.'
-      : differs
-        ? `CASATRADE AO VIVO: ${label(actual)} • modo exige ${label(required)}.`
-        : `CASATRADE AO VIVO: ${label(actual)} • compatível com o modo ativo.`;
-    const signature = `${actual || ''}|${required || ''}|${nextClass}|${nextText}`;
-    if (signature === lastGuardSignature) return;
-    lastGuardSignature = signature;
-
+    const fresh = Number(state.platformControls?.checkedAt || 0) > 0 && Date.now() - Number(state.platformControls.checkedAt) < 7000;
     const expirationEl = document.getElementById('expiration');
-    if (expirationEl && actual && expirationEl.textContent !== label(actual)) expirationEl.textContent = label(actual);
-    if (status.className !== nextClass) status.className = nextClass;
-    if (status.textContent !== nextText) status.textContent = nextText;
+    if (expirationEl && actual) expirationEl.textContent = label(actual);
+
+    if (!actual || !fresh) {
+      status.className = 'expiration-guard-status warn';
+      status.textContent = 'AGUARDANDO EXPIRAÇÃO REAL DA CASATRADE — entrada bloqueada.';
+      return;
+    }
+
+    const required = requiredExpiration(state);
+    const differs = !!required && actual !== required;
+    status.className = `expiration-guard-status ${differs ? 'warn' : 'ok'}`;
+    status.textContent = differs
+      ? `CASATRADE AO VIVO: ${label(actual)} • modo exige ${label(required)}.`
+      : `CASATRADE AO VIVO: ${label(actual)} • compatível com o modo ativo.`;
   }
 
   async function syncPreference(value) {
