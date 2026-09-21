@@ -19,7 +19,7 @@ const PANEL_OPENED_AT = Date.now();
 let prefs = { ...DEFAULT_PREFS };
 let liveOhlc = null;
 let audioContext = null;
-let expirationUiLastReal = { value: null, at: 0 };
+let expirationUiLastReal = { value: null, at: 0, tabId: 0 };
 const EXPIRATION_UI_GRACE_MS = 12000;
 
 const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
@@ -66,12 +66,14 @@ function expirationObservation(state = {}) {
 function expirationDisplayObservation(state = {}) {
   const live = expirationObservation(state);
   const source = clean(state.diagnostics?.expirationGuard?.source || state.platformControls?.expirationSource || '');
+  const tabId = Number(state.targetTabId || 0);
   if (live.fresh && live.value && source !== 'user-declared') {
-    expirationUiLastReal = { value: live.value, at: live.at || Date.now() };
+    expirationUiLastReal = { value: live.value, at: live.at || Date.now(), tabId };
     return { ...live, held: false, source };
   }
   const heldAge = expirationUiLastReal.at > 0 ? Date.now() - expirationUiLastReal.at : Infinity;
-  if (!live.value && expirationUiLastReal.value && heldAge <= EXPIRATION_UI_GRACE_MS) {
+  const sameTarget = tabId > 0 && expirationUiLastReal.tabId === tabId;
+  if (!live.value && sameTarget && expirationUiLastReal.value && heldAge <= EXPIRATION_UI_GRACE_MS) {
     return {
       ...live,
       value: expirationUiLastReal.value,
