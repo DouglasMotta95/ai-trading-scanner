@@ -66,6 +66,10 @@ function sessionAgeMs(state = {}) {
   if (!(at > 0)) return panelAge;
   return Math.min(Math.max(0, Date.now() - at), panelAge);
 }
+function focusConfirmedThisPanel(state = {}) {
+  const at = Number(state.diagnostics?.focusedAsset?.at || 0);
+  return at >= PANEL_OPENED_AT;
+}
 
 function normTf(value = '') {
   const raw = clean(value).toUpperCase().replace(/\s+/g, '');
@@ -418,6 +422,7 @@ function render(state = {}) {
   const dataLive = sessionReady(state);
   const timeReady = entryTimeReady(state);
   lastRenderedState = state;
+  syncSettingsUi(state);
 
   const remaining = smoothedRemaining(state);
   const actualTf = normTf(clock.timeframe || state.platformControls?.observed?.timeframe || state.analysisTimeframe || state.timeframe);
@@ -426,15 +431,20 @@ function render(state = {}) {
   const operation = operationRequirement(state);
   const pending = transitionAsset(state);
   const session = sessionInfo(state);
-  const freshMarket = marketDataReady(state) && focusReady(state) && sameMarket(state.diagnostics?.focusedAsset?.asset, state.asset);
+  const panelFocusFresh = focusConfirmedThisPanel(state);
+  const freshMarket = marketDataReady(state) && focusReady(state) && panelFocusFresh && sameMarket(state.diagnostics?.focusedAsset?.asset, state.asset);
   const visibleAsset = freshMarket ? marketId(session.confirmedAsset || state.asset) : '';
+  const bootAwaitingFocus = !!state.targetTabId && !panelFocusFresh;
 
-  setText('asset', visibleAsset || (pending ? `Atualizando para ${pending}…` : '—'));
-  setText('timeframe', freshMarket || pending ? (actualTf || '—') : '—');
+  setText('asset', visibleAsset || (pending ? `Atualizando para ${pending}…` : bootAwaitingFocus ? 'ATUALIZANDO…' : '—'));
+  // The summary TF represents the scanner operation mode, not a separate live
+  // observation. The live CasaTrade timeframe is still validated below as an
+  // entry gate, but every mode label now has one canonical source.
+  setText('timeframe', freshMarket || pending || bootAwaitingFocus ? operation.timeframe : '—');
   setText('price', freshMarket ? fmtPrice(state.price) : '—');
 
   if (freshMarket) setSourceState('assetSource', 'REAL', 'real', 'Ativo confirmado pelo gráfico + feed da CasaTrade.');
-  else if (pending) setSourceState('assetSource', 'ATUALIZANDO', 'estimated', 'Troca detectada; preço e velas anteriores já foram descartados.');
+  else if (pending || bootAwaitingFocus) setSourceState('assetSource', 'ATUALIZANDO', 'estimated', 'Confirmando novamente o ativo visível na CasaTrade.');
   else setSourceState('assetSource', 'STALE', 'stale', 'Ativo ainda não confirmado.');
 
   if (actualExp) {
@@ -587,8 +597,10 @@ function play(kind) {
   tone(760,0,.18,.17); tone(940,.17,.19,.19); tone(1120,.31,.22,.22);
   try { navigator?.vibrate?.([110,55,150,55,210]); } catch {}
 }
-function syncSettingsUi() {
-  const operationMode = prefs.operationMode === 'M5' ? 'M5' : 'M1';
+function syncSettingsUi(state = null) {
+  const stateMode = clean(state?.analystPreferences?.operationMode || '').toUpperCase();
+  const operationMode = stateMode === 'M5' ? 'M5' : stateMode === 'M1' ? 'M1' : (prefs.operationMode === 'M5' ? 'M5' : 'M1');
+  if (stateMode === 'M1' || stateMode === 'M5') prefs = { ...prefs, operationMode };
   const operationExpirationLabel = operationMode === 'M5' ? '5 min' : '1 min';
   const payoutMap = prefs.payoutByMode && typeof prefs.payoutByMode === 'object' ? prefs.payoutByMode : { M1: 88, M5: 88 };
   if ($('operationMode')) $('operationMode').value = operationMode;
@@ -730,4 +742,10 @@ chrome.storage.onChanged.addListener(changes => {
   await loadPrefs();
   const response = await chrome.runtime.sendMessage({ type: 'ATS_READ_SCANNER_STATE' });
   if (response?.state) render(response.state);
+
+  // Never trust a focus snapshot that predates this panel boot. Force one
+  // passive refresh; the UI keeps the old asset hidden until the fresh visual
+  // focus arrives, avoiding the EUR/USD vs NZD/USD frame-1 regression.
+  const refreshed = await chrome.runtime.sendMessage({ type: 'ATS_REFRESH_MARKET' }).catch(() => null);
+  if (refreshed?.state) render(refreshed.state);
 })().catch(() => render({}));
