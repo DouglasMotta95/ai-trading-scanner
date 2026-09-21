@@ -383,7 +383,8 @@ function seedCycle(key, snapshot, signal, state = {}) {
       key, targetStart: targetStartOf(snapshot, signal), candidateDirection: null,
       confirmHits: 0, lastHitAt: null, decisionWeakSince: null, locked: null, direction: null, score: 0,
       setup: null, reason: null, decidedAt: null, resolved: false,
-      confirmationMode: null, persistenceDirection: null, persistenceSamples: [], persistence: null
+      confirmationMode: null, persistenceDirection: null, persistenceSamples: [], persistence: null,
+      decisionWindowSamples: 0, lastDecisionWindowBucket: null
     };
   }
   cycles.set(key, cycle);
@@ -603,6 +604,12 @@ export function processSnapshot(snapshot = {}, state = {}) {
     return measured({ ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: nextSignal, decisionCycle: { ...cycle } });
   }
 
+  const decisionWindowBucket = Math.floor(at / CANDIDATE_PERSISTENCE_BUCKET_MS);
+  if (cycle.lastDecisionWindowBucket !== decisionWindowBucket) {
+    cycle.lastDecisionWindowBucket = decisionWindowBucket;
+    cycle.decisionWindowSamples = Number(cycle.decisionWindowSamples || 0) + 1;
+  }
+
   if (signal.state === 'CONFIRM' && ['BUY', 'SELL'].includes(signal.direction)) {
     cycle.locked = 'ENTER';
     cycle.direction = signal.direction;
@@ -636,7 +643,10 @@ export function processSnapshot(snapshot = {}, state = {}) {
   const persistenceDirection = persistence.armed && persistence.direction === possibleDirection
     ? possibleDirection
     : null;
-  if (secondsRemaining < windows.decision && persistenceDirection && canShowPossible) {
+  if (secondsRemaining < windows.decision
+    && Number(cycle.decisionWindowSamples || 0) >= 2
+    && persistenceDirection
+    && canShowPossible) {
     cycle.locked = 'ENTER';
     cycle.direction = persistenceDirection;
     cycle.score = Math.max(score, Math.round(Number(persistence.averageScore || 0)));
