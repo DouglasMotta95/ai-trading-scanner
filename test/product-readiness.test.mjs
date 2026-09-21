@@ -239,8 +239,8 @@ test('v0.11.50 UI motion is presentation-only', () => {
   assert.doesNotMatch(layout, /chrome\.tabs|chrome\.scripting|fetch\(|WebSocket|XMLHttpRequest/);
 });
 
-test('extension build is v0.11.53 high confidence signals', () => {
+test('extension build is v0.11.53 final decision windows', () => {
   const manifest = JSON.parse(read('manifest.json'));
-  assert.equal(manifest.version, '0.11.52');
-  assert.equal(manifest.version_name, '0.11.52-high-confidence-signals');
+  assert.equal(manifest.version, '0.11.53');
+  assert.equal(manifest.version_name, '0.11.53-final-window-m1-5s-m5-8s');
 });
