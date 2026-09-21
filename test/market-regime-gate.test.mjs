@@ -37,8 +37,8 @@ test('range regime allows ENTER only when a decisive local setup overrides the b
   const candles = rangeWithStrongCurrent(bucket);
   processSnapshot(snapshot(bucket, 35_000, candles), { connection: 'online' });
   processSnapshot(snapshot(bucket, 36_000, candles), { connection: 'online' });
-  const firstFinal = processSnapshot(snapshot(bucket, 51_000, candles), { connection: 'online' });
-  const confirmed = processSnapshot(snapshot(bucket, 52_000, candles), { connection: 'online' });
+  const firstFinal = processSnapshot(snapshot(bucket, 55_000, candles), { connection: 'online' });
+  const confirmed = processSnapshot(snapshot(bucket, 56_000, candles), { connection: 'online' });
   assert.equal(confirmed.signal.regime?.type, 'range');
   assert.ok(Number(confirmed.signal.analysisScore) >= 58, `expected score >= 58, got ${confirmed.signal.analysisScore}`);
   assert.ok(['POSSIBLE_BUY','POSSIBLE_SELL','DECIDING','ENTER_BUY','ENTER_SELL','SKIP','WAIT'].includes(firstFinal.signal.uiState));
