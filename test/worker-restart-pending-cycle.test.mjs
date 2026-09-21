@@ -27,8 +27,8 @@ test('locked next-candle entry survives a service-worker restart before target c
   const bucket = Math.floor(1_806_000_000_000 / minute) * minute;
   const state = { connection: 'online' };
 
-  processSnapshot(snapshot(bucket, 50_000, 10), state);
-  const locked = processSnapshot(snapshot(bucket, 51_000, 9), state);
+  processSnapshot(snapshot(bucket, 55_000, 5), state);
+  const locked = processSnapshot(snapshot(bucket, 56_000, 4), state);
   assert.equal(locked.signal.state, 'CONFIRM');
   assert.equal(locked.decisionCycle.locked, 'ENTER');
   assert.equal(locked.decisionCycle.direction, 'BUY');
@@ -57,8 +57,8 @@ test('recovered pending entry never substitutes a later candle or live quote for
   resetOrchestrator();
   const bucket = Math.floor(1_806_100_000_000 / minute) * minute;
   const state = { connection: 'online' };
-  processSnapshot(snapshot(bucket, 50_000, 10), state);
-  const locked = processSnapshot(snapshot(bucket, 51_000, 9), state);
+  processSnapshot(snapshot(bucket, 55_000, 5), state);
+  const locked = processSnapshot(snapshot(bucket, 56_000, 4), state);
   const persistedCycle = structuredClone(locked.decisionCycle);
   resetOrchestrator();
 
