@@ -19,6 +19,8 @@ const PANEL_OPENED_AT = Date.now();
 let prefs = { ...DEFAULT_PREFS };
 let liveOhlc = null;
 let audioContext = null;
+let expirationUiLastReal = { value: null, at: 0 };
+const EXPIRATION_UI_GRACE_MS = 12000;
 
 const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
 const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
@@ -59,6 +61,26 @@ function expirationObservation(state = {}) {
   const fresh = at > 0 && Date.now() - at < 7000;
   const value = fresh ? normExp(controls.observed?.expiration) : null;
   return { value, fresh, at, ageMs: at > 0 ? Date.now() - at : Infinity };
+}
+
+function expirationDisplayObservation(state = {}) {
+  const live = expirationObservation(state);
+  const source = clean(state.diagnostics?.expirationGuard?.source || state.platformControls?.expirationSource || '');
+  if (live.fresh && live.value && source !== 'user-declared') {
+    expirationUiLastReal = { value: live.value, at: live.at || Date.now() };
+    return { ...live, held: false, source };
+  }
+  const heldAge = expirationUiLastReal.at > 0 ? Date.now() - expirationUiLastReal.at : Infinity;
+  if (!live.value && expirationUiLastReal.value && heldAge <= EXPIRATION_UI_GRACE_MS) {
+    return {
+      ...live,
+      value: expirationUiLastReal.value,
+      held: true,
+      source: 'last-real-reading',
+      ageMs: heldAge
+    };
+  }
+  return { ...live, held: false, source };
 }
 function sessionAgeMs(state = {}) {
   const at = Number(sessionInfo(state).startedAt || state.diagnostics?.target?.connectedAt || 0);
@@ -329,13 +351,25 @@ function decisionModel(state = {}) {
   return { uiState: 'WAIT', title: 'AGUARDAR', text: 'AGUARDAR', sub: 'Padrão sem confirmação suficiente.', tone: 'no-trade', reason: reason.startsWith('AGUARDAR') ? reason : `AGUARDAR — ${reason}`, score, actionable: false };
 }
 
-function setText(id, value) { const el = $(id); if (el) el.textContent = value; }
-function setBadge(id, value, tone = '') { const el = $(id); if (!el) return; el.textContent = value; el.className = `badge ${tone}`.trim(); }
+function setText(id, value) {
+  const el = $(id);
+  if (el && el.textContent !== String(value ?? '')) el.textContent = value;
+}
+function setBadge(id, value, tone = '') {
+  const el = $(id); if (!el) return;
+  const text = String(value ?? '');
+  const className = `badge ${tone}`.trim();
+  if (el.textContent !== text) el.textContent = text;
+  if (el.className !== className) el.className = className;
+}
 function setSourceState(id, value, tone = 'stale', title = '') {
   const el = $(id); if (!el) return;
-  el.textContent = value;
-  el.className = `source-state ${tone}`;
-  el.title = title || value;
+  const text = String(value ?? '');
+  const className = `source-state ${tone}`;
+  const nextTitle = title || text;
+  if (el.textContent !== text) el.textContent = text;
+  if (el.className !== className) el.className = className;
+  if (el.title !== nextTitle) el.title = nextTitle;
 }
 
 function renderCandles(state = {}) {
@@ -421,7 +455,7 @@ function render(state = {}) {
 
   const remaining = smoothedRemaining(state);
   const actualTf = normTf(clock.timeframe || state.platformControls?.observed?.timeframe || state.analysisTimeframe || state.timeframe);
-  const expirationObs = expirationObservation(state);
+  const expirationObs = expirationDisplayObservation(state);
   const actualExp = expirationObs.value;
   const operation = operationRequirement(state);
   const pending = transitionAsset(state);
@@ -439,7 +473,12 @@ function render(state = {}) {
 
   if (actualExp) {
     const expirationGuardSource = clean(state.diagnostics?.expirationGuard?.source || '');
-    if (expirationGuardSource === 'user-declared') {
+    if (expirationObs.held) {
+      const heldLabel = `${expLabel(actualExp)} • VALIDANDO`;
+      setText('heroExpiration', heldLabel);
+      setText('expiration', heldLabel);
+      setSourceState('expirationSource', 'VALIDANDO', 'estimated', 'Última leitura real mantida somente na interface enquanto a CasaTrade é relida. A entrada continua bloqueada até nova confirmação.');
+    } else if (expirationGuardSource === 'user-declared') {
       const informedLabel = `${expLabel(actualExp)} (informada)`;
       setText('heroExpiration', informedLabel);
       setText('expiration', informedLabel);
