@@ -34,11 +34,13 @@
 /* Full mode: keep every tool available but avoid duplicate live status on the main flow. */
 body[data-panel-mode="full"] #operationalPulse{display:block}
 body[data-panel-mode="full"] .market-chart-panel{display:block}
+body[data-panel-mode="full"] .signal-quick-meta{display:none}
 
 /* Signal mode: one-screen operational view. */
 body[data-panel-mode="signal"] .compact-shell{max-width:620px;gap:6px;padding:6px 7px 10px}
 body[data-panel-mode="signal"] .compact-topbar{margin-bottom:0}
 body[data-panel-mode="signal"] #syncStrip.live{display:none}
+body[data-panel-mode="signal"] .compact-market{display:none}
 body[data-panel-mode="signal"] #expectedAssetWarning:empty{display:none}
 body[data-panel-mode="signal"] .compact-market{grid-template-columns:minmax(0,1.5fr) repeat(3,minmax(52px,.65fr));gap:4px}
 body[data-panel-mode="signal"] .compact-market>div{padding:5px 7px}
