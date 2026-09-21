@@ -70,7 +70,9 @@ function licenseStillValid(license = {}) {
 
 function cacheInsideReopenGrace(cached = null) {
   const validatedAt = Number(cached?.validatedAt);
+  const tokenExpiresAt = Number(cached?.clientTokenExpiresAt);
   if (!Number.isFinite(validatedAt) || validatedAt <= 0) return false;
+  if (!Number.isFinite(tokenExpiresAt) || tokenExpiresAt <= Date.now() + 5000) return false;
   const age = Date.now() - validatedAt;
   return age >= 0 && age <= REOPEN_CACHE_GRACE_MS;
 }

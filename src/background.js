@@ -3,7 +3,8 @@ import { readScannerState, updateScannerState } from './services/scanner-state-a
 import { resolveSignalHistory, signalPerformance, resolveSignalOutcome } from './core/signal-outcomes.js';
 import { getThresholds, getOperationMode } from './core/analysis.js';
 import { storageLocalGet, storageLocalSet } from './services/chrome-compat.js';
-import { track as telemetryEvent } from './services/telemetry.js';
+import { track as telemetryEvent, heartbeat as telemetryHeartbeat } from './services/telemetry.js';
+import { consumeSignal, validateLicense } from './services/license.js';
 
 // Single owner of technical analysis.
 // All acquisition modules only update scannerState. This loop coalesces those
@@ -222,6 +223,31 @@ const activeAccess = state => {
     || state?.diagnostics?.access?.state === 'owner_dev';
 };
 
+function signalAllowance(state = {}) {
+  const license = state.license || {};
+  if (license.devMode === true || clean(license.plan).toUpperCase() === 'OWNER_DEV') return { allowed: true, reason: '' };
+  const remainingTotal = license.remainingTotal;
+  const remainingToday = license.remainingToday;
+  if (remainingTotal != null && Number(remainingTotal) <= 0) return { allowed: false, reason: 'limite total de sinais do plano atingido' };
+  if (remainingToday != null && Number(remainingToday) <= 0) return { allowed: false, reason: 'limite diário de sinais do plano atingido' };
+  return { allowed: true, reason: '' };
+}
+
+function blockEntrySignal(signal = {}, reason = 'limite de sinais atingido') {
+  const text = `AGUARDAR — ${reason}. Renove ou ajuste seu plano para liberar novas entradas.`;
+  return {
+    ...signal,
+    state: 'NO_TRADE',
+    direction: null,
+    diagnosis: 'WAIT',
+    uiState: 'WAIT',
+    provisional: false,
+    phase: 'FINAL',
+    reason: text,
+    hint: text
+  };
+}
+
 function historyFor(state = {}, asset = '') {
   const history = state.marketHistory || {};
   const key = Object.keys(history).find(value => sameMarket(value, asset));
@@ -282,6 +308,7 @@ function signalRecordId(asset, timeframe, targetStart, direction) {
 
 function reconcileSignalHistory(state = {}, next = {}, snapshot = {}) {
   let rows = Array.isArray(state.signalHistory) ? state.signalHistory.slice(-99) : [];
+  const created = [];
   const signal = next.signal || {};
   const direction = clean(signal.direction || next.decisionCycle?.direction).toUpperCase();
   const targetStart = num(signal.targetStart ?? next.decisionCycle?.targetStart);
@@ -292,7 +319,7 @@ function reconcileSignalHistory(state = {}, next = {}, snapshot = {}) {
   if (confirmed && ['BUY', 'SELL'].includes(direction) && targetStart != null && timeframe) {
     const id = signalRecordId(snapshot.asset, timeframe, targetStart, direction);
     if (!rows.some(row => row?.id === id)) {
-      rows.push({
+      const record = {
         id,
         asset: snapshot.asset,
         timeframe,
@@ -305,7 +332,9 @@ function reconcileSignalHistory(state = {}, next = {}, snapshot = {}) {
         exitPrice: null,
         result: null,
         status: 'pending'
-      });
+      };
+      rows.push(record);
+      created.push(record);
     }
   }
 
@@ -317,6 +346,7 @@ function reconcileSignalHistory(state = {}, next = {}, snapshot = {}) {
   rows = outcome.rows.slice(-100);
   return {
     rows,
+    created,
     resolved: outcome.resolved,
     captured: outcome.captured,
     performance: signalPerformance(rows)
@@ -376,6 +406,7 @@ async function runCentralAnalysis(force = false) {
   analysisRunning = true;
   let needsConfirmationFollowup = false;
   let resolvedForTelemetry = [];
+  let confirmedForUsage = [];
   try {
     await updateScannerState(current => {
       const snapshot = consolidatedSnapshot(current);
@@ -398,7 +429,21 @@ async function runCentralAnalysis(force = false) {
       if (lastMarketKey && lastMarketKey !== marketKey) resetOrchestrator();
       lastMarketKey = marketKey;
 
-      const processed = processSnapshot(snapshot, current);
+      let processed = processSnapshot(snapshot, current);
+      const allowance = signalAllowance(current);
+      const processedUi = clean(processed?.signal?.uiState).toUpperCase();
+      const processedConfirmed = processed?.signal?.state === 'CONFIRM' || processedUi === 'ENTER_BUY' || processedUi === 'ENTER_SELL';
+      if (processedConfirmed && !allowance.allowed) {
+        processed = {
+          ...processed,
+          signal: blockEntrySignal(processed.signal, allowance.reason),
+          decisionCycle: {
+            ...(processed.decisionCycle || {}),
+            locked: 'WAIT',
+            reason: allowance.reason
+          }
+        };
+      }
       const confirmationMode = clean(current.analystPreferences?.confirmationMode).toUpperCase() === 'EXIGENTE' ? 'EXIGENTE' : 'SIMPLES';
       lastInputSignature = inputSignature;
       lastRunAt = Date.now();
@@ -438,6 +483,7 @@ async function runCentralAnalysis(force = false) {
       };
 
       const history = reconcileSignalHistory(current, next, snapshot);
+      confirmedForUsage = history.created;
       resolvedForTelemetry = history.resolved;
       const nextWithHistory = {
         ...next,
@@ -465,6 +511,57 @@ async function runCentralAnalysis(force = false) {
     analysisRunning = false;
   }
 
+  for (const row of confirmedForUsage) {
+    const state = await readScannerState().catch(() => null);
+    const license = state?.license || {};
+    const isOwner = license.devMode === true || clean(license.plan).toUpperCase() === 'OWNER_DEV';
+    if (isOwner) continue;
+
+    const { settings = {} } = await storageLocalGet('settings').catch(() => ({}));
+    const usage = await consumeSignal(settings).catch(() => ({ ok: false, error: 'backend_unreachable' }));
+    if (usage?.license) {
+      await updateScannerState(current => ({
+        ...current,
+        license: {
+          ...(current.license || {}),
+          ...usage.license,
+          error: usage.ok ? null : (usage.error || current.license?.error || null),
+          syncPending: usage.ok ? false : usage.error === 'backend_unreachable'
+        }
+      })).catch(() => {});
+    }
+
+    if (usage?.ok) {
+      telemetryEvent('signal_confirmed', {
+        id: row.id,
+        asset: row.asset,
+        timeframe: row.timeframe,
+        direction: row.direction,
+        targetStart: row.targetStart,
+        score: row.score,
+        setup: row.setup || null
+      }).catch(() => {});
+    } else if (usage?.error === 'daily_limit_reached' || usage?.error === 'trial_limit_reached') {
+      await updateScannerState(current => {
+        const currentSignal = current.signal || {};
+        const sameSignal = sameMarket(current.asset, row.asset)
+          && clean(currentSignal.direction).toUpperCase() === clean(row.direction).toUpperCase()
+          && Number(currentSignal.targetStart || current.decisionCycle?.targetStart || 0) === Number(row.targetStart || 0);
+        const rows = (Array.isArray(current.signalHistory) ? current.signalHistory : []).filter(item => item?.id !== row.id);
+        return {
+          ...current,
+          signal: sameSignal ? blockEntrySignal(currentSignal, 'limite de sinais do plano atingido') : currentSignal,
+          signalHistory: rows,
+          performance: signalPerformance(rows),
+          diagnostics: {
+            ...(current.diagnostics || {}),
+            usageGate: { blocked: true, error: usage.error, at: Date.now() }
+          }
+        };
+      }).catch(() => {});
+    }
+  }
+
   for (const row of resolvedForTelemetry) {
     telemetryEvent('signal_resolved', {
       id: row.id,
@@ -485,7 +582,42 @@ async function runCentralAnalysis(force = false) {
   if (needsConfirmationFollowup) scheduleAnalysis(true);
 }
 
+const HEARTBEAT_INTERVAL_MS = 5000;
+let heartbeatBusy = false;
+let lastHeartbeatAt = 0;
+
+async function pushLiveHeartbeat(state = {}) {
+  if (heartbeatBusy || !activeAccess(state) || state.connection !== 'online') return;
+  const now = Date.now();
+  if (now - lastHeartbeatAt < HEARTBEAT_INTERVAL_MS) return;
+  lastHeartbeatAt = now;
+  heartbeatBusy = true;
+  try {
+    const { settings = {} } = await storageLocalGet('settings').catch(() => ({}));
+    let result = await telemetryHeartbeat(state, settings).catch(() => ({ ok: false, error: 'telemetry_unreachable' }));
+    if (!result?.ok && (result?.error === 'client_token_missing' || result?.status === 401)) {
+      const refreshed = await validateLicense(settings).catch(() => null);
+      if (refreshed?.ok && refreshed?.license && refreshed?.devMode !== true) {
+        const refreshedState = await updateScannerState(current => ({
+          ...current,
+          license: {
+            ...(current.license || {}),
+            ...refreshed.license,
+            status: 'active',
+            error: null,
+            syncPending: false
+          }
+        })).catch(() => state);
+        result = await telemetryHeartbeat(refreshedState || state, settings).catch(() => result);
+      }
+    }
+  } finally {
+    heartbeatBusy = false;
+  }
+}
+
 function observeState(state = {}) {
+  pushLiveHeartbeat(state).catch(() => {});
   const snapshot = consolidatedSnapshot(state);
   if (!snapshot) return;
   const signature = rawInputSignature(state, snapshot);
@@ -505,6 +637,10 @@ readScannerState().then(state => {
   observeState(state);
   observeSignalPerformance(state);
 }).catch(() => {});
+
+setInterval(() => {
+  readScannerState().then(state => pushLiveHeartbeat(state)).catch(() => {});
+}, HEARTBEAT_INTERVAL_MS);
 
 const HEALTH_CHECK_MS = 1000;
 const RECOVERY_AFTER_MS = 4500;
