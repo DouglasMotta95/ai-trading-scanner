@@ -148,12 +148,12 @@ function decisionQualityTelemetry(signal = {}, direction = null, thresholds = ge
   const regime = String(signal.regime?.type || '').toLowerCase();
   const globalFailures = [];
   if (!direction) globalFailures.push('direção ausente');
-  if (score < thresholds.confirmScore) globalFailures.push(\`score \${score}<\${thresholds.confirmScore}\`);
-  if (power < 50) globalFailures.push(\`power \${power}<50\`);
+  if (score < thresholds.confirmScore) globalFailures.push(`score ${score}<${thresholds.confirmScore}`);
+  if (power < 50) globalFailures.push(`power ${power}<50`);
 
   const evaluate = (applies, checks = []) => {
     const failures = [...globalFailures];
-    if (!applies) failures.push(\`não aplicável no regime \${regime || 'unknown'}\`);
+    if (!applies) failures.push(`não aplicável no regime ${regime || 'unknown'}`);
     for (const check of checks) if (!check.ok) failures.push(check.reason);
     return { ok: applies && failures.length === 0, reason: failures.length ? failures.join('; ') : 'OK' };
   };
@@ -169,33 +169,33 @@ function decisionQualityTelemetry(signal = {}, direction = null, thresholds = ge
     },
     setups: {
       rejection: evaluate(regime !== 'range', [
-        { ok: power >= 48, reason: \`power \${power}<48\` },
-        { ok: rejection, reason: \`rejeição insuficiente/direção divergente (strength=\${rejectionStrength}, mínimo=\${thresholds.rejectionStrength})\` }
+        { ok: power >= 48, reason: `power ${power}<48` },
+        { ok: rejection, reason: `rejeição insuficiente/direção divergente (strength=${rejectionStrength}, mínimo=${thresholds.rejectionStrength})` }
       ]),
       continuation: evaluate(regime !== 'range', [
-        { ok: power >= 50, reason: \`power \${power}<50\` },
-        { ok: continuation, reason: \`continuação ausente/divergente ou score<55 (score=\${Number(analytics.continuationScore || 0)})\` }
+        { ok: power >= 50, reason: `power ${power}<50` },
+        { ok: continuation, reason: `continuação ausente/divergente ou score<55 (score=${Number(analytics.continuationScore || 0)})` }
       ]),
       momentum: evaluate(regime !== 'range', [
-        { ok: power >= 50, reason: \`power \${power}<50\` },
-        { ok: strongCandle, reason: \`currentStrength \${currentStrength}<\${thresholds.candleStrength}\` },
-        { ok: momentum, reason: \`momentum ausente/divergente ou score<40 (score=\${Number(analytics.momentumScore || 0)})\` }
+        { ok: power >= 50, reason: `power ${power}<50` },
+        { ok: strongCandle, reason: `currentStrength ${currentStrength}<${thresholds.candleStrength}` },
+        { ok: momentum, reason: `momentum ausente/divergente ou score<40 (score=${Number(analytics.momentumScore || 0)})` }
       ]),
       strongConfluence: evaluate(regime !== 'range', [
-        { ok: power >= 48, reason: \`power \${power}<48\` },
-        { ok: score >= 68, reason: \`score \${score}<68\` },
-        { ok: momentum, reason: \`momentum ausente/divergente ou score<40 (score=\${Number(analytics.momentumScore || 0)})\` },
-        { ok: strongCandle || continuation, reason: \`sem vela forte nem continuação (strength=\${currentStrength}, continuation=\${Number(analytics.continuationScore || 0)})\` }
+        { ok: power >= 48, reason: `power ${power}<48` },
+        { ok: score >= 68, reason: `score ${score}<68` },
+        { ok: momentum, reason: `momentum ausente/divergente ou score<40 (score=${Number(analytics.momentumScore || 0)})` },
+        { ok: strongCandle || continuation, reason: `sem vela forte nem continuação (strength=${currentStrength}, continuation=${Number(analytics.continuationScore || 0)})` }
       ]),
       rangeRejection: evaluate(regime === 'range', [
-        { ok: power >= 52, reason: \`power \${power}<52\` },
-        { ok: rejection, reason: \`rejeição insuficiente/direção divergente (strength=\${rejectionStrength}, mínimo=\${thresholds.rejectionStrength})\` }
+        { ok: power >= 52, reason: `power ${power}<52` },
+        { ok: rejection, reason: `rejeição insuficiente/direção divergente (strength=${rejectionStrength}, mínimo=${thresholds.rejectionStrength})` }
       ]),
       rangeContinuation: evaluate(regime === 'range', [
-        { ok: power >= 55, reason: \`power \${power}<55\` },
-        { ok: score >= 64, reason: \`score \${score}<64\` },
-        { ok: continuation, reason: \`continuação ausente/divergente ou score<55 (score=\${Number(analytics.continuationScore || 0)})\` },
-        { ok: momentum, reason: \`momentum ausente/divergente ou score<40 (score=\${Number(analytics.momentumScore || 0)})\` }
+        { ok: power >= 55, reason: `power ${power}<55` },
+        { ok: score >= 64, reason: `score ${score}<64` },
+        { ok: continuation, reason: `continuação ausente/divergente ou score<55 (score=${Number(analytics.continuationScore || 0)})` },
+        { ok: momentum, reason: `momentum ausente/divergente ou score<40 (score=${Number(analytics.momentumScore || 0)})` }
       ])
     }
   };
