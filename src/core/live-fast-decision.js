@@ -36,10 +36,14 @@ function quality(signal = {}, direction = null, thresholds = getThresholds(), co
     const momentumScore = Number(a.momentumScore || 0);
     const rejectionStrength = Number(a.rejectionStrength || 0);
     const currentStrength = Number(a.currentStrength || 0);
+    const directionalRejection = a.rejectionDirection === direction
+      || Number(direction === 'BUY' ? a.rejectionBuy : a.rejectionSell) >= thresholds.rejectionStrength;
+    const continuation = a.continuationDirection === direction && continuationScore >= 55;
+    const momentum = a.momentumDirection === direction && momentumScore >= 40;
     const reasons = [];
-    if (rejectionStrength >= thresholds.rejectionStrength) reasons.push('rejeição');
-    if (continuationScore >= 55) reasons.push('continuação');
-    if (momentumScore >= 40) reasons.push('momentum');
+    if (directionalRejection && rejectionStrength >= thresholds.rejectionStrength) reasons.push('rejeição');
+    if (continuation) reasons.push('continuação');
+    if (momentum) reasons.push('momentum');
     if (currentStrength >= thresholds.candleStrength) reasons.push('força');
     return {
       strong: power >= 50 && reasons.length > 0,
