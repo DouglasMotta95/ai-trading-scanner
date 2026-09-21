@@ -51,3 +51,9 @@ test('customer portal escapes plan labels and exposes recovery/legal surfaces', 
   assert.match(html, /href="\/terms"/);
   assert.match(html, /id="forgotPassword"/);
 });
+
+test('public health and extension download support HEAD checks', () => {
+  const server = read('backend/src/server.js');
+  assert.match(server, /pathname === '\/health'[\s\S]*?\['GET', 'HEAD'\]\.includes\(req\.method\)/);
+  assert.match(server, /pathname === '\/download\/extension'[\s\S]*?\['GET', 'HEAD'\]\.includes\(req\.method\)/);
+});
