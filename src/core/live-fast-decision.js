@@ -46,10 +46,12 @@ function quality(signal = {}, direction = null, thresholds = getThresholds(), co
     if (momentum) reasons.push('momentum');
     if (currentStrength >= thresholds.candleStrength) reasons.push('força');
     return {
-      strong: power >= 50 && reasons.length > 0,
+      // In SIMPLES the final score check happens outside this helper. Power is
+      // the only mandatory quality gate here; reasons are explanatory only.
+      strong: power >= 50,
       power,
       reasons,
-      setup: reasons.length ? 'confirmação simples' : null
+      setup: reasons.length ? 'confirmação simples' : 'direção + score + poder'
     };
   }
 
