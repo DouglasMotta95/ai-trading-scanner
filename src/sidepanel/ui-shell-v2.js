@@ -5,6 +5,10 @@ const EXACT_CLOCK_SOURCES = new Set(['trader-dom-countdown','network-server-cycl
 const CLOCK_FRESH_MS = 3200;
 const CONTROLS_FRESH_MS = 7000;
 const PANEL_OPENED_AT = Date.now();
+const PERFORMANCE_KEY = 'atsSignalPerformanceLedgerV1';
+const PUBLIC_CONFIG_URL = 'https://ats-control-center-v07-production.up.railway.app/v1/public/config';
+let performanceRows = [];
+let latestPublishedVersion = '';
 
 const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
 const marketId = value => {
@@ -164,8 +168,108 @@ function setBadge(id, label, tone) {
   el.className = `badge ${tone}`;
 }
 
+function ensureOperationalPulseUi() {
+  let root = $('operationalPulse');
+  if (root) return root;
+  const decision = $('decisionCard');
+  if (!decision) return null;
+  if (!$('atsOperationalPulseStyle')) {
+    const style = document.createElement('style');
+    style.id = 'atsOperationalPulseStyle';
+    style.textContent = `
+      .operational-pulse{margin-top:10px;padding:14px;border:1px solid #17324a;border-radius:16px;background:linear-gradient(180deg,#081625,#07111d)}
+      .operational-pulse-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
+      .operational-pulse-head b{font-size:12px;letter-spacing:.08em}.operational-pulse-head span{font-size:10px;color:#7f9bb0}
+      .operational-pulse-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+      .operational-pulse-grid div{padding:10px;border-radius:12px;background:#0b1c2b;border:1px solid #17344a;text-align:center}
+      .operational-pulse-grid small{display:block;color:#6f8ea5;font-size:9px;letter-spacing:.06em}.operational-pulse-grid b{display:block;margin-top:3px;font-size:18px}
+      .operational-blocker{margin:10px 0 0;padding:10px 11px;border-radius:12px;background:#091723;color:#9bb4c6;font-size:11px;line-height:1.45}
+      .operational-blocker strong{color:#dcebf6}.version-notice{margin:8px 0 0;padding:9px 11px;border:1px solid #6b5220;border-radius:12px;background:#1a160b;color:#f5d98b;display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:10px}
+      .version-notice button{border:1px solid #80682b;background:#2a220e;color:#ffe6a0;border-radius:9px;padding:7px 9px;font-weight:700}
+    `;
+    document.head.append(style);
+  }
+  root = document.createElement('section');
+  root.id = 'operationalPulse';
+  root.className = 'operational-pulse';
+  root.innerHTML = `
+    <div class="operational-pulse-head"><b>FREQUÊNCIA OPERACIONAL</b><span id="funnelMode">SIMPLES</span></div>
+    <div class="operational-pulse-grid">
+      <div><small>CANDIDATOS RECENTES</small><b id="funnelCandidates">0</b></div>
+      <div><small>POSSÍVEIS HOJE</small><b id="funnelPossible">0</b></div>
+      <div><small>ENTRADAS HOJE</small><b id="funnelEntries">0</b></div>
+    </div>
+    <p id="currentBlocker" class="operational-blocker"><strong>STATUS:</strong> aguardando dados do scanner.</p>
+  `;
+  decision.insertAdjacentElement('afterend', root);
+  return root;
+}
+
+function todayKey(value) {
+  const d = new Date(Number(value || 0)), now = new Date();
+  return Number.isFinite(d.getTime()) && d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+}
+
+function renderOperationalPulse(state = {}) {
+  if (!ensureOperationalPulseUi()) return;
+  const traces = Array.isArray(state.candidateBlockerTrace) ? state.candidateBlockerTrace.slice(-20) : [];
+  const uniqueCandidates = new Set(traces.map(row => clean(row?.key || [row?.targetStart,row?.candidateDirection].join('|'))).filter(Boolean)).size;
+  const todayRows = performanceRows.filter(row => todayKey(row?.emittedAt));
+  const entries = todayRows.filter(row => clean(row?.type).toUpperCase() === 'ENTER').length;
+  if ($('funnelCandidates')) $('funnelCandidates').textContent = String(uniqueCandidates);
+  if ($('funnelPossible')) $('funnelPossible').textContent = String(todayRows.length);
+  if ($('funnelEntries')) $('funnelEntries').textContent = String(entries);
+  if ($('funnelMode')) $('funnelMode').textContent = normalizeConfirmationMode(state?.analystPreferences?.confirmationMode);
+  const professional = state.professionalDecision || {}, technical = state.signal || {}, lastTrace = traces.at(-1) || {};
+  let status = clean(professional.reason || lastTrace.finalBlockMessage || technical.reason || 'Aguardando leitura técnica.');
+  if (professional.actionable === true || ['ENTER_BUY','ENTER_SELL'].includes(clean(professional.uiState).toUpperCase())) {
+    status = `ENTRADA LIBERADA • ${clean(professional.direction || technical.direction || '—')} • score ${Math.round(Number(professional.score ?? technical.score ?? 0))}`;
+  } else if (['POSSIBLE_BUY','POSSIBLE_SELL'].includes(clean(professional.uiState).toUpperCase())) {
+    status = `CANDIDATO MANTIDO • ${clean(professional.direction || technical.direction || '—')} • ${status}`;
+  }
+  if ($('currentBlocker')) $('currentBlocker').textContent = `STATUS: ${status}`;
+}
+
+async function loadPerformanceRows() {
+  const stored = await chrome.storage.local.get(PERFORMANCE_KEY).catch(() => ({}));
+  performanceRows = Array.isArray(stored?.[PERFORMANCE_KEY]?.rows) ? stored[PERFORMANCE_KEY].rows : [];
+  renderOperationalPulse(lastState || {});
+}
+
+function semverParts(value) { return String(value || '').replace(/^v/i,'').split('.').map(x => Number(x) || 0).slice(0,3); }
+function isNewerVersion(remote, local) {
+  const a = semverParts(remote), b = semverParts(local);
+  for (let i=0;i<3;i++) if ((a[i]||0) !== (b[i]||0)) return (a[i]||0) > (b[i]||0);
+  return false;
+}
+function renderVersionNotice() {
+  const current = chrome.runtime.getManifest().version;
+  let notice = $('atsVersionNotice');
+  if (!latestPublishedVersion || !isNewerVersion(latestPublishedVersion, current)) { notice?.remove(); return; }
+  if (!notice) {
+    notice = document.createElement('div');
+    notice.id = 'atsVersionNotice';
+    notice.className = 'version-notice';
+    notice.innerHTML = '<span></span><button type="button">ABRIR PORTAL</button>';
+    document.querySelector('.topbar')?.insertAdjacentElement('afterend', notice);
+    notice.querySelector('button')?.addEventListener('click', () => chrome.tabs.create({url:'https://ats-control-center-v07-production.up.railway.app/'}));
+  }
+  notice.querySelector('span').textContent = `Atualização disponível: v${latestPublishedVersion} • instalada v${current}`;
+}
+async function checkLatestVersion() {
+  try {
+    const response = await fetch(PUBLIC_CONFIG_URL, {cache:'no-store'});
+    if (!response.ok) return;
+    const data = await response.json();
+    latestPublishedVersion = clean(data.extensionLatestVersion || data.version || '');
+    renderVersionNotice();
+  } catch {}
+}
+
 function renderShell(state = {}) {
   syncConfirmationMode(state);
+  renderOperationalPulse(state);
+  renderVersionNotice();
   const session = state.diagnostics?.marketSession || {};
   const pendingAsset = clean(session.pendingAsset || session.asset || '');
   const switching = session.transitioning === true && !!pendingAsset;
@@ -722,6 +826,10 @@ chrome.storage.onChanged.addListener(changes => {
     syncToggleClasses(nextPrefs);
     syncConfirmationMode(lastState, nextPrefs);
   }
+  if (changes[PERFORMANCE_KEY]) {
+    performanceRows = Array.isArray(changes[PERFORMANCE_KEY].newValue?.rows) ? changes[PERFORMANCE_KEY].newValue.rows : [];
+    renderOperationalPulse(lastState);
+  }
 });
 
 // Freshness is time-based; re-render even when Chrome storage is quiet so the
@@ -735,6 +843,8 @@ import(chrome.runtime.getURL('src/sidepanel/trial-ui.js')).catch(() => {});
 
 (async () => {
   await loadPrefs();
+  await loadPerformanceRows();
+  checkLatestVersion().catch(() => {});
   const response = await chrome.runtime.sendMessage({ type: 'ATS_READ_SCANNER_STATE' }).catch(() => null);
   lastState = response?.state || {};
   renderShell(lastState);
