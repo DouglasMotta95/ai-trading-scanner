@@ -242,7 +242,11 @@ function baseDecision(state = {}) {
   const additionalConfluenceReady = factors.count >= HIGH_CONFIDENCE.minimumConfluence;
   const possibleScore = Math.max(pref.thresholds.possibleScore, HIGH_CONFIDENCE.possibleScore);
   const finalScore = Math.max(pref.thresholds.finalScore, HIGH_CONFIDENCE.finalScore);
-  const entryWindowSeconds = pref.thresholds.entryWindowSeconds;
+  const entryWindowSeconds = pref.operationMode === 'M1'
+    ? 5
+    : pref.operationMode === 'M5'
+      ? 8
+      : pref.thresholds.entryWindowSeconds;
   const preSignalWindowSeconds = 30;
   const directionalPower = Number(direction === 'BUY' ? signal.analytics?.buyPower : signal.analytics?.sellPower) || 0;
   const mandatoryPowerReady = directionalPower >= HIGH_CONFIDENCE.possiblePower;
