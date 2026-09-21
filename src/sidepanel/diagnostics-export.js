@@ -302,6 +302,22 @@
       .join('\n') || '[sem dados]';
   }
 
+  function shadowFilterLines(label, rows = [], field = '') {
+    const statuses = ['PASSA', 'FALHA', 'NEUTRO'];
+    const parts = [label];
+    const summaries = {};
+    for (const status of statuses) {
+      const group = rows.filter(row => row?.[field] === status);
+      summaries[status] = resultSummary(group);
+      parts.push(summaryLine(status, group, null));
+    }
+    const passRate = summaries.PASSA.winRate;
+    const failRate = summaries.FALHA.winRate;
+    const difference = passRate == null || failRate == null ? null : passRate - failRate;
+    parts.push(`diferença PASSA-FALHA: ${difference == null ? '—' : (difference >= 0 ? '+' : '') + pct(difference)}`);
+    return parts.join('\n');
+  }
+
   function scoreBand(row = {}) {
     const score = num(row.score);
     if (score == null) return 'sem score';
@@ -341,7 +357,18 @@
       secondsRemaining: num(row?.secondsRemaining),
       direction: ['BUY','SELL'].includes(String(row?.direction || '').toUpperCase()) ? String(row.direction).toUpperCase() : '—',
       asset: clean(row?.asset || '—', 64),
-      emittedAt: num(row?.emittedAt)
+      emittedAt: num(row?.emittedAt),
+      targetStart: num(row?.targetStart),
+      entryPrice: num(row?.entryPrice),
+      f_m5: ['PASSA','FALHA','NEUTRO'].includes(String(row?.f_m5 || '').toUpperCase()) ? String(row.f_m5).toUpperCase() : 'NEUTRO',
+      f_extremo: ['PASSA','FALHA','NEUTRO'].includes(String(row?.f_extremo || '').toUpperCase()) ? String(row.f_extremo).toUpperCase() : 'NEUTRO',
+      er_m1: num(row?.er_m1),
+      er_m5: num(row?.er_m5),
+      sugestao_timeframe: ['M1','M5'].includes(String(row?.sugestao_timeframe || '').toUpperCase())
+        ? String(row.sugestao_timeframe).toUpperCase()
+        : 'SEM_DIFERENCA_CLARA',
+      resultPendingAfter3: row?.resultPendingAfter3 === true,
+      resultPendingReason: clean(row?.resultPendingReason || '', 160)
     }));
 
     const normalizePayout = value => Math.max(1, Math.min(200, Number(value ?? 88) || 88)) / 100;
@@ -367,6 +394,10 @@
 
     const enter = safeRows.filter(row => row.type === 'ENTER');
     const possible = safeRows.filter(row => row.type === 'POSSIBLE');
+    const unresolvedAfter3 = safeRows.filter(row => row.resultPendingAfter3 === true && !row.result);
+    const unresolvedLines = unresolvedAfter3.length
+      ? unresolvedAfter3.map((row, index) => `${index + 1}. ${row.asset} | ${row.mode} | ${row.direction} | alvo=${row.targetStart ? new Date(row.targetStart).toISOString() : '—'} | motivo=${row.resultPendingReason || 'não informado'}`).join('\n')
+      : '[nenhum]';
 
     return [
       'AI Trading Scanner — RELATÓRIO DE DESEMPENHO DOS SINAIS',
@@ -384,6 +415,20 @@
       '',
       'POR MODO',
       groupLines(safeRows, row => row.mode, list => breakEvenForRows(list)),
+      '',
+      'POR SUGESTÃO M1/M5 (NÃO VALIDADA)',
+      groupLines(safeRows, row => row.sugestao_timeframe, list => breakEvenForRows(list)),
+      '',
+      'POR SUGESTÃO + MODO',
+      groupLines(safeRows, row => `${row.sugestao_timeframe} | modo ${row.mode}`, list => breakEvenForRows(list)),
+      '',
+      shadowFilterLines('FILTRO SOMBRA f_m5', safeRows, 'f_m5'),
+      '',
+      shadowFilterLines('FILTRO SOMBRA f_extremo', safeRows, 'f_extremo'),
+      '',
+      'SEM RESULTADO 3 VELAS APÓS A VELA ALVO',
+      `quantidade=${unresolvedAfter3.length}`,
+      unresolvedLines,
       '',
       'POR PERFIL',
       groupLines(safeRows, row => row.profile, list => breakEvenForRows(list)),
@@ -406,7 +451,7 @@
       'POR HORA DO DIA',
       groupLines(safeRows, hourBand, list => breakEvenForRows(list)),
       '',
-      'Observação: EMPATE e INDETERMINADO ficam fora do denominador da taxa de acerto.'
+      'Observação: EMPATE e INDETERMINADO ficam fora do denominador da taxa de acerto. f_m5, f_extremo e sugestão M1/M5 são SOMBRA/observação e nunca alteram a decisão do sinal.'
     ].join('\n');
   }
 

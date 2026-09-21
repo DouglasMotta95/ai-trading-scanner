@@ -30,6 +30,77 @@ function operationMode(state = {}) {
   return clean(state.analystPreferences?.operationMode || state.analysisTimeframe || state.timeframe || 'M1').toUpperCase() === 'M5' ? 'M5' : 'M1';
 }
 
+function candleTime(row = {}) {
+  let value = num(row?.time ?? row?.timestamp);
+  if (value != null && value > 0 && value < 1e12) value *= 1000;
+  return value != null && value > 0 ? value : null;
+}
+
+function median(values = []) {
+  const rows = values.filter(Number.isFinite).sort((a,b) => a-b);
+  if (!rows.length) return null;
+  const mid = Math.floor(rows.length / 2);
+  return rows.length % 2 ? rows[mid] : (rows[mid - 1] + rows[mid]) / 2;
+}
+
+function currentM1Closed(state = {}, now = Date.now()) {
+  const history = state.marketHistory && typeof state.marketHistory === 'object' ? state.marketHistory : {};
+  const key = Object.keys(history).find(value => marketId(value) === marketId(state.asset));
+  const source = key && Array.isArray(history[key]) ? history[key] : Array.isArray(state.candles) ? state.candles : [];
+  const rows = source
+    .map(row => ({ ...row, __time: candleTime(row), close: num(row?.close) }))
+    .filter(row => row.__time != null && row.close != null)
+    .sort((a,b) => a.__time - b.__time);
+  const unique = [...new Map(rows.map(row => [row.__time, row])).values()];
+  const diffs = [];
+  for (let i = 1; i < unique.length; i += 1) {
+    const diff = unique[i].__time - unique[i - 1].__time;
+    if (diff >= 30_000 && diff <= 120_000) diffs.push(diff);
+  }
+  const cadence = median(diffs);
+  if (cadence == null || cadence < 45_000 || cadence > 90_000) return [];
+  return unique.filter(row => row.__time + 60_000 <= now);
+}
+
+function aggregateM5Closed(m1Rows = [], now = Date.now()) {
+  const groups = new Map();
+  for (const row of m1Rows) {
+    const bucket = Math.floor(row.__time / 300_000) * 300_000;
+    if (bucket + 300_000 > now) continue;
+    const group = groups.get(bucket) || new Map();
+    group.set(Math.floor(row.__time / 60_000) * 60_000, row);
+    groups.set(bucket, group);
+  }
+  return [...groups.entries()]
+    .sort((a,b) => a[0] - b[0])
+    .filter(([, group]) => group.size >= 5)
+    .map(([time, group]) => {
+      const rows = [...group.values()].sort((a,b) => a.__time - b.__time).slice(0,5);
+      return { time, close: num(rows.at(-1)?.close) };
+    })
+    .filter(row => row.close != null);
+}
+
+function kaufmanEfficiency(values = []) {
+  const rows = values.map(num).filter(value => value != null).slice(-20);
+  if (rows.length < 20) return null;
+  const change = Math.abs(rows.at(-1) - rows[0]);
+  let volatility = 0;
+  for (let i = 1; i < rows.length; i += 1) volatility += Math.abs(rows[i] - rows[i - 1]);
+  return volatility > 0 ? change / volatility : 0;
+}
+
+function timeframeSuggestion(state = {}) {
+  const m1 = currentM1Closed(state);
+  const m5 = aggregateM5Closed(m1);
+  const erM1 = kaufmanEfficiency(m1.map(row => row.close));
+  const erM5 = kaufmanEfficiency(m5.map(row => row.close));
+  if (erM1 == null || erM5 == null || Math.abs(erM5 - erM1) < 0.10) {
+    return { value: 'SEM_DIFERENCA_CLARA', erM1, erM5 };
+  }
+  return { value: erM5 > erM1 ? 'M5' : 'M1', erM1, erM5 };
+}
+
 function ensureToggle() {
   let root = $('panelViewToggle');
   if (root) return root;
@@ -70,6 +141,22 @@ function ensureQuickMeta() {
   return root;
 }
 
+function ensureSignalNotes() {
+  let root = $('signalFixedNotes');
+  if (root) return root;
+  const quick = ensureQuickMeta();
+  if (!quick) return null;
+  root = document.createElement('div');
+  root.id = 'signalFixedNotes';
+  root.className = 'signal-fixed-notes';
+  root.innerHTML = `
+    <p id="signalExpirationReminder" hidden>Confira na CasaTrade: expiração —</p>
+    <p id="signalTimeframeSuggestion">Sugestão: sem diferença clara (não validada)</p>
+  `;
+  quick.insertAdjacentElement('afterend', root);
+  return root;
+}
+
 function ensureChartDisclosure() {
   let details = $('marketChartPanel');
   const card = document.querySelector('.live-card');
@@ -96,6 +183,7 @@ function moveOperationalPulse() {
 function syncDynamicUi() {
   ensureToggle();
   ensureQuickMeta();
+  ensureSignalNotes();
   ensureChartDisclosure();
   moveOperationalPulse();
   document.querySelector('#marketRadar')?.classList.add('layout-aware-radar');
@@ -132,6 +220,32 @@ function renderQuickMeta(state = {}) {
   if ($('quickScore')) $('quickScore').textContent = score == null ? '—' : `${Math.round(score)}/100`;
 }
 
+function renderSignalNotes(state = {}) {
+  ensureSignalNotes();
+  const professional = state.professionalDecision || {};
+  const signal = state.signal || {};
+  const ui = clean(professional.uiState || signal.uiState).toUpperCase();
+  const showExpiration = ['POSSIBLE_BUY','POSSIBLE_SELL','ENTER_BUY','ENTER_SELL'].includes(ui);
+  const modeTf = operationMode(state);
+  const requiredExpiration = state.analystPreferences?.operationExpiration
+    || state.diagnostics?.expirationGuard?.required
+    || (modeTf === 'M5' ? '300s' : '60s');
+
+  const expiration = $('signalExpirationReminder');
+  if (expiration) {
+    expiration.hidden = !showExpiration;
+    expiration.textContent = `Confira na CasaTrade: expiração ${labelExp(requiredExpiration)}`;
+  }
+
+  const suggestion = timeframeSuggestion(state);
+  const suggestionText = suggestion.value === 'M1' || suggestion.value === 'M5'
+    ? suggestion.value
+    : 'sem diferença clara';
+  if ($('signalTimeframeSuggestion')) {
+    $('signalTimeframeSuggestion').textContent = `Sugestão: ${suggestionText} (não validada)`;
+  }
+}
+
 function renderConnectionAnimation(state = {}) {
   const button = $('connectScanner');
   if (!button) return;
@@ -155,6 +269,7 @@ function render(state = {}) {
   lastState = state || {};
   syncDynamicUi();
   renderQuickMeta(lastState);
+  renderSignalNotes(lastState);
   renderConnectionAnimation(lastState);
 }
 
