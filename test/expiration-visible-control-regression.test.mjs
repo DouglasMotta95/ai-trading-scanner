@@ -20,6 +20,15 @@ test('expiration probe can pair a visible Expiração label with a nearby 1 min 
   assert.match(source, /selectedLike\(el\)/);
 });
 
+test('real CasaTrade expiration invalidates the temporary manual fallback immediately', () => {
+  const controls = read('src/background-platform-controls.js');
+  assert.match(controls, /const invalidatedDeclared = realFresh && declared \? declared : null/);
+  assert.match(controls, /const effectiveDeclared = invalidatedDeclared \? null : declared/);
+  assert.match(controls, /userDeclaredExpiration: resolved\.authority\.invalidatedDeclared \? null/);
+  assert.match(controls, /manualInvalidated: authority\.invalidatedDeclared \|\| null/);
+  assert.match(controls, /divergence: false/);
+});
+
 test('expiration probe also accepts a real duration immediately before the Expiração label', () => {
   const source = read('src/content/casatrade-expiration-probe.js');
   assert.match(source, /const reversed = spaced\.match/);
