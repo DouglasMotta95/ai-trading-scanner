@@ -198,8 +198,8 @@ function ensureOperationalPulseUi() {
     <div class="operational-pulse-head"><b>FREQUÊNCIA OPERACIONAL</b><span id="funnelMode">SIMPLES</span></div>
     <div class="operational-pulse-grid">
       <div><small>CANDIDATOS RECENTES</small><b id="funnelCandidates">0</b></div>
-      <div><small>POSSÍVEIS HOJE</small><b id="funnelPossible">0</b></div>
-      <div><small>ENTRADAS HOJE</small><b id="funnelEntries">0</b></div>
+      <div><small>ENTRADAS CONFIRMADAS</small><b id="funnelPossible">0</b></div>
+      <div><small>FINALIZADAS HOJE</small><b id="funnelEntries">0</b></div>
       <div><small>RESTAM NO PLANO</small><b id="funnelRemaining">—</b></div>
     </div>
     <p id="currentBlocker" class="operational-blocker"><strong>STATUS:</strong> aguardando dados do scanner.</p>
@@ -218,18 +218,21 @@ function renderOperationalPulse(state = {}) {
   if (!ensureOperationalPulseUi()) return;
   const traces = Array.isArray(state.candidateBlockerTrace) ? state.candidateBlockerTrace.slice(-20) : [];
   const uniqueCandidates = new Set(traces.map(row => clean(row?.key || [row?.targetStart,row?.candidateDirection].join('|'))).filter(Boolean)).size;
-  const todayRows = performanceRows.filter(row => todayKey(row?.emittedAt));
-  const entries = todayRows.filter(row => clean(row?.type).toUpperCase() === 'ENTER').length;
+  const confirmedRows = (Array.isArray(state.signalHistory) ? state.signalHistory : [])
+    .filter(row => todayKey(row?.createdAt));
+  const finalizedRows = confirmedRows.filter(row =>
+    !!clean(row?.result)
+    || clean(row?.status).toLowerCase() === 'resolved'
+    || Number(row?.resolvedAt || 0) > 0
+  );
   if ($('funnelCandidates')) $('funnelCandidates').textContent = String(uniqueCandidates);
-  if ($('funnelPossible')) $('funnelPossible').textContent = String(todayRows.length);
-  if ($('funnelEntries')) $('funnelEntries').textContent = String(entries);
+  if ($('funnelPossible')) $('funnelPossible').textContent = String(confirmedRows.length);
+  if ($('funnelEntries')) $('funnelEntries').textContent = String(finalizedRows.length);
   const license = state.license || {};
   const finiteRemaining = [license.remainingToday, license.remainingTotal]
     .filter(value => value != null && Number.isFinite(Number(value)))
     .map(Number);
-  const remaining = license.devMode === true || clean(license.plan).toUpperCase() === 'OWNER_DEV'
-    ? '∞'
-    : finiteRemaining.length ? String(Math.max(0, Math.min(...finiteRemaining))) : '∞';
+  const remaining = finiteRemaining.length ? String(Math.max(0, Math.min(...finiteRemaining))) : '∞';
   if ($('funnelRemaining')) $('funnelRemaining').textContent = remaining;
   if ($('funnelMode')) {
     const plan = clean(license.planLabel || license.plan || '').toUpperCase();
