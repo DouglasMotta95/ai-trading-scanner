@@ -222,7 +222,9 @@ const activeAccess = state => {
 
 const utcDay = () => new Date().toISOString().slice(0, 10);
 const USAGE_RETRY_MS = 15_000;
+const USAGE_IN_FLIGHT_TIMEOUT_MS = 30_000;
 const RETRYABLE_USAGE_ERRORS = new Set(['backend_unreachable', 'telemetry_unreachable', 'client_token_missing', 'request_timeout']);
+const AUTHORITATIVE_LICENSE_ERRORS = new Set(['license_not_found', 'license_inactive', 'license_expired', 'device_limit_reached', 'device_locked']);
 
 function signalAllowance(state = {}) {
   const license = state.license || {};
@@ -531,10 +533,12 @@ async function runCentralAnalysis(force = false) {
 
       const history = reconcileSignalHistory(current, next, snapshot);
       const usageNow = Date.now();
-      confirmedForUsage = history.rows.filter(row =>
-        ['pending', 'retry'].includes(clean(row?.usageStatus).toLowerCase())
-        && usageNow >= Number(row?.usageRetryAt || 0)
-      );
+      confirmedForUsage = history.rows.filter(row => {
+        const status = clean(row?.usageStatus).toLowerCase();
+        const retryReady = ['pending', 'retry'].includes(status) && usageNow >= Number(row?.usageRetryAt || 0);
+        const staleInFlight = status === 'in_flight' && usageNow - Number(row?.usageStartedAt || 0) >= USAGE_IN_FLIGHT_TIMEOUT_MS;
+        return retryReady || staleInFlight;
+      });
       confirmedForTelemetry = history.rows.filter(row =>
         clean(row?.usageStatus).toLowerCase() === 'consumed'
         && num(row?.entryPrice) != null
@@ -568,15 +572,38 @@ async function runCentralAnalysis(force = false) {
   }
 
   for (const row of confirmedForUsage) {
+    let claimed = false;
+    await updateScannerState(current => {
+      const now = Date.now();
+      const rows = (Array.isArray(current.signalHistory) ? current.signalHistory : []).map(item => {
+        if (item?.id !== row.id) return item;
+        const status = clean(item?.usageStatus).toLowerCase();
+        const retryReady = ['pending', 'retry'].includes(status) && now >= Number(item?.usageRetryAt || 0);
+        const staleInFlight = status === 'in_flight' && now - Number(item?.usageStartedAt || 0) >= USAGE_IN_FLIGHT_TIMEOUT_MS;
+        if (!retryReady && !staleInFlight) return item;
+        claimed = true;
+        return {
+          ...item,
+          usageStatus: 'in_flight',
+          usageStartedAt: now,
+          usageRetryAt: 0,
+          usageError: null,
+          usageAttempts: Number(item.usageAttempts || 0) + 1
+        };
+      });
+      return claimed ? { ...current, signalHistory: rows, performance: signalPerformance(rows) } : current;
+    }).catch(() => {});
+    if (!claimed) continue;
+
     const { settings = {} } = await storageLocalGet('settings').catch(() => ({}));
-    const usage = await consumeSignal(settings).catch(() => ({ ok: false, error: 'backend_unreachable' }));
+    const usage = await consumeSignal(settings, row.signalId || row.id).catch(() => ({ ok: false, error: 'backend_unreachable' }));
     let consumedRow = null;
     if (usage?.license || usage?.ok) {
       await updateScannerState(current => {
         const rows = (Array.isArray(current.signalHistory) ? current.signalHistory : []).map(item => {
           if (item?.id !== row.id) return item;
           const nextRow = usage?.ok
-            ? { ...item, usageStatus: 'consumed', usageAttempts: Number(item.usageAttempts || 0) + 1, usageRetryAt: 0, usageError: null, usageConsumedAt: Date.now() }
+            ? { ...item, usageStatus: 'consumed', usageStartedAt: 0, usageRetryAt: 0, usageError: null, usageConsumedAt: Date.now(), usageDuplicate: usage?.duplicate === true }
             : item;
           if (usage?.ok) consumedRow = nextRow;
           return nextRow;
@@ -623,7 +650,7 @@ async function runCentralAnalysis(force = false) {
           item?.id === row.id ? {
             ...item,
             usageStatus: 'retry',
-            usageAttempts: Number(item.usageAttempts || 0) + 1,
+            usageStartedAt: 0,
             usageRetryAt: retryAt,
             usageError: usage?.error || 'backend_unreachable'
           } : item
@@ -634,6 +661,23 @@ async function runCentralAnalysis(force = false) {
         }
       })).catch(() => {});
       setTimeout(() => scheduleAnalysis(true), USAGE_RETRY_MS + 250);
+    } else {
+      await updateScannerState(current => ({
+        ...current,
+        signalHistory: (Array.isArray(current.signalHistory) ? current.signalHistory : []).map(item =>
+          item?.id === row.id ? {
+            ...item,
+            usageStatus: 'failed',
+            usageStartedAt: 0,
+            usageRetryAt: 0,
+            usageError: usage?.error || 'usage_failed'
+          } : item
+        ),
+        diagnostics: {
+          ...(current.diagnostics || {}),
+          usageGate: { blocked: true, error: usage?.error || 'usage_failed', at: Date.now() }
+        }
+      })).catch(() => {});
     }
   }
 
@@ -659,6 +703,38 @@ async function runCentralAnalysis(force = false) {
   if (needsConfirmationFollowup) scheduleAnalysis(true);
 }
 
+async function blockRuntimeForLicense(error = 'license_required', serverLicense = null) {
+  resetOrchestrator();
+  await updateScannerState(current => ({
+    ...current,
+    scanner: 'idle',
+    connection: 'offline',
+    signal: null,
+    professionalDecision: null,
+    tradeIntent: null,
+    decisionCycle: null,
+    asset: null,
+    price: null,
+    candles: [],
+    currentCandle: null,
+    marketHistory: {},
+    expiration: null,
+    targetExpiration: null,
+    license: {
+      ...(current.license || {}),
+      ...(serverLicense || {}),
+      status: error === 'license_expired' ? 'expired' : error === 'device_locked' || error === 'device_limit_reached' ? 'device_locked' : 'unconfigured',
+      error,
+      syncPending: false
+    },
+    diagnostics: {
+      ...(current.diagnostics || {}),
+      access: { state: 'license_required', ownerDev: false, error, at: Date.now() },
+      acquisition: { stage: 'license_blocked', reason: `Acesso bloqueado: ${error}`, at: Date.now() }
+    }
+  })).catch(() => {});
+}
+
 const HEARTBEAT_INTERVAL_MS = 5000;
 let heartbeatBusy = false;
 let lastHeartbeatAt = 0;
@@ -672,9 +748,9 @@ async function pushLiveHeartbeat(state = {}) {
   try {
     const { settings = {} } = await storageLocalGet('settings').catch(() => ({}));
     let result = await telemetryHeartbeat(state, settings).catch(() => ({ ok: false, error: 'telemetry_unreachable' }));
-    if (!result?.ok && (result?.error === 'client_token_missing' || result?.status === 401)) {
-      const refreshed = await validateLicense(settings).catch(() => null);
-      if (refreshed?.ok && refreshed?.license && refreshed?.devMode !== true) {
+    if (!result?.ok && (result?.error === 'client_token_missing' || result?.error === 'client_token_invalid' || result?.status === 401)) {
+      const refreshed = await validateLicense(settings, { forceServer: true }).catch(() => null);
+      if (refreshed?.ok && refreshed?.license) {
         const refreshedState = await updateScannerState(current => ({
           ...current,
           license: {
@@ -686,6 +762,12 @@ async function pushLiveHeartbeat(state = {}) {
           }
         })).catch(() => state);
         result = await telemetryHeartbeat(refreshedState || state, settings).catch(() => result);
+      } else {
+        const error = clean(refreshed?.error).toLowerCase();
+        if (AUTHORITATIVE_LICENSE_ERRORS.has(error)) {
+          await blockRuntimeForLicense(error, refreshed?.license || null);
+          return;
+        }
       }
     }
   } finally {
