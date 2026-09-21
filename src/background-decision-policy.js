@@ -121,8 +121,9 @@ export function CasaTradeExpiration(state = {}, timeframe = null) {
   const expirationAt = Number(controls.expirationCheckedAt || controls.observed?.observedAt?.expiration || 0);
   const observedFresh = expirationAt > 0 && Date.now() - expirationAt < 7000;
   const observed = observedFresh ? normExp(controls.observed?.expiration) : null;
+  const observedSource = text(controls.expirationSource || controls.observed?.source || '');
   const actual = guardActual || observed || null;
-  const source = guardSource || (observed ? 'casatrade-observed' : '');
+  const source = guardSource || observedSource || (observed ? 'casatrade-observed' : '');
   const liveTf = normTf(timeframe || state.analysisTimeframe || state.timeframe);
 
   if (guardDivergence) {
