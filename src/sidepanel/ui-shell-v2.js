@@ -11,6 +11,11 @@ const PUBLIC_CONFIG_URL = 'https://ats-control-center-v07-production.up.railway.
 let performanceRows = [];
 let telemetryStatus = {};
 let latestPublishedVersion = '';
+// UI-only hold: prevents the expiration block from flickering when a probe arrives late.
+// It never feeds the trading engine and never fabricates countdown/expiration values.
+let lastUiExpiration = '';
+let lastUiExpirationAt = 0;
+const EXPIRATION_UI_HOLD_MS = 12000;
 
 const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
 const marketId = value => {
@@ -324,7 +329,14 @@ function renderShell(state = {}) {
   const declaredExpiration = clean(state.platformControls?.userDeclaredExpiration || expirationGuard.userDeclared || '');
   const expirationSource = clean(expirationGuard.source || state.platformControls?.expirationSource || '');
   const expirationDivergence = expirationGuard.divergence === true;
-  const expiration = clean(expirationGuard.actual || (expirationFresh ? state.platformControls?.observed?.expiration : '') || '');
+  const freshExpiration = clean(expirationGuard.actual || (expirationFresh ? state.platformControls?.observed?.expiration : '') || '');
+  if (freshExpiration) {
+    lastUiExpiration = freshExpiration;
+    lastUiExpirationAt = Date.now();
+  }
+  // Presentation may hold the last real value briefly across a delayed probe.
+  // Decision gates continue to use state/diagnostics only.
+  const expiration = freshExpiration || (Date.now() - lastUiExpirationAt <= EXPIRATION_UI_HOLD_MS ? lastUiExpiration : '');
   const expirationWrong = dataConnected && !!expiration && expiration !== operation.expiration;
   const sessionStartedAt = Number(session.startedAt || state.diagnostics?.target?.connectedAt || 0);
   const sessionAge = sessionStartedAt > 0 ? Date.now() - sessionStartedAt : 0;
@@ -875,9 +887,14 @@ chrome.storage.onChanged.addListener(changes => {
 // Freshness is time-based; re-render even when Chrome storage is quiet so the
 // badge cannot remain CONECTADO with a stale clock.
 setInterval(() => {
-  renderShell(lastState);
+  // Keep the fast pulse lightweight. Full shell rendering is driven by real
+  // state changes; this avoids repaint/layout churn in the expiration block.
+  renderOperationalPulse(lastState);
   probePlatformControls().catch(() => {});
 }, 500);
+
+// Freshness labels do not need a 2 Hz full-layout repaint.
+setInterval(() => renderShell(lastState), 2000);
 
 import(chrome.runtime.getURL('src/sidepanel/trial-ui.js')).catch(() => {});
 
