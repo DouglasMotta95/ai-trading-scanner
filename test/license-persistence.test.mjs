@@ -53,22 +53,22 @@ function jsonResponse(body, status = 200) {
 test('manual activation persists key and last valid license even if backend omits client token', async () => {
   const storage = storageMock({ atsInstallationId: 'install-1' });
   const license = { key: 'ATS-ABC-123', status: 'active', plan: 'starter', planLabel: 'Starter', expiresAt: future() };
+  const mod = await loadLicenseModule(storage, async () => jsonResponse({ ok: true, license }));
+  const result = await mod.activateLicense({}, license.key);
+  assert.equal(result.ok, true);
+  assert.equal(storage.data.get('atsLicenseKey'), license.key);
+  assert.equal(storage.data.get('atsLastValidLicense')?.license?.status, 'active');
+});
+
+test('numeric epoch expiration remains cacheable inside reopen grace without backend request', async () => {
+  const storage = storageMock({ atsInstallationId: 'install-epoch' });
+  const license = { key: 'ATS-EPOCH-001', status: 'active', plan: 'pro', expiresAt: Date.now() + 86400000 };
   const mod = await loadLicenseModule(storage, async () => jsonResponse({
     ok: true,
     license,
     clientToken: 'client-token-epoch',
     clientTokenExpiresAt: Date.now() + 60 * 60 * 1000
   }));
-  const result = await mod.activateLicense({}, license.key);
-  assert.equal(result.ok, true);
-  assert.equal(storage.data.get('atsLicenseKey'), license.key);
-  assert.equal(storage.data.has('atsLastValidLicense'), false);
-});
-
-test('numeric epoch expiration remains cacheable inside reopen grace without backend request', async () => {
-  const storage = storageMock({ atsInstallationId: 'install-epoch' });
-  const license = { key: 'ATS-EPOCH-001', status: 'active', plan: 'pro', expiresAt: Date.now() + 86400000 };
-  const mod = await loadLicenseModule(storage, async () => jsonResponse({ ok: true, license }));
   const activated = await mod.activateLicense({}, license.key);
   assert.equal(activated.ok, true);
   assert.equal(storage.data.get('atsLastValidLicense')?.license?.status, 'active');
@@ -150,7 +150,7 @@ test('manual activation device_locked response clears previous cached access', a
   const result = await mod.activateLicense({}, license.key);
   assert.equal(result.ok, false);
   assert.equal(result.error, 'device_locked');
-  assert.equal(storage.data.get('atsLastValidLicense')?.license?.status, 'active');
+  assert.equal(storage.data.has('atsLastValidLicense'), false);
 });
 
 test('stale valid cache survives backend timeout and returns temporary warning', async () => {
