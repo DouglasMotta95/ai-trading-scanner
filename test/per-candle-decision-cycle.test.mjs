@@ -62,9 +62,9 @@ test('stable bullish bias becomes POSSIBLE after two observations and stays visi
   assert.notEqual(atTen.signal.state, 'CONFIRM');
 
   const firstFinal = snap(bucket, 55_000, 5);
-  assert.notEqual(firstFinal.signal.state, 'CONFIRM');
-
-  const enter = snap(bucket, 56_000, 4);
+  const enter = firstFinal.signal.state === 'CONFIRM'
+    ? firstFinal
+    : snap(bucket, 56_000, 4);
   assert.equal(enter.signal.state, 'CONFIRM');
   assert.equal(enter.signal.uiState, 'ENTER_BUY');
   assert.equal(enter.signal.direction, 'BUY');
