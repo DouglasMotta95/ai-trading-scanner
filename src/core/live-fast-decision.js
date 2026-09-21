@@ -238,7 +238,9 @@ export function fastLiveDecision(signal = {}, context = {}) {
   // hit inside the confirmation gap upgrades it to ENTRAR.
   if (strong && hits > 0) return possible(signal, direction, score, seconds, q);
 
-  // Inside the final window, anything below the hard high-confidence gate is WAIT.
+  // Fast path is an accelerator, never a veto against a stronger central signal.
+  // It only promotes its own candidate when the hard high-confidence gate is met.
+  // Inside the final window, anything below that gate is WAIT.
   return waitFinal(signal, score, 'confiança final abaixo do nível exigido');
 }
 
