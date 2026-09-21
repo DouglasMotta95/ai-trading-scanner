@@ -52,10 +52,25 @@ function decisionWindows(snapshot = {}, signal = {}, thresholds = getThresholds(
 function cycleKey(snapshot = {}, signal = {}) {
   const asset = clean(snapshot.asset || 'unknown');
   const timeframe = clean(snapshot.analysisTimeframe || snapshot.timeframe || signal.timeframe || 'M1').toUpperCase();
+  const tfMs = timeframeMs(timeframe);
+
+  // Prefer the observed current-candle timestamp: it is stable for the whole
+  // candle and cannot jitter with an integer countdown.
+  let currentAt = num(signal.currentCandle?.time ?? signal.currentCandle?.timestamp
+    ?? snapshot.currentCandle?.time ?? snapshot.currentCandle?.timestamp);
+  if (currentAt != null && currentAt > 0 && currentAt < 1e12) currentAt *= 1000;
+  if (currentAt != null) {
+    const bucket = Math.floor(currentAt / tfMs) * tfMs;
+    return `${asset}|${timeframe}|${bucket + tfMs}`;
+  }
+
   const sampleAt = num(snapshot.serverTime) ?? Date.now();
   const seconds = num(signal.secondsRemaining) ?? num(snapshot.secondsRemaining) ?? 0;
   const rawTarget = num(signal.targetStart) ?? (sampleAt + Math.max(0, seconds) * 1000);
-  const targetKey = Math.round(rawTarget / 5000) * 5000;
+
+  // Fallback identifies the target candle, never a 5-second slice. Otherwise
+  // targetStart jitter can create a new cycle and erase POSSÍVEL/confirmHits.
+  const targetKey = Math.round(rawTarget / tfMs) * tfMs;
   return `${asset}|${timeframe}|${targetKey}`;
 }
 
