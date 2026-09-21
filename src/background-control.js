@@ -841,7 +841,7 @@ async function connectActiveTab({ automatic = false } = {}) {
       && currentFocus.chartScoped === true
       && currentFocus.trustedChartFrame === true
       && sameAsset(currentFocus.asset, currentConfirmedAsset);
-    const preserveDeclaredExpiration = automatic === true && sameTabBeforeReconnect && sameConfirmedAsset;
+    const preserveDeclaredExpiration = sameTabBeforeReconnect && sameConfirmedAsset;
     const restartBase = preserveDeclaredExpiration ? current : clearUserDeclaredExpirationState(current);
 
     const sameTab = Number(restartBase.targetTabId) === Number(tab.id);
@@ -1014,14 +1014,11 @@ async function setScanner(enabled = false) {
     }));
     return { ok: false, error: 'license_required', state: next };
   }
-  const next = await updateScannerState(current => {
-    const restartBase = enabled ? clearUserDeclaredExpirationState(current) : current;
-    return {
-      ...restartBase,
-      scanner: enabled ? 'scanning' : 'idle',
-      ...(enabled ? {} : { signal: null, professionalDecision: null, tradeIntent: null })
-    };
-  });
+  const next = await updateScannerState(current => ({
+    ...current,
+    scanner: enabled ? 'scanning' : 'idle',
+    ...(enabled ? {} : { signal: null, professionalDecision: null, tradeIntent: null })
+  }));
   return { ok: true, state: next };
 }
 
