@@ -36,19 +36,6 @@
       <div><b id="syncTitle">DESCONECTADO</b><span id="syncText">Abra a CasaTrade e toque em CONECTAR.</span></div>
       <span class="loading-dots" aria-hidden="true"><i></i><i></i><i></i></span>
       <button id="retryLiveRead" class="sync-retry" type="button" hidden>TENTAR NOVAMENTE</button>
-      <div id="userExpirationChoice" hidden>
-        <label for="userDeclaredExpiration">Expiração que estou usando na CasaTrade:</label>
-        <select id="userDeclaredExpiration" aria-label="Expiração que estou usando na CasaTrade">
-          <option value="" selected disabled>Selecione</option>
-          <option value="5s">5 seg</option>
-          <option value="15s">15 seg</option>
-          <option value="30s">30 seg</option>
-          <option value="60s">1 min</option>
-          <option value="300s">5 min</option>
-        </select>
-        <small id="userDeclaredExpirationStatus"></small>
-      </div>
-      <button id="copyExpirationDiagnostic" class="sync-retry" type="button" hidden>Copiar diagnóstico de expiração</button>
     </section>
 
     <section class="market-hero professional-hero compact-market">
@@ -146,6 +133,18 @@
             <span><b id="signalHoldDisplay">2 s</b><small>confirmação</small></span>
           </div>
           <label class="setting-row" for="operationMode"><span><b>Modo de operação</b><small>Define o timeframe e a expiração exigidos.</small></span><select id="operationMode" aria-label="Modo de operação"><option value="M1" selected>M1 + 1 min</option><option value="M5">M5 + 5 min</option></select></label>
+          <div id="userExpirationChoice" class="setting-row" hidden>
+            <span><b>Expiração usada na CasaTrade</b><small id="userDeclaredExpirationStatus">Use somente quando a leitura automática permanecer indisponível.</small></span>
+            <select id="userDeclaredExpiration" aria-label="Expiração que estou usando na CasaTrade">
+              <option value="" selected disabled>Selecione</option>
+              <option value="5s">5 seg</option>
+              <option value="15s">15 seg</option>
+              <option value="30s">30 seg</option>
+              <option value="60s">1 min</option>
+              <option value="300s">5 min</option>
+            </select>
+          </div>
+          <button id="copyExpirationDiagnostic" class="secondary" type="button" hidden>DIAGNÓSTICO DE EXPIRAÇÃO</button>
           <label class="toggle-row" for="notificationToggle"><span><b>Notificações</b><small>Pré-sinal e decisão final.</small></span><input id="notificationToggle" type="checkbox" role="switch" aria-label="Notificações do sistema"></label>
           <label class="setting-row" for="alertLevel"><span><b>Som</b><small>Alerta somente nos momentos importantes.</small></span><select id="alertLevel" aria-label="Nível de som"><option value="off">Off</option><option value="discrete">Discreto</option><option value="strong">Forte</option></select></label>
           <label class="toggle-row" for="geminiToggle"><span><b>Gemini</b><small>Segunda leitura após confirmação técnica.</small></span><input id="geminiToggle" type="checkbox" role="switch" aria-label="Gemini"></label>
