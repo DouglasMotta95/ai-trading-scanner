@@ -96,18 +96,18 @@ function decisionQuality(signal = {}, direction = null, thresholds = getThreshol
     const setups = [
       {
         name: 'rejeição',
-        ok: rejectionStrength >= thresholds.rejectionStrength,
-        reason: `rejectionStrength ${Math.round(rejectionStrength)} ${rejectionStrength >= thresholds.rejectionStrength ? '>=' : '<'} ${thresholds.rejectionStrength}`
+        ok: rejection,
+        reason: `rejeição direcional=${rejection} | strength ${Math.round(rejectionStrength)} ${rejectionStrength >= thresholds.rejectionStrength ? '>=' : '<'} ${thresholds.rejectionStrength}`
       },
       {
         name: 'continuação',
-        ok: continuationScore >= 55,
-        reason: `continuationScore ${Math.round(continuationScore)} ${continuationScore >= 55 ? '>=' : '<'} 55`
+        ok: continuation,
+        reason: `continuação direcional=${analytics.continuationDirection === direction} | score ${Math.round(continuationScore)} ${continuationScore >= 55 ? '>=' : '<'} 55`
       },
       {
         name: 'momentum',
-        ok: momentumScore >= 40,
-        reason: `momentumScore ${Math.round(momentumScore)} ${momentumScore >= 40 ? '>=' : '<'} 40`
+        ok: momentum,
+        reason: `momentum direcional=${analytics.momentumDirection === direction} | score ${Math.round(momentumScore)} ${momentumScore >= 40 ? '>=' : '<'} 40`
       },
       {
         name: 'força da vela',
