@@ -32,15 +32,15 @@ test('unpacked customer build still requires a real license', async () => {
   assert.equal(result.error, 'license_required');
 });
 
-test('owner dev bypass is explicit instead of inferred from unpacked install type', async () => {
+test('local owner dev bypass is permanently disabled even in unpacked builds', async () => {
   manifest = { version: '0.11.47' };
   store.clear();
-  assert.equal(license.licenseRequired({ ownerDevMode: true }), false);
+  assert.equal(license.ownerDevMode({ ownerDevMode: true }), false);
+  assert.equal(license.licenseRequired({ ownerDevMode: true }), true);
+  assert.equal(license.devOwnerLicense(), null);
   const result = await license.validateLicense({ ownerDevMode: true });
-  assert.equal(result.ok, true);
-  assert.equal(result.devMode, true);
-  assert.equal(result.license?.status, 'active');
-  assert.equal(result.license?.plan, 'OWNER_DEV');
+  assert.equal(result.ok, false);
+  assert.equal(result.error, 'license_required');
 });
 
 test('customer/release build requires a real license by default', async () => {
@@ -53,11 +53,12 @@ test('customer/release build requires a real license by default', async () => {
   assert.equal(result.error, 'license_required');
 });
 
-test('testLicenseBlock overrides explicit owner dev mode', async () => {
+test('local settings cannot re-enable owner dev mode', async () => {
   manifest = { version: '0.11.47' };
   store.clear();
-  assert.equal(license.licenseRequired({ ownerDevMode: true, testLicenseBlock: true }), true);
-  const result = await license.validateLicense({ ownerDevMode: true, testLicenseBlock: true });
+  assert.equal(license.ownerDevMode({ ownerDevMode: true, testLicenseBlock: false }), false);
+  assert.equal(license.licenseRequired({ ownerDevMode: true, testLicenseBlock: false }), true);
+  const result = await license.validateLicense({ ownerDevMode: true, testLicenseBlock: false });
   assert.equal(result.ok, false);
   assert.equal(result.error, 'license_required');
 });
