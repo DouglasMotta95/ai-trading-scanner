@@ -125,13 +125,37 @@ async function publishDisabled(state = {}) {
   }));
 }
 
+async function publishWaiting(state = {}) {
+  const currentStatus = text(state.aiAudit?.status).toLowerCase();
+  if (currentStatus === 'waiting'
+    && state.aiAudit?.cycleKey === cycleKey(state)
+    && state.aiAudit?.scannerDirection === directionOf(state)) return;
+  await updateScannerState(current => ({
+    ...current,
+    aiAudit: {
+      status: 'waiting',
+      requestKey: '',
+      cycleKey: cycleKey(current),
+      stage: null,
+      scannerDirection: directionOf(current),
+      requestedAt: null,
+      receivedAt: Date.now(),
+      error: null
+    }
+  }));
+}
+
 async function evaluate(state = {}) {
   if (state.analystPreferences?.geminiEnabled === false) {
     await publishDisabled(state);
     return;
   }
   const stage = aiStage(state);
-  if (!stage || !liveReady(state)) return;
+  if (!stage) {
+    await publishWaiting(state);
+    return;
+  }
+  if (!liveReady(state)) return;
   if (shouldReusePreviousFinal(state, stage)) return;
 
   const key = requestKey(state);

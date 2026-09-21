@@ -38,7 +38,7 @@ test('backend requires strong production session secret and serializes payment p
   assert.match(server, /setPaymentEvent\(eventKey, 'completed'/);
   assert.match(server, /admin-login', 5, 60000/);
   assert.match(server, /duplicateOrder/);
-  assert.equal(JSON.parse(read('backend/package.json')).version, '0.10.2');
+  assert.equal(JSON.parse(read('backend/package.json')).version, '0.11.48');
 });
 
 test('customer portal escapes plan labels and exposes recovery/legal surfaces', () => {
@@ -50,4 +50,107 @@ test('customer portal escapes plan labels and exposes recovery/legal surfaces', 
   assert.match(html, /href="\/privacy"/);
   assert.match(html, /href="\/terms"/);
   assert.match(html, /id="forgotPassword"/);
+});
+
+test('public health and extension download support HEAD checks', () => {
+  const server = read('backend/src/server.js');
+  assert.match(server, /pathname === '\/health'[\s\S]*?\['GET', 'HEAD'\]\.includes\(req\.method\)/);
+  assert.match(server, /pathname === '\/download\/extension'[\s\S]*?\['GET', 'HEAD'\]\.includes\(req\.method\)/);
+});
+
+
+test('quota rollover and usage retry are server-backed instead of permanently cached', () => {
+  const server = read('backend/src/server.js');
+  const background = read('src/background.js');
+  assert.match(server, /usageDay/);
+  assert.match(background, /clean\(license\.usageDay\) === utcDay\(\)/);
+  assert.match(background, /USAGE_RETRY_MS/);
+  assert.match(background, /usageStatus: 'retry'/);
+  assert.match(background, /setTimeout\(\(\) => scheduleAnalysis\(true\), USAGE_RETRY_MS \+ 250\)/);
+});
+
+test('confirmed-signal telemetry waits for exact entry and uses backend recorder fields', () => {
+  const background = read('src/background.js');
+  const server = read('backend/src/server.js');
+  assert.match(background, /signalId: row\.signalId \|\| row\.id/);
+  assert.match(background, /entryPrice: row\.entryPrice/);
+  assert.match(background, /entryTime: row\.entryTime \?\? row\.targetStart/);
+  assert.match(background, /usageStatus: 'consumed'/);
+  assert.match(server, /const signalId = text\(d\.signalId/);
+  assert.match(server, /entryPrice = num\(d\.entryPrice\)/);
+  assert.match(server, /entryAt = num\(d\.entryTime\) \?\? evt\.at/);
+});
+
+test('customer package cannot enable OWNER_DEV through local settings', () => {
+  const license = read('src/services/license.js');
+  const owner = read('src/background-dev-owner.js');
+  assert.match(license, /export const ownerDevMode = \(\) => false/);
+  assert.doesNotMatch(license, /settings\?\.ownerDevMode === true/);
+  assert.match(owner, /removeLegacyOwnerBypass/);
+  assert.doesNotMatch(owner, /storageLocalGet\('settings'\)/);
+});
+
+
+test('signal usage is claimed in-flight and backend consumption is idempotent by signalId', () => {
+  const background = read('src/background.js');
+  const license = read('src/services/license.js');
+  const server = read('backend/src/server.js');
+  assert.match(background, /usageStatus: 'in_flight'/);
+  assert.match(background, /USAGE_IN_FLIGHT_TIMEOUT_MS/);
+  assert.match(background, /consumeSignal\(settings, row\.signalId \|\| row\.id\)/);
+  assert.match(license, /signalId: String\(signalId \|\| ''\)/);
+  assert.match(server, /license\.consumedSignals \?\?= \{\}/);
+  assert.match(server, /license\.consumedSignals\[p\.signalId\]/);
+  assert.match(server, /usageDuplicate: true/);
+});
+
+test('heartbeat forces server validation and blocks runtime on authoritative license failure', () => {
+  const background = read('src/background.js');
+  const license = read('src/services/license.js');
+  assert.match(license, /forceServer = options\?\.forceServer === true/);
+  assert.match(background, /validateLicense\(settings, \{ forceServer: true \}\)/);
+  assert.match(background, /AUTHORITATIVE_LICENSE_ERRORS/);
+  assert.match(background, /blockRuntimeForLicense/);
+  assert.match(background, /scanner: 'idle'/);
+  assert.match(background, /connection: 'offline'/);
+  assert.match(background, /professionalDecision: null/);
+});
+
+
+test('video regression: possible can only publish with a final-entry-capable CasaTrade clock', () => {
+  const background = read('src/background.js');
+  const fastBg = read('src/background-fast-decision.js');
+  const clock = read('src/content/market-cycle-clock-v4.js');
+  assert.match(background, /clock\.verified !== true/);
+  assert.match(background, /EXACT_CLOCK_SOURCES/);
+  assert.match(fastBg, /exactClockReady\(observed\)/);
+  assert.match(clock, /structured-candle-boundary/);
+  assert.match(clock, /clockSource: 'network-server-cycle'/);
+  assert.match(clock, /currentStateBoundary\(state, focus, cycleTf\)/);
+});
+
+test('video regression: declared expiration is a usable authority until CasaTrade disproves it', () => {
+  const policy = read('src/background-decision-policy.js');
+  const control = read('src/background-control.js');
+  assert.match(policy, /guardActual/);
+  assert.match(policy, /source === 'user-declared'/);
+  assert.match(policy, /informada por você e aceita para este modo/);
+  assert.match(control, /const preserveDeclaredExpiration = sameTabBeforeReconnect && sameConfirmedAsset/);
+  assert.doesNotMatch(control, /const restartBase = enabled \? clearUserDeclaredExpirationState\(current\)/);
+});
+
+test('video regression: Gemini cannot remain loading after the primary entry disappears', () => {
+  const ai = read('src/background-ai-analysis.js');
+  const ui = read('src/sidepanel/ai-analysis-ui.js');
+  assert.match(ai, /async function publishWaiting/);
+  assert.match(ai, /if \(!stage\) \{[\s\S]*?await publishWaiting\(state\)/);
+  assert.match(ui, /ai\.status === 'waiting'/);
+});
+
+test('operational panel does not count POSSIBLE events as entries', () => {
+  const ui = read('src/sidepanel/ui-shell-v2.js');
+  assert.doesNotMatch(ui, /POSSÍVEIS HOJE/);
+  assert.match(ui, /ENTRADAS CONFIRMADAS/);
+  assert.match(ui, /FINALIZADAS HOJE/);
+  assert.match(ui, /state\.signalHistory/);
 });

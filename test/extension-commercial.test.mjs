@@ -140,7 +140,7 @@ test('license persistence remains cache-first and only definitive license errors
   assert.match(license, /REOPEN_CACHE_GRACE_MS/);
   assert.match(license, /AUTHORITATIVE_LICENSE_ERRORS/);
   assert.match(authoritative, /device_limit_reached/);
-  assert.doesNotMatch(authoritative, /device_locked/);
-  assert.match(control, /response\?\.error === 'device_locked'/);
-  assert.match(control, /restoreCachedLicense\(\)/);
+  assert.match(authoritative, /device_locked/);
+  assert.match(control, /licenseFailureStatus/);
+  assert.match(control, /clearMarket/);
 });

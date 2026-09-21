@@ -36,16 +36,22 @@ function quality(signal = {}, direction = null, thresholds = getThresholds(), co
     const momentumScore = Number(a.momentumScore || 0);
     const rejectionStrength = Number(a.rejectionStrength || 0);
     const currentStrength = Number(a.currentStrength || 0);
+    const directionalRejection = a.rejectionDirection === direction
+      || Number(direction === 'BUY' ? a.rejectionBuy : a.rejectionSell) >= thresholds.rejectionStrength;
+    const continuation = a.continuationDirection === direction && continuationScore >= 55;
+    const momentum = a.momentumDirection === direction && momentumScore >= 40;
     const reasons = [];
-    if (rejectionStrength >= thresholds.rejectionStrength) reasons.push('rejeição');
-    if (continuationScore >= 55) reasons.push('continuação');
-    if (momentumScore >= 40) reasons.push('momentum');
+    if (directionalRejection && rejectionStrength >= thresholds.rejectionStrength) reasons.push('rejeição');
+    if (continuation) reasons.push('continuação');
+    if (momentum) reasons.push('momentum');
     if (currentStrength >= thresholds.candleStrength) reasons.push('força');
     return {
-      strong: power >= 50 && reasons.length > 0,
+      // In SIMPLES the final score check happens outside this helper. Power is
+      // the only mandatory quality gate here; reasons are explanatory only.
+      strong: power >= 50,
       power,
       reasons,
-      setup: reasons.length ? 'confirmação simples' : null
+      setup: reasons.length ? 'confirmação simples' : 'direção + score + poder'
     };
   }
 
@@ -213,9 +219,16 @@ export function fastLiveDecision(signal = {}, context = {}) {
   // hit inside the confirmation gap upgrades it to ENTRAR.
   if (strong && hits > 0) return possible(signal, direction, score, seconds, q);
 
-  return waitFinal(signal, score, direction
-    ? `decisão final sem confirmação suficiente para ${direction === 'BUY' ? 'COMPRA' : 'VENDA'}`
-    : 'sem direção confiável');
+  // Fast path is an accelerator, never a veto. While the candidate still has
+  // a stable direction and remains above possibleScore, keep POSSÍVEL visible
+  // and let the central orchestrator own the final rejection/confirmation.
+  if (direction) {
+    const pending = possible(signal, direction, score, seconds, q);
+    const side = direction === 'BUY' ? 'COMPRA' : 'VENDA';
+    const reason = `POSSÍVEL ${side} • ${seconds}s — aguardando confirmação técnica final (score ${Math.round(score)}/100).`;
+    return { ...pending, phase: 'FINAL', reason, hint: reason };
+  }
+  return waitFinal(signal, score, 'sem direção confiável');
 }
 
 export function resetFastLiveDecision() {

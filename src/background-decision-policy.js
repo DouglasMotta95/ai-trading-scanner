@@ -106,24 +106,70 @@ export function exactCasaTradeTime(state = {}) {
 export function CasaTradeExpiration(state = {}, timeframe = null) {
   const operationMode = getOperationMode(state.analystPreferences?.operationMode || 'M1');
   const controls = state.platformControls || {};
-  const expirationAt = Number(controls.expirationCheckedAt || controls.observed?.observedAt?.expiration || 0);
-  const fresh = expirationAt > 0 && Date.now() - expirationAt < 7000;
-  const observed = fresh ? normExp(controls.observed?.expiration) : null;
-  const startedAt = Number(state.diagnostics?.marketSession?.startedAt || state.diagnostics?.target?.connectedAt || 0);
-  const waiting = startedAt > 0 && Date.now() - startedAt < 5000;
+  const guard = state.diagnostics?.expirationGuard || {};
   const expirationLabel = operationMode.expiration === '300s' ? '5 minutos' : '1 minuto';
-  if (!observed || !fresh) return {
-    ready: false,
-    actual: null,
-    required: operationMode.expiration,
-    reason: waiting
-      ? 'Lendo expiração real da CasaTrade'
-      : 'Não foi possível ler a expiração — informe a expiração no campo do topo do painel'
-  };
-  if (normTf(timeframe || state.analysisTimeframe || state.timeframe) === operationMode.timeframe && observed !== operationMode.expiration) {
-    return { ready: false, actual: observed, required: operationMode.expiration, reason: `Ajuste a expiração da CasaTrade para ${expirationLabel}` };
+
+  // background-platform-controls already resolves one authority for expiration:
+  // a fresh CasaTrade observation wins; otherwise a user-declared value is
+  // accepted, and any later real divergence blocks the entry.
+  const guardAt = Number(guard.at || 0);
+  const guardFresh = guardAt > 0 && Date.now() - guardAt < 10000;
+  const guardActual = guardFresh ? normExp(guard.actual || controls.userDeclaredExpiration || '') : null;
+  const guardSource = guardFresh ? text(guard.source || '') : '';
+  const guardDivergence = guardFresh && guard.divergence === true;
+
+  const expirationAt = Number(controls.expirationCheckedAt || controls.observed?.observedAt?.expiration || 0);
+  const observedFresh = expirationAt > 0 && Date.now() - expirationAt < 7000;
+  const observed = observedFresh ? normExp(controls.observed?.expiration) : null;
+  const observedSource = text(controls.expirationSource || controls.observed?.source || '');
+  const actual = guardActual || observed || null;
+  const source = guardSource || observedSource || (observed ? 'casatrade-observed' : '');
+  const liveTf = normTf(timeframe || state.analysisTimeframe || state.timeframe);
+
+  if (guardDivergence) {
+    return {
+      ready: false,
+      actual,
+      required: operationMode.expiration,
+      source,
+      verified: guard.verified === true,
+      reason: text(guard.reason || 'A expiração real da CasaTrade diverge do valor informado.')
+    };
   }
-  return { ready: true, actual: observed, required: operationMode.expiration, reason: `Expiração de ${expirationLabel} confirmada para o modo ${operationMode.timeframe}.` };
+  if (!actual) {
+    const startedAt = Number(state.diagnostics?.marketSession?.startedAt || state.diagnostics?.target?.connectedAt || 0);
+    const waiting = startedAt > 0 && Date.now() - startedAt < 5000;
+    return {
+      ready: false,
+      actual: null,
+      required: operationMode.expiration,
+      source: null,
+      verified: false,
+      reason: waiting
+        ? 'Lendo expiração da CasaTrade'
+        : 'Informe a expiração que você está usando no campo do topo do painel'
+    };
+  }
+  if (liveTf === operationMode.timeframe && actual !== operationMode.expiration) {
+    return {
+      ready: false,
+      actual,
+      required: operationMode.expiration,
+      source,
+      verified: guard.verified === true || observedFresh,
+      reason: `Ajuste a expiração da CasaTrade para ${expirationLabel}`
+    };
+  }
+  return {
+    ready: actual === operationMode.expiration,
+    actual,
+    required: operationMode.expiration,
+    source,
+    verified: guard.verified === true || (source !== 'user-declared' && observedFresh),
+    reason: source === 'user-declared'
+      ? `Expiração de ${expirationLabel} informada por você e aceita para este modo.`
+      : `Expiração de ${expirationLabel} confirmada para o modo ${operationMode.timeframe}.`
+  };
 }
 
 function completeCandles(state = {}) {

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 const store = new Map();
-let manifest = { version: '0.11.13' };
+let manifest = { version: '0.11.47' };
 
 globalThis.chrome = {
   runtime: { getManifest: () => manifest },
@@ -20,23 +20,31 @@ globalThis.chrome = {
   }
 };
 
-const license = await import('../src/services/license.js?dev-owner-license-mode');
+const license = await import('../src/services/license.js?dev-owner-license-mode-v01147');
 
-test('unpacked diagnostic build grants owner dev access without a customer key', async () => {
-  manifest = { version: '0.11.13' };
+test('unpacked customer build still requires a real license', async () => {
+  manifest = { version: '0.11.47' };
   store.clear();
   assert.equal(license.isDevBuild(), true);
-  assert.equal(license.licenseRequired({}), false);
+  assert.equal(license.licenseRequired({}), true);
   const result = await license.validateLicense({});
-  assert.equal(result.ok, true);
-  assert.equal(result.devMode, true);
-  assert.equal(result.license?.status, 'active');
-  assert.equal(result.license?.plan, 'OWNER_DEV');
-  assert.equal(result.license?.planLabel, 'DEV OWNER');
+  assert.equal(result.ok, false);
+  assert.equal(result.error, 'license_required');
 });
 
-test('customer/release build still requires a real license', async () => {
-  manifest = { version: '0.11.13', update_url: 'https://clients2.google.com/service/update2/crx' };
+test('local owner dev bypass is permanently disabled even in unpacked builds', async () => {
+  manifest = { version: '0.11.47' };
+  store.clear();
+  assert.equal(license.ownerDevMode({ ownerDevMode: true }), false);
+  assert.equal(license.licenseRequired({ ownerDevMode: true }), true);
+  assert.equal(license.devOwnerLicense(), null);
+  const result = await license.validateLicense({ ownerDevMode: true });
+  assert.equal(result.ok, false);
+  assert.equal(result.error, 'license_required');
+});
+
+test('customer/release build requires a real license by default', async () => {
+  manifest = { version: '0.11.47', update_url: 'https://clients2.google.com/service/update2/crx' };
   store.clear();
   assert.equal(license.isDevBuild(), false);
   assert.equal(license.licenseRequired({}), true);
@@ -45,11 +53,12 @@ test('customer/release build still requires a real license', async () => {
   assert.equal(result.error, 'license_required');
 });
 
-test('owner can explicitly test the license gate even in an unpacked build', async () => {
-  manifest = { version: '0.11.13' };
+test('local settings cannot re-enable owner dev mode', async () => {
+  manifest = { version: '0.11.47' };
   store.clear();
-  assert.equal(license.licenseRequired({ testLicenseBlock: true }), true);
-  const result = await license.validateLicense({ testLicenseBlock: true });
+  assert.equal(license.ownerDevMode({ ownerDevMode: true, testLicenseBlock: false }), false);
+  assert.equal(license.licenseRequired({ ownerDevMode: true, testLicenseBlock: false }), true);
+  const result = await license.validateLicense({ ownerDevMode: true, testLicenseBlock: false });
   assert.equal(result.ok, false);
   assert.equal(result.error, 'license_required');
 });

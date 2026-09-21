@@ -10,7 +10,8 @@ const AUTHORITATIVE_LICENSE_ERRORS = new Set([
   'license_not_found',
   'license_inactive',
   'license_expired',
-  'device_limit_reached'
+  'device_limit_reached',
+  'device_locked'
 ]);
 
 export const PUBLIC_LICENSE_API = 'https://ats-control-center-v07-production.up.railway.app';
@@ -18,16 +19,11 @@ const base = () => PUBLIC_LICENSE_API;
 const normalizedError = error => String(error || '');
 
 export const isDevBuild = () => !chrome.runtime.getManifest().update_url;
-export const ownerDevMode = (settings = {}) => isDevBuild() && settings?.testLicenseBlock !== true;
-export const devOwnerLicense = () => ({
-  status: 'active',
-  plan: 'OWNER_DEV',
-  planLabel: 'DEV OWNER',
-  dailyLimit: null, usedToday: 0, remainingToday: null,
-  totalLimit: null, usedTotal: 0, remainingTotal: null,
-  error: null, syncPending: false, devMode: true
-});
-export const licenseRequired = (settings = {}) => !ownerDevMode(settings);
+// An unpacked ZIP is customer-modifiable, so no local setting may grant owner access.
+// Owner/testing access must use a normal server-issued license (use the Unlimited plan).
+export const ownerDevMode = () => false;
+export const devOwnerLicense = () => null;
+export const licenseRequired = () => true;
 
 export async function savedLicenseKey() {
   const x = await storageLocalGet(LICENSE_KEY);
@@ -67,7 +63,9 @@ function licenseStillValid(license = {}) {
 
 function cacheInsideReopenGrace(cached = null) {
   const validatedAt = Number(cached?.validatedAt);
+  const tokenExpiresAt = Number(cached?.clientTokenExpiresAt);
   if (!Number.isFinite(validatedAt) || validatedAt <= 0) return false;
+  if (!Number.isFinite(tokenExpiresAt) || tokenExpiresAt <= Date.now() + 5000) return false;
   const age = Date.now() - validatedAt;
   return age >= 0 && age <= REOPEN_CACHE_GRACE_MS;
 }
@@ -178,15 +176,12 @@ export async function activateLicense(settings = {}, key = '') {
   return r;
 }
 
-export async function validateLicense(settings = {}) {
-  // Unpacked diagnostic/development builds are the owner's workbench.
-  // Customer/release builds still require the normal server-backed license.
-  if (ownerDevMode(settings)) return { ok: true, devMode: true, license: devOwnerLicense() };
-
+export async function validateLicense(settings = {}, options = {}) {
+  const forceServer = options?.forceServer === true;
   const cached = await cachedLicenseSession();
   let licenseKey = await savedLicenseKey();
   if (!licenseKey && cached?.licenseKey) licenseKey = await saveLicenseKey(cached.licenseKey);
-  if (cached && cacheInsideReopenGrace(cached)) return cachedResponse(cached);
+  if (!forceServer && cached && cacheInsideReopenGrace(cached)) return cachedResponse(cached);
   if (!licenseKey) return { ok: false, error: 'license_required' };
 
   const r = await call(settings, '/v1/license/validate', {
@@ -202,13 +197,17 @@ export async function validateLicense(settings = {}) {
   return withCachedFallback(r, cached);
 }
 
-export async function consumeSignal(settings = {}) {
+export async function consumeSignal(settings = {}, signalId = '') {
   const cached = await cachedLicenseSession();
   let licenseKey = await savedLicenseKey();
   if (!licenseKey && cached?.licenseKey) licenseKey = await saveLicenseKey(cached.licenseKey);
   if (!licenseKey) return { ok: false, error: 'license_required' };
   const r = await call(settings, '/v1/license/consume', {
-    licenseKey, installationId: await installationId(), type: 'signal', version: chrome.runtime.getManifest().version
+    licenseKey,
+    installationId: await installationId(),
+    type: 'signal',
+    signalId: String(signalId || '').trim().slice(0, 96) || null,
+    version: chrome.runtime.getManifest().version
   });
   if (r.ok && r.license) await saveValidLicenseSession({ ...r, ok: true, license: normalizeActiveLicense(r.license) }, licenseKey);
   return r;
