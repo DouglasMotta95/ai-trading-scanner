@@ -18,13 +18,14 @@ test('device lock is authoritative and cannot fall back to cached active access'
   assert.match(control, /response\?\.ok === true && activeLicense\(license\)/);
 });
 
-test('unpacked customer builds do not automatically become OWNER_DEV', () => {
+test('unpacked customer builds cannot become OWNER_DEV from local settings', () => {
   const license = read('src/services/license.js');
   const owner = read('src/background-dev-owner.js');
-  assert.match(license, /settings\?\.ownerDevMode === true/);
-  assert.doesNotMatch(license, /ownerDevMode = \(settings = \{\}\) => isDevBuild\(\)/);
-  assert.match(owner, /ownerDevEnabled/);
-  assert.match(owner, /settings\?\.ownerDevMode === true/);
+  assert.match(license, /export const ownerDevMode = \(\) => false/);
+  assert.match(license, /export const licenseRequired = \(\) => true/);
+  assert.doesNotMatch(license, /settings\?\.ownerDevMode === true/);
+  assert.match(owner, /removeLegacyOwnerBypass/);
+  assert.doesNotMatch(owner, /storageLocalGet\('settings'\)/);
 });
 
 test('live runtime sends heartbeat and consumes each user-facing confirmed signal', () => {
