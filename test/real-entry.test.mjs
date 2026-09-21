@@ -35,9 +35,9 @@ function confirmAt(bucket) {
   const possible = processSnapshot(strongSnapshot(bucket, bucket + 36_000), state);
   assert.equal(possible.signal.state, 'WATCH');
   assert.equal(possible.signal.uiState, 'POSSIBLE_BUY');
-  const firstFinal = processSnapshot(strongSnapshot(bucket, bucket + 51_000), state);
+  const firstFinal = processSnapshot(strongSnapshot(bucket, bucket + 55_000), state);
   assert.notEqual(firstFinal.signal.state, 'CONFIRM');
-  const final = processSnapshot(strongSnapshot(bucket, bucket + 52_000), state);
+  const final = processSnapshot(strongSnapshot(bucket, bucket + 56_000), state);
   assert.equal(final.signal.state, 'CONFIRM');
   assert.equal(final.signal.uiState, 'ENTER_BUY');
   return history;
