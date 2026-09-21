@@ -35,3 +35,28 @@ test('keeps POSSIBLE visible in the final window while confirmation is still pen
   assert.equal(r.state, 'WATCH');
   assert.match(r.reason, /aguardando confirmação técnica final/i);
 });
+
+
+test('simple confirmation ignores strong evidence from the opposite direction', () => {
+  resetFastLiveDecision();
+  const signal = base({
+    score: 64,
+    analysisScore: 64,
+    secondsRemaining: 9,
+    analytics: {
+      sellPower: 57,
+      buyPower: 43,
+      momentumDirection: 'BUY',
+      momentumScore: 99,
+      continuationDirection: 'BUY',
+      continuationScore: 99,
+      rejectionDirection: 'BUY',
+      rejectionStrength: 99
+    }
+  });
+  const first = fastLiveDecision(signal, { asset: 'AUD/CAD (OTC)', timeframe: 'M1', serverTime: 200000, confirmationMode: 'SIMPLES' });
+  const second = fastLiveDecision(signal, { asset: 'AUD/CAD (OTC)', timeframe: 'M1', serverTime: 201000, confirmationMode: 'SIMPLES' });
+  assert.equal(first.uiState, 'POSSIBLE_SELL');
+  assert.equal(second.uiState, 'POSSIBLE_SELL');
+  assert.notEqual(second.state, 'CONFIRM');
+});
