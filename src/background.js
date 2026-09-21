@@ -230,7 +230,7 @@ async function runCentralAnalysis(force = false) {
       const seconds = num(snapshot.secondsRemaining);
       const locked = clean(next.decisionCycle?.locked).toUpperCase();
       const confirmed = next.signal?.state === 'CONFIRM' || ['ENTER_BUY', 'ENTER_SELL'].includes(clean(next.signal?.uiState).toUpperCase());
-      needsConfirmationFollowup = seconds != null && seconds > 0 && seconds <= 15 && !confirmed && locked !== 'WAIT';
+      needsConfirmationFollowup = seconds != null && seconds > 0 && seconds <= 10 && !confirmed && locked !== 'WAIT';
       return next;
     });
   } finally {
