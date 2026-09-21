@@ -1,4 +1,4 @@
-import { activateLicense, validateLicense, clearLicense, restoreCachedLicense } from './services/license.js';
+import { activateLicense, validateLicense, clearLicense } from './services/license.js';
 import { readScannerState, updateScannerState } from './services/scanner-state-atomic.js';
 import { storageLocalGet, storageSessionGet, tabsQuery, sidePanelSetBehavior, scriptingExecuteScript } from './services/chrome-compat.js';
 import { detectPlatform } from './platforms/registry.js';
