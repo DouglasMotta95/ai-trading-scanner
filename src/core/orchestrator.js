@@ -267,8 +267,8 @@ function enterSignal(signal, cycle, direction, score, reason = null) {
     ...signal, state: 'CONFIRM', direction, diagnosis: direction,
     uiState: direction === 'BUY' ? 'ENTER_BUY' : 'ENTER_SELL', provisional: false, phase: 'FINAL',
     score, analysisScore: score, setup: cycle.setup || signal.setup || null,
-    reason: reason || `ENTRAR NA PRÓXIMA VELA: ${direction === 'BUY' ? 'COMPRA' : 'VENDA'} — padrão confirmado para a próxima abertura.`,
-    hint: reason || `ENTRAR NA PRÓXIMA VELA: ${direction === 'BUY' ? 'COMPRA' : 'VENDA'}.`,
+    reason: reason || `${direction === 'BUY' ? 'COMPRA' : 'VENDA'} — ALTA CONFIANÇA • ENTRAR NA PRÓXIMA VELA.`,
+    hint: reason || `${direction === 'BUY' ? 'COMPRA' : 'VENDA'} — ALTA CONFIANÇA.`,
     targetStart: cycle.targetStart
   };
 }
@@ -284,7 +284,7 @@ function possibleSignal(signal, windows, direction, score) {
   const seconds = Math.max(0, Math.ceil(Number(signal.secondsRemaining || 0)));
   const side = direction === 'BUY' ? 'COMPRA' : 'VENDA';
   const waiting = clean(signal.waitingFor?.text || signal.reason || 'aguardando confirmação final do padrão');
-  const reason = `POSSÍVEL ${side} • ${seconds}s restantes — ${waiting}`;
+  const reason = `POSSÍVEL ${side} — PADRÃO FORTE • ${seconds}s restantes • ${Math.round(score)}/100.`;
   return {
     ...signal,
     state: 'WATCH', direction, diagnosis: direction,
@@ -411,8 +411,8 @@ export function processSnapshot(snapshot = {}, state = {}) {
   const direction = directionOf(signal);
   const analytics = signal.analytics || {};
   const power = Number(direction === 'BUY' ? analytics.buyPower : analytics.sellPower) || 0;
-  const rawPossible = possibleQuality(signal, direction, score, thresholds);
   const quality = decisionQuality(signal, direction, thresholds, confirmationMode);
+  const rawPossible = possibleQuality(signal, direction, score, thresholds) && quality.qualifies;
   const technicalFinal = signal.state === 'CONFIRM' || ['ENTER_BUY', 'ENTER_SELL'].includes(clean(signal.uiState).toUpperCase());
   let candidateBlockerTrace = upsertCandidateBlockerTrace(state, {
     key,
@@ -454,7 +454,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
     };
   }
   if (cycle.locked === 'WAIT') {
-    const reason = cycle.reason || 'AGUARDAR — padrão não confirmou a tempo.';
+    const reason = cycle.reason || 'AGUARDAR — SEM CONFIANÇA ALTA.';
     candidateBlockerTrace = markCandidateWait(candidateBlockerTrace, key, secondsRemaining, reason);
     return {
       ...result,
@@ -517,7 +517,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
     cycle.locked = 'WAIT';
     cycle.direction = null;
     cycle.score = score;
-    cycle.reason = `AGUARDAR — ${blocker}`;
+    cycle.reason = 'AGUARDAR — SEM CONFIANÇA ALTA.';
     cycle.decidedAt = at;
     cycles.set(key, cycle);
     candidateBlockerTrace = markCandidateWait(candidateBlockerTrace, key, secondsRemaining, cycle.reason);
