@@ -61,31 +61,34 @@ test('stable bullish bias becomes POSSIBLE after two observations and stays visi
   const atTen = snap(bucket, 50_000, 10);
   assert.notEqual(atTen.signal.state, 'CONFIRM');
 
-  const enter = snap(bucket, 51_000, 9);
+  const firstFinal = snap(bucket, 55_000, 5);
+  assert.notEqual(firstFinal.signal.state, 'CONFIRM');
+
+  const enter = snap(bucket, 56_000, 4);
   assert.equal(enter.signal.state, 'CONFIRM');
   assert.equal(enter.signal.uiState, 'ENTER_BUY');
   assert.equal(enter.signal.direction, 'BUY');
-  assert.equal(enter.signal.secondsRemaining, 9);
+  assert.equal(enter.signal.secondsRemaining, 4);
   assert.equal(enter.decisionCycle.locked, 'ENTER');
 });
 
 test('decision remains latched for the same target candle after entry is released', () => {
   resetOrchestrator();
   const bucket = Math.floor(1_701_200_000_000 / minute) * minute;
-  snap(bucket, 50_000, 10);
-  const enter = snap(bucket, 51_000, 9);
+  snap(bucket, 55_000, 5);
+  const enter = snap(bucket, 56_000, 4);
   assert.equal(enter.signal.state, 'CONFIRM');
 
-  const later = snap(bucket, 52_000, 8, lateralRows(bucket), 1.001);
+  const later = snap(bucket, 57_000, 3, lateralRows(bucket), 1.001);
   assert.equal(later.signal.state, 'CONFIRM');
   assert.equal(later.signal.direction, 'BUY');
   assert.equal(later.signal.uiState, 'ENTER_BUY');
 });
 
-test('if no setup confirms by four seconds the next candle ends in AGUARDAR', () => {
+test('if no setup confirms by one second the next candle ends in AGUARDAR', () => {
   resetOrchestrator();
   const bucket = Math.floor(1_701_300_000_000 / minute) * minute;
-  const out = snap(bucket, 56_000, 4, lateralRows(bucket), 1.001);
+  const out = snap(bucket, 59_000, 1, lateralRows(bucket), 1.001);
   assert.equal(out.signal.state, 'NO_TRADE');
   assert.equal(out.signal.uiState, 'WAIT');
   assert.equal(out.signal.provisional, false);
@@ -96,7 +99,7 @@ test('if no setup confirms by four seconds the next candle ends in AGUARDAR', ()
 test('each next candle gets a new decision cycle instead of inheriting POSSIBLE indefinitely', () => {
   resetOrchestrator();
   const bucket = Math.floor(1_701_400_000_000 / minute) * minute;
-  const waited = snap(bucket, 56_000, 4, lateralRows(bucket), 1.001);
+  const waited = snap(bucket, 59_000, 1, lateralRows(bucket), 1.001);
   const firstKey = waited.decisionCycle.key;
 
   const nextBucket = bucket + minute;
