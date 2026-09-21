@@ -25,7 +25,7 @@ function candlesFor(payload = {}, asset = '') {
   const source = payload.recentCandles || {};
   const key = Object.keys(source).find(value => sameMarket(value, asset));
   if (!key) return [];
-  return (Array.isArray(source[key]) ? source[key] : []).map(candle).filter(Boolean).slice(-12);
+  return (Array.isArray(source[key]) ? source[key] : []).map(candle).filter(Boolean).slice(-40);
 }
 
 function candidateRows(payload = {}) {
@@ -39,8 +39,11 @@ function candidateRows(payload = {}) {
 
 function rowFrom(payload = {}, candidate = {}, focusedAsset = '') {
   const candles = candlesFor(payload, candidate.asset);
-  const quality = assessAssetQuality({ asset: candidate.asset, price: candidate.price, candles });
-  const enoughHistory = candles.length >= 3 && quality.score != null;
+  // Preserve the previous quality behavior (last 12 candles) while retaining
+  // a larger read-only history for the new M1/M5 pre-operation radar.
+  const qualityCandles = candles.slice(-12);
+  const quality = assessAssetQuality({ asset: candidate.asset, price: candidate.price, candles: qualityCandles });
+  const enoughHistory = qualityCandles.length >= 3 && quality.score != null;
   return {
     asset: candidate.asset,
     price: candidate.price,
@@ -53,7 +56,8 @@ function rowFrom(payload = {}, candidate = {}, focusedAsset = '') {
     focused: sameMarket(candidate.asset, focusedAsset),
     selected: candidate.selected,
     confidence: candidate.confidence,
-    candleCount: candles.length,
+    candleCount: qualityCandles.length,
+    candles: candles.slice(-40),
     observedAt: Math.max(candidate.observedAt || 0, Date.now()),
     actionable: false
   };
