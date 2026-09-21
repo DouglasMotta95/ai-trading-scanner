@@ -246,6 +246,9 @@ function analystPrefs(state = {}, message = {}) {
   const current = state.analystPreferences || {};
   const thresholds = getThresholds(message.sensitivityProfile ?? current.sensitivityProfile ?? 'MEDIO');
   const operationMode = getOperationMode(message.operationMode ?? current.operationMode ?? 'M1');
+  const confirmationMode = clean(message.confirmationMode ?? current.confirmationMode ?? 'SIMPLES').toUpperCase() === 'EXIGENTE'
+    ? 'EXIGENTE'
+    : 'SIMPLES';
   return {
     ...current,
     mode: 'NORMAL',
@@ -254,6 +257,7 @@ function analystPrefs(state = {}, message = {}) {
     operationDurationSeconds: operationMode.durationSeconds,
     sensitivityProfile: thresholds.profile,
     sensitivityLabel: thresholds.label,
+    confirmationMode,
     holdSeconds: thresholds.holdSeconds,
     geminiEnabled: message.geminiEnabled == null ? current.geminiEnabled !== false : message.geminiEnabled !== false,
     preferredExpiration: null,
