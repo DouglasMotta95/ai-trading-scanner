@@ -156,13 +156,21 @@ function observePossible(tracker, direction, score, at, thresholds) {
   return tracker.publishedDirection;
 }
 
-function confirmationQuality(result = {}, direction = null, thresholds = getThresholds()) {
+function confirmationQuality(result = {}, direction = null, thresholds = getThresholds(), confirmationMode = 'EXIGENTE', score = 0) {
   if (!direction || !result?.recent?.ready) return false;
   const metrics = result.analytics || result.recent?.metrics || {};
   const directionalPower = direction === 'BUY' ? Number(metrics.buyPower || 0) : Number(metrics.sellPower || 0);
   const candleStrong = Number(metrics.currentStrength || 0) >= thresholds.candleStrength;
   const rejected = result.recent?.rejection === direction
     && Number(metrics.rejectionStrength || 0) >= thresholds.rejectionStrength;
+  if (String(confirmationMode).toUpperCase() === 'SIMPLES') {
+    const continuation = result.recent?.continuationDirection === direction && Number(score) >= 55;
+    const momentum = metrics.momentumDirection === direction && Number(metrics.momentumScore || 0) >= 40;
+    return Number(score) >= thresholds.confirmScore
+      && directionalPower >= 50
+      && (rejected || continuation || momentum || candleStrong);
+  }
+  // EXIGENTE is intentionally byte-for-byte equivalent in conditions to v0.11.51.
   const broke = result.recent?.breakout === direction;
   const continuation = result.recent?.continuationDirection === direction
     && Number(result.recent?.continuationScore || 0) >= 60;
@@ -172,7 +180,8 @@ function confirmationQuality(result = {}, direction = null, thresholds = getThre
   return directionalPower >= 50 && (candleStrong || rejected || broke || continuation || trendAligned);
 }
 
-function rangeOverrideQuality(result = {}, direction = null, thresholds = getThresholds()) {
+function rangeOverrideQuality(result = {}, direction = null, thresholds = getThresholds(), confirmationMode = 'EXIGENTE', score = 0) {
+  if (String(confirmationMode).toUpperCase() === 'SIMPLES') return confirmationQuality(result, direction, thresholds, confirmationMode, score);
   if (!direction || !result?.recent?.ready) return false;
   const metrics = result.analytics || result.recent?.metrics || {};
   const directionalPower = direction === 'BUY' ? Number(metrics.buyPower || 0) : Number(metrics.sellPower || 0);
@@ -186,10 +195,10 @@ function rangeOverrideQuality(result = {}, direction = null, thresholds = getThr
   return directionalPower >= 50 && (broke || rejected || continuation);
 }
 
-function observeConfirmation(tracker, result, direction, score, at, thresholds) {
+function observeConfirmation(tracker, result, direction, score, at, thresholds, confirmationMode = 'EXIGENTE') {
   const qualifies = tracker.publishedDirection === direction
     && Number(score) >= thresholds.confirmScore
-    && confirmationQuality(result, direction, thresholds);
+    && confirmationQuality(result, direction, thresholds, confirmationMode, score);
   if (!qualifies) {
     tracker.confirmDirection = null;
     tracker.confirmHits = 0;
@@ -303,6 +312,7 @@ function stabilitySnapshot(tracker = {}) {
 
 export function processSnapshot(snapshot = {}, state = {}) {
   const thresholds = getThresholds(state.analystPreferences?.sensitivityProfile || 'MEDIO');
+  const confirmationMode = clean(snapshot.confirmationMode || state.analystPreferences?.confirmationMode || 'EXIGENTE').toUpperCase();
   const price = num(snapshot.price);
   if (!snapshot.asset || price == null) {
     return {
@@ -434,13 +444,13 @@ export function processSnapshot(snapshot = {}, state = {}) {
   }
 
   if (secondsRemaining <= thresholds.entryWindowSeconds) {
-    const rangeBlocked = regime?.type === 'range' && !rangeOverrideQuality(liveResult, direction, thresholds);
+    const rangeBlocked = regime?.type === 'range' && !rangeOverrideQuality(liveResult, direction, thresholds, confirmationMode, score);
     if (rangeBlocked) {
       tracker.confirmDirection = null;
       tracker.confirmHits = 0;
       tracker.lastConfirmAt = null;
     }
-    const canConfirm = !rangeBlocked && observeConfirmation(tracker, liveResult, direction, score, sampleAt, thresholds);
+    const canConfirm = !rangeBlocked && observeConfirmation(tracker, liveResult, direction, score, sampleAt, thresholds, confirmationMode);
     if (canConfirm) {
       const latestDecision = {
         bucket: currentBucket,
