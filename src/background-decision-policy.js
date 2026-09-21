@@ -197,17 +197,42 @@ function baseDecision(state = {}) {
   const finalScore = pref.thresholds.finalScore;
   const entryWindowSeconds = pref.thresholds.entryWindowSeconds;
   const preSignalWindowSeconds = pref.operation.timeframe === 'M5' ? 90 : 30;
-  const directionalPower = Number(direction === 'BUY' ? signal.analytics?.buyPower : signal.analytics?.sellPower) || 0;
-  const mandatoryPowerReady = directionalPower >= 50;
+  const rawDirectionalPower = Number(direction === 'BUY' ? signal.analytics?.buyPower : signal.analytics?.sellPower) || 0;
   const technicalCandidate = ['POSSIBLE_BUY', 'POSSIBLE_SELL', 'ENTER_BUY', 'ENTER_SELL'].includes(ui);
   const technicalFinal = ['ENTER_BUY', 'ENTER_SELL'].includes(ui);
+  const previous = state.professionalDecision || {};
+  const previousUi = text(previous.uiState).toUpperCase();
+  const sameCandidate = previous.cycleKey === cycle
+    && previous.direction === direction
+    && ['POSSIBLE_BUY','POSSIBLE_SELL','ENTER_BUY','ENTER_SELL'].includes(previousUi);
+  const continuityActive = technicalCandidate && sameCandidate;
+
+  // The technical orchestrator owns candidate hysteresis. While it still says
+  // POSSÍVEL for the same candle/direction, a single weak live tick must not
+  // make this presentation policy independently erase the score/power and
+  // restart hold. Once the technical candidate actually drops, these values
+  // immediately return to the raw live reading.
+  const previousScore = Number(previous.score || 0);
+  const previousPower = Number(previous.candidateBlockerPolicy?.effectiveDirectionalPower
+    ?? previous.candidateBlockerPolicy?.directionalPower
+    ?? 0);
+  const effectiveScore = continuityActive ? Math.max(score, previousScore) : score;
+  const effectiveDirectionalPower = continuityActive
+    ? Math.max(rawDirectionalPower, previousPower)
+    : rawDirectionalPower;
+  const mandatoryPowerReady = effectiveDirectionalPower >= 50;
+
   const diagnosticCycleKey = state.decisionCycle?.key || cycle;
   const candidateBlockerPolicy = {
     cycleKey: diagnosticCycleKey,
     technicalCandidate,
     technicalFinal,
     mandatoryPowerReady,
-    directionalPower,
+    directionalPower: rawDirectionalPower,
+    effectiveDirectionalPower,
+    rawScore: score,
+    effectiveScore,
+    continuityActive,
     expirationReady: expiration.ready,
     timeReady: time.ready,
     secondsRemaining: time.secondsRemaining ?? num(state.diagnostics?.marketClock?.secondsRemaining),
@@ -229,7 +254,7 @@ function baseDecision(state = {}) {
     sensitivityLabel: pref.sensitivityLabel,
     holdSeconds: pref.holdSeconds,
     cycleKey: cycle,
-    score,
+    score: effectiveScore,
     confluence: factors.count,
     factors: factors.factors,
     timeReady: time.ready,
@@ -260,16 +285,14 @@ function baseDecision(state = {}) {
     return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: 'AGUARDAR — fechamento da vela em andamento.' };
   }
 
-  if (!technicalCandidate || !direction || score < possibleScore || !mandatoryPowerReady || !additionalConfluenceReady) {
+  if (!technicalCandidate || !direction || effectiveScore < possibleScore || !mandatoryPowerReady || !additionalConfluenceReady) {
     return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: 'AGUARDAR — motor técnico ainda não liberou um candidato.' };
   }
 
-  const previous = state.professionalDecision || {};
-  const sameCandidate = previous.cycleKey === cycle && previous.direction === direction && ['POSSIBLE_BUY','POSSIBLE_SELL','ENTER_BUY','ENTER_SELL'].includes(text(previous.uiState).toUpperCase());
   const possibleSince = sameCandidate && Number(previous.possibleSince || 0) > 0 ? Number(previous.possibleSince) : now;
   const holdMs = pref.holdSeconds * 1000;
   const heldFor = Math.max(0, now - possibleSince);
-  const finalQuality = technicalFinal && score >= finalScore && mandatoryPowerReady && additionalConfluenceReady;
+  const finalQuality = technicalFinal && effectiveScore >= finalScore && mandatoryPowerReady && additionalConfluenceReady;
   const reason = shortReason(direction, factors.factors, signal.reason);
 
   // Expiration is an execution gate, not a technical-analysis gate. Keep the
