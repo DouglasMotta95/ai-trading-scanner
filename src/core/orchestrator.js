@@ -83,13 +83,13 @@ function decisionQuality(signal = {}, direction = null, thresholds = getThreshol
   const strongCandle = currentStrength >= thresholds.candleStrength;
   const rejection = directionalRejection && rejectionStrength >= thresholds.rejectionStrength;
   const regime = String(signal.regime?.type || '').toLowerCase();
-  const commonReady = !!direction && score >= thresholds.confirmScore && power >= 50;
+  const commonReady = !!direction && score >= thresholds.confirmScore && power >= 55;
   const commonReason = !direction
     ? 'sem direção'
     : score < thresholds.confirmScore
       ? `score ${Math.round(score)} < ${thresholds.confirmScore}`
-      : power < 50
-        ? `poder ${Math.round(power)} < 50`
+      : power < 55
+        ? `poder ${Math.round(power)} < 55`
         : 'direção + score + poder aprovados';
 
   if (mode === 'SIMPLES') {
@@ -116,10 +116,10 @@ function decisionQuality(signal = {}, direction = null, thresholds = getThreshol
       }
     ];
     const matched = setups.find(item => item.ok) || null;
+    const confirmationCount = setups.filter(item => item.ok).length;
     return {
-      // SIMPLES uses the same explicit final gate as the central/live-fast path:
-      // direction + final score + directional power + at least one setup.
-      qualifies: commonReady && !!matched,
+      // High-confidence mode: require two independent technical confirmations.
+      qualifies: commonReady && confirmationCount >= 2,
       setup: matched?.name || null,
       checks: setups,
       mode,
