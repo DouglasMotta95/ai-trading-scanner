@@ -234,9 +234,10 @@ function candidateBlockerMeasured(result = {}, snapshot = {}, state = {}, thresh
   const publishedDirection = ['BUY', 'SELL'].includes(clean(outputSignal.direction).toUpperCase())
     ? clean(outputSignal.direction).toUpperCase()
     : null;
-  const policy = state.professionalDecision?.candidateBlockerPolicy
+  const policySource = state.professionalDecision?.candidateBlockerPolicy || null;
+  const policy = policySource && (!policySource.cycleKey || policySource.cycleKey === key)
     ? {
-        ...state.professionalDecision.candidateBlockerPolicy,
+        ...policySource,
         finalBlockMessage: clean(state.professionalDecision?.reason || '')
       }
     : null;
