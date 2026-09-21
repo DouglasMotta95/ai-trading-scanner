@@ -20,13 +20,14 @@ test('Build 5 wires owner access, exact clock projection and expiration probe in
   assert.equal(manifest.version_name, '0.11.13-build5-live-pipeline');
 });
 
-test('owner dev guard requires explicit ownerDevMode and never infers bypass from unpacked install type', () => {
+test('owner access cannot be minted from unpacked build or local settings', () => {
   const source = read('src/background-dev-owner.js');
-  assert.match(source, /settings\?\.ownerDevMode === true/);
+  const license = read('src/services/license.js');
+  assert.match(license, /export const ownerDevMode = \(\) => false/);
+  assert.doesNotMatch(source, /ownerDevMode === true/);
   assert.doesNotMatch(source, /!chrome\.runtime\.getManifest\(\)\.update_url/);
-  assert.match(source, /status: 'active'/);
-  assert.match(source, /plan: 'OWNER_DEV'/);
-  assert.match(source, /chrome\.storage\?\.onChanged/);
+  assert.match(source, /removeLegacyOwnerBypass/);
+  assert.match(source, /license_required/);
 });
 
 test('local clock projector is disabled so only CasaTrade can authorize M1 timing', () => {
