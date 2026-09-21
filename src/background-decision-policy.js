@@ -195,6 +195,26 @@ function baseDecision(state = {}) {
   const mandatoryPowerReady = directionalPower >= 50;
   const technicalCandidate = ['POSSIBLE_BUY', 'POSSIBLE_SELL', 'ENTER_BUY', 'ENTER_SELL'].includes(ui);
   const technicalFinal = ['ENTER_BUY', 'ENTER_SELL'].includes(ui);
+  const diagnosticCycleKey = state.decisionCycle?.key || cycle;
+  const candidateBlockerPolicy = {
+    cycleKey: diagnosticCycleKey,
+    technicalCandidate,
+    technicalFinal,
+    mandatoryPowerReady,
+    directionalPower,
+    expirationReady: expiration.ready,
+    timeReady: time.ready,
+    secondsRemaining: time.secondsRemaining ?? num(state.diagnostics?.marketClock?.secondsRemaining),
+    preSignalWindowSeconds,
+    entryWindowSeconds,
+    possibleScore,
+    finalScore,
+    secondsVsWindow: {
+      insidePreSignal: Number.isFinite(Number(time.secondsRemaining)) && Number(time.secondsRemaining) <= preSignalWindowSeconds,
+      insideEntryWindow: Number.isFinite(Number(time.secondsRemaining)) && Number(time.secondsRemaining) <= entryWindowSeconds,
+      secondsRemaining: time.secondsRemaining ?? num(state.diagnostics?.marketClock?.secondsRemaining)
+    }
+  };
 
   const common = {
     profile: pref.mode,
@@ -212,6 +232,7 @@ function baseDecision(state = {}) {
     timeSource: time.source || null,
     timeframe: time.timeframe || normTf(state.analysisTimeframe || state.timeframe),
     secondsRemaining: time.secondsRemaining ?? num(state.diagnostics?.marketClock?.secondsRemaining),
+    candidateBlockerPolicy,
     updatedAt: now
   };
 
