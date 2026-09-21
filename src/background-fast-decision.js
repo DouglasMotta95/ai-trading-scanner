@@ -17,7 +17,13 @@ function marketFresh(state = {}) {
 const EXACT_CLOCK_SOURCES = new Set(['trader-dom-countdown', 'network-server-cycle']);
 
 function sameMarket(a = '', b = '') {
-  const norm = value => clean(value).toUpperCase().replace(/\s*\(\s*OTC\s*\)\s*$/i, '');
+  const norm = value => {
+    const raw = clean(value).toUpperCase();
+    if (!raw) return '';
+    const otc = /(?:\(|\b|[_-])OTC(?:\)|\b)?/i.test(raw);
+    const pair = raw.match(/\b([A-Z0-9]{2,20})\s*[\/_-]\s*([A-Z0-9]{2,12})/i);
+    return pair ? `${pair[1]}/${pair[2]}${otc ? ' (OTC)' : ''}` : raw;
+  };
   return !!norm(a) && norm(a) === norm(b);
 }
 
