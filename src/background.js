@@ -4,7 +4,7 @@ import { readScannerState, updateScannerState } from './services/scanner-state-a
 // Single owner of technical analysis.
 // All acquisition modules only update scannerState. This loop coalesces those
 // updates and is the only runtime path allowed to invoke the technical orchestrator.
-const ANALYSIS_CADENCE_MS = 650;
+const ANALYSIS_CADENCE_MS = 450;
 const BURST_COALESCE_MS = 80;
 const CLOCK_FRESH_MS = 3200;
 const ALLOWED_CLOCK_SOURCES = new Set(['trader-dom-countdown', 'network-server-cycle', 'platform-cycle-derived']);
@@ -153,10 +153,10 @@ async function runCentralAnalysis(force = false) {
       const marketKey = [
         snapshot.asset,
         snapshot.analysisTimeframe,
-        Number(session.epoch || 0),
-        Number(focus.frameId ?? -1),
-        clean(focus.frameHost).toLowerCase()
+        Number(session.epoch || 0)
       ].join('|');
+      // Frame id/host are transport ownership details, not market identity.
+      // Reset only when asset, timeframe or real market-session epoch changes.
       if (lastMarketKey && lastMarketKey !== marketKey) resetOrchestrator();
       lastMarketKey = marketKey;
 
@@ -165,9 +165,39 @@ async function runCentralAnalysis(force = false) {
       lastRunAt = Date.now();
       revision += 1;
 
+      const processedUi = clean(processed?.signal?.uiState).toUpperCase();
+      const processedDirection = processedUi === 'ENTER_BUY'
+        ? 'BUY'
+        : processedUi === 'ENTER_SELL'
+          ? 'SELL'
+          : null;
+      const tfMs = snapshot.analysisTimeframe?.startsWith('M')
+        ? Math.max(1, Number(snapshot.analysisTimeframe.slice(1)) || 1) * 60_000
+        : 60_000;
+      const signalTargetStart = num(processed?.signal?.targetStart);
+      const existingAdvice = current.entryAdvice || null;
+      const existingAdviceActive = existingAdvice
+        && sameMarket(existingAdvice.asset, snapshot.asset)
+        && Number(existingAdvice.activeUntil || 0) > Date.now();
+      const entryAdvice = processedDirection && signalTargetStart
+        ? {
+            asset: snapshot.asset,
+            direction: processedDirection,
+            setup: clean(processed?.signal?.setup || ''),
+            score: Number(processed?.signal?.analysisScore ?? processed?.signal?.score ?? 0),
+            targetStart: signalTargetStart,
+            issuedAt: Date.now(),
+            activeUntil: signalTargetStart + tfMs,
+            source: 'orchestrator-final-signal'
+          }
+        : existingAdviceActive
+          ? existingAdvice
+          : null;
+
       const next = {
         ...current,
         ...processed,
+        entryAdvice,
         // Raw acquisition state remains authoritative.
         asset: current.asset,
         price: current.price,
@@ -250,11 +280,7 @@ function acquisitionGaps(state = {}) {
     && Number(clock.at || 0) > 0
     && Date.now() - Number(clock.at) < CLOCK_FRESH_MS;
   if (!clockFresh) gaps.push('countdown');
-  const expirationAt = Number(controls.observed?.observedAt?.expiration || controls.expirationCheckedAt || 0);
-  // A selected expiration is persistent platform state. Do not classify a
-  // previously confirmed value as missing merely because seven seconds passed.
-  const expirationConfirmed = expirationAt > 0 && !!clean(controls.observed?.expiration);
-  if (!expirationConfirmed) gaps.push('expiração');
+  // Expiration is no longer a product gate in the simplified signal flow.
   return gaps;
 }
 

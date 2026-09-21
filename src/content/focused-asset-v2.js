@@ -1,5 +1,5 @@
 (() => {
-  const FOCUS_READER_BUILD = 'focused-asset-v2-live-authority-v5';
+  const FOCUS_READER_BUILD = 'focused-asset-v2-chart-header-named-asset-v7';
   if (globalThis.__ATS_FOCUSED_ASSET_TRACKER_V2_BUILD__ === FOCUS_READER_BUILD) return;
   globalThis.__ATS_FOCUSED_ASSET_TRACKER_V2_BUILD__ = FOCUS_READER_BUILD;
   globalThis.__ATS_FOCUSED_ASSET_TRACKER_V2__ = true;
@@ -32,7 +32,22 @@
     return out;
   }
 
-  const canonicalAsset = value => assetsIn(value)[0] || '';
+  const AMBIGUOUS_NAMED = new Set([
+    'EURO','DOLLAR','DÓLAR','USD','EUR','GBP','JPY','AUD','CAD','CHF','NZD','BRL',
+    'BUY','SELL','COMPRA','VENDA','BLITZ','DIGITAL','INFO','OTC'
+  ]);
+  function namedChartAsset(value = '') {
+    const raw = clean(value).normalize('NFKC');
+    if (!raw || raw.length > 64 || !/\(\s*OTC\s*\)/i.test(raw)) return '';
+    const name = raw.replace(/\(\s*OTC\s*\)/ig, '').replace(/\s+/g, ' ').trim();
+    const upper = name.toUpperCase();
+    if (!/^[A-Z0-9][A-Z0-9 ._-]{2,30}$/i.test(name)) return '';
+    if (AMBIGUOUS_NAMED.has(upper)) return '';
+    if (/\b(?:PORTF[ÓO]LIO|HIST[ÓO]RICO|TABELA|PROMO[CÇ][AÃ]O|AN[ÁA]LISE|VALOR|EXPIRA[CÇ][AÃ]O|LUCRO)\b/i.test(name)) return '';
+    return `${upper} (OTC)`;
+  }
+
+  const canonicalAsset = value => assetsIn(value)[0] || namedChartAsset(value) || '';
   const identity = value => canonicalAsset(value);
   const sameAsset = (a, b) => !!identity(a) && identity(a) === identity(b);
   const visible = el => {
@@ -128,6 +143,57 @@
     return rect.right >= chart.left - padX && rect.left <= chart.right + padX && rect.bottom >= top && rect.top <= bottom;
   }
 
+  function chartHeaderWinner(chart) {
+    if (!chart) return null;
+    const rows = [];
+    const headerTop = Math.max(0, chart.top - 140);
+    const headerBottom = chart.top + Math.min(180, chart.height * .24);
+    const headerRight = chart.left + chart.width * .68;
+
+    for (const el of deepElements(6500)) {
+      if (!visible(el)) continue;
+      const text = elementAssetText(el);
+      if (!text || text.length > 64) continue;
+      const assets = assetsIn(text);
+      const named = assets.length ? '' : namedChartAsset(text);
+      if (assets.length !== 1 && !named) continue;
+
+      const rect = el.getBoundingClientRect();
+      if (rect.bottom < headerTop || rect.top > headerBottom) continue;
+      if (rect.left > headerRight || rect.right < chart.left - 120) continue;
+
+      const context = contextOf(el);
+      // The open-market tab strip can show several symbols at once. It is not
+      // allowed to own focus. The title physically attached to the chart is.
+      if (/watchlist|asset-list|instrument-list|listbox|search|history|portfolio|ranking|modal|drawer|dropdown|menu|tablist|asset-tab|instrument-tab|(?:^|[\s_-])tabs?(?:$|[\s_-])/.test(context)) continue;
+
+      const selection = selectionEvidence(el);
+      if (selection.rejected) continue;
+      let score = 4000 + selection.score;
+      if (/chart|tradingview|instrument|symbol|asset|header/.test(context)) score += 500;
+      if (text.length <= 36) score += 200;
+      score -= Math.max(0, rect.top - chart.top) * .5;
+      rows.push({
+        asset: assets[0] || named,
+        score,
+        explicit: true,
+        interaction: interactionFresh(assets[0] || named),
+        chartScoped: true,
+        chartHits: 3,
+        hits: 1,
+        top: rect.top,
+        left: rect.left,
+        source: 'visible-chart-header'
+      });
+    }
+    rows.sort((a,b) => b.score - a.score || a.top - b.top || a.left - b.left);
+    if (!rows.length) return null;
+    const first = rows[0];
+    const second = rows.find(row => !sameAsset(row.asset, first.asset));
+    if (second && Number(first.score) - Number(second.score) < 450) return null;
+    return first;
+  }
+
   const INTERACTION_TRANSITION_MS = 8000;
   let recentInteraction = { asset: '', at: 0 };
   const interactionFresh = asset => sameAsset(recentInteraction.asset, asset) && Date.now() - Number(recentInteraction.at || 0) < INTERACTION_TRANSITION_MS;
@@ -144,14 +210,19 @@
     const path = typeof event?.composedPath === 'function' ? event.composedPath() : [event?.target];
     for (const node of path.slice(0, 8)) {
       if (!(node instanceof Element) || !visible(node)) continue;
-      const assets = assetsIn(elementAssetText(node));
+      const text = elementAssetText(node);
+      const assets = assetsIn(text);
       if (assets.length === 1) return assets[0];
+      const named = namedChartAsset(text);
+      if (named) return named;
     }
     return '';
   }
 
   function scanWinner() {
     const chart = chartRect();
+    const header = chartHeaderWinner(chart);
+    if (header?.asset) return { ...header, chartFound: true };
     const rows = [];
     for (const el of deepElements()) {
       if (!visible(el)) continue;
@@ -317,7 +388,7 @@
         frameHost: host,
         frameRole,
         at: now,
-        source: winner.interaction ? 'chart-frame-user-confirmed' : winner.explicit ? 'chart-frame-explicit' : 'chart-frame-scoped'
+        source: winner.source || (winner.interaction ? 'chart-frame-user-confirmed' : winner.explicit ? 'chart-frame-explicit' : 'chart-frame-scoped')
       };
       sendFocus(common);
     } finally {

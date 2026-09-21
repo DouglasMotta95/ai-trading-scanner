@@ -289,7 +289,21 @@ export function recentPriceAction(candles = []) {
   const prevHigh = Math.max(...prev.slice(-4).map(x => x.high));
   const prevLow = Math.min(...prev.slice(-4).map(x => x.low));
   const averageRange = avg(rows.map(x => x.range));
+  const priorAverageRange = Math.max(1e-12, avg(prev.slice(-5).map(x => x.range)) || averageRange);
+  const currentRangeMultiple = last.range / priorAverageRange;
   const breakout = last.close > prevHigh ? 'BUY' : last.close < prevLow ? 'SELL' : null;
+  const breakoutDistance = breakout === 'BUY'
+    ? Math.max(0, last.close - prevHigh)
+    : breakout === 'SELL'
+      ? Math.max(0, prevLow - last.close)
+      : 0;
+  const breakoutDistanceRatio = breakoutDistance / priorAverageRange;
+  const strongBreakout = !!breakout
+    && breakoutDistanceRatio >= .18
+    && last.bodyRatio >= .52
+    && currentRangeMultiple <= 1.55;
+  const overextendedImpulse = currentRangeMultiple >= 1.55 && last.bodyRatio >= .58;
+  const exhaustionRisk = overextendedImpulse && !strongBreakout;
   const rejection = last.lowerRatio >= ANALYST_THRESHOLDS.rejectionStrength / 100 && last.close > last.open
     ? 'BUY'
     : last.upperRatio >= ANALYST_THRESHOLDS.rejectionStrength / 100 && last.close < last.open
@@ -331,11 +345,23 @@ export function recentPriceAction(candles = []) {
   if (metrics.lossOfStrength >= 72 && !breakout && !rejection) {
     reasons.push('A vela atual perdeu força; confirmação exige continuidade');
   }
-  const decisiveLocalSetup = !!breakout || !!rejection || (continuationDirection && continuationScore >= 65);
+  if (overextendedImpulse) {
+    reasons.push(`Vela atual esticada (${currentRangeMultiple.toFixed(1)}x a faixa média recente)`);
+  }
+  if (breakout && !strongBreakout) {
+    reasons.push('Rompimento ainda sem margem suficiente para perseguir continuação');
+  }
+  const decisiveLocalSetup = !!rejection || strongBreakout || (continuationDirection && continuationScore >= 65 && !exhaustionRisk);
   if (lateral && !decisiveLocalSetup) { score = Math.min(score, 54); direction = null; reasons.push('Mercado lateral nas últimas velas'); }
   if (doji && !rejection) { score = Math.min(score, 48); direction = null; reasons.push('Doji sem confirmação'); }
   if (tiny >= Math.ceil(rows.length * .6) && agreement < .75 && !decisiveLocalSetup) { score = Math.min(score, 56); direction = null; reasons.push('Compressão: aguardando rompimento'); }
   if (lateral && decisiveLocalSetup) reasons.push('Mercado lateral, mas com gatilho local confirmado');
+  // Do not turn the last oversized impulse into an automatic next-candle
+  // continuation. It may be exhaustion/mean reversion, especially in range.
+  if (exhaustionRisk && continuationDirection === direction && !rejection) {
+    score = Math.min(score, ANALYST_THRESHOLDS.confirmScore - 1);
+    reasons.push('Anti-chase: impulso esticado não confirma continuação da próxima vela');
+  }
   score = clamp(score);
 
   const opinion = !direction
@@ -366,6 +392,13 @@ export function recentPriceAction(candles = []) {
     support,
     resistance,
     averageRange,
+    priorAverageRange,
+    currentRangeMultiple,
+    breakoutDistance,
+    breakoutDistanceRatio,
+    strongBreakout,
+    overextendedImpulse,
+    exhaustionRisk,
     lastClose: last.close,
     reasons
   };
@@ -425,6 +458,12 @@ export function analyzeCandles(candles = [], indicatorCandles = candles) {
       ...levelAnalytics,
       continuationDirection: recent.continuationDirection || null,
       continuationScore: Number(recent.continuationScore || 0),
+      breakoutDirection: recent.breakout || null,
+      breakoutDistanceRatio: Number(recent.breakoutDistanceRatio || 0),
+      currentRangeMultiple: Number(recent.currentRangeMultiple || 0),
+      strongBreakout: recent.strongBreakout === true,
+      overextendedImpulse: recent.overextendedImpulse === true,
+      exhaustionRisk: recent.exhaustionRisk === true,
       rsi: indicators.rsi?.value ?? null,
       macdHistogram: indicators.macd?.histogram ?? null
     }

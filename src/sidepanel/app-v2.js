@@ -143,24 +143,12 @@ function sessionReady(state = {}) {
   return activeLicense(state)
     && state.connection === 'online'
     && marketDataReady(state)
-    && focusReady(state)
-    && operationalClockReady(state);
+    && focusReady(state);
 }
 
 function entryTimeReady(state = {}) {
-  if (!exactClockReady(state)) return false;
-  const clock = state.diagnostics?.marketClock || {};
-  const expiration = expirationObservation(state);
-  const actualExpiration = expiration.value;
-  if (!actualExpiration || !expiration.fresh) return false;
-  const clockTf = normTf(clock.timeframe);
-  const stateTf = normTf(state.analysisTimeframe || state.timeframe);
-  const controlTf = normTf(state.platformControls?.observed?.timeframe);
-  if (!clockTf || clockTf !== 'M1') return false;
-  if (actualExpiration !== '60s') return false;
-  if (stateTf && stateTf !== clockTf) return false;
-  if (controlTf && controlTf !== clockTf) return false;
-  return state.professionalDecision?.timeReady === true && state.professionalDecision?.expirationReady === true;
+  const ui = clean(state.signal?.uiState).toUpperCase();
+  return ui === 'ENTER_BUY' || ui === 'ENTER_SELL';
 }
 
 function completeCandle(row = {}) {
@@ -212,74 +200,63 @@ function currentOhlc(state = {}) {
   return { ...liveOhlc, approximate: true, source: 'live-price-observed' };
 }
 
-function entryBlockReason(state = {}) {
-  const expiration = expirationObservation(state);
-  if (!expiration.value) return 'EXPIRAÇÃO PENDENTE — LEIA O SELETOR DA CASATRADE E TENTE NOVAMENTE';
-  if (expiration.value !== '60s') return 'AJUSTE A EXPIRAÇÃO DA CASATRADE PARA 1 MINUTO';
-
-  const clock = state.diagnostics?.marketClock || {};
-  if (!exactClockReady(state)) return 'COUNTDOWN REAL PENDENTE — AGUARDANDO TEMPO EXATO DA CASATRADE';
-
-  const clockTf = normTf(clock.timeframe);
-  if (clockTf !== 'M1') return 'AJUSTE O TIMEFRAME DA CASATRADE PARA M1';
-  return 'ENTRADA AINDA NÃO LIBERADA';
+function entryBlockReason() {
+  return 'Aguardando apenas a confirmação técnica da próxima entrada.';
 }
 
-function gateKind(state = {}) {
-  const expiration = expirationObservation(state);
-  if (!expiration.value) return 'waiting';
-  if (expiration.value !== '60s') return 'rule';
-  if (!exactClockReady(state)) return 'waiting';
-  const clockTf = normTf(state.diagnostics?.marketClock?.timeframe);
-  if (clockTf !== 'M1') return 'rule';
+function gateKind() {
   return 'waiting';
+}
+
+function activeEntryAdvice(state = {}) {
+  const advice = state.entryAdvice || null;
+  if (!advice?.direction || !advice?.asset) return null;
+  const now = Date.now();
+  const start = Number(advice.targetStart || 0);
+  const end = Number(advice.activeUntil || 0);
+  if (!start || !end || now < start || now >= end) return null;
+  if (state.asset && !sameMarket(advice.asset, state.asset)) return null;
+  return advice;
 }
 
 function decisionModel(state = {}) {
   if (!activeLicense(state)) return { uiState: 'WAIT', title: 'AGUARDAR', text: 'AGUARDAR', sub: 'Ative o acesso para iniciar a leitura.', tone: 'waiting', reason: 'Aguardando licença ativa.', score: 0, actionable: false };
   const pending = transitionAsset(state);
-  if (pending) return { uiState: 'ANALYZING_MARKET', title: 'ATUALIZANDO ATIVO', text: `ATUALIZANDO PARA ${pending}`, sub: 'Limpando dados anteriores e confirmando preço + velas do novo ativo.', tone: 'waiting', reason: 'Troca de ativo em validação.', score: 0, actionable: false };
+  if (pending) return { uiState: 'ANALYZING_MARKET', title: 'ATUALIZANDO ATIVO', text: `ATUALIZANDO PARA ${pending}`, sub: 'Limpando dados anteriores e confirmando o novo gráfico.', tone: 'waiting', reason: 'Troca de ativo em validação.', score: 0, actionable: false };
   if (!marketDataReady(state) || !focusReady(state)) return { uiState: 'ANALYZING_MARKET', title: 'AGUARDAR', text: 'AGUARDAR', sub: 'Confirmando ativo, preço e velas reais.', tone: 'waiting', reason: 'Identificando o gráfico atual da CasaTrade.', score: 0, actionable: false };
 
-  const p = state.professionalDecision || {};
-  const technical = state.signal || {};
-  const ui = String(p.uiState || technical.uiState || '').toUpperCase();
-  const technicalUi = String(technical.uiState || '').toUpperCase();
-  const direction = String(p.direction || technical.direction || technical.analysisDirection || '').toUpperCase();
-  const score = Number(p.score ?? technical.analysisScore ?? technical.score ?? 0) || 0;
-  const reason = clean(p.reason || technical.reason || 'Aguardando confluência técnica.');
-  const timeReady = entryTimeReady(state);
-  const blocked = timeReady ? '' : entryBlockReason(state);
-
-  if (!timeReady) {
-    const possibleUi = ['POSSIBLE_BUY','POSSIBLE_SELL','ENTER_BUY','ENTER_SELL'].includes(ui)
-      ? ui
-      : ['POSSIBLE_BUY','POSSIBLE_SELL','ENTER_BUY','ENTER_SELL'].includes(technicalUi) ? technicalUi : '';
-    const possibleDirection = possibleUi.includes('BUY') ? 'BUY' : possibleUi.includes('SELL') ? 'SELL' : (['BUY','SELL'].includes(direction) && score >= 44 ? direction : null);
-    if (possibleDirection) {
-      const side = possibleDirection === 'BUY' ? 'COMPRA' : 'VENDA';
-      return {
-        uiState: possibleDirection === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL',
-        title: `POSSÍVEL ${side}`,
-        text: `POSSÍVEL ${side}`,
-        sub: blocked,
-        tone: 'possible',
-        reason: `${reason} • ${blocked}`,
-        score,
-        actionable: false,
-        direction: possibleDirection
-      };
-    }
-    return { uiState: 'WAIT', title: 'AGUARDAR', text: 'AGUARDAR', sub: blocked, tone: gateKind(state) === 'technical' ? 'waiting' : 'no-trade', reason: blocked, score, actionable: false };
+  const advice = activeEntryAdvice(state);
+  if (advice) {
+    const direction = String(advice.direction || '').toUpperCase();
+    const side = direction === 'BUY' ? 'COMPRA' : 'VENDA';
+    return {
+      uiState: direction === 'BUY' ? 'ENTRY_ACTIVE_BUY' : 'ENTRY_ACTIVE_SELL',
+      title: 'SINAL DA VELA',
+      text: `SINAL DA VELA: ${side}`,
+      sub: 'Sinal final emitido para a vela atual. Não repetir a entrada.',
+      tone: direction === 'BUY' ? 'buy' : 'sell',
+      reason: `${advice.setup ? advice.setup + ' • ' : ''}score ${Math.round(Number(advice.score || 0))}/100 • sinal mantido até o fechamento desta vela.`,
+      score: Number(advice.score || 0),
+      actionable: false,
+      entryActive: true,
+      direction
+    };
   }
 
+  const signal = state.signal || {};
+  const ui = clean(signal.uiState).toUpperCase();
+  const direction = ui.includes('BUY') ? 'BUY' : ui.includes('SELL') ? 'SELL' : null;
+  const score = Number(signal.analysisScore ?? signal.score ?? 0) || 0;
+  const reason = clean(signal.reason || 'Aguardando confluência técnica.');
+
+  // The orchestrator signal is the only decision authority rendered by the UI.
+  if (ui === 'ENTER_BUY') return { uiState: ui, title: 'ENTRADA', text: 'ENTRAR: COMPRA', sub: 'Entrada manual agora.', tone: 'buy', reason, score, actionable: true, direction: 'BUY' };
+  if (ui === 'ENTER_SELL') return { uiState: ui, title: 'ENTRADA', text: 'ENTRAR: VENDA', sub: 'Entrada manual agora.', tone: 'sell', reason, score, actionable: true, direction: 'SELL' };
+  if (ui === 'POSSIBLE_BUY') return { uiState: ui, title: 'POSSÍVEL COMPRA', text: 'POSSÍVEL COMPRA', sub: 'Candidato mantido nesta vela; aguardando confirmação final perto de 10s.', tone: 'possible', reason, score, actionable: false, direction: 'BUY' };
+  if (ui === 'POSSIBLE_SELL') return { uiState: ui, title: 'POSSÍVEL VENDA', text: 'POSSÍVEL VENDA', sub: 'Candidato mantido nesta vela; aguardando confirmação final perto de 10s.', tone: 'possible', reason, score, actionable: false, direction: 'SELL' };
   if (ui === 'ANALYZING_MARKET') return { uiState: ui, title: 'ANALISANDO MERCADO', text: 'ANALISANDO MERCADO', sub: reason, tone: 'waiting', reason, score, actionable: false };
-  if (ui === 'BUILDING_PATTERN' || ui === 'DECIDING') return { uiState: ui, title: ui === 'DECIDING' ? 'DECIDINDO PRÓXIMA VELA' : 'MONTANDO PADRÃO', text: ui === 'DECIDING' ? 'DECIDINDO PRÓXIMA VELA' : 'MONTANDO PADRÃO DA PRÓXIMA VELA', sub: reason, tone: 'waiting', reason, score, actionable: false };
-  if (ui === 'POSSIBLE_BUY') return { uiState: ui, title: 'POSSÍVEL COMPRA', text: 'POSSÍVEL COMPRA', sub: 'Padrão comprador em confirmação.', tone: 'possible', reason, score, actionable: false, direction: 'BUY' };
-  if (ui === 'POSSIBLE_SELL') return { uiState: ui, title: 'POSSÍVEL VENDA', text: 'POSSÍVEL VENDA', sub: 'Padrão vendedor em confirmação.', tone: 'possible', reason, score, actionable: false, direction: 'SELL' };
-  if (ui === 'ENTER_BUY' && p.actionable === true) return { uiState: ui, title: 'ENTRAR NA PRÓXIMA VELA', text: 'ENTRAR: COMPRA', sub: 'ENTRAR na próxima vela: COMPRA', tone: 'buy', reason, score, actionable: true, direction: 'BUY' };
-  if (ui === 'ENTER_SELL' && p.actionable === true) return { uiState: ui, title: 'ENTRAR NA PRÓXIMA VELA', text: 'ENTRAR: VENDA', sub: 'ENTRAR na próxima vela: VENDA', tone: 'sell', reason, score, actionable: true, direction: 'SELL' };
-  return { uiState: 'WAIT', title: 'AGUARDAR', text: 'AGUARDAR', sub: 'Padrão sem confirmação suficiente.', tone: 'no-trade', reason: reason.startsWith('AGUARDAR') ? reason : `AGUARDAR — ${reason}`, score, actionable: false };
+  if (ui === 'BUILDING_PATTERN' || ui === 'DECIDING') return { uiState: ui, title: 'ANALISANDO', text: 'ANALISANDO', sub: reason, tone: 'waiting', reason, score, actionable: false };
+  return { uiState: 'WAIT', title: 'AGUARDAR', text: 'AGUARDAR', sub: 'Sem padrão técnico suficiente agora.', tone: 'no-trade', reason: reason.startsWith('AGUARDAR') ? reason : `AGUARDAR — ${reason}`, score, actionable: false };
 }
 
 function setText(id, value) { const el = $(id); if (el) el.textContent = value; }
@@ -348,11 +325,26 @@ let lastRenderedState = {};
 let countdownUi = { value: null, at: 0, cycle: '' };
 
 function projectedRemaining(state = {}) {
-  // Never locally decrement/project the last second. Display and decision timing
-  // must reflect the latest exact CasaTrade observation only.
-  if (!exactClockReady(state)) return null;
-  const raw = num(state.diagnostics?.marketClock?.secondsRemaining);
-  return raw == null ? null : Math.max(0, raw);
+  const sources = [
+    num(state.professionalDecision?.secondsRemaining),
+    num(state.diagnostics?.marketClock?.secondsRemaining),
+    num(state.signal?.secondsRemaining)
+  ];
+  const direct = sources.find(value => value != null && value >= 0 && value <= 62);
+  if (direct != null) return Math.max(0, direct);
+
+  const tf = normTf(state.analysisTimeframe || state.timeframe || state.signal?.timeframe);
+  if (tf === 'M1') {
+    const row = state.currentCandle || state.signal?.currentCandle || (Array.isArray(state.candles) ? state.candles.at(-1) : null);
+    let openAt = num(row?.time ?? row?.timestamp);
+    if (openAt != null && openAt > 0 && openAt < 1e12) openAt *= 1000;
+    if (Number.isFinite(openAt)) {
+      const now = Date.now();
+      const closeAt = openAt + 60_000;
+      if (now >= openAt - 1500 && now <= closeAt + 1500) return Math.max(0, Math.min(60, Math.ceil((closeAt - now) / 1000)));
+    }
+  }
+  return null;
 }
 
 function smoothedRemaining(state = {}) {
@@ -389,15 +381,6 @@ function render(state = {}) {
   else if (pending) setSourceState('assetSource', 'ATUALIZANDO', 'estimated', 'Troca detectada; preço e velas anteriores já foram descartados.');
   else setSourceState('assetSource', 'STALE', 'stale', 'Ativo ainda não confirmado.');
 
-  if (actualExp) {
-    setText('heroExpiration', actualExp === '60s' ? '1 min ✓' : expLabel(actualExp));
-    setText('expiration', actualExp === '60s' ? '1 min ✓' : expLabel(actualExp));
-    setSourceState('expirationSource', 'REAL', 'real', 'Expiração relida diretamente do controle da CasaTrade.');
-  } else {
-    setText('heroExpiration', 'PENDENTE');
-    setText('expiration', 'PENDENTE');
-    setSourceState('expirationSource', 'PENDENTE', 'estimated', 'Aguardando leitura real do seletor de expiração da CasaTrade.');
-  }
 
   const countdownText = remaining == null ? '—' : `${remaining}s`;
   setText('heroCountdown', countdownText);
@@ -405,9 +388,8 @@ function render(state = {}) {
   if (exact) setSourceState('countdownSource', 'REAL', 'real', 'Countdown exato lido da CasaTrade.');
   else setSourceState('countdownSource', 'PENDENTE', 'estimated', 'Aguardando countdown real da CasaTrade; nenhum tempo local é usado.');
 
-  setText('heroTimeStatus', timeReady ? 'OK' : 'AGUARDAR');
-  setText('sessionMode', timeReady ? 'LIVE' : exact ? 'LIVE • GATE' : 'LIVE • CLOCK PENDENTE');
-  setText('timeSyncStatus', exact ? 'EXATO • CASATRADE' : 'PENDENTE');
+  setText('heroTimeStatus', 'LIVE');
+  setText('sessionMode', 'LIVE');
 
   setText('signalTitle', model.title);
   setText('decisionText', model.text);
@@ -421,7 +403,7 @@ function render(state = {}) {
   const banner = $('decisionBanner');
   if (banner) banner.className = `decision-banner ${model.tone}`;
   const badgeTone = model.tone === 'buy' ? 'ok' : model.tone === 'sell' ? 'bad' : 'warn';
-  setBadge('signalBadge', model.actionable ? 'ENTRAR' : model.uiState.startsWith('POSSIBLE_') ? 'POSSÍVEL' : 'AGUARDAR', badgeTone);
+  setBadge('signalBadge', model.entryActive ? 'SINAL DA VELA' : model.actionable ? 'ENTRAR' : model.uiState.startsWith('POSSIBLE_') ? 'POSSÍVEL' : 'AGUARDAR', badgeTone);
 
   const duration = timeframeSeconds(actualTf);
   const progress = $('candleProgress');
@@ -431,32 +413,22 @@ function render(state = {}) {
   }
 
   const buy = $('prepareBuy'), sell = $('prepareSell');
-  const canBuy = model.actionable && model.direction === 'BUY' && timeReady;
-  const canSell = model.actionable && model.direction === 'SELL' && timeReady;
+  const canBuy = model.actionable && model.direction === 'BUY';
+  const canSell = model.actionable && model.direction === 'SELL';
   if (buy) { buy.disabled = !canBuy; buy.classList.toggle('selected', canBuy); }
   if (sell) { sell.disabled = !canSell; sell.classList.toggle('selected', canSell); }
 
   const actionStatus = $('tradeActionStatus');
   if (actionStatus) {
-    const kind = gateKind(state);
     actionStatus.classList.remove('rule-block','technical-block');
-    if (model.actionable && timeReady) {
-      actionStatus.textContent = `Entrada manual liberada para ${model.direction === 'BUY' ? 'COMPRA' : 'VENDA'} na próxima vela.`;
-    } else if (!timeReady) {
-      const block = entryBlockReason(state);
-      if (kind === 'rule') {
-        actionStatus.classList.add('rule-block');
-        actionStatus.textContent = `Bloqueado por regra: ${block}`;
-      } else if (kind === 'technical') {
-        actionStatus.classList.add('technical-block');
-        actionStatus.textContent = `Falha técnica: ${block}`;
-      } else {
-        actionStatus.textContent = block;
-      }
+    if (model.entryActive) {
+      actionStatus.textContent = `Sinal ${model.direction === 'BUY' ? 'COMPRA' : 'VENDA'} já emitido para esta vela. Não repetir entrada.`;
+    } else if (model.actionable) {
+      actionStatus.textContent = `ENTRADA AGORA: ${model.direction === 'BUY' ? 'COMPRA' : 'VENDA'}.`;
     } else if (model.uiState.startsWith('POSSIBLE_')) {
-      actionStatus.textContent = `Possível sinal em hold (${Math.ceil(Number(state.professionalDecision?.holdRemainingMs || 0) / 1000)}s restantes).`;
+      actionStatus.textContent = 'Sinal possível detectado. Aguardando confirmação final perto de 10s.';
     } else {
-      actionStatus.textContent = 'Aguardando decisão final desta vela.';
+      actionStatus.textContent = 'Aguardando um sinal técnico válido.';
     }
   }
 
@@ -488,9 +460,8 @@ function render(state = {}) {
 
   const retry = $('retryLiveRead');
   if (retry) {
-    const expirationTimedOut = dataLive && !actualExp && sessionAgeMs(state) >= 5000;
     const marketTimedOut = !!pending && sessionAgeMs(state) >= 8000;
-    retry.hidden = !(expirationTimedOut || marketTimedOut);
+    retry.hidden = !marketTimedOut;
   }
 
   renderOhlc(freshMarket ? state : {});

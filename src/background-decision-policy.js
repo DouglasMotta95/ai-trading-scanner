@@ -151,27 +151,71 @@ function cycleKey(state = {}, signal = {}) {
   return `${asset}|${timeframe}|${target == null ? 'pending' : Math.round(target / 1000) * 1000}`;
 }
 
+function simpleEntryTiming(state = {}, signal = {}) {
+  const now = Date.now();
+  const clock = state.diagnostics?.marketClock || {};
+  const clockSeconds = num(clock.secondsRemaining);
+  const clockFresh = clockSeconds != null
+    && clockSeconds >= 0
+    && clockSeconds <= 62
+    && Number(clock.at || 0) > 0
+    && now - Number(clock.at) < 6000;
+  if (clockFresh) {
+    return {
+      ready: true,
+      secondsRemaining: clockSeconds,
+      source: text(clock.source || 'market-clock'),
+      timeframe: normTf(clock.timeframe || state.analysisTimeframe || state.timeframe) || 'M1'
+    };
+  }
+
+  const signalSeconds = num(signal.secondsRemaining);
+  if (signalSeconds != null && signalSeconds >= 0 && signalSeconds <= 62) {
+    return {
+      ready: true,
+      secondsRemaining: signalSeconds,
+      source: 'technical-signal-clock',
+      timeframe: normTf(signal.timeframe || state.analysisTimeframe || state.timeframe) || 'M1'
+    };
+  }
+
+  const timeframe = normTf(state.analysisTimeframe || state.timeframe || signal.timeframe);
+  if (timeframe === 'M1') {
+    const candidates = [
+      state.currentCandle,
+      signal.currentCandle,
+      Array.isArray(state.candles) ? state.candles.at(-1) : null
+    ].filter(Boolean);
+    for (const row of candidates) {
+      let openAt = num(row?.time ?? row?.timestamp);
+      if (openAt != null && openAt > 0 && openAt < 1e12) openAt *= 1000;
+      if (!Number.isFinite(openAt)) continue;
+      const closeAt = openAt + 60_000;
+      if (now < openAt - 1500 || now > closeAt + 1500) continue;
+      const secondsRemaining = Math.max(0, Math.min(60, Math.ceil((closeAt - now) / 1000)));
+      return { ready: true, secondsRemaining, source: 'current-candle-boundary', timeframe: 'M1' };
+    }
+  }
+
+  return { ready: false, secondsRemaining: null, source: null, timeframe: timeframe || 'M1' };
+}
+
 function baseDecision(state = {}) {
   const pref = preferences(state);
   const signal = state.signal || {};
   const now = Date.now();
-  const time = exactCasaTradeTime(state);
-  const expiration = CasaTradeExpiration(state, time.timeframe || state.analysisTimeframe || state.timeframe);
+  const timing = simpleEntryTiming(state, signal);
   const rows = completeCandles(state);
-  const direction = signalDirection(signal);
-  const score = Number(signal.analysisScore ?? signal.score ?? 0) || 0;
   const ui = text(signal.uiState).toUpperCase();
+  const direction = ui.includes('BUY') ? 'BUY' : ui.includes('SELL') ? 'SELL' : null;
+  const score = Number(signal.analysisScore ?? signal.score ?? 0) || 0;
   const cycle = cycleKey(state, signal);
   const factors = confluence(signal, direction);
-  // NORMAL already passed the technical engine's own quality gates. Requiring
-  // another independent confluence count here was suppressing valid POSSIBLE/
-  // ENTER decisions and leaving the product stuck on AGUARDAR. Only A+ applies
-  // this extra presentation-policy filter.
-  const additionalConfluenceReady = true;
-  const possibleScore = 44;
-  const finalScore = 58;
-  const technicalCandidate = ['POSSIBLE_BUY', 'POSSIBLE_SELL', 'ENTER_BUY', 'ENTER_SELL'].includes(ui);
-  const technicalFinal = ['ENTER_BUY', 'ENTER_SELL'].includes(ui);
+  const previous = state.professionalDecision || {};
+  const sameCycleDirection = previous.cycleKey === cycle && previous.direction === direction;
+  const possibleSince = sameCycleDirection && Number(previous.possibleSince || 0) > 0
+    ? Number(previous.possibleSince)
+    : now;
 
   const common = {
     profile: pref.mode,
@@ -180,95 +224,86 @@ function baseDecision(state = {}) {
     score,
     confluence: factors.count,
     factors: factors.factors,
-    timeReady: time.ready,
-    expirationReady: expiration.ready,
-    actualExpiration: expiration.actual || null,
-    timeSource: time.source || null,
-    timeframe: time.timeframe || normTf(state.analysisTimeframe || state.timeframe),
-    secondsRemaining: time.secondsRemaining ?? num(state.diagnostics?.marketClock?.secondsRemaining),
+    timeReady: timing.ready,
+    expirationReady: true,
+    actualExpiration: null,
+    timeSource: timing.source,
+    timeframe: timing.timeframe || normTf(state.analysisTimeframe || state.timeframe) || 'M1',
+    secondsRemaining: timing.secondsRemaining,
+    possibleSince,
+    holdRemainingMs: 0,
     updatedAt: now
   };
 
   if (!state.asset || num(state.price) == null || !focusReady(state)) {
-    return { ...common, uiState: 'ANALYZING_MARKET', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: 'Identificando o ativo e a cotação do gráfico atual.' };
-  }
-  if (rows.length < 2) {
-    return { ...common, uiState: 'BUILDING_PATTERN', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: 'Montando o padrão com as velas reais da CasaTrade.' };
-  }
-  if (!time.ready) {
-    return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: `AGUARDAR — ${time.reason}` };
-  }
-
-  const seconds = Number(time.secondsRemaining);
-  if (!Number.isFinite(seconds) || seconds > 30) {
-    return { ...common, uiState: 'BUILDING_PATTERN', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: 'Analisando a vela M1 atual. O pré-sinal abre por volta de 30s restantes.' };
-  }
-  if (seconds <= 0) {
-    return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: 'AGUARDAR — fechamento da vela em andamento.' };
-  }
-
-  if (!technicalCandidate || !direction || score < possibleScore || !additionalConfluenceReady) {
-    return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: 'AGUARDAR — motor técnico ainda não liberou um candidato.' };
-  }
-
-  const previous = state.professionalDecision || {};
-  const sameCandidate = previous.cycleKey === cycle && previous.direction === direction && ['POSSIBLE_BUY','POSSIBLE_SELL','ENTER_BUY','ENTER_SELL'].includes(text(previous.uiState).toUpperCase());
-  const possibleSince = sameCandidate && Number(previous.possibleSince || 0) > 0 ? Number(previous.possibleSince) : now;
-  const holdMs = pref.holdSeconds * 1000;
-  const heldFor = Math.max(0, now - possibleSince);
-  const finalQuality = technicalFinal && score >= finalScore && additionalConfluenceReady;
-  const reason = shortReason(direction, factors.factors, signal.reason);
-
-  // Expiration is an execution gate, not a technical-analysis gate. Keep the
-  // directional POSSIBLE state visible when the pattern exists, but never make
-  // it actionable until the real CasaTrade control confirms M1 + 60 seconds.
-  if (!expiration.ready) {
     return {
       ...common,
-      uiState: direction === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL',
-      direction,
-      actionable: false,
-      alert: 'silent',
-      possibleSince,
-      holdRemainingMs: Math.max(0, holdMs - heldFor),
-      reason: `${reason} BLOQUEADO — ${expiration.reason}.`
-    };
-  }
-
-  if (seconds > 10) {
-    return {
-      ...common,
-      uiState: direction === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL',
-      direction,
-      actionable: false,
-      alert: 'discrete',
-      possibleSince,
-      holdRemainingMs: Math.max(0, holdMs - heldFor),
-      reason
-    };
-  }
-  if (!finalQuality || heldFor < holdMs) {
-    return {
-      ...common,
-      uiState: 'WAIT',
+      uiState: 'ANALYZING_MARKET',
       direction: null,
       actionable: false,
       alert: 'silent',
-      possibleSince,
-      holdRemainingMs: Math.max(0, holdMs - heldFor),
-      reason: `AGUARDAR — decisão final sem confirmação suficiente. ${reason}`
+      possibleSince: null,
+      reason: 'Identificando o ativo e a cotação do gráfico atual.'
+    };
+  }
+
+  if (rows.length < 2) {
+    return {
+      ...common,
+      uiState: 'BUILDING_PATTERN',
+      direction: null,
+      actionable: false,
+      alert: 'silent',
+      possibleSince: null,
+      reason: 'Montando o padrão com as velas reais da CasaTrade.'
+    };
+  }
+
+  // Single authority rule: professionalDecision mirrors the orchestrator signal.
+  // It must never invent a POSSÍVEL from score, erase one because score dipped,
+  // or choose a direction independently from state.signal.
+  if (ui === 'ENTER_BUY' || ui === 'ENTER_SELL') {
+    return {
+      ...common,
+      uiState: ui,
+      direction,
+      actionable: true,
+      alert: 'strong',
+      reason: text(signal.reason || `ENTRAR AGORA: ${direction === 'BUY' ? 'COMPRA' : 'VENDA'}.`)
+    };
+  }
+
+  if (ui === 'POSSIBLE_BUY' || ui === 'POSSIBLE_SELL') {
+    return {
+      ...common,
+      uiState: ui,
+      direction,
+      actionable: false,
+      alert: 'discrete',
+      reason: text(signal.reason || `POSSÍVEL ${direction === 'BUY' ? 'COMPRA' : 'VENDA'} — aguardando confirmação final perto de 10s.`)
+    };
+  }
+
+  if (ui === 'ANALYZING_MARKET' || ui === 'BUILDING_PATTERN' || ui === 'DECIDING') {
+    return {
+      ...common,
+      uiState: ui,
+      direction: null,
+      actionable: false,
+      alert: 'silent',
+      possibleSince: null,
+      reason: text(signal.reason || 'Analisando o padrão da vela atual.')
     };
   }
 
   return {
     ...common,
-    uiState: direction === 'BUY' ? 'ENTER_BUY' : 'ENTER_SELL',
-    direction,
-    actionable: true,
-    alert: 'strong',
-    possibleSince,
-    holdRemainingMs: 0,
-    reason
+    uiState: 'WAIT',
+    direction: null,
+    actionable: false,
+    alert: 'silent',
+    possibleSince: null,
+    reason: text(signal.reason || 'AGUARDAR — nenhum padrão confirmado para esta vela.')
   };
 }
 

@@ -494,28 +494,21 @@ async function forceLiveControlRead(tabId) {
       target: { tabId, allFrames: true },
       world: 'ISOLATED',
       func: () => {
-        let expiration = false;
         let asset = false;
-        try {
-          if (typeof globalThis.__ATS_FORCE_EXPIRATION_SCAN__ === 'function') {
-            globalThis.__ATS_FORCE_EXPIRATION_SCAN__();
-            expiration = true;
-          }
-        } catch {}
         try {
           if (typeof globalThis.__ATS_FORCE_FOCUSED_ASSET_SCAN__ === 'function') {
             globalThis.__ATS_FORCE_FOCUSED_ASSET_SCAN__();
             asset = true;
           }
         } catch {}
-        return { expiration, asset };
+        return { asset };
       }
     });
     await result.catch(() => []);
-    await sleep(320);
+    await sleep(240);
     return true;
   } catch {
-    await sleep(320);
+    await sleep(240);
     return false;
   }
 }
@@ -526,43 +519,12 @@ async function refreshTargetTab() {
   const tabId = Number(state.targetTabId || 0);
   if (!tabId) return { ok: false, error: 'target_tab_missing', state };
 
-  // On Android/tablet browsers the scripting API may be callback-only. Read the
-  // visible expiration first through executeScriptCompat; do not make the user
-  // wait for a full pipeline reinjection when market/clock are already healthy.
-  const directExpiration = await readAndCommitDirectExpiration(tabId);
-  if (directExpiration) {
-    forceLiveControlRead(tabId).catch(() => false);
-    return {
-      ok: true,
-      tabId,
-      injected: null,
-      directExpiration,
-      state: await readScannerState()
-    };
-  }
-
   const injected = await injectModern(tabId).catch(() => false);
   await forceLiveControlRead(tabId).catch(() => false);
-  const afterInjectionExpiration = await readAndCommitDirectExpiration(tabId);
   const nextState = await readScannerState();
-
-  if (!injected && !afterInjectionExpiration) {
-    return {
-      ok: false,
-      error: 'runtime_injection_failed_and_expiration_not_found',
-      tabId,
-      directExpiration: null,
-      state: nextState
-    };
-  }
-  return {
-    ok: true,
-    tabId,
-    injected,
-    directExpiration: afterInjectionExpiration || null,
-    state: nextState
-  };
+  return { ok: !!injected, tabId, injected, state: nextState };
 }
+
 async function connectActiveTab() {
   let state = await readScannerState();
   const license = await recoverLicense(state);
@@ -671,10 +633,9 @@ async function connectActiveTab() {
     return { ok: false, error: 'runtime_injection_failed', platform: { id: platform.id, name: platform.name }, tabId: tab.id, state: failed };
   }
   await forceLiveControlRead(tab.id);
-  const directExpiration = await readAndCommitDirectExpiration(tab.id);
   const connectedAt = Number(next.diagnostics?.target?.connectedAt || Date.now());
   scheduleConnectionTimeout(tab.id, connectedAt);
-  return { ok: true, platform: { id: platform.id, name: platform.name }, tabId: tab.id, directExpiration: directExpiration || null, state: await readScannerState() || next };
+  return { ok: true, platform: { id: platform.id, name: platform.name }, tabId: tab.id, state: await readScannerState() || next };
 }
 
 async function activate(key = '') {
@@ -728,19 +689,11 @@ async function readSessionHistory() {
 }
 
 function exactTradeReady(state = {}) {
-  const clock = state.diagnostics?.marketClock || {};
   const focus = state.diagnostics?.focusedAsset || {};
-  const professional = state.professionalDecision || {};
-  const expirationAt = Number(state.platformControls?.expirationCheckedAt || state.platformControls?.observed?.observedAt?.expiration || 0);
-  const actualExpiration = clean(state.platformControls?.observed?.expiration || '');
-  const controlsFresh = expirationAt > 0 && !!actualExpiration;
-  if (professional.timeReady !== true || professional.expirationReady !== true || professional.actionable !== true) return false;
-  if (clock.verified !== true || clock.available === false || clock.role !== 'candle-close' || !EXACT_CLOCK_SOURCES.has(clean(clock.source))) return false;
-  if (Date.now() - Number(clock.at || 0) >= 3000) return false;
-  if (!sameAsset(clock.asset, state.asset) || !sameAsset(focus.asset, state.asset)) return false;
-  if (Number(clock.frameId) !== Number(focus.frameId)) return false;
-  if (clean(clock.frameHost).toLowerCase() !== clean(focus.frameHost).toLowerCase()) return false;
-  if (!actualExpiration || !controlsFresh) return false;
+  const ui = String(state.signal?.uiState || '').toUpperCase();
+  if (!['ENTER_BUY','ENTER_SELL'].includes(ui)) return false;
+  if (!state.asset || !sameAsset(focus.asset, state.asset)) return false;
+  if (focus.reliable !== true || focus.chartScoped !== true || focus.trustedChartFrame !== true) return false;
   return true;
 }
 
@@ -753,17 +706,11 @@ async function manualIntent(direction = '') {
   const confirmed = state.signal?.state === 'CONFIRM' || ['ENTER_BUY', 'ENTER_SELL'].includes(String(state.signal?.uiState || ''));
   if (!confirmed || signalDirection !== direction) return { ok: false, error: 'signal_not_confirmed', state };
 
-  const professional = state.professionalDecision || {};
-  const expectedUi = direction === 'BUY' ? 'ENTER_BUY' : 'ENTER_SELL';
-  if (professional.uiState !== expectedUi || professional.direction !== direction || professional.actionable !== true) {
-    return { ok: false, error: 'professional_signal_not_confirmed', state };
-  }
-  if (!exactTradeReady(state)) return { ok: false, error: 'time_not_synchronized', state };
+  if (!exactTradeReady(state)) return { ok: false, error: 'signal_not_ready', state };
 
-  const actualExpiration = clean(state.platformControls?.observed?.expiration || state.targetExpiration || state.expiration || '') || null;
   const intent = {
     direction, asset: state.asset, timeframe: state.analysisTimeframe || state.timeframe,
-    expiration: actualExpiration,
+    expiration: null,
     targetStart: state.signal?.targetStart || null,
     mode: 'manual-only', createdAt: Date.now()
   };

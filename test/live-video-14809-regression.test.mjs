@@ -21,7 +21,7 @@ test('video 14809: stale protocol-selected old asset cannot rollback an active v
   assert.match(session, /protocol-rollback-during-visible-transition/);
   assert.match(session, /protocol-rollback-after-user-selection/);
   assert.match(session, /protocol-rollback-visual-selection-lock/);
-  assert.match(session, /visualSelectionLock: userSelected/);
+  assert.match(session, /visualSelectionLock: authoritativeVisual/);
   assert.match(session, /protocolContradictsSelectionLock/);
 });
 
@@ -64,8 +64,8 @@ test('video 14809: platform stays connected while selected asset is resynchroniz
 
 test('video 14809: build version is unique so 0.11.26 cache cannot be reused', () => {
   const manifest = JSON.parse(read('manifest.json'));
-  assert.equal(manifest.version, '0.11.39');
-  assert.equal(manifest.version_name, '0.11.39-android-expiration-visible-line-fix');
+  assert.equal(manifest.version, '0.11.43');
+  assert.equal(manifest.version_name, '0.11.43-signal-continuity-and-entry-latch');
 });
 
 test('video 14809: central technical analysis owner remains single', () => {
