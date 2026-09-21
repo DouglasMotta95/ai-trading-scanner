@@ -217,20 +217,24 @@ const clockBoundToFocus = (clock = {}, focus = {}) => {
 };
 const activeAccess = state => {
   const status = clean(state?.license?.status).toLowerCase();
-  return ['active', 'valid'].includes(status)
-    || state?.license?.devMode === true
-    || state?.license?.plan === 'OWNER_DEV'
-    || state?.diagnostics?.access?.ownerDev === true
-    || state?.diagnostics?.access?.state === 'owner_dev';
+  return ['active', 'valid'].includes(status);
 };
+
+const utcDay = () => new Date().toISOString().slice(0, 10);
+const USAGE_RETRY_MS = 15_000;
+const RETRYABLE_USAGE_ERRORS = new Set(['backend_unreachable', 'telemetry_unreachable', 'client_token_missing', 'request_timeout']);
 
 function signalAllowance(state = {}) {
   const license = state.license || {};
-  if (license.devMode === true || clean(license.plan).toUpperCase() === 'OWNER_DEV') return { allowed: true, reason: '' };
   const remainingTotal = license.remainingTotal;
   const remainingToday = license.remainingToday;
   if (remainingTotal != null && Number(remainingTotal) <= 0) return { allowed: false, reason: 'limite total de sinais do plano atingido' };
-  if (remainingToday != null && Number(remainingToday) <= 0) return { allowed: false, reason: 'limite diário de sinais do plano atingido' };
+  // A cached zero only belongs to the server UTC usage day that produced it.
+  // After rollover, allow the candidate to reach consumeSignal(), where the
+  // backend refreshes/enforces the new day's allowance authoritatively.
+  if (remainingToday != null && Number(remainingToday) <= 0 && clean(license.usageDay) === utcDay()) {
+    return { allowed: false, reason: 'limite diário de sinais do plano atingido' };
+  }
   return { allowed: true, reason: '' };
 }
 
@@ -328,8 +332,12 @@ function reconcileSignalHistory(state = {}, next = {}, snapshot = {}) {
     if (!rows.some(row => row?.id === id)) {
       const record = {
         id,
+        signalId: id,
+        platformId: snapshot.platformId || next.platformId || state.platformId || 'casatrade',
+        platformName: snapshot.platformName || next.platformName || state.platformName || 'CasaTrade',
         asset: snapshot.asset,
         timeframe,
+        expiration: snapshot.expiration || snapshot.targetExpiration || null,
         direction,
         targetStart,
         score: num(signal.analysisScore ?? signal.score),
@@ -338,7 +346,12 @@ function reconcileSignalHistory(state = {}, next = {}, snapshot = {}) {
         entryPrice: null,
         exitPrice: null,
         result: null,
-        status: 'pending'
+        status: 'pending',
+        usageStatus: 'pending',
+        usageAttempts: 0,
+        usageRetryAt: 0,
+        usageError: null,
+        telemetryConfirmedAt: null
       };
       rows.push(record);
       created.push(record);
@@ -405,6 +418,32 @@ function scheduleAnalysis(force = false) {
   }, delay);
 }
 
+async function sendConfirmedSignalTelemetry(row = {}) {
+  if (!row?.id || num(row.entryPrice) == null || row.telemetryConfirmedAt) return false;
+  const sent = await telemetryEvent('signal_confirmed', {
+    signalId: row.signalId || row.id,
+    asset: row.asset,
+    platformId: row.platformId || 'casatrade',
+    platformName: row.platformName || 'CasaTrade',
+    timeframe: row.timeframe,
+    expiration: row.expiration || null,
+    direction: row.direction,
+    targetStart: row.targetStart,
+    entryTime: row.entryTime ?? row.targetStart,
+    entryPrice: row.entryPrice,
+    score: row.score,
+    setup: row.setup || null
+  }).catch(() => ({ ok: false, error: 'telemetry_unreachable' }));
+  if (!sent?.ok) return false;
+  await updateScannerState(current => ({
+    ...current,
+    signalHistory: (Array.isArray(current.signalHistory) ? current.signalHistory : []).map(item =>
+      item?.id === row.id ? { ...item, telemetryConfirmedAt: Date.now(), telemetryError: null } : item
+    )
+  })).catch(() => {});
+  return true;
+}
+
 async function runCentralAnalysis(force = false) {
   if (analysisRunning) {
     scheduleAnalysis(force);
@@ -414,6 +453,7 @@ async function runCentralAnalysis(force = false) {
   let needsConfirmationFollowup = false;
   let resolvedForTelemetry = [];
   let confirmedForUsage = [];
+  let confirmedForTelemetry = [];
   try {
     await updateScannerState(current => {
       const snapshot = consolidatedSnapshot(current);
@@ -490,7 +530,16 @@ async function runCentralAnalysis(force = false) {
       };
 
       const history = reconcileSignalHistory(current, next, snapshot);
-      confirmedForUsage = history.created;
+      const usageNow = Date.now();
+      confirmedForUsage = history.rows.filter(row =>
+        ['pending', 'retry'].includes(clean(row?.usageStatus).toLowerCase())
+        && usageNow >= Number(row?.usageRetryAt || 0)
+      );
+      confirmedForTelemetry = history.rows.filter(row =>
+        clean(row?.usageStatus).toLowerCase() === 'consumed'
+        && num(row?.entryPrice) != null
+        && !row?.telemetryConfirmedAt
+      );
       resolvedForTelemetry = history.resolved;
       const nextWithHistory = {
         ...next,
@@ -519,35 +568,35 @@ async function runCentralAnalysis(force = false) {
   }
 
   for (const row of confirmedForUsage) {
-    const state = await readScannerState().catch(() => null);
-    const license = state?.license || {};
-    const isOwner = license.devMode === true || clean(license.plan).toUpperCase() === 'OWNER_DEV';
-    if (isOwner) continue;
-
     const { settings = {} } = await storageLocalGet('settings').catch(() => ({}));
     const usage = await consumeSignal(settings).catch(() => ({ ok: false, error: 'backend_unreachable' }));
-    if (usage?.license) {
-      await updateScannerState(current => ({
-        ...current,
-        license: {
-          ...(current.license || {}),
-          ...usage.license,
-          error: usage.ok ? null : (usage.error || current.license?.error || null),
-          syncPending: usage.ok ? false : usage.error === 'backend_unreachable'
-        }
-      })).catch(() => {});
+    let consumedRow = null;
+    if (usage?.license || usage?.ok) {
+      await updateScannerState(current => {
+        const rows = (Array.isArray(current.signalHistory) ? current.signalHistory : []).map(item => {
+          if (item?.id !== row.id) return item;
+          const nextRow = usage?.ok
+            ? { ...item, usageStatus: 'consumed', usageAttempts: Number(item.usageAttempts || 0) + 1, usageRetryAt: 0, usageError: null, usageConsumedAt: Date.now() }
+            : item;
+          if (usage?.ok) consumedRow = nextRow;
+          return nextRow;
+        });
+        return {
+          ...current,
+          signalHistory: rows,
+          performance: signalPerformance(rows),
+          license: usage?.license ? {
+            ...(current.license || {}),
+            ...usage.license,
+            error: usage.ok ? null : (usage.error || current.license?.error || null),
+            syncPending: usage.ok ? false : RETRYABLE_USAGE_ERRORS.has(clean(usage.error).toLowerCase())
+          } : current.license
+        };
+      }).catch(() => {});
     }
 
     if (usage?.ok) {
-      telemetryEvent('signal_confirmed', {
-        id: row.id,
-        asset: row.asset,
-        timeframe: row.timeframe,
-        direction: row.direction,
-        targetStart: row.targetStart,
-        score: row.score,
-        setup: row.setup || null
-      }).catch(() => {});
+      if (consumedRow && num(consumedRow.entryPrice) != null) await sendConfirmedSignalTelemetry(consumedRow);
     } else if (usage?.error === 'daily_limit_reached' || usage?.error === 'trial_limit_reached') {
       await updateScannerState(current => {
         const currentSignal = current.signal || {};
@@ -566,8 +615,29 @@ async function runCentralAnalysis(force = false) {
           }
         };
       }).catch(() => {});
+    } else if (RETRYABLE_USAGE_ERRORS.has(clean(usage?.error).toLowerCase())) {
+      const retryAt = Date.now() + USAGE_RETRY_MS;
+      await updateScannerState(current => ({
+        ...current,
+        signalHistory: (Array.isArray(current.signalHistory) ? current.signalHistory : []).map(item =>
+          item?.id === row.id ? {
+            ...item,
+            usageStatus: 'retry',
+            usageAttempts: Number(item.usageAttempts || 0) + 1,
+            usageRetryAt: retryAt,
+            usageError: usage?.error || 'backend_unreachable'
+          } : item
+        ),
+        diagnostics: {
+          ...(current.diagnostics || {}),
+          usageGate: { blocked: false, retryPending: true, error: usage?.error || 'backend_unreachable', retryAt, at: Date.now() }
+        }
+      })).catch(() => {});
+      setTimeout(() => scheduleAnalysis(true), USAGE_RETRY_MS + 250);
     }
   }
+
+  for (const row of confirmedForTelemetry) await sendConfirmedSignalTelemetry(row);
 
   for (const row of resolvedForTelemetry) {
     telemetryEvent('signal_resolved', {
