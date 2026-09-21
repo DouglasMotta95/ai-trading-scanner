@@ -89,3 +89,29 @@ test('customer package cannot enable OWNER_DEV through local settings', () => {
   assert.match(owner, /removeLegacyOwnerBypass/);
   assert.doesNotMatch(owner, /storageLocalGet\('settings'\)/);
 });
+
+
+test('signal usage is claimed in-flight and backend consumption is idempotent by signalId', () => {
+  const background = read('src/background.js');
+  const license = read('src/services/license.js');
+  const server = read('backend/src/server.js');
+  assert.match(background, /usageStatus: 'in_flight'/);
+  assert.match(background, /USAGE_IN_FLIGHT_TIMEOUT_MS/);
+  assert.match(background, /consumeSignal\(settings, row\.signalId \|\| row\.id\)/);
+  assert.match(license, /signalId: String\(signalId \|\| ''\)/);
+  assert.match(server, /license\.consumedSignals \?\?= \{\}/);
+  assert.match(server, /license\.consumedSignals\[p\.signalId\]/);
+  assert.match(server, /usageDuplicate: true/);
+});
+
+test('heartbeat forces server validation and blocks runtime on authoritative license failure', () => {
+  const background = read('src/background.js');
+  const license = read('src/services/license.js');
+  assert.match(license, /forceServer = options\?\.forceServer === true/);
+  assert.match(background, /validateLicense\(settings, \{ forceServer: true \}\)/);
+  assert.match(background, /AUTHORITATIVE_LICENSE_ERRORS/);
+  assert.match(background, /blockRuntimeForLicense/);
+  assert.match(background, /scanner: 'idle'/);
+  assert.match(background, /connection: 'offline'/);
+  assert.match(background, /professionalDecision: null/);
+});
