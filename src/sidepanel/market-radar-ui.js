@@ -1,3 +1,4 @@
+// Read-only pre-operation radar: never mutates the technical signal engine or CasaTrade controls.
 const STATE_KEY = 'scannerState';
 const PREF_KEY = 'atsMarketRadarPreferencesV1';
 const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
