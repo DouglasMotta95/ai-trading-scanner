@@ -213,9 +213,16 @@ export function fastLiveDecision(signal = {}, context = {}) {
   // hit inside the confirmation gap upgrades it to ENTRAR.
   if (strong && hits > 0) return possible(signal, direction, score, seconds, q);
 
-  return waitFinal(signal, score, direction
-    ? `decisão final sem confirmação suficiente para ${direction === 'BUY' ? 'COMPRA' : 'VENDA'}`
-    : 'sem direção confiável');
+  // Fast path is an accelerator, never a veto. While the candidate still has
+  // a stable direction and remains above possibleScore, keep POSSÍVEL visible
+  // and let the central orchestrator own the final rejection/confirmation.
+  if (direction) {
+    const pending = possible(signal, direction, score, seconds, q);
+    const side = direction === 'BUY' ? 'COMPRA' : 'VENDA';
+    const reason = `POSSÍVEL ${side} • ${seconds}s — aguardando confirmação técnica final (score ${Math.round(score)}/100).`;
+    return { ...pending, phase: 'FINAL', reason, hint: reason };
+  }
+  return waitFinal(signal, score, 'sem direção confiável');
 }
 
 export function resetFastLiveDecision() {

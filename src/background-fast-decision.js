@@ -25,6 +25,26 @@ function sameSignal(a = {}, b = {}) {
     && clean(a.reason) === clean(b.reason);
 }
 
+function decisionRank(signal = {}) {
+  const ui = clean(signal?.uiState).toUpperCase();
+  if (ui === 'ENTER_BUY' || ui === 'ENTER_SELL' || clean(signal?.state).toUpperCase() === 'CONFIRM') return 3;
+  if (ui === 'POSSIBLE_BUY' || ui === 'POSSIBLE_SELL') return 2;
+  if (ui === 'DECIDING') return 1;
+  return 0;
+}
+
+function canFastApply(current = {}, decided = {}) {
+  const currentRank = decisionRank(current);
+  const nextRank = decisionRank(decided);
+  if (nextRank < currentRank) return false;
+  if (currentRank >= 2 && nextRank === currentRank) {
+    const a = clean(current.direction).toUpperCase();
+    const b = clean(decided.direction).toUpperCase();
+    if (a && b && a !== b) return false;
+  }
+  return true;
+}
+
 async function applyFastDecision(observed = {}) {
   if (writing || !activeAccess(observed) || observed.scanner !== 'scanning' || observed.connection !== 'online') return;
   if (!marketFresh(observed) || !observed.asset || !Array.isArray(observed.candles) || observed.candles.length < 3 || !observed.signal) return;
@@ -40,7 +60,7 @@ async function applyFastDecision(observed = {}) {
     targetStart: observed.diagnostics?.marketClock?.closeAt ?? observed.signal?.targetStart,
     serverTime: observed.serverTime || Date.now()
   });
-  if (!nextSignal || sameSignal(nextSignal, observed.signal)) return;
+  if (!nextSignal || sameSignal(nextSignal, observed.signal) || !canFastApply(observed.signal, nextSignal)) return;
 
   writing = true;
   try {
@@ -48,7 +68,7 @@ async function applyFastDecision(observed = {}) {
       if (!activeAccess(epochState) || epochState.scanner !== 'scanning' || epochState.connection !== 'online') return epochState;
       if (clean(epochState.asset) !== clean(observed.asset)) return epochState;
       const decided = nextSignal;
-      if (!decided || sameSignal(decided, epochState.signal || {})) return epochState;
+      if (!decided || sameSignal(decided, epochState.signal || {}) || !canFastApply(epochState.signal || {}, decided)) return epochState;
       return {
         ...epochState,
         signal: decided,
