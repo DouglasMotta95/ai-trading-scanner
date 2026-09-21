@@ -2,7 +2,7 @@ const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
 const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const apiBase = location.origin;
-let metrics = {}, plans = [], licenses = [], clients = [], auditEvents = [];
+let metrics = {}, plans = [], licenses = [], clients = [], auditEvents = [], productHealth = {};
 let licenseFilter = 'all', selectedLicenseKey = '', modalMode = 'trial', activeTemplate = 'trial';
 
 const api = async (path, opt = {}) => {
@@ -138,7 +138,8 @@ function renderClients() {
   const q = ($('#clientSearch').value || '').trim().toLowerCase();
   const list = clients.filter(c => !q || [c.customerName,c.email,c.licenseKey,c.planLabel,c.installationId].some(v => String(v || '').toLowerCase().includes(q)));
   const online = clients.filter(c => c.online).length; $('#onlineBadge').textContent = `${online} ONLINE`;
-  $('#clientsGrid').innerHTML = list.length ? list.map(c => `<article class="client-card"><div class="client-top"><div><b>${esc(c.customerName || 'Sem nome')}</b><small>${esc(c.licenseKey)}</small></div><span class="online-dot ${c.online ? 'on' : ''}">${c.online ? 'ONLINE' : 'OFFLINE'}</span></div><div class="client-meta"><div><span>PLANO</span><b>${esc(c.planLabel || c.plan)}</b></div><div><span>VERSÃO</span><b>${esc(c.version || '—')}</b></div><div><span>ÚLTIMA ATIVIDADE</span><b>${esc(ago(c.lastSeen))}</b></div><div><span>DISPOSITIVO</span><b>${esc(String(c.installationId || '').slice(0, 10) || '—')}</b></div></div><div class="client-actions"><button class="btn primary full" data-client-reset="${esc(c.licenseKey)}">RESETAR EXTENSÃO</button></div></article>`).join('') : '<div class="empty-panel">Nenhum dispositivo encontrado.</div>';
+  const latestVersion = String(productHealth.extensionLatestVersion || '').replace(/^v/i,'');
+  $('#clientsGrid').innerHTML = list.length ? list.map(c => `<article class="client-card"><div class="client-top"><div><b>${esc(c.customerName || 'Sem nome')}</b><small>${esc(c.licenseKey)}</small></div><span class="online-dot ${c.online ? 'on' : ''}">${c.online ? 'ONLINE' : 'OFFLINE'}</span></div><div class="client-meta"><div><span>PLANO</span><b>${esc(c.planLabel || c.plan)}</b></div><div><span>VERSÃO</span><b>${esc(c.version || '—')}</b><small>${latestVersion && String(c.version || '').replace(/^v/i,'') !== latestVersion ? `ATUALIZAR → ${esc(latestVersion)}` : 'ATUAL'}</small></div><div><span>ÚLTIMA ATIVIDADE</span><b>${esc(ago(c.lastSeen))}</b></div><div><span>DISPOSITIVO</span><b>${esc(String(c.installationId || '').slice(0, 10) || '—')}</b></div></div><div class="client-actions"><button class="btn primary full" data-client-reset="${esc(c.licenseKey)}">RESETAR EXTENSÃO</button></div></article>`).join('') : '<div class="empty-panel">Nenhum dispositivo encontrado.</div>';
   $$('[data-client-reset]').forEach(b => b.onclick = () => openModal('reset', b.dataset.clientReset));
 }
 function renderSystem(health, authStatus) {
@@ -163,7 +164,7 @@ async function refreshData() {
   if (failures.some(e => e?.status === 401)) return showLogin();
   const value = i => settled[i].status === 'fulfilled' ? settled[i].value : null;
   const m=value(0),p=value(1),l=value(2),c=value(3),a=value(4),h=value(5),s=value(6);
-  if(m)metrics=m;if(p)plans=p.plans||[];if(l)licenses=l.licenses||[];if(c)clients=c.clients||[];if(a)auditEvents=a.events||[];
+  if(m)metrics=m;if(p)plans=p.plans||[];if(l)licenses=l.licenses||[];if(c)clients=c.clients||[];if(a)auditEvents=a.events||[];if(h)productHealth=h;
   renderMetrics(); renderPlans(); renderRecent(); renderAudit(); renderLicenseSelects(); renderLicenses(); renderInspector(); renderClients();
   if(h&&s)renderSystem(h,s);
   if(failures.length) toast(`Atualização parcial: ${failures.length} fonte${failures.length===1?'':'s'} indisponível${failures.length===1?'':'is'}.`);
