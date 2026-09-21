@@ -269,7 +269,7 @@ function entryBlockReason(state = {}) {
   const operation = operationRequirement(state);
   const expirationLabel = operation.expiration === '300s' ? '5 MINUTOS' : '1 MINUTO';
   const expiration = expirationObservation(state);
-  if (!expiration.value) return 'EXPIRAÇÃO PENDENTE — INFORME A EXPIRAÇÃO NO CAMPO DO TOPO DO PAINEL';
+  if (!expiration.value) return 'EXPIRAÇÃO PENDENTE — ABRA AVANÇADO PARA INFORMAR A EXPIRAÇÃO USADA NA CASATRADE';
   if (expiration.value !== operation.expiration) return `AJUSTE A EXPIRAÇÃO DA CASATRADE PARA ${expirationLabel}`;
 
   const clock = state.diagnostics?.marketClock || {};
