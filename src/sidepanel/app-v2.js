@@ -6,7 +6,7 @@ const DEFAULT_PREFS = Object.freeze({
   confirmSoundEnabled: false,
   alertLevel: 'discrete',
   notificationsEnabled: true,
-  analystMode: 'NORMAL',
+  analystMode: 'A_PLUS',
   geminiEnabled: true,
   holdSeconds: 3,
   expectedAsset: ''
@@ -509,7 +509,7 @@ function syncSettingsUi() {
 async function pushAnalystPreferences() {
   await chrome.runtime.sendMessage({
     type: 'ATS_SET_ANALYST_PREFERENCES',
-    mode: 'NORMAL',
+    mode: 'A_PLUS',
     geminiEnabled: prefs.geminiEnabled,
     holdSeconds: 3,
     preferredExpiration: null
@@ -541,7 +541,7 @@ async function loadPrefs() {
     overlayEnabled: false,
     notificationsEnabled: raw.notificationsEnabled !== false,
     alertLevel: ['off','discrete','strong'].includes(migratedAlert) ? migratedAlert : DEFAULT_PREFS.alertLevel,
-    analystMode: 'NORMAL',
+    analystMode: 'A_PLUS',
     geminiEnabled: raw.geminiEnabled !== false,
     holdSeconds: 3,
     expectedAsset: clean(raw.expectedAsset || '')
