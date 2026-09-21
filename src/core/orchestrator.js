@@ -13,6 +13,15 @@ const DECISION_HIT_GAP_MS = 7000;
 const DECISION_WEAK_HOLD_MS = 2500;
 const POSSIBLE_DROP_HITS = 2;
 const POSSIBLE_WEAK_HOLD_MS = 2500;
+const CANDIDATE_PERSISTENCE_WINDOW_MS = 20_000;
+const CANDIDATE_PERSISTENCE_BUCKET_MS = 1000;
+const CANDIDATE_PERSISTENCE_MIN_SAMPLES = 4;
+const CANDIDATE_PERSISTENCE_MIN_SCORE = 55;
+const CANDIDATE_PERSISTENCE_MIN_RATIO = 0.70;
+// Android/tablet browsers can throttle live observations to 5–6s. Keep one
+// recent persistent candidate alive across that real gap without weakening the
+// score/ratio/opposite-direction gates.
+const CANDIDATE_PERSISTENCE_MAX_GAP_MS = 8000;
 const cycles = new Map();
 const wrapperCompletedDecisions = new Map();
 const WRAPPER_ROW_PREFIX = 'wrapper-cycle:';
@@ -312,6 +321,62 @@ function possibleWithHysteresis(cycle, allowed, direction, at) {
   return null;
 }
 
+function observeCandidatePersistence(cycle, direction, qualifies, score, at, thresholds = getThresholds()) {
+  const rawDirection = ['BUY', 'SELL'].includes(direction) ? direction : null;
+  const acceptedDirection = qualifies && rawDirection && Number(score) >= CANDIDATE_PERSISTENCE_MIN_SCORE
+    ? rawDirection
+    : null;
+  const bucket = Math.floor(at / CANDIDATE_PERSISTENCE_BUCKET_MS);
+  const previous = Array.isArray(cycle.persistenceSamples) ? cycle.persistenceSamples : [];
+  let samples = previous.filter(row => Number(row?.at || 0) >= at - CANDIDATE_PERSISTENCE_WINDOW_MS);
+  const sample = { at, bucket, direction: acceptedDirection, rawDirection, score: Number(score) || 0 };
+  if (samples.length && samples[samples.length - 1]?.bucket === bucket) samples[samples.length - 1] = sample;
+  else samples.push(sample);
+  samples = samples.slice(-24);
+  cycle.persistenceSamples = samples;
+
+  const total = samples.length;
+  const buyCount = samples.filter(row => row.direction === 'BUY').length;
+  const sellCount = samples.filter(row => row.direction === 'SELL').length;
+  const dominantDirection = buyCount === sellCount
+    ? (cycle.persistenceDirection || acceptedDirection || rawDirection || null)
+    : (buyCount > sellCount ? 'BUY' : 'SELL');
+  const dominantRows = dominantDirection ? samples.filter(row => row.direction === dominantDirection) : [];
+  const dominantCount = dominantRows.length;
+  const ratio = total ? dominantCount / total : 0;
+  const averageScore = dominantCount
+    ? dominantRows.reduce((sum, row) => sum + Number(row.score || 0), 0) / dominantCount
+    : 0;
+  const lastStrongAt = dominantRows.length ? Number(dominantRows[dominantRows.length - 1].at || 0) : 0;
+  const lastStrongAgeMs = lastStrongAt > 0 ? Math.max(0, at - lastStrongAt) : Infinity;
+  const strongOpposite = !!dominantDirection && samples.some(row =>
+    row.rawDirection
+    && row.rawDirection !== dominantDirection
+    && Number(row.score || 0) >= Number(thresholds.confirmScore || 0)
+    && at - Number(row.at || 0) <= DECISION_HIT_GAP_MS
+  );
+  const armed = !!dominantDirection
+    && total >= CANDIDATE_PERSISTENCE_MIN_SAMPLES
+    && dominantCount >= 3
+    && ratio >= CANDIDATE_PERSISTENCE_MIN_RATIO
+    && averageScore >= CANDIDATE_PERSISTENCE_MIN_SCORE
+    && lastStrongAgeMs <= CANDIDATE_PERSISTENCE_MAX_GAP_MS
+    && !strongOpposite;
+
+  if (armed) cycle.persistenceDirection = dominantDirection;
+  return {
+    armed,
+    direction: dominantDirection,
+    sampleCount: total,
+    dominantCount,
+    ratio,
+    averageScore,
+    lastStrongAt: lastStrongAt || null,
+    lastStrongAgeMs: Number.isFinite(lastStrongAgeMs) ? lastStrongAgeMs : null,
+    strongOpposite
+  };
+}
+
 function seedCycle(key, snapshot, signal, state = {}) {
   const stored = state?.decisionCycle;
   let cycle = cycles.get(key);
@@ -320,7 +385,9 @@ function seedCycle(key, snapshot, signal, state = {}) {
     cycle = {
       key, targetStart: targetStartOf(snapshot, signal), candidateDirection: null,
       confirmHits: 0, lastHitAt: null, decisionWeakSince: null, locked: null, direction: null, score: 0,
-      setup: null, reason: null, decidedAt: null, resolved: false
+      setup: null, reason: null, decidedAt: null, resolved: false,
+      confirmationMode: null, persistenceDirection: null, persistenceSamples: [], persistence: null,
+      decisionWindowSamples: 0, lastDecisionWindowBucket: null
     };
   }
   cycles.set(key, cycle);
@@ -362,11 +429,13 @@ function appendTrace(state = {}, row = {}) {
   return [...rows.filter(item => item?.key !== row.key), row].slice(-40);
 }
 
-function enterSignal(signal, cycle, direction, score, reason = null) {
+function enterSignal(signal, cycle, direction, score, reason = null, confirmationMode = 'STRONG', persistence = null) {
   return {
     ...signal, state: 'CONFIRM', direction, diagnosis: direction,
     uiState: direction === 'BUY' ? 'ENTER_BUY' : 'ENTER_SELL', provisional: false, phase: 'FINAL',
     score, analysisScore: score, setup: cycle.setup || signal.setup || null,
+    confirmationMode,
+    candidatePersistence: persistence || cycle.persistence || signal.candidatePersistence || null,
     reason: reason || `ENTRAR NA PRÓXIMA VELA: ${direction === 'BUY' ? 'COMPRA' : 'VENDA'} — padrão confirmado para a próxima abertura.`,
     hint: reason || `ENTRAR NA PRÓXIMA VELA: ${direction === 'BUY' ? 'COMPRA' : 'VENDA'}.`,
     targetStart: cycle.targetStart
@@ -380,16 +449,21 @@ function waitSignal(signal, reason) {
   };
 }
 
-function possibleSignal(signal, windows, direction, score) {
+function possibleSignal(signal, windows, direction, score, persistence = null) {
   const seconds = Math.max(0, Math.ceil(Number(signal.secondsRemaining || 0)));
   const side = direction === 'BUY' ? 'COMPRA' : 'VENDA';
   const waiting = clean(signal.waitingFor?.text || signal.reason || 'aguardando confirmação final do padrão');
-  const reason = `POSSÍVEL ${side} • ${seconds}s restantes — ${waiting}`;
+  const armed = !!persistence?.armed && persistence.direction === direction;
+  const dominance = armed ? Math.round(Number(persistence.ratio || 0) * 100) : 0;
+  const reason = armed
+    ? `${side} ARMADA • ${seconds}s restantes — persistência ${dominance}% e score médio ${Math.round(Number(persistence.averageScore || 0))}/100.`
+    : `POSSÍVEL ${side} • ${seconds}s restantes — ${waiting}`;
   return {
     ...signal,
     state: 'WATCH', direction, diagnosis: direction,
     uiState: direction === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL',
-    provisional: true, phase: 'POSSIBLE', score, analysisScore: score,
+    provisional: true, phase: armed ? 'ARMED' : 'POSSIBLE', score, analysisScore: score,
+    candidatePersistence: persistence,
     reason, hint: reason, decisionWindow: windows
   };
 }
@@ -510,13 +584,15 @@ export function processSnapshot(snapshot = {}, state = {}) {
   const direction = directionOf(signal);
   const rawPossible = possibleQuality(signal, direction, score, thresholds);
   const possibleDirection = possibleWithHysteresis(cycle, rawPossible, direction, at);
+  const persistence = observeCandidatePersistence(cycle, direction, rawPossible, score, at, thresholds);
+  cycle.persistence = persistence;
   const canShowPossible = !!possibleDirection;
   const recovered = resolveWrapperDecision(snapshot, result, key, state);
   const rolledLastConfirmed = newerDecision(newerDecision(result.lastConfirmed, latestWrapperCompleted(snapshot)), recovered);
   const measured = output => candidateBlockerMeasured(output, snapshot, state, thresholds, key, cycle, signal);
 
   if (cycle.locked === 'ENTER') {
-    return measured({ ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: enterSignal(signal, cycle, cycle.direction, Math.max(score, Number(cycle.score || 0)), cycle.reason), decisionCycle: { ...cycle } });
+    return measured({ ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: enterSignal(signal, cycle, cycle.direction, Math.max(score, Number(cycle.score || 0)), cycle.reason, cycle.confirmationMode || 'STRONG', cycle.persistence), decisionCycle: { ...cycle } });
   }
   if (cycle.locked === 'WAIT') {
     return measured({ ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: waitSignal(signal, cycle.reason || 'AGUARDAR — padrão não confirmou a tempo.'), decisionCycle: { ...cycle } });
@@ -527,8 +603,14 @@ export function processSnapshot(snapshot = {}, state = {}) {
     return measured({ ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: nextSignal, decisionCycle: { ...cycle } });
   }
   if (secondsRemaining > windows.decision) {
-    const nextSignal = canShowPossible ? possibleSignal(signal, windows, possibleDirection, score) : signal;
+    const nextSignal = canShowPossible ? possibleSignal(signal, windows, possibleDirection, score, persistence) : signal;
     return measured({ ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: nextSignal, decisionCycle: { ...cycle } });
+  }
+
+  const decisionWindowBucket = Math.floor(at / CANDIDATE_PERSISTENCE_BUCKET_MS);
+  if (cycle.lastDecisionWindowBucket !== decisionWindowBucket) {
+    cycle.lastDecisionWindowBucket = decisionWindowBucket;
+    cycle.decisionWindowSamples = Number(cycle.decisionWindowSamples || 0) + 1;
   }
 
   if (signal.state === 'CONFIRM' && ['BUY', 'SELL'].includes(signal.direction)) {
@@ -537,6 +619,8 @@ export function processSnapshot(snapshot = {}, state = {}) {
     cycle.score = Math.max(score, Number(signal.score || 0));
     cycle.setup = signal.setup || null;
     cycle.reason = signal.reason;
+    cycle.confirmationMode = signal.confirmationMode || 'STRONG';
+    cycle.persistence = signal.candidatePersistence || persistence;
     cycle.decidedAt = at;
     cycles.set(key, cycle);
     const trace = appendTrace(state, { key, targetStart: cycle.targetStart, decision: 'ENTER', direction: cycle.direction, score: cycle.score, setup: cycle.setup, reason: cycle.reason, decidedAt: at });
@@ -551,10 +635,32 @@ export function processSnapshot(snapshot = {}, state = {}) {
     cycle.direction = direction;
     cycle.score = score;
     cycle.reason = `ENTRAR NA PRÓXIMA VELA: ${direction === 'BUY' ? 'COMPRA' : 'VENDA'} — ${cycle.setup || 'setup'} confirmado, score ${Math.round(score)}/100.`;
+    cycle.confirmationMode = 'STRONG';
+    cycle.persistence = persistence;
     cycle.decidedAt = at;
     cycles.set(key, cycle);
     const trace = appendTrace(state, { key, targetStart: cycle.targetStart, decision: 'ENTER', direction, score, setup: cycle.setup, reason: cycle.reason, decidedAt: at });
-    return measured({ ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: enterSignal(signal, cycle, direction, score, cycle.reason), decisionCycle: { ...cycle }, decisionTrace: trace });
+    return measured({ ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: enterSignal(signal, cycle, direction, score, cycle.reason, 'STRONG', persistence), decisionCycle: { ...cycle }, decisionTrace: trace });
+  }
+
+  const persistenceDirection = persistence.armed && persistence.direction === possibleDirection
+    ? possibleDirection
+    : null;
+  if (secondsRemaining < windows.decision
+    && Number(cycle.decisionWindowSamples || 0) >= 2
+    && persistenceDirection
+    && canShowPossible) {
+    cycle.locked = 'ENTER';
+    cycle.direction = persistenceDirection;
+    cycle.score = Math.max(score, Math.round(Number(persistence.averageScore || 0)));
+    cycle.setup = cycle.setup || signal.setup || 'persistência do candidato';
+    cycle.confirmationMode = 'PERSISTENCE';
+    cycle.persistence = persistence;
+    cycle.reason = `ENTRAR NA PRÓXIMA VELA: ${persistenceDirection === 'BUY' ? 'COMPRA' : 'VENDA'} — candidato dominante em ${Math.round(Number(persistence.ratio || 0) * 100)}% das leituras recentes, score médio ${Math.round(Number(persistence.averageScore || 0))}/100, sem oposição forte.`;
+    cycle.decidedAt = at;
+    cycles.set(key, cycle);
+    const trace = appendTrace(state, { key, targetStart: cycle.targetStart, decision: 'ENTER', direction: cycle.direction, score: cycle.score, setup: cycle.setup, confirmationMode: cycle.confirmationMode, reason: cycle.reason, decidedAt: at });
+    return measured({ ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: enterSignal(signal, cycle, persistenceDirection, score, cycle.reason, 'PERSISTENCE', persistence), decisionCycle: { ...cycle }, decisionTrace: trace });
   }
 
   if (secondsRemaining <= windows.skip) {
@@ -571,7 +677,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
 
   cycles.set(key, cycle);
   const nextSignal = canShowPossible
-    ? possibleSignal(signal, windows, possibleDirection, score)
+    ? possibleSignal(signal, windows, possibleDirection, score, persistence)
     : decidingSignal(signal, windows);
   return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: nextSignal, decisionCycle: { ...cycle } };
 }

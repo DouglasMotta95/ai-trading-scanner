@@ -23,10 +23,21 @@ test('15019: professional hold uses the stable technical candle key', () => {
   assert.match(src, /state\.diagnostics\?\.marketClock\?\.closeAt/);
 });
 
-test('15019: build is v0.11.45 and keeps diagnostic section available', () => {
+test('15019 continuity remains intact in v0.11.46 persistent-candidate build', () => {
   const manifest = JSON.parse(read('manifest.json'));
   const panel = read('src/sidepanel/ui-shell-v2.js');
-  assert.equal(manifest.version, '0.11.45');
-  assert.equal(manifest.version_name, '0.11.45-candidate-continuity-final-window');
+  const orchestrator = read('src/core/orchestrator.js');
+  const policy = read('src/background-decision-policy.js');
+  assert.equal(manifest.version, '0.11.46');
+  assert.equal(manifest.version_name, '0.11.46-persistent-candidate-entry');
   assert.match(panel, /7\. BLOQUEIO DO CANDIDATO/);
+  assert.match(orchestrator, /CANDIDATE_PERSISTENCE_MIN_SCORE = 55/);
+  assert.match(orchestrator, /CANDIDATE_PERSISTENCE_MIN_RATIO = 0\.70/);
+  assert.match(orchestrator, /CANDIDATE_PERSISTENCE_MIN_SAMPLES = 4/);
+  assert.match(orchestrator, /CANDIDATE_PERSISTENCE_MAX_GAP_MS = 8000/);
+  assert.match(orchestrator, /phase: armed \? 'ARMED' : 'POSSIBLE'/);
+  assert.match(orchestrator, /decisionWindowSamples: 0/);
+  assert.match(orchestrator, /Number\(cycle\.decisionWindowSamples \|\| 0\) >= 2/);
+  assert.match(policy, /persistenceCandidate/);
+  assert.match(policy, /const finalQuality = strongFinalQuality \|\| persistenceFinalQuality/);
 });
