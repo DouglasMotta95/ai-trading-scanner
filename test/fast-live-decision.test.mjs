@@ -28,9 +28,10 @@ test('confirms ENTER on two strong observations inside final 10 seconds', () => 
   assert.equal(second.state, 'CONFIRM');
 });
 
-test('finishes candle with AGUARDAR when setup never confirms', () => {
+test('keeps POSSIBLE visible in the final window while confirmation is still pending', () => {
   resetFastLiveDecision();
   const r = fastLiveDecision(base({ secondsRemaining: 3 }), { asset: 'AUD/CAD (OTC)', timeframe: 'M1', serverTime: 100000 });
-  assert.equal(r.uiState, 'WAIT');
-  assert.equal(r.state, 'NO_TRADE');
+  assert.equal(r.uiState, 'POSSIBLE_SELL');
+  assert.equal(r.state, 'WATCH');
+  assert.match(r.reason, /aguardando confirmação técnica final/i);
 });

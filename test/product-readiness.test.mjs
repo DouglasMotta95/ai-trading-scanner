@@ -38,7 +38,7 @@ test('backend requires strong production session secret and serializes payment p
   assert.match(server, /setPaymentEvent\(eventKey, 'completed'/);
   assert.match(server, /admin-login', 5, 60000/);
   assert.match(server, /duplicateOrder/);
-  assert.equal(JSON.parse(read('backend/package.json')).version, '0.10.2');
+  assert.equal(JSON.parse(read('backend/package.json')).version, '0.11.47');
 });
 
 test('customer portal escapes plan labels and exposes recovery/legal surfaces', () => {
