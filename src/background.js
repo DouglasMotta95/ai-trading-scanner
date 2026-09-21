@@ -317,18 +317,16 @@ async function updateSignalPerformanceLedger(state = {}) {
     const threeCandlesLater = target + durationMs * 3;
     const feedAdvancedThree = performanceFeedAdvancedPastTarget(candles, target, durationMs * 3);
     if (now >= threeCandlesLater && feedAdvancedThree) {
-      changed = true;
       const reason = diagnoseSignalOutcomePending(row, candles);
-      return {
-        ...row,
-        resultPendingAfter3: true,
-        resultPendingReason: reason,
-        resultPendingCheckedAt: now,
-        result: 'INDETERMINADO',
-        status: 'resolved',
-        resolvedAt: now,
-        outcomeBasis: 'target_candle_data_unavailable_after_3'
-      };
+      if (row.resultPendingAfter3 !== true || row.resultPendingReason !== reason) {
+        changed = true;
+        return {
+          ...row,
+          resultPendingAfter3: true,
+          resultPendingReason: reason,
+          resultPendingCheckedAt: now
+        };
+      }
     }
     return row;
   });
