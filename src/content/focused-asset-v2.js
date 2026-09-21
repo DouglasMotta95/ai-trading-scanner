@@ -261,7 +261,13 @@
       else { candidate = winner.asset; candidateSince = now; candidateSamples = 1; }
       const stableFor = Math.max(0, now - candidateSince);
       const reliable = winner.interaction || winner.explicit || (candidateSamples >= 2 && stableFor >= 220) || (candidateSamples >= 3);
-      if (!reliable) return;
+      if (!reliable) {
+        // Do not wait for the next passive interval to prove the boot/switch
+        // candidate. Re-scan quickly so the visible CasaTrade asset becomes
+        // authoritative well inside the 1.5s synchronization budget.
+        schedulePublish(260, false);
+        return;
+      }
       if (!force && sameAsset(lastPublished, winner.asset) && now - lastPublishedAt < 650) return;
       lastPublished = winner.asset;
       lastPublishedAt = now;
@@ -304,7 +310,7 @@
     }, delay);
   }
 
-  const observer = new MutationObserver(() => schedulePublish(160, false));
+  const observer = new MutationObserver(() => schedulePublish(120, false));
   try { observer.observe(document.documentElement, { subtree: true, childList: true, attributes: true, characterData: true }); } catch {}
   const noteInteraction = event => {
     const asset = touchedAsset(event);
@@ -318,8 +324,8 @@
   document.addEventListener('pointerup', noteInteraction, true);
   document.addEventListener('touchend', noteInteraction, true);
   document.addEventListener('click', noteInteraction, true);
-  const intervalId = setInterval(() => schedulePublish(0, false), 600);
-  const bootTimer = setTimeout(() => { invalidateElements(); publish(true); }, 250);
+  const intervalId = setInterval(() => schedulePublish(0, false), 450);
+  const bootTimer = setTimeout(() => { invalidateElements(); publish(true); }, 80);
 
   globalThis.__ATS_FORCE_FOCUS_SCAN__ = () => {
     invalidateElements();

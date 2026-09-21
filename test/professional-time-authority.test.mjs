@@ -24,6 +24,14 @@ test('CasaTrade time is the only authority for a user-facing entry', () => {
   assert.match(panel, /model\.actionable && model\.direction === 'SELL' && timeReady/);
 });
 
+test('summary TF and advanced scanner mode share the same operation-mode authority', () => {
+  const panel = read('src/sidepanel/app-v2.js');
+  assert.match(panel, /function syncSettingsUi\(state = null\)/);
+  assert.match(panel, /state\?\.analystPreferences\?\.operationMode/);
+  assert.match(panel, /setText\('timeframe', freshMarket \|\| pending \|\| bootAwaitingFocus \? operation\.timeframe : '—'\)/);
+  assert.match(panel, /syncSettingsUi\(state\)/);
+});
+
 test('live CasaTrade controls are authoritative and timeframe changes reset the market cycle', () => {
   const controls = read('src/background-platform-controls.js');
   const html = read('src/sidepanel/index.html');

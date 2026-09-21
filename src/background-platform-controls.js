@@ -124,17 +124,22 @@ function expirationContext(state = {}, observed = {}, expirationSource = '') {
   }
 
   const realFresh = !!realExpiration && realExpirationAt > 0 && now - realExpirationAt < 7000;
-  const divergence = !!(realFresh && declared && realExpiration !== declared);
-  const actual = realFresh ? realExpiration : declared || null;
-  const source = realFresh ? (realExpirationSource || 'real') : declared ? 'user-declared' : null;
+  // A real CasaTrade observation always supersedes the temporary manual
+  // fallback. Once real expiration exists, the declaration is invalidated
+  // instead of remaining stuck and creating a false divergence/block.
+  const invalidatedDeclared = realFresh && declared ? declared : null;
+  const effectiveDeclared = invalidatedDeclared ? null : declared;
+  const actual = realFresh ? realExpiration : effectiveDeclared || null;
+  const source = realFresh ? (realExpirationSource || 'real') : effectiveDeclared ? 'user-declared' : null;
 
   return {
-    declared,
+    declared: effectiveDeclared,
+    invalidatedDeclared,
     realExpiration: realFresh ? realExpiration : null,
     realExpirationAt: realFresh ? realExpirationAt : 0,
     realExpirationSource: realFresh ? (realExpirationSource || 'real') : '',
     realFresh,
-    divergence,
+    divergence: false,
     actual,
     source
   };
@@ -210,7 +215,8 @@ function applyExpirationAuthority(state = {}, observedInput = {}, expirationSour
     verified: authority.realFresh,
     userDeclared: authority.declared,
     real: authority.realExpiration,
-    divergence: authority.divergence,
+    divergence: false,
+    manualInvalidated: authority.invalidatedDeclared || null,
     label: authority.source === 'user-declared' ? 'informada por você, não verificada' : authority.source ? 'confirmada pela CasaTrade' : 'pendente',
     ready,
     validForM1: operationMode.timeframe === 'M1' ? ready : false,
@@ -322,6 +328,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         platformControls: {
           ...seededState.platformControls,
           observed: resolved.observed,
+          userDeclaredExpiration: resolved.authority.invalidatedDeclared ? null : seededState.platformControls.userDeclaredExpiration,
+          userDeclaredAt: resolved.authority.invalidatedDeclared ? 0 : Number(seededState.platformControls.userDeclaredAt || 0),
           checkedAt: now,
           expirationCheckedAt: resolved.expirationCheckedAt,
           timeframeCheckedAt: resolved.timeframeCheckedAt,
@@ -400,6 +408,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       platformControls: {
         ...seededState.platformControls,
         observed: resolved.observed,
+        userDeclaredExpiration: resolved.authority.invalidatedDeclared ? null : seededState.platformControls.userDeclaredExpiration,
+        userDeclaredAt: resolved.authority.invalidatedDeclared ? 0 : Number(seededState.platformControls.userDeclaredAt || 0),
         checkedAt: Date.now(),
         expirationCheckedAt: resolved.expirationCheckedAt,
         timeframeCheckedAt: resolved.timeframeCheckedAt,
