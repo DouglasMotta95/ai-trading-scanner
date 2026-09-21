@@ -164,7 +164,8 @@ function confirmationQuality(result = {}, direction = null, thresholds = getThre
   const rejected = result.recent?.rejection === direction
     && Number(metrics.rejectionStrength || 0) >= thresholds.rejectionStrength;
   if (String(confirmationMode).toUpperCase() === 'SIMPLES') {
-    const continuation = result.recent?.continuationDirection === direction && Number(score) >= 55;
+    const continuation = result.recent?.continuationDirection === direction
+      && Number(result.recent?.continuationScore || 0) >= 55;
     const momentum = metrics.momentumDirection === direction && Number(metrics.momentumScore || 0) >= 40;
     const confirmations = [rejected, continuation, momentum, candleStrong].filter(Boolean).length;
     return Number(score) >= thresholds.confirmScore
