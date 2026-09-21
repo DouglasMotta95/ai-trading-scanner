@@ -1,11 +1,13 @@
 // Read-only pre-operation radar: never mutates the technical signal engine or CasaTrade controls.
 const STATE_KEY = 'scannerState';
 const PREF_KEY = 'atsMarketRadarPreferencesV1';
+const ASSET_RADAR_KEY = 'atsAssetRadarV1';
 const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
 const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
 const clamp = (value, min = 0, max = 100) => Math.max(min, Math.min(max, Number(value) || 0));
 
 let lastState = {};
+let assetRadarSnapshot = { rows: [] };
 let liveEnabled = true;
 let lastRadarSignature = '';
 let lastRenderedAt = 0;
@@ -167,18 +169,30 @@ function assess(rows = [], timeframe = 'M1') {
 }
 
 function histories(state = {}) {
-  const result = [];
-  const history = state.marketHistory && typeof state.marketHistory === 'object' ? state.marketHistory : {};
-  for (const [asset, rows] of Object.entries(history)) {
+  const byAsset = new Map();
+  const put = (asset, rows) => {
+    const id = marketId(asset);
     const normalized = completeRows(rows);
-    if (normalized.length >= 6) result.push({ asset: marketId(asset), rows: normalized });
-  }
-  const current = completeRows(state.candles);
+    if (!id || normalized.length < 6) return;
+    const previous = byAsset.get(id);
+    if (!previous || normalized.length > previous.rows.length || Number(normalized.at(-1)?.time || 0) > Number(previous.rows.at(-1)?.time || 0)) {
+      byAsset.set(id, { asset: id, rows: normalized });
+    }
+  };
+
+  const history = state.marketHistory && typeof state.marketHistory === 'object' ? state.marketHistory : {};
+  for (const [asset, rows] of Object.entries(history)) put(asset, rows);
+
   const currentAsset = marketId(state.asset);
-  if (currentAsset && current.length >= 6 && !result.some(item => item.asset === currentAsset)) {
-    result.push({ asset: currentAsset, rows: current });
+  put(currentAsset, state.candles);
+
+  // The existing passive CasaTrade asset radar observes other markets from the
+  // platform feed. Use only rows that actually contain captured candles.
+  for (const row of Array.isArray(assetRadarSnapshot?.rows) ? assetRadarSnapshot.rows : []) {
+    put(row?.asset, row?.candles);
   }
-  return result;
+
+  return [...byAsset.values()];
 }
 
 function analyzeAsset(asset, rows, currentTf = '') {
@@ -373,11 +387,13 @@ function renderEntrySafety(state = {}) {
   if (!root) return;
   const professional = state.professionalDecision || {};
   const signal = state.signal || {};
-  const ui = clean(professional.uiState || signal.uiState).toUpperCase();
-  const confirmed = professional.actionable === true
-    || signal.state === 'CONFIRM'
-    || ui === 'ENTER_BUY'
-    || ui === 'ENTER_SELL';
+  const professionalUi = clean(professional.uiState).toUpperCase();
+  const technicalUi = clean(signal.uiState).toUpperCase();
+  const hasProfessional = !!professionalUi || Number(professional.updatedAt || 0) > 0;
+  const ui = hasProfessional ? professionalUi : technicalUi;
+  const confirmed = hasProfessional
+    ? professional.actionable === true && (ui === 'ENTER_BUY' || ui === 'ENTER_SELL')
+    : signal.state === 'CONFIRM' || ui === 'ENTER_BUY' || ui === 'ENTER_SELL';
 
   if (!confirmed) {
     root.hidden = true;
@@ -417,6 +433,10 @@ function renderAll(state = {}, force = false) {
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local') return;
   if (changes[STATE_KEY]) renderAll(changes[STATE_KEY].newValue || {});
+  if (changes[ASSET_RADAR_KEY]) {
+    assetRadarSnapshot = changes[ASSET_RADAR_KEY].newValue || { rows: [] };
+    if (liveEnabled) renderRadar(lastState, true);
+  }
   if (changes[PREF_KEY]) {
     liveEnabled = changes[PREF_KEY].newValue?.liveEnabled !== false;
     syncLiveButton();
@@ -430,8 +450,9 @@ setInterval(() => {
 
 (async () => {
   await loadPrefs();
-  const stored = await chrome.storage.local.get(STATE_KEY).catch(() => ({}));
+  const stored = await chrome.storage.local.get([STATE_KEY, ASSET_RADAR_KEY]).catch(() => ({}));
   lastState = stored?.[STATE_KEY] || {};
+  assetRadarSnapshot = stored?.[ASSET_RADAR_KEY] || { rows: [] };
   ensureUi();
   ensureEntryCheckUi();
   renderAll(lastState, true);
