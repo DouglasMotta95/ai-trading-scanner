@@ -6,16 +6,43 @@ let writing = false;
 const clean = value => String(value ?? '').trim();
 const activeAccess = state => {
   const status = clean(state?.license?.status).toLowerCase();
-  return ['active', 'valid'].includes(status)
-    || state?.license?.devMode === true
-    || state?.license?.plan === 'OWNER_DEV'
-    || state?.diagnostics?.access?.ownerDev === true
-    || state?.diagnostics?.access?.state === 'owner_dev';
+  return ['active', 'valid'].includes(status);
 };
 
 function marketFresh(state = {}) {
   const at = Number(state.lastSeen || 0);
   return at > 0 && Date.now() - at <= 6000;
+}
+
+const EXACT_CLOCK_SOURCES = new Set(['trader-dom-countdown', 'network-server-cycle']);
+
+function sameMarket(a = '', b = '') {
+  const norm = value => clean(value).toUpperCase().replace(/\s*\(\s*OTC\s*\)\s*$/i, '');
+  return !!norm(a) && norm(a) === norm(b);
+}
+
+function exactClockReady(state = {}) {
+  const clock = state.diagnostics?.marketClock || {};
+  const focus = state.diagnostics?.focusedAsset || {};
+  const sameFrame = Number(clock.frameId) === Number(focus.frameId)
+    && clean(clock.frameHost).toLowerCase() === clean(focus.frameHost).toLowerCase();
+  const boundControlFrame = clock.crossFrameControl === true
+    && Number(clock.boundFocusFrameId) === Number(focus.frameId)
+    && clean(clock.boundFocusFrameHost).toLowerCase() === clean(focus.frameHost).toLowerCase();
+
+  return focus.reliable === true
+    && focus.chartScoped === true
+    && focus.trustedChartFrame === true
+    && sameMarket(focus.asset, state.asset)
+    && clock.verified === true
+    && clock.available !== false
+    && clock.role === 'candle-close'
+    && EXACT_CLOCK_SOURCES.has(clean(clock.source))
+    && sameMarket(clock.asset, state.asset)
+    && (sameFrame || boundControlFrame)
+    && Number(clock.at || 0) > 0
+    && Date.now() - Number(clock.at) < 3200
+    && Number.isFinite(Number(clock.secondsRemaining));
 }
 
 function sameSignal(a = {}, b = {}) {
@@ -47,7 +74,7 @@ function canFastApply(current = {}, decided = {}) {
 
 async function applyFastDecision(observed = {}) {
   if (writing || !activeAccess(observed) || observed.scanner !== 'scanning' || observed.connection !== 'online') return;
-  if (!marketFresh(observed) || !observed.asset || !Array.isArray(observed.candles) || observed.candles.length < 3 || !observed.signal) return;
+  if (!marketFresh(observed) || !exactClockReady(observed) || !observed.asset || !Array.isArray(observed.candles) || observed.candles.length < 3 || !observed.signal) return;
 
   const observedEpoch = marketSessionEpoch(observed);
   const nextSignal = fastLiveDecision(observed.signal, {
