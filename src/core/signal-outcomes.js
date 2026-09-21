@@ -36,13 +36,42 @@ function timeframeMs(value = 'M1') {
   return 60_000;
 }
 
-function exactTargetCandle(record = {}, candles = []) {
+function targetBucket(record = {}) {
   const targetStart = num(record.targetStart);
   if (targetStart == null) return null;
+  const tfMs = timeframeMs(record.timeframe);
+  return Math.round(targetStart / tfMs) * tfMs;
+}
+
+function exactTargetCandle(record = {}, candles = []) {
+  const targetStart = targetBucket(record);
+  if (targetStart == null) return null;
+  const tfMs = timeframeMs(record.timeframe);
   return (Array.isArray(candles) ? candles : []).find(candle => {
     const time = candleTime(candle);
-    return time === targetStart && sameTimeframe(candle, record);
+    if (time == null) return false;
+    return Math.floor(time / tfMs) * tfMs === targetStart && sameTimeframe(candle, record);
   }) || null;
+}
+
+export function diagnoseSignalOutcomePending(record = {}, candles = []) {
+  if (!record) return 'registro ausente';
+  if (num(record.targetStart) == null) return 'vela alvo ausente: targetStart ausente';
+  if (!['BUY', 'SELL'].includes(String(record.direction || '').toUpperCase())) return 'direção ausente';
+  const bucket = targetBucket(record);
+  const tfMs = timeframeMs(record.timeframe);
+  const rows = (Array.isArray(candles) ? candles : []).filter(candle => {
+    const time = candleTime(candle);
+    return time != null && Math.floor(time / tfMs) * tfMs === bucket;
+  });
+  if (!rows.length) return 'vela alvo ausente';
+  const sameTf = rows.filter(candle => sameTimeframe(candle, record));
+  if (!sameTf.length) return 'timeframe diferente';
+  const target = sameTf[0];
+  if (num(target?.open) == null) return 'entryPrice ausente';
+  if (num(target?.close) == null) return 'fechamento da vela alvo ausente';
+  if (num(record.entryPrice) == null) return 'entryPrice ausente no registro';
+  return 'dados da vela alvo presentes; resultado ainda pendente';
 }
 
 export function captureSignalEntry(record = {}, candles = []) {
@@ -54,7 +83,7 @@ export function captureSignalEntry(record = {}, candles = []) {
   return {
     ...record,
     entryPrice: open,
-    entryTime: num(record.targetStart),
+    entryTime: targetBucket(record),
     entryCapturedAt: Date.now(),
     entryStatus: 'confirmed'
   };
@@ -63,7 +92,7 @@ export function captureSignalEntry(record = {}, candles = []) {
 export function resolveSignalOutcome(record = {}, candles = [], options = {}) {
   if (!record || record.result || record.status === 'resolved') return null;
   if (!['BUY', 'SELL'].includes(String(record.direction || '').toUpperCase())) return null;
-  const targetStart = num(record.targetStart);
+  const targetStart = targetBucket(record);
   if (targetStart == null) return null;
 
   const target = exactTargetCandle(record, candles);
