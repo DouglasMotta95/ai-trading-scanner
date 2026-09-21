@@ -57,3 +57,35 @@ test('public health and extension download support HEAD checks', () => {
   assert.match(server, /pathname === '\/health'[\s\S]*?\['GET', 'HEAD'\]\.includes\(req\.method\)/);
   assert.match(server, /pathname === '\/download\/extension'[\s\S]*?\['GET', 'HEAD'\]\.includes\(req\.method\)/);
 });
+
+
+test('quota rollover and usage retry are server-backed instead of permanently cached', () => {
+  const server = read('backend/src/server.js');
+  const background = read('src/background.js');
+  assert.match(server, /usageDay/);
+  assert.match(background, /clean\(license\.usageDay\) === utcDay\(\)/);
+  assert.match(background, /USAGE_RETRY_MS/);
+  assert.match(background, /usageStatus: 'retry'/);
+  assert.match(background, /setTimeout\(\(\) => scheduleAnalysis\(true\), USAGE_RETRY_MS \+ 250\)/);
+});
+
+test('confirmed-signal telemetry waits for exact entry and uses backend recorder fields', () => {
+  const background = read('src/background.js');
+  const server = read('backend/src/server.js');
+  assert.match(background, /signalId: row\.signalId \|\| row\.id/);
+  assert.match(background, /entryPrice: row\.entryPrice/);
+  assert.match(background, /entryTime: row\.entryTime \?\? row\.targetStart/);
+  assert.match(background, /usageStatus: 'consumed'/);
+  assert.match(server, /const signalId = text\(d\.signalId/);
+  assert.match(server, /entryPrice = num\(d\.entryPrice\)/);
+  assert.match(server, /entryAt = num\(d\.entryTime\) \?\? evt\.at/);
+});
+
+test('customer package cannot enable OWNER_DEV through local settings', () => {
+  const license = read('src/services/license.js');
+  const owner = read('src/background-dev-owner.js');
+  assert.match(license, /export const ownerDevMode = \(\) => false/);
+  assert.doesNotMatch(license, /settings\?\.ownerDevMode === true/);
+  assert.match(owner, /removeLegacyOwnerBypass/);
+  assert.doesNotMatch(owner, /storageLocalGet\('settings'\)/);
+});
