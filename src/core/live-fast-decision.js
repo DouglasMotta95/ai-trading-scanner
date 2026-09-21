@@ -7,6 +7,14 @@ export const FAST_DECISION = Object.freeze({
   maxHitGapMs: 5000
 });
 
+const HIGH_CONFIDENCE = Object.freeze({
+  possibleScore: 60,
+  finalScore: 70,
+  possiblePower: 58,
+  finalPower: 60,
+  minimumEvidence: 2
+});
+
 const trackers = new Map();
 const directionTrackers = new Map();
 const DIRECTION_FLIP_HITS = 2;
@@ -46,12 +54,10 @@ function quality(signal = {}, direction = null, thresholds = getThresholds(), co
     if (momentum) reasons.push('momentum');
     if (currentStrength >= thresholds.candleStrength) reasons.push('força');
     return {
-      // In SIMPLES the final score check happens outside this helper. Power is
-      // the only mandatory quality gate here; reasons are explanatory only.
-      strong: power >= 50,
+      strong: power >= HIGH_CONFIDENCE.possiblePower && reasons.length >= HIGH_CONFIDENCE.minimumEvidence,
       power,
       reasons,
-      setup: reasons.length ? 'confirmação simples' : 'direção + score + poder'
+      setup: reasons.length >= HIGH_CONFIDENCE.minimumEvidence ? reasons.slice(0, 2).join(' + ') : null
     };
   }
 
@@ -65,7 +71,12 @@ function quality(signal = {}, direction = null, thresholds = getThresholds(), co
   if (momentum) reasons.push('momentum');
   if (rejection) reasons.push('rejeição');
   if (strength) reasons.push('força');
-  return { strong: power >= 50 && reasons.length > 0, power, reasons, setup: reasons[0] || null };
+  return {
+    strong: power >= HIGH_CONFIDENCE.possiblePower && reasons.length >= HIGH_CONFIDENCE.minimumEvidence,
+    power,
+    reasons,
+    setup: reasons.length >= HIGH_CONFIDENCE.minimumEvidence ? reasons.slice(0, 2).join(' + ') : null
+  };
 }
 
 function cycleKey(context = {}, signal = {}) {
@@ -116,7 +127,7 @@ function observe(key, direction, strong, at) {
 
 function possible(signal, direction, score, seconds, q) {
   const side = direction === 'BUY' ? 'COMPRA' : 'VENDA';
-  const reason = `POSSÍVEL ${side} • ${seconds}s — score ${Math.round(score)}/100${q.reasons.length ? ` • ${q.reasons.join(' + ')}` : ''}.`;
+  const reason = `${side} — ALTA CONFIANÇA • PRÉ-SINAL • ${seconds}s • score ${Math.round(score)}/100 • ${q.reasons.slice(0, 2).join(' + ')}.`;
   return {
     ...signal,
     state: 'WATCH', direction, diagnosis: direction,
@@ -128,7 +139,7 @@ function possible(signal, direction, score, seconds, q) {
 
 function enter(signal, direction, score, seconds, q) {
   const side = direction === 'BUY' ? 'COMPRA' : 'VENDA';
-  const reason = `ENTRAR NA PRÓXIMA VELA: ${side} • ${seconds}s — score ${Math.round(score)}/100 • ${q.setup || q.reasons.join(' + ') || 'setup confirmado'}.`;
+  const reason = `${side} — ALTA CONFIANÇA • ENTRAR NA PRÓXIMA VELA • ${seconds}s • score ${Math.round(score)}/100 • ${q.setup || q.reasons.slice(0, 2).join(' + ')}.`;
   return {
     ...signal,
     state: 'CONFIRM', direction, diagnosis: direction,
@@ -153,7 +164,7 @@ export function fastLiveDecision(signal = {}, context = {}) {
   const thresholds = getThresholds(context.sensitivityProfile || 'MEDIO');
   const confirmationMode = clean(context.confirmationMode || signal.confirmationMode).toUpperCase() === 'EXIGENTE' ? 'EXIGENTE' : 'SIMPLES';
   const operationMode = getOperationMode(context.operationMode || context.timeframe || 'M1');
-  const preSignalWindowSeconds = operationMode.timeframe === 'M5' ? 90 : 30;
+  const preSignalWindowSeconds = 30;
   const finalWindowSeconds = thresholds.entryWindowSeconds;
   if (signal.uiState === 'ENTER_BUY' || signal.uiState === 'ENTER_SELL' || signal.state === 'CONFIRM') return signal;
 
@@ -176,9 +187,10 @@ export function fastLiveDecision(signal = {}, context = {}) {
     return { ...signal, state: 'WAIT', direction: null, diagnosis: 'WAIT', uiState: 'BUILDING_PATTERN', provisional: true, phase: 'BUILDING', reason: text, hint: text, fastDecision: true };
   }
 
-  if (!rawDirection || score < thresholds.possibleScore) {
+  const possibleScore = Math.max(HIGH_CONFIDENCE.possibleScore, thresholds.possibleScore);
+  if (!rawDirection || score < possibleScore) {
     trackers.delete(key);
-    const text = `AGUARDAR • ${seconds}s — leitura ainda fraca (${Math.round(score)}/${thresholds.possibleScore}).`;
+    const text = `AGUARDAR • ${seconds}s — confiança insuficiente (score ${Math.round(score)}/${possibleScore}).`;
     return { ...signal, state: 'WAIT', direction: null, diagnosis: 'WAIT', uiState: 'WAIT', provisional: true, phase: seconds <= finalWindowSeconds ? 'FINAL' : 'LIVE', reason: text, hint: text, fastDecision: true };
   }
 
@@ -206,12 +218,19 @@ export function fastLiveDecision(signal = {}, context = {}) {
   const direction = stabilized.direction;
   const q = quality(signal, direction, thresholds, confirmationMode);
 
+  if (!q.strong) {
+    observe(key, direction, false, at);
+    return waitFinal(signal, score, `confiança insuficiente: poder ${Math.round(q.power)}/${HIGH_CONFIDENCE.possiblePower}, confluências ${q.reasons.length}/${HIGH_CONFIDENCE.minimumEvidence}`);
+  }
+
   if (seconds > finalWindowSeconds) {
     observe(key, direction, false, at);
     return possible(signal, direction, score, seconds, q);
   }
 
-  const strong = score >= thresholds.confirmScore && q.strong;
+  const strong = score >= Math.max(HIGH_CONFIDENCE.finalScore, thresholds.confirmScore)
+    && q.power >= HIGH_CONFIDENCE.finalPower
+    && q.reasons.length >= HIGH_CONFIDENCE.minimumEvidence;
   const hits = observe(key, direction, strong, at);
   if (strong && hits >= FAST_DECISION.confirmHits) return enter(signal, direction, score, seconds, q);
 
@@ -219,16 +238,8 @@ export function fastLiveDecision(signal = {}, context = {}) {
   // hit inside the confirmation gap upgrades it to ENTRAR.
   if (strong && hits > 0) return possible(signal, direction, score, seconds, q);
 
-  // Fast path is an accelerator, never a veto. While the candidate still has
-  // a stable direction and remains above possibleScore, keep POSSÍVEL visible
-  // and let the central orchestrator own the final rejection/confirmation.
-  if (direction) {
-    const pending = possible(signal, direction, score, seconds, q);
-    const side = direction === 'BUY' ? 'COMPRA' : 'VENDA';
-    const reason = `POSSÍVEL ${side} • ${seconds}s — aguardando confirmação técnica final (score ${Math.round(score)}/100).`;
-    return { ...pending, phase: 'FINAL', reason, hint: reason };
-  }
-  return waitFinal(signal, score, 'sem direção confiável');
+  // Inside the final window, anything below the hard high-confidence gate is WAIT.
+  return waitFinal(signal, score, 'confiança final abaixo do nível exigido');
 }
 
 export function resetFastLiveDecision() {
