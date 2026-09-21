@@ -165,7 +165,11 @@ export function fastLiveDecision(signal = {}, context = {}) {
   const confirmationMode = clean(context.confirmationMode || signal.confirmationMode).toUpperCase() === 'EXIGENTE' ? 'EXIGENTE' : 'SIMPLES';
   const operationMode = getOperationMode(context.operationMode || context.timeframe || 'M1');
   const preSignalWindowSeconds = 30;
-  const finalWindowSeconds = thresholds.entryWindowSeconds;
+  const finalWindowSeconds = operationMode.timeframe === 'M1'
+    ? 5
+    : operationMode.timeframe === 'M5'
+      ? 8
+      : thresholds.entryWindowSeconds;
   if (signal.uiState === 'ENTER_BUY' || signal.uiState === 'ENTER_SELL' || signal.state === 'CONFIRM') return signal;
 
   const score = Number(signal.analysisScore ?? signal.score ?? 0);

@@ -72,7 +72,7 @@ test('three burst data updates cannot reset confirmation between central analysi
         frameId: 7, frameHost: 'trade.casatraders.online', at: bucket + 50_000
       },
       marketClock: {
-        asset: 'EUR/USD (OTC)', timeframe: 'M1', secondsRemaining: 9,
+        asset: 'EUR/USD (OTC)', timeframe: 'M1', secondsRemaining: 4,
         verified: true, available: true, operational: true, role: 'candle-close',
         source: 'trader-dom-countdown', frameId: 7, frameHost: 'trade.casatraders.online',
         at: bucket + 50_000
@@ -86,7 +86,7 @@ test('three burst data updates cannot reset confirmation between central analysi
     ...shared,
     diagnostics: {
       ...shared.diagnostics,
-      marketClock: { ...shared.diagnostics.marketClock, secondsRemaining: 9, at: bucket + 50_050 }
+      marketClock: { ...shared.diagnostics.marketClock, secondsRemaining: 4, at: bucket + 50_050 }
     }
   }; // clock update
 

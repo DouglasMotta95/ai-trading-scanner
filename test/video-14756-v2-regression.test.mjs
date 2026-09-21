@@ -185,15 +185,15 @@ test('valid final-window pattern advances POSSIBLE to ENTER after two confirmati
   resetFastLiveDecision();
   const targetStart = 1_700_000_120_000;
   const first = fastLiveDecision(strongSignal('BUY', 84), {
-    asset: 'AUD/CAD (OTC)', timeframe: 'M1', secondsRemaining: 9,
-    targetStart, serverTime: 1_700_000_111_000
+    asset: 'AUD/CAD (OTC)', timeframe: 'M1', secondsRemaining: 5,
+    targetStart, serverTime: 1_700_000_115_000
   });
   assert.equal(first.uiState, 'POSSIBLE_BUY');
   assert.notEqual(first.state, 'CONFIRM');
 
   const second = fastLiveDecision(strongSignal('BUY', 84), {
-    asset: 'AUD/CAD (OTC)', timeframe: 'M1', secondsRemaining: 8,
-    targetStart, serverTime: 1_700_000_111_800
+    asset: 'AUD/CAD (OTC)', timeframe: 'M1', secondsRemaining: 4,
+    targetStart, serverTime: 1_700_000_115_800
   });
   assert.equal(second.uiState, 'ENTER_BUY');
   assert.equal(second.state, 'CONFIRM');
