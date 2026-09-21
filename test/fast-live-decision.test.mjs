@@ -33,7 +33,8 @@ test('keeps POSSIBLE visible in the final window while confirmation is still pen
   const r = fastLiveDecision(base({ secondsRemaining: 3 }), { asset: 'AUD/CAD (OTC)', timeframe: 'M1', serverTime: 100000 });
   assert.equal(r.uiState, 'POSSIBLE_SELL');
   assert.equal(r.state, 'WATCH');
-  assert.match(r.reason, /aguardando confirmação técnica final/i);
+  assert.equal(r.direction, 'SELL');
+  assert.match(r.reason, /POSSÍVEL VENDA/i);
 });
 
 
