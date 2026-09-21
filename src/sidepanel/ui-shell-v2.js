@@ -387,7 +387,7 @@ function renderShell(state = {}) {
           : expirationDivergence
             ? clean(expirationGuard.reason || 'A expiração lida da CasaTrade diverge do valor informado. Entrada bloqueada.')
             : expirationPending
-              ? 'EXPIRAÇÃO PENDENTE — a CasaTrade não expõe esse valor para leitura. Informe abaixo a expiração que você está usando.'
+              ? 'EXPIRAÇÃO PENDENTE — a CasaTrade não expõe esse valor para leitura. Abra AVANÇADO para informar a expiração que você está usando.'
               : connected && expirationWrong
             ? `Ajuste a expiração da CasaTrade para ${operation.expirationLabel}.`
             : tradeReady
