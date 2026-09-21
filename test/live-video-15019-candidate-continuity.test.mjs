@@ -35,7 +35,8 @@ test('15019 continuity remains intact in v0.11.46 persistent-candidate build', (
   assert.match(orchestrator, /CANDIDATE_PERSISTENCE_MIN_RATIO = 0\.70/);
   assert.match(orchestrator, /CANDIDATE_PERSISTENCE_MIN_SAMPLES = 4/);
   assert.match(orchestrator, /phase: armed \? 'ARMED' : 'POSSIBLE'/);
-  assert.match(orchestrator, /secondsRemaining < windows\.decision && persistenceDirection && canShowPossible/);
+  assert.match(orchestrator, /decisionWindowSamples: 0/);
+  assert.match(orchestrator, /Number\(cycle\.decisionWindowSamples \|\| 0\) >= 2/);
   assert.match(policy, /persistenceCandidate/);
   assert.match(policy, /const finalQuality = strongFinalQuality \|\| persistenceFinalQuality/);
 });
