@@ -636,7 +636,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
   const persistenceDirection = persistence.armed && persistence.direction === possibleDirection
     ? possibleDirection
     : null;
-  if (persistenceDirection && canShowPossible) {
+  if (secondsRemaining < windows.decision && persistenceDirection && canShowPossible) {
     cycle.locked = 'ENTER';
     cycle.direction = persistenceDirection;
     cycle.score = Math.max(score, Math.round(Number(persistence.averageScore || 0)));
