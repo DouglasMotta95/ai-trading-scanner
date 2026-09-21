@@ -19,18 +19,11 @@ const base = () => PUBLIC_LICENSE_API;
 const normalizedError = error => String(error || '');
 
 export const isDevBuild = () => !chrome.runtime.getManifest().update_url;
-// Customer ZIPs are also loaded unpacked and therefore have no update_url.
-// Owner bypass must never be inferred from install type; it is explicit only.
-export const ownerDevMode = (settings = {}) => settings?.ownerDevMode === true && settings?.testLicenseBlock !== true;
-export const devOwnerLicense = () => ({
-  status: 'active',
-  plan: 'OWNER_DEV',
-  planLabel: 'DEV OWNER',
-  dailyLimit: null, usedToday: 0, remainingToday: null,
-  totalLimit: null, usedTotal: 0, remainingTotal: null,
-  error: null, syncPending: false, devMode: true
-});
-export const licenseRequired = (settings = {}) => !ownerDevMode(settings);
+// An unpacked ZIP is customer-modifiable, so no local setting may grant owner access.
+// Owner/testing access must use a normal server-issued license (use the Unlimited plan).
+export const ownerDevMode = () => false;
+export const devOwnerLicense = () => null;
+export const licenseRequired = () => true;
 
 export async function savedLicenseKey() {
   const x = await storageLocalGet(LICENSE_KEY);
@@ -184,10 +177,6 @@ export async function activateLicense(settings = {}, key = '') {
 }
 
 export async function validateLicense(settings = {}) {
-  // Unpacked diagnostic/development builds are the owner's workbench.
-  // Customer/release builds still require the normal server-backed license.
-  if (ownerDevMode(settings)) return { ok: true, devMode: true, license: devOwnerLicense() };
-
   const cached = await cachedLicenseSession();
   let licenseKey = await savedLicenseKey();
   if (!licenseKey && cached?.licenseKey) licenseKey = await saveLicenseKey(cached.licenseKey);
