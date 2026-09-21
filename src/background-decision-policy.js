@@ -329,10 +329,20 @@ function baseDecision(state = {}) {
       reason: `${side} — ALTA CONFIANÇA • PRÉ-SINAL • ${reason}`
     };
   }
-  if (!finalQuality || heldFor < holdMs) {
-    // Keep the candidate alive inside the final window. Returning WAIT here used
-    // to clear direction on the next policy tick, restart possibleSince and make
-    // the hold impossible to complete after a late technical confirmation.
+  if (!finalQuality) {
+    return {
+      ...common,
+      uiState: 'WAIT',
+      direction: null,
+      actionable: false,
+      alert: 'silent',
+      possibleSince: null,
+      holdRemainingMs: 0,
+      reason: `AGUARDAR — confiança final insuficiente para ${side.toLowerCase()}.`
+    };
+  }
+
+  if (heldFor < holdMs) {
     return {
       ...common,
       uiState: direction === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL',
@@ -341,9 +351,7 @@ function baseDecision(state = {}) {
       alert: 'discrete',
       possibleSince,
       holdRemainingMs: Math.max(0, holdMs - heldFor),
-      reason: finalQuality
-        ? `${side} — ALTA CONFIANÇA • confirmação final recebida; estabilizando hold.`
-        : `AGUARDAR — ${side} ainda não atingiu a confiança final exigida.`
+      reason: `${side} — ALTA CONFIANÇA • confirmação final recebida; estabilizando hold.`
     };
   }
 
