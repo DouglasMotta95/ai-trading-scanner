@@ -1,0 +1,93 @@
+/* v0.11.50 UI polish. Presentation only — no scanner behavior. */
+.panel-view-toggle{display:flex;align-items:center;gap:3px;padding:3px;border:1px solid #1e4055;border-radius:999px;background:#071621}
+.panel-view-toggle button{border:0;border-radius:999px;background:transparent;color:#7392a7;font-size:8px;font-weight:950;letter-spacing:.05em;padding:6px 8px;cursor:pointer}
+.panel-view-toggle button.active{background:#123246;color:#e8f8ff;box-shadow:inset 0 0 0 1px #285b76}
+
+.signal-quick-meta{display:grid;grid-template-columns:minmax(0,1.6fr) repeat(3,minmax(58px,.7fr));gap:5px;margin-top:6px}
+.signal-quick-meta>span{display:grid;gap:1px;padding:6px 7px;border:1px solid #17364b;border-radius:9px;background:#071621;min-width:0}
+.signal-quick-meta small{font-size:6px;color:#6f8fa4;letter-spacing:.07em;font-weight:900}
+.signal-quick-meta b{font-size:9px;color:#e2f2fb;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+.market-chart-panel{border:1px solid #17364b;border-radius:12px;background:#07131f;overflow:hidden}
+.market-chart-panel>summary{list-style:none;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 11px;font-size:9px;font-weight:950;color:#d8e9f3}
+.market-chart-panel>summary::-webkit-details-marker{display:none}
+.market-chart-panel>summary::after{content:"+";font-size:16px;color:#6fa7c8}
+.market-chart-panel[open]>summary::after{content:"–"}
+.market-chart-panel>summary small{margin-left:auto;color:#6f8da2;font-size:7px;font-weight:700}
+.market-chart-panel>.live-card{margin:0;border:0;border-top:1px solid #17364b;border-radius:0;box-shadow:none}
+
+#operationalPulse.moved-to-advanced{margin:0!important}
+
+/* Connection and scanner motion */
+.connect-btn{position:relative;overflow:visible}
+.connect-btn.ats-connecting::after{content:"";position:absolute;inset:-5px;border:1px solid rgba(100,209,238,.55);border-radius:999px;animation:atsConnectRing 1.15s ease-out infinite;pointer-events:none}
+.connect-btn.ats-connecting .connect-dot{animation:atsConnectDot .8s ease-in-out infinite!important}
+.decision-card.ats-analyzing #decisionBanner::after{content:"";position:absolute;left:0;right:0;bottom:0;height:2px;background:linear-gradient(90deg,transparent,#4aaedb,transparent);animation:atsAnalysisSweep 1.7s linear infinite}
+.decision-card.ats-possible #decisionBanner{animation:atsPossibleBreath 1.35s ease-in-out infinite}
+.decision-card.ats-enter #decisionBanner{animation:atsEntryFlash .55s ease-out 1}
+@keyframes atsConnectRing{0%{transform:scale(.92);opacity:.8}100%{transform:scale(1.16);opacity:0}}
+@keyframes atsConnectDot{0%,100%{transform:scale(.85);opacity:.6}50%{transform:scale(1.25);opacity:1}}
+@keyframes atsAnalysisSweep{0%{transform:translateX(-100%);opacity:.2}50%{opacity:1}100%{transform:translateX(100%);opacity:.2}}
+@keyframes atsPossibleBreath{0%,100%{box-shadow:inset 0 0 0 rgba(223,188,80,0)}50%{box-shadow:inset 0 0 24px rgba(223,188,80,.09)}}
+@keyframes atsEntryFlash{0%{filter:brightness(1.45);transform:scale(.99)}100%{filter:brightness(1);transform:scale(1)}}
+
+/* Full mode: keep every tool available but avoid duplicate live status on the main flow. */
+body[data-panel-mode="full"] #operationalPulse{display:block}
+body[data-panel-mode="full"] .market-chart-panel{display:block}
+
+/* Signal mode: one-screen operational view. */
+body[data-panel-mode="signal"] .compact-shell{max-width:620px;gap:6px;padding:6px 7px 10px}
+body[data-panel-mode="signal"] .compact-topbar{margin-bottom:0}
+body[data-panel-mode="signal"] #syncStrip.live{display:none}
+body[data-panel-mode="signal"] #expectedAssetWarning:empty{display:none}
+body[data-panel-mode="signal"] .compact-market{grid-template-columns:minmax(0,1.5fr) repeat(3,minmax(52px,.65fr));gap:4px}
+body[data-panel-mode="signal"] .compact-market>div{padding:5px 7px}
+body[data-panel-mode="signal"] .compact-market span{font-size:6px}
+body[data-panel-mode="signal"] .compact-market b{font-size:10px}
+body[data-panel-mode="signal"] .source-state{display:none!important}
+
+body[data-panel-mode="signal"] #marketRadar{padding:9px 10px;margin:5px 0}
+body[data-panel-mode="signal"] #marketRadar .market-radar-head{margin-bottom:0}
+body[data-panel-mode="signal"] #marketRadar .market-radar-head small{display:none}
+body[data-panel-mode="signal"] #marketRadar .market-radar-head b{font-size:11px}
+body[data-panel-mode="signal"] #marketRadar .market-radar-actions{margin-top:6px}
+body[data-panel-mode="signal"] #marketRadar .market-radar-actions button{padding:6px 8px;font-size:8px}
+body[data-panel-mode="signal"] #marketRadar #radarOpportunities{display:none}
+body[data-panel-mode="signal"] #marketRadar .market-radar-summary{margin-top:6px;padding:7px 8px}
+body[data-panel-mode="signal"] #marketRadar .market-radar-summary strong{font-size:11px}
+body[data-panel-mode="signal"] #marketRadar .market-radar-summary p{font-size:8px;margin-top:3px}
+body[data-panel-mode="signal"] #marketRadar .radar-tfs{margin-top:5px;gap:5px}
+body[data-panel-mode="signal"] #marketRadar .radar-tf{padding:6px 7px}
+body[data-panel-mode="signal"] #marketRadar .radar-tf b{font-size:12px}
+body[data-panel-mode="signal"] #marketRadar .radar-tf span,
+body[data-panel-mode="signal"] #marketRadar .radar-tf small{font-size:7px}
+
+body[data-panel-mode="signal"] #decisionCard{padding:8px 9px}
+body[data-panel-mode="signal"] #decisionCard .compact-decision-head{display:none}
+body[data-panel-mode="signal"] #decisionCard #decisionBanner{margin-top:0;padding:9px}
+body[data-panel-mode="signal"] #decisionCard #decisionBanner strong{font-size:18px!important}
+body[data-panel-mode="signal"] #decisionCard .decision-compact-grid{display:none}
+body[data-panel-mode="signal"] #decisionCard #tradeActionStatus{display:none}
+body[data-panel-mode="signal"] #decisionCard #signalReason{display:none}
+body[data-panel-mode="signal"] #decisionCard .progress-track{margin-top:5px;height:4px}
+body[data-panel-mode="signal"] #decisionCard .primary-trade-actions{margin-top:6px}
+body[data-panel-mode="signal"] #decisionCard .primary-trade-actions .trade-choice{min-height:38px;padding:7px 5px;font-size:12px}
+body[data-panel-mode="signal"] #entrySafetyCheck{margin:6px 0;padding:8px}
+body[data-panel-mode="signal"] #entrySafetyCheck strong{font-size:9px}
+body[data-panel-mode="signal"] #entrySafetyCheck p{font-size:8px;margin-top:3px}
+
+body[data-panel-mode="signal"] #operationalPulse,
+body[data-panel-mode="signal"] #marketChartPanel,
+body[data-panel-mode="signal"] #advancedPanel{display:none!important}
+
+@media(max-width:520px){
+  .panel-view-toggle{order:2}
+  .compact-topbar{flex-wrap:wrap}
+  .compact-topbar .top-status{margin-left:auto}
+  body[data-panel-mode="signal"] .signal-quick-meta{grid-template-columns:minmax(0,1.5fr) repeat(3,minmax(48px,.65fr))}
+}
+@media(max-width:390px){
+  .panel-view-toggle button{padding:5px 7px;font-size:7px}
+  body[data-panel-mode="signal"] .compact-market{grid-template-columns:1.35fr .65fr .75fr .75fr}
+  body[data-panel-mode="signal"] .signal-quick-meta{grid-template-columns:1.2fr .9fr .65fr .75fr}
+}
