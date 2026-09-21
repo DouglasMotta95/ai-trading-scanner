@@ -15,6 +15,14 @@ const cycles = new Map();
 const wrapperCompletedDecisions = new Map();
 const WRAPPER_ROW_PREFIX = 'wrapper-cycle:';
 
+const HIGH_CONFIDENCE = Object.freeze({
+  possibleScore: 60,
+  finalScore: 70,
+  possiblePower: 58,
+  finalPower: 60,
+  minimumEvidence: 2
+});
+
 const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
 const clean = value => String(value ?? '').trim();
 const directionOf = signal => ['BUY', 'SELL'].includes(signal?.analysisDirection)
@@ -34,10 +42,10 @@ function timeframeMs(value = 'M1') {
 function decisionWindows(snapshot = {}, signal = {}, thresholds = getThresholds()) {
   const timeframe = clean(snapshot.analysisTimeframe || snapshot.timeframe || signal.timeframe || 'M1').toUpperCase();
   const duration = Math.max(2, Math.round(timeframeMs(timeframe) / 1000));
-  // Operation contract: final decision window stays in absolute seconds from
-  // the sensitivity profile. Only the pre-signal window differs by mode.
+  // Operation contract: pre-signal is concentrated in the final ~30s for both
+  // M1 and M5; the final decision stays at 10-15s via the active profile.
   if (timeframe === 'M1' || timeframe === 'M5') {
-    return { pre: timeframe === 'M5' ? 90 : 30, decision: thresholds.entryWindowSeconds, skip: 4, duration, timeframe };
+    return { pre: 30, decision: thresholds.entryWindowSeconds, skip: 4, duration, timeframe };
   }
 
   // Longer/shorter candles keep proportional windows.
@@ -67,6 +75,22 @@ function confirmationModeOf(state = {}) {
   return clean(state.analystPreferences?.confirmationMode).toUpperCase() === 'EXIGENTE' ? 'EXIGENTE' : 'SIMPLES';
 }
 
+function highConfidenceEvidence(signal = {}, direction = null, thresholds = getThresholds()) {
+  const analytics = signal.analytics || {};
+  const currentStrength = Number(analytics.currentStrength || 0);
+  const rejectionStrength = Number(analytics.rejectionStrength || 0);
+  const continuationScore = Number(analytics.continuationScore || 0);
+  const momentumScore = Number(analytics.momentumScore || 0);
+  const directionalRejection = analytics.rejectionDirection === direction
+    || Number(direction === 'BUY' ? analytics.rejectionBuy : analytics.rejectionSell) >= Math.max(50, thresholds.rejectionStrength);
+  const evidence = [];
+  if (directionalRejection && rejectionStrength >= Math.max(50, thresholds.rejectionStrength)) evidence.push('rejeição');
+  if (analytics.continuationDirection === direction && continuationScore >= 60) evidence.push('continuação');
+  if (analytics.momentumDirection === direction && momentumScore >= 45) evidence.push('momentum');
+  if (currentStrength >= Math.max(60, thresholds.candleStrength)) evidence.push('força');
+  return evidence;
+}
+
 function decisionQuality(signal = {}, direction = null, thresholds = getThresholds(), confirmationMode = 'SIMPLES') {
   const mode = clean(confirmationMode).toUpperCase() === 'EXIGENTE' ? 'EXIGENTE' : 'SIMPLES';
   const score = Number(signal.analysisScore ?? signal.score ?? 0);
@@ -83,14 +107,21 @@ function decisionQuality(signal = {}, direction = null, thresholds = getThreshol
   const strongCandle = currentStrength >= thresholds.candleStrength;
   const rejection = directionalRejection && rejectionStrength >= thresholds.rejectionStrength;
   const regime = String(signal.regime?.type || '').toLowerCase();
-  const commonReady = !!direction && score >= thresholds.confirmScore && power >= 50;
+  const evidence = highConfidenceEvidence(signal, direction, thresholds);
+  const finalScore = Math.max(HIGH_CONFIDENCE.finalScore, thresholds.confirmScore);
+  const commonReady = !!direction
+    && score >= finalScore
+    && power >= HIGH_CONFIDENCE.finalPower
+    && evidence.length >= HIGH_CONFIDENCE.minimumEvidence;
   const commonReason = !direction
     ? 'sem direção'
-    : score < thresholds.confirmScore
-      ? `score ${Math.round(score)} < ${thresholds.confirmScore}`
-      : power < 50
-        ? `poder ${Math.round(power)} < 50`
-        : 'direção + score + poder aprovados';
+    : score < finalScore
+      ? `score ${Math.round(score)} < ${finalScore}`
+      : power < HIGH_CONFIDENCE.finalPower
+        ? `poder ${Math.round(power)} < ${HIGH_CONFIDENCE.finalPower}`
+        : evidence.length < HIGH_CONFIDENCE.minimumEvidence
+          ? `confluências fortes ${evidence.length}/${HIGH_CONFIDENCE.minimumEvidence}`
+          : 'alta confiança confirmada';
 
   if (mode === 'SIMPLES') {
     const setups = [
@@ -117,11 +148,10 @@ function decisionQuality(signal = {}, direction = null, thresholds = getThreshol
     ];
     const matched = setups.find(item => item.ok) || null;
     return {
-      // SIMPLES deliberately has one final gate: stable direction + final score
-      // + directional power. The setup checks remain diagnostic context instead
-      // of becoming a second hidden veto after POSSÍVEL was already published.
+      // SIMPLES no longer bypasses setup quality: every final signal must have
+      // high score, directional power and at least two independent confirmations.
       qualifies: commonReady,
-      setup: matched ? matched.name : 'direção + score + poder',
+      setup: matched ? matched.name : evidence.join(' + ') || 'alta confiança',
       checks: setups,
       mode,
       commonReady,
@@ -177,10 +207,12 @@ function decisionQuality(signal = {}, direction = null, thresholds = getThreshol
 }
 
 function possibleQuality(signal = {}, direction = null, score = 0, thresholds = getThresholds()) {
-  if (!direction || Number(score) < thresholds.possibleScore) return false;
+  const possibleScore = Math.max(HIGH_CONFIDENCE.possibleScore, thresholds.possibleScore);
+  if (!direction || Number(score) < possibleScore) return false;
   const analytics = signal.analytics || {};
   const power = Number(direction === 'BUY' ? analytics.buyPower : analytics.sellPower) || 0;
-  if (power < 50) return false;
+  if (power < HIGH_CONFIDENCE.possiblePower) return false;
+  if (highConfidenceEvidence(signal, direction, thresholds).length < HIGH_CONFIDENCE.minimumEvidence) return false;
   const stableDirection = clean(signal.stability?.possibleDirection).toUpperCase();
   const publishedDirection = clean(signal.direction).toUpperCase();
   return stableDirection === direction || (signal.state === 'WATCH' && publishedDirection === direction);
@@ -268,8 +300,8 @@ function enterSignal(signal, cycle, direction, score, reason = null) {
     ...signal, state: 'CONFIRM', direction, diagnosis: direction,
     uiState: direction === 'BUY' ? 'ENTER_BUY' : 'ENTER_SELL', provisional: false, phase: 'FINAL',
     score, analysisScore: score, setup: cycle.setup || signal.setup || null,
-    reason: reason || `ENTRAR NA PRÓXIMA VELA: ${direction === 'BUY' ? 'COMPRA' : 'VENDA'} — padrão confirmado para a próxima abertura.`,
-    hint: reason || `ENTRAR NA PRÓXIMA VELA: ${direction === 'BUY' ? 'COMPRA' : 'VENDA'}.`,
+    reason: reason || `${direction === 'BUY' ? 'COMPRA' : 'VENDA'} — ALTA CONFIANÇA • ENTRAR NA PRÓXIMA VELA.`,
+    hint: reason || `${direction === 'BUY' ? 'COMPRA' : 'VENDA'} — ALTA CONFIANÇA • ENTRAR NA PRÓXIMA VELA.`,
     targetStart: cycle.targetStart
   };
 }
@@ -284,8 +316,7 @@ function waitSignal(signal, reason) {
 function possibleSignal(signal, windows, direction, score) {
   const seconds = Math.max(0, Math.ceil(Number(signal.secondsRemaining || 0)));
   const side = direction === 'BUY' ? 'COMPRA' : 'VENDA';
-  const waiting = clean(signal.waitingFor?.text || signal.reason || 'aguardando confirmação final do padrão');
-  const reason = `POSSÍVEL ${side} • ${seconds}s restantes — ${waiting}`;
+  const reason = `${side} — ALTA CONFIANÇA • PRÉ-SINAL • ${seconds}s — aguardando a janela final.`;
   return {
     ...signal,
     state: 'WATCH', direction, diagnosis: direction,
@@ -297,8 +328,7 @@ function possibleSignal(signal, windows, direction, score) {
 
 function decidingSignal(signal, windows) {
   const seconds = Math.max(0, Math.ceil(Number(signal.secondsRemaining || 0)));
-  const waiting = clean(signal.waitingFor?.text || signal.reason || 'checando força, rejeição, continuação e momentum');
-  const reason = `DECIDINDO A PRÓXIMA VELA • ${seconds}s restantes — ${waiting}`;
+  const reason = `AGUARDAR • ${seconds}s — confiança ainda abaixo do nível exigido para entrada.`;
   return { ...signal, state: 'WAIT', direction: null, diagnosis: 'WAIT', uiState: 'DECIDING', provisional: true, phase: 'FINAL', reason, hint: reason, decisionWindow: windows };
 }
 
@@ -480,7 +510,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
     return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: nextSignal, decisionCycle: { ...cycle }, candidateBlockerTrace };
   }
 
-  if (signal.state === 'CONFIRM' && ['BUY', 'SELL'].includes(signal.direction)) {
+  if (signal.state === 'CONFIRM' && ['BUY', 'SELL'].includes(signal.direction) && quality.qualifies) {
     cycle.locked = 'ENTER';
     cycle.direction = signal.direction;
     cycle.score = Math.max(score, Number(signal.score || 0));
@@ -498,7 +528,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
     cycle.locked = 'ENTER';
     cycle.direction = direction;
     cycle.score = score;
-    cycle.reason = `ENTRAR NA PRÓXIMA VELA: ${direction === 'BUY' ? 'COMPRA' : 'VENDA'} — ${cycle.setup || 'setup'} confirmado, score ${Math.round(score)}/100.`;
+    cycle.reason = `${direction === 'BUY' ? 'COMPRA' : 'VENDA'} — ALTA CONFIANÇA • ENTRAR NA PRÓXIMA VELA • score ${Math.round(score)}/100 • ${cycle.setup || 'confluência forte'}.`;
     cycle.decidedAt = at;
     cycles.set(key, cycle);
     const trace = appendTrace(state, { key, targetStart: cycle.targetStart, decision: 'ENTER', direction, score, setup: cycle.setup, reason: cycle.reason, decidedAt: at });

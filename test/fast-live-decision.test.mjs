@@ -5,48 +5,55 @@ import { fastLiveDecision, resetFastLiveDecision } from '../src/core/live-fast-d
 function base(overrides = {}) {
   return {
     state: 'WAIT', uiState: 'BUILDING_PATTERN', analysisDirection: 'SELL',
-    score: 54, analysisScore: 54, secondsRemaining: 40,
-    analytics: { sellPower: 57, buyPower: 43, momentumDirection: 'SELL', momentumScore: 48 },
+    score: 64, analysisScore: 64, secondsRemaining: 40,
+    analytics: {
+      sellPower: 62,
+      buyPower: 38,
+      momentumDirection: 'SELL',
+      momentumScore: 52,
+      continuationDirection: 'SELL',
+      continuationScore: 64
+    },
     ...overrides
   };
 }
 
-test('shows POSSIBLE inside the 30 second preparation window', () => {
+test('shows only a high-confidence POSSIBLE inside the 30 second preparation window', () => {
   resetFastLiveDecision();
   const r = fastLiveDecision(base({ secondsRemaining: 24 }), { asset: 'AUD/CAD (OTC)', timeframe: 'M1', serverTime: 100000 });
   assert.equal(r.uiState, 'POSSIBLE_SELL');
   assert.equal(r.direction, 'SELL');
+  assert.match(r.reason, /ALTA CONFIANÇA/i);
 });
 
-test('confirms ENTER on two strong observations inside final 10 seconds', () => {
+test('confirms ENTER on two high-confidence observations inside final window', () => {
   resetFastLiveDecision();
-  const signal = base({ score: 64, analysisScore: 64, secondsRemaining: 9 });
+  const signal = base({ score: 74, analysisScore: 74, secondsRemaining: 9 });
   const first = fastLiveDecision(signal, { asset: 'AUD/CAD (OTC)', timeframe: 'M1', serverTime: 100000 });
   const second = fastLiveDecision(signal, { asset: 'AUD/CAD (OTC)', timeframe: 'M1', serverTime: 101000 });
   assert.equal(first.uiState, 'POSSIBLE_SELL');
   assert.equal(second.uiState, 'ENTER_SELL');
   assert.equal(second.state, 'CONFIRM');
+  assert.match(second.reason, /ALTA CONFIANÇA/i);
 });
 
-test('keeps POSSIBLE visible in the final window while confirmation is still pending', () => {
+test('keeps high-confidence POSSIBLE visible while the second final hit is pending', () => {
   resetFastLiveDecision();
-  const r = fastLiveDecision(base({ secondsRemaining: 3 }), { asset: 'AUD/CAD (OTC)', timeframe: 'M1', serverTime: 100000 });
+  const r = fastLiveDecision(base({ score: 74, analysisScore: 74, secondsRemaining: 9 }), { asset: 'AUD/CAD (OTC)', timeframe: 'M1', serverTime: 100000 });
   assert.equal(r.uiState, 'POSSIBLE_SELL');
   assert.equal(r.state, 'WATCH');
   assert.equal(r.direction, 'SELL');
-  assert.match(r.reason, /POSSÍVEL VENDA/i);
 });
 
-
-test('simple confirmation promotes stable score and power without a duplicate setup veto', () => {
+test('simple confirmation rejects score and power when independent directional evidence is missing', () => {
   resetFastLiveDecision();
   const signal = base({
-    score: 64,
-    analysisScore: 64,
+    score: 74,
+    analysisScore: 74,
     secondsRemaining: 9,
     analytics: {
-      sellPower: 57,
-      buyPower: 43,
+      sellPower: 62,
+      buyPower: 38,
       momentumDirection: 'BUY',
       momentumScore: 99,
       continuationDirection: 'BUY',
@@ -57,20 +64,20 @@ test('simple confirmation promotes stable score and power without a duplicate se
   });
   const first = fastLiveDecision(signal, { asset: 'AUD/CAD (OTC)', timeframe: 'M1', serverTime: 200000, confirmationMode: 'SIMPLES' });
   const second = fastLiveDecision(signal, { asset: 'AUD/CAD (OTC)', timeframe: 'M1', serverTime: 201000, confirmationMode: 'SIMPLES' });
-  assert.equal(first.uiState, 'POSSIBLE_SELL');
-  assert.equal(second.uiState, 'ENTER_SELL');
-  assert.equal(second.state, 'CONFIRM');
+  assert.equal(first.uiState, 'WAIT');
+  assert.equal(second.uiState, 'WAIT');
+  assert.notEqual(second.state, 'CONFIRM');
 });
 
-test('strict confirmation still rejects opposite-direction setup evidence', () => {
+test('strict confirmation rejects opposite-direction setup evidence', () => {
   resetFastLiveDecision();
   const signal = base({
-    score: 64,
-    analysisScore: 64,
+    score: 74,
+    analysisScore: 74,
     secondsRemaining: 9,
     analytics: {
-      sellPower: 57,
-      buyPower: 43,
+      sellPower: 62,
+      buyPower: 38,
       currentStrength: 20,
       momentumDirection: 'BUY',
       momentumScore: 99,
@@ -82,7 +89,7 @@ test('strict confirmation still rejects opposite-direction setup evidence', () =
   });
   const first = fastLiveDecision(signal, { asset: 'AUD/CAD (OTC)', timeframe: 'M1', serverTime: 300000, confirmationMode: 'EXIGENTE' });
   const second = fastLiveDecision(signal, { asset: 'AUD/CAD (OTC)', timeframe: 'M1', serverTime: 301000, confirmationMode: 'EXIGENTE' });
-  assert.equal(first.uiState, 'POSSIBLE_SELL');
-  assert.equal(second.uiState, 'POSSIBLE_SELL');
+  assert.equal(first.uiState, 'WAIT');
+  assert.equal(second.uiState, 'WAIT');
   assert.notEqual(second.state, 'CONFIRM');
 });

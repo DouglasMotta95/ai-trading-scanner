@@ -9,6 +9,14 @@ const CLOCK_FRESH_MS = 3000;
 const FOCUS_FRESH_MS = 5500;
 const DEFAULT_PREFS = Object.freeze({ mode: 'NORMAL', geminiEnabled: true, sensitivityProfile: 'MEDIO', confirmationMode: 'SIMPLES', operationMode: 'M1', preferredExpiration: null });
 
+const HIGH_CONFIDENCE = Object.freeze({
+  possibleScore: 60,
+  finalScore: 70,
+  possiblePower: 58,
+  finalPower: 60,
+  minimumConfluence: 2
+});
+
 const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
 const text = value => String(value ?? '').trim();
 const clamp = (value, min, max) => Math.max(min, Math.min(max, Number(value) || 0));
@@ -229,17 +237,16 @@ function baseDecision(state = {}) {
   const ui = text(signal.uiState).toUpperCase();
   const cycle = cycleKey(state, signal);
   const factors = confluence(signal, direction, pref.thresholds);
-  // NORMAL already passed the technical engine's own quality gates. Requiring
-  // another independent confluence count here was suppressing valid POSSIBLE/
-  // ENTER decisions and leaving the product stuck on AGUARDAR. Only A+ applies
-  // this extra presentation-policy filter.
-  const additionalConfluenceReady = true;
-  const possibleScore = pref.thresholds.possibleScore;
-  const finalScore = pref.thresholds.finalScore;
+  // Presentation policy mirrors the technical high-confidence gate so no
+  // weaker candidate can reappear in the user-facing funnel.
+  const additionalConfluenceReady = factors.count >= HIGH_CONFIDENCE.minimumConfluence;
+  const possibleScore = Math.max(pref.thresholds.possibleScore, HIGH_CONFIDENCE.possibleScore);
+  const finalScore = Math.max(pref.thresholds.finalScore, HIGH_CONFIDENCE.finalScore);
   const entryWindowSeconds = pref.thresholds.entryWindowSeconds;
-  const preSignalWindowSeconds = pref.operation.timeframe === 'M5' ? 90 : 30;
+  const preSignalWindowSeconds = 30;
   const directionalPower = Number(direction === 'BUY' ? signal.analytics?.buyPower : signal.analytics?.sellPower) || 0;
-  const mandatoryPowerReady = directionalPower >= 50;
+  const mandatoryPowerReady = directionalPower >= HIGH_CONFIDENCE.possiblePower;
+  const finalPowerReady = directionalPower >= HIGH_CONFIDENCE.finalPower;
   const technicalCandidate = ['POSSIBLE_BUY', 'POSSIBLE_SELL', 'ENTER_BUY', 'ENTER_SELL'].includes(ui);
   const technicalFinal = ['ENTER_BUY', 'ENTER_SELL'].includes(ui);
 
@@ -290,8 +297,9 @@ function baseDecision(state = {}) {
   const possibleSince = sameCandidate && Number(previous.possibleSince || 0) > 0 ? Number(previous.possibleSince) : now;
   const holdMs = pref.holdSeconds * 1000;
   const heldFor = Math.max(0, now - possibleSince);
-  const finalQuality = technicalFinal && score >= finalScore && mandatoryPowerReady && additionalConfluenceReady;
+  const finalQuality = technicalFinal && score >= finalScore && finalPowerReady && additionalConfluenceReady;
   const reason = shortReason(direction, factors.factors, signal.reason);
+  const side = direction === 'BUY' ? 'COMPRA' : 'VENDA';
 
   // Expiration is an execution gate, not a technical-analysis gate. Keep the
   // directional POSSIBLE state visible when the pattern exists, but never make
@@ -305,7 +313,7 @@ function baseDecision(state = {}) {
       alert: 'silent',
       possibleSince,
       holdRemainingMs: Math.max(0, holdMs - heldFor),
-      reason: `${reason} BLOQUEADO — ${expiration.reason}.`
+      reason: `${side} — ALTA CONFIANÇA • PRÉ-SINAL • BLOQUEADO — ${expiration.reason}.`
     };
   }
 
@@ -318,13 +326,23 @@ function baseDecision(state = {}) {
       alert: 'discrete',
       possibleSince,
       holdRemainingMs: Math.max(0, holdMs - heldFor),
-      reason
+      reason: `${side} — ALTA CONFIANÇA • PRÉ-SINAL • ${reason}`
     };
   }
-  if (!finalQuality || heldFor < holdMs) {
-    // Keep the candidate alive inside the final window. Returning WAIT here used
-    // to clear direction on the next policy tick, restart possibleSince and make
-    // the hold impossible to complete after a late technical confirmation.
+  if (!finalQuality) {
+    return {
+      ...common,
+      uiState: 'WAIT',
+      direction: null,
+      actionable: false,
+      alert: 'silent',
+      possibleSince: null,
+      holdRemainingMs: 0,
+      reason: `AGUARDAR — confiança final insuficiente para ${side.toLowerCase()}.`
+    };
+  }
+
+  if (heldFor < holdMs) {
     return {
       ...common,
       uiState: direction === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL',
@@ -333,9 +351,7 @@ function baseDecision(state = {}) {
       alert: 'discrete',
       possibleSince,
       holdRemainingMs: Math.max(0, holdMs - heldFor),
-      reason: finalQuality
-        ? `POSSÍVEL ${direction === 'BUY' ? 'COMPRA' : 'VENDA'} — confirmação final recebida; mantendo hold estável. ${reason}`
-        : `POSSÍVEL ${direction === 'BUY' ? 'COMPRA' : 'VENDA'} — aguardando confirmação técnica final. ${reason}`
+      reason: `${side} — ALTA CONFIANÇA • confirmação final recebida; estabilizando hold.`
     };
   }
 
@@ -347,7 +363,7 @@ function baseDecision(state = {}) {
     alert: 'strong',
     possibleSince,
     holdRemainingMs: 0,
-    reason
+    reason: `${side} — ALTA CONFIANÇA • ENTRAR NA PRÓXIMA VELA.`
   };
 }
 

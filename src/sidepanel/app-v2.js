@@ -302,13 +302,13 @@ function decisionModel(state = {}) {
     const possibleUi = ['POSSIBLE_BUY','POSSIBLE_SELL','ENTER_BUY','ENTER_SELL'].includes(ui)
       ? ui
       : ['POSSIBLE_BUY','POSSIBLE_SELL','ENTER_BUY','ENTER_SELL'].includes(technicalUi) ? technicalUi : '';
-    const possibleDirection = possibleUi.includes('BUY') ? 'BUY' : possibleUi.includes('SELL') ? 'SELL' : (['BUY','SELL'].includes(direction) && score >= 44 ? direction : null);
+    const possibleDirection = possibleUi.includes('BUY') ? 'BUY' : possibleUi.includes('SELL') ? 'SELL' : null;
     if (possibleDirection) {
       const side = possibleDirection === 'BUY' ? 'COMPRA' : 'VENDA';
       return {
         uiState: possibleDirection === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL',
-        title: `POSSÍVEL ${side}`,
-        text: `POSSÍVEL ${side}`,
+        title: `${side} — ALTA CONFIANÇA`,
+        text: `PRÉ-SINAL: ${side}`,
         sub: blocked,
         tone: 'possible',
         reason: `${reason} • ${blocked}`,
@@ -321,11 +321,11 @@ function decisionModel(state = {}) {
   }
 
   if (ui === 'ANALYZING_MARKET') return { uiState: ui, title: 'ANALISANDO MERCADO', text: 'ANALISANDO MERCADO', sub: reason, tone: 'waiting', reason, score, actionable: false };
-  if (ui === 'BUILDING_PATTERN' || ui === 'DECIDING') return { uiState: ui, title: ui === 'DECIDING' ? 'DECIDINDO PRÓXIMA VELA' : 'MONTANDO PADRÃO', text: ui === 'DECIDING' ? 'DECIDINDO PRÓXIMA VELA' : 'MONTANDO PADRÃO DA PRÓXIMA VELA', sub: reason, tone: 'waiting', reason, score, actionable: false };
-  if (ui === 'POSSIBLE_BUY') return { uiState: ui, title: 'POSSÍVEL COMPRA', text: 'POSSÍVEL COMPRA', sub: 'Padrão comprador em confirmação.', tone: 'possible', reason, score, actionable: false, direction: 'BUY' };
-  if (ui === 'POSSIBLE_SELL') return { uiState: ui, title: 'POSSÍVEL VENDA', text: 'POSSÍVEL VENDA', sub: 'Padrão vendedor em confirmação.', tone: 'possible', reason, score, actionable: false, direction: 'SELL' };
-  if (ui === 'ENTER_BUY' && p.actionable === true) return { uiState: ui, title: 'ENTRAR NA PRÓXIMA VELA', text: 'ENTRAR: COMPRA', sub: 'ENTRAR na próxima vela: COMPRA', tone: 'buy', reason, score, actionable: true, direction: 'BUY' };
-  if (ui === 'ENTER_SELL' && p.actionable === true) return { uiState: ui, title: 'ENTRAR NA PRÓXIMA VELA', text: 'ENTRAR: VENDA', sub: 'ENTRAR na próxima vela: VENDA', tone: 'sell', reason, score, actionable: true, direction: 'SELL' };
+  if (ui === 'BUILDING_PATTERN' || ui === 'DECIDING') return { uiState: ui, title: 'AGUARDAR', text: 'AGUARDAR', sub: 'Buscando alta confiança técnica.', tone: 'waiting', reason, score, actionable: false };
+  if (ui === 'POSSIBLE_BUY') return { uiState: ui, title: 'COMPRA — ALTA CONFIANÇA', text: 'PRÉ-SINAL: COMPRA', sub: 'Alta confiança detectada; aguardando janela final.', tone: 'possible', reason, score, actionable: false, direction: 'BUY' };
+  if (ui === 'POSSIBLE_SELL') return { uiState: ui, title: 'VENDA — ALTA CONFIANÇA', text: 'PRÉ-SINAL: VENDA', sub: 'Alta confiança detectada; aguardando janela final.', tone: 'possible', reason, score, actionable: false, direction: 'SELL' };
+  if (ui === 'ENTER_BUY' && p.actionable === true) return { uiState: ui, title: 'COMPRA — ALTA CONFIANÇA', text: 'COMPRA — ALTA CONFIANÇA', sub: 'ENTRAR NA PRÓXIMA VELA', tone: 'buy', reason, score, actionable: true, direction: 'BUY' };
+  if (ui === 'ENTER_SELL' && p.actionable === true) return { uiState: ui, title: 'VENDA — ALTA CONFIANÇA', text: 'VENDA — ALTA CONFIANÇA', sub: 'ENTRAR NA PRÓXIMA VELA', tone: 'sell', reason, score, actionable: true, direction: 'SELL' };
   return { uiState: 'WAIT', title: 'AGUARDAR', text: 'AGUARDAR', sub: 'Padrão sem confirmação suficiente.', tone: 'no-trade', reason: reason.startsWith('AGUARDAR') ? reason : `AGUARDAR — ${reason}`, score, actionable: false };
 }
 
