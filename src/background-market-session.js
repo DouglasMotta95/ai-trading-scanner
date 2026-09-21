@@ -485,17 +485,43 @@ export async function applyFocus(message = {}, sender = {}) {
     }
 
     // Prefer the embedded trader as the long-lived authority for the same asset.
-    // This is a one-way handoff (shell -> trader), avoiding frame ping-pong.
+    // A shell -> trader handoff is transport ownership, NOT a market switch.
+    // Resetting the whole session here erases POSSÍVEL/hold/confirm state in
+    // the middle of the candle — exactly the failure visible in video 15019.
     const traderHandoff = !assetChanged && frameChanged && !oldEmbeddedTrader && incomingEmbeddedTrader;
-    const changed = assetChanged || traderHandoff || (!old && frameChanged);
+    const realAssetMismatch = !!state.asset && !sameMarket(state.asset, asset);
     let next = state;
-    if (changed || (state.asset && !sameMarket(state.asset, asset))) {
+
+    if (assetChanged || realAssetMismatch) {
       next = resetForSession(state, {
         asset, info, source: clean(message.source || 'visible-chart'),
-        reason: assetChanged
-          ? `Ativo ${asset} confirmado no gráfico. Sincronizando a sessão ao vivo.`
-          : `Gráfico ${asset} vinculado ao frame de mercado ativo.`
+        reason: `Ativo ${asset} confirmado no gráfico. Sincronizando a sessão ao vivo.`
       });
+    } else if (traderHandoff) {
+      const previousSession = state.diagnostics?.marketSession || {};
+      next = {
+        ...state,
+        diagnostics: {
+          ...(state.diagnostics || {}),
+          // Keep epoch, signal, professionalDecision and candidate memory.
+          // Only move frame ownership; the exact clock will rebind to this frame.
+          marketClock: null,
+          marketSession: {
+            ...previousSession,
+            asset: normAsset(previousSession.asset || asset) || asset,
+            confirmedAsset: normAsset(previousSession.confirmedAsset || state.asset || asset) || asset,
+            frameId: info.frameId,
+            frameHost: info.frameHost,
+            source: 'same-market-trader-handoff'
+          },
+          acquisition: {
+            ...(state.diagnostics?.acquisition || {}),
+            stage: 'syncing_clock_owner',
+            reason: `Mesmo ativo ${asset}; transferindo autoridade do frame sem reiniciar o sinal.`,
+            at: now
+          }
+        }
+      };
     }
 
     const previousStableSince = sameMarket(old?.asset, asset)
@@ -511,7 +537,7 @@ export async function applyFocus(message = {}, sender = {}) {
           ? { asset, at: interactionAt || now }
           : (next.diagnostics?.visualSelectionLock || null),
         focusedAsset: {
-          asset, at: now, stableSince: changed ? now : previousStableSince,
+          asset, at: now, stableSince: assetChanged ? now : previousStableSince,
           score: Number(message.score || 0), samples: Number(message.samples || 0), reliable: true,
           visual: message.visual !== false, explicit: message.explicit === true, chartScoped: true,
           interactionHint: userSelected,
