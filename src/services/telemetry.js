@@ -113,6 +113,14 @@ async function post(path, payload, _settings = {}) {
 }
 
 export async function heartbeat(state = {}, settings = {}) {
+  const professional = state.professionalDecision || {};
+  const professionalUi = String(professional.uiState || '').toUpperCase();
+  const hasProfessional = !!professionalUi || Number(professional.updatedAt || 0) > 0;
+  const professionalSignalState = ['ENTER_BUY','ENTER_SELL'].includes(professionalUi)
+    ? 'CONFIRM'
+    : ['POSSIBLE_BUY','POSSIBLE_SELL'].includes(professionalUi)
+      ? 'WATCH'
+      : professionalUi === 'WAIT' ? 'WAIT' : null;
   const payload = {
     platformId: state.platformId || null,
     platformName: state.platformName || null,
@@ -124,13 +132,13 @@ export async function heartbeat(state = {}, settings = {}) {
     expiration: state.targetExpiration || state.signal?.targetExpiration || state.expiration || null,
     price: state.price ?? null,
     serverTime: state.serverTime ?? null,
-    signalState: state.signal?.state || null,
-    direction: state.signal?.direction || null,
-    score: state.signal?.score ?? null,
+    signalState: hasProfessional ? professionalSignalState : (state.signal?.state || null),
+    direction: hasProfessional ? (professional.direction || null) : (state.signal?.direction || null),
+    score: hasProfessional ? (professional.score ?? null) : (state.signal?.score ?? null),
     grade: state.signal?.grade || null,
     confirmations: state.signal?.confirmations || null,
     regime: state.signal?.regime || null,
-    provisional: !!state.signal?.provisional,
+    provisional: hasProfessional ? professional.actionable !== true : !!state.signal?.provisional,
     feedQuality: state.telemetry?.feedQuality ?? null,
     structured: !!state.capabilities?.structuredQuotes,
     latency: state.telemetry?.latency ?? null,

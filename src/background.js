@@ -57,11 +57,12 @@ function performanceEmission(state = {}) {
   const professional = state.professionalDecision || {};
   const professionalUi = clean(professional.uiState).toUpperCase();
   const technicalUi = clean(signal.uiState).toUpperCase();
-  const ui = ['ENTER_BUY','ENTER_SELL','POSSIBLE_BUY','POSSIBLE_SELL'].includes(professionalUi)
-    ? professionalUi
-    : ['ENTER_BUY','ENTER_SELL','POSSIBLE_BUY','POSSIBLE_SELL'].includes(technicalUi)
-      ? technicalUi
-      : '';
+  const hasProfessionalDecision = !!professionalUi || Number(professional.updatedAt || 0) > 0;
+  // Performance follows the user-facing professional decision. Once that layer
+  // exists, a technical ENTER blocked by time/expiration/hold is not a signal.
+  const ui = hasProfessionalDecision
+    ? (['ENTER_BUY','ENTER_SELL','POSSIBLE_BUY','POSSIBLE_SELL'].includes(professionalUi) ? professionalUi : '')
+    : (['ENTER_BUY','ENTER_SELL','POSSIBLE_BUY','POSSIBLE_SELL'].includes(technicalUi) ? technicalUi : '');
   if (!ui) return null;
 
   const type = ui.startsWith('ENTER_') ? 'ENTER' : 'POSSIBLE';
@@ -313,8 +314,14 @@ function reconcileSignalHistory(state = {}, next = {}, snapshot = {}) {
   const direction = clean(signal.direction || next.decisionCycle?.direction).toUpperCase();
   const targetStart = num(signal.targetStart ?? next.decisionCycle?.targetStart);
   const timeframe = normTf(snapshot.analysisTimeframe || snapshot.timeframe || signal.timeframe);
-  const confirmed = signal.state === 'CONFIRM'
+  const technicalConfirmed = signal.state === 'CONFIRM'
     || ['ENTER_BUY', 'ENTER_SELL'].includes(clean(signal.uiState).toUpperCase());
+  const professional = state.professionalDecision || {};
+  const professionalUi = clean(professional.uiState).toUpperCase();
+  const professionalConfirmed = professional.actionable === true
+    && ['ENTER_BUY', 'ENTER_SELL'].includes(professionalUi)
+    && clean(professional.direction).toUpperCase() === direction;
+  const confirmed = technicalConfirmed && professionalConfirmed;
 
   if (confirmed && ['BUY', 'SELL'].includes(direction) && targetStart != null && timeframe) {
     const id = signalRecordId(snapshot.asset, timeframe, targetStart, direction);
