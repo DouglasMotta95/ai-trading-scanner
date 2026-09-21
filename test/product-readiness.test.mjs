@@ -191,3 +191,12 @@ test('extension build is v0.11.49 market radar', () => {
   assert.equal(manifest.version, '0.11.49');
   assert.equal(manifest.version_name, '0.11.49-market-radar');
 });
+
+
+test('v0.11.49 passive asset radar retains real candles without changing its legacy quality window', () => {
+  const radarCore = read('src/core/asset-radar.js');
+  assert.match(radarCore, /slice\(-40\)/);
+  assert.match(radarCore, /const qualityCandles = candles\.slice\(-12\)/);
+  assert.match(radarCore, /candles: candles\.slice\(-40\)/);
+  assert.match(radarCore, /assessAssetQuality\(\{ asset: candidate\.asset, price: candidate\.price, candles: qualityCandles \}\)/);
+});
