@@ -113,5 +113,9 @@ test('central loop coalesces burst updates and schedules a final-window follow-u
   assert.match(central, /scheduleAnalysis\(true\)/);
   assert.match(central, /owner: 'background\.js'/);
   assert.match(central, /Number\(session\.epoch \|\| 0\)/);
-  assert.match(central, /Number\(focus\.frameId \?\? -1\)/);
+  // Same-market shell/trader handoff must not redefine market identity or
+  // reset the orchestrator in the middle of a candle.
+  const marketKeyBlock = central.match(/const marketKey = \[[\s\S]*?\]\.join\('\|'\);/)?.[0] || '';
+  assert.ok(marketKeyBlock);
+  assert.doesNotMatch(marketKeyBlock, /frameId|frameHost/);
 });
