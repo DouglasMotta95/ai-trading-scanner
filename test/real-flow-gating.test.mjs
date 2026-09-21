@@ -37,15 +37,15 @@ test('trade preparation remains confirmation-gated and manual-only', () => {
   assert.doesNotMatch(handoff, /dispatchEvent\s*\(\s*new\s+MouseEvent/);
 });
 
-test('activation preserves a valid cached session on transient device_locked', () => {
+test('activation treats device_locked as authoritative and clears tradable state', () => {
   const control = read('src/background-control.js');
   const license = read('src/services/license.js');
   const authoritative = license.match(/const AUTHORITATIVE_LICENSE_ERRORS = new Set\(\[([\s\S]*?)\]\);/)?.[1] || '';
-  assert.match(control, /response\?\.error === 'device_locked'/);
-  assert.match(control, /restoreCachedLicense\(\)/);
-  assert.match(control, /syncPending: true/);
-  assert.doesNotMatch(authoritative, /device_locked/);
+  assert.match(authoritative, /device_locked/);
   assert.match(authoritative, /device_limit_reached/);
+  assert.match(control, /licenseFailureStatus/);
+  assert.match(control, /clearMarket/);
+  assert.doesNotMatch(control, /response\?\.error === 'device_locked'[\s\S]*restoreCachedLicense/);
 });
 
 test('visible chart frame stays authoritative and legacy market writers are ignored', () => {
