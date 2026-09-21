@@ -38,7 +38,7 @@ test('backend requires strong production session secret and serializes payment p
   assert.match(server, /setPaymentEvent\(eventKey, 'completed'/);
   assert.match(server, /admin-login', 5, 60000/);
   assert.match(server, /duplicateOrder/);
-  assert.equal(JSON.parse(read('backend/package.json')).version, '0.11.48');
+  assert.equal(JSON.parse(read('backend/package.json')).version, '0.11.49');
 });
 
 test('customer portal escapes plan labels and exposes recovery/legal surfaces', () => {
@@ -153,4 +153,50 @@ test('operational panel does not count POSSIBLE events as entries', () => {
   assert.match(ui, /ENTRADAS CONFIRMADAS/);
   assert.match(ui, /FINALIZADAS HOJE/);
   assert.match(ui, /state\.signalHistory/);
+});
+
+
+test('v0.11.49 market radar is additive and does not mutate the signal engine', () => {
+  const html = read('src/sidepanel/index.html');
+  const radar = read('src/sidepanel/market-radar-ui.js');
+  assert.match(html, /market-radar-ui\.js/);
+  assert.match(radar, /RADAR PRÉ-OPERAÇÃO/);
+  assert.match(radar, /ANALISAR MERCADO AGORA/);
+  assert.match(radar, /TEMPO REAL/);
+  assert.match(radar, /aggregateM5/);
+  assert.match(radar, /state\.marketHistory/);
+  assert.doesNotMatch(radar, /processSnapshot|consumeSignal|ATS_SET_USER_DECLARED_EXPIRATION|ATS_SET_ANALYST_PREFERENCES/);
+});
+
+test('v0.11.49 entry safety check is visual only and asks for manual CasaTrade verification', () => {
+  const radar = read('src/sidepanel/market-radar-ui.js');
+  assert.match(radar, /CONFIRA A CASATRADE ANTES DE ENTRAR/);
+  assert.match(radar, /Confira e ajuste manualmente antes de clicar na operação/);
+  assert.match(radar, /ativo, timeframe e expiração/);
+  assert.doesNotMatch(radar, /chrome\.tabs\.executeScript|scripting\.executeScript|click\(.*COMPRAR|click\(.*VENDER/);
+});
+
+test('v0.11.49 radar recommends M1 M5 or wait from captured candles only', () => {
+  const radar = read('src/sidepanel/market-radar-ui.js');
+  assert.match(radar, /recommendation = !best \|\| best\.quality < 55/);
+  assert.match(radar, /'AGUARDAR'/);
+  assert.match(radar, /PREFERIR/);
+  assert.match(radar, /histórico real insuficiente/);
+  assert.doesNotMatch(radar, /fetch\(/);
+  assert.doesNotMatch(radar, /XMLHttpRequest|WebSocket/);
+});
+
+test('extension build is v0.11.49 market radar', () => {
+  const manifest = JSON.parse(read('manifest.json'));
+  assert.equal(manifest.version, '0.11.49');
+  assert.equal(manifest.version_name, '0.11.49-market-radar');
+});
+
+
+test('v0.11.49 passive asset radar retains real candles without changing its legacy quality window', () => {
+  const radarCore = read('src/core/asset-radar.js');
+  assert.match(radarCore, /slice\(-40\)/);
+  assert.match(radarCore, /const qualityCandles = candles\.slice\(-12\)/);
+  assert.match(radarCore, /candles: candles\.slice\(-40\)/);
+  assert.match(radarCore, /assessAssetQuality\(\{ asset: candidate\.asset, price: candidate\.price, candles: qualityCandles \}\)/);
 });
