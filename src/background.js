@@ -468,9 +468,9 @@ function reconcileSignalHistory(state = {}, next = {}, snapshot = {}) {
   const created = [];
   const signal = next.signal || {};
   const direction = clean(signal.direction || next.decisionCycle?.direction).toUpperCase();
-  const rawTargetStart = num(signal.targetStart ?? next.decisionCycle?.targetStart);
+  const targetStart = num(signal.targetStart ?? next.decisionCycle?.targetStart);
   const timeframe = normTf(snapshot.analysisTimeframe || snapshot.timeframe || signal.timeframe);
-  const targetStart = rawTargetStart == null || !timeframe ? rawTargetStart : performanceTargetBucket(rawTargetStart, timeframe);
+  const outcomeTargetStart = targetStart == null || !timeframe ? targetStart : performanceTargetBucket(targetStart, timeframe);
   const technicalConfirmed = signal.state === 'CONFIRM'
     || ['ENTER_BUY', 'ENTER_SELL'].includes(clean(signal.uiState).toUpperCase());
   const professional = state.professionalDecision || {};
@@ -480,8 +480,8 @@ function reconcileSignalHistory(state = {}, next = {}, snapshot = {}) {
     && clean(professional.direction).toUpperCase() === direction;
   const confirmed = technicalConfirmed && professionalConfirmed;
 
-  if (confirmed && ['BUY', 'SELL'].includes(direction) && targetStart != null && timeframe) {
-    const id = signalRecordId(snapshot.asset, timeframe, targetStart, direction);
+  if (confirmed && ['BUY', 'SELL'].includes(direction) && outcomeTargetStart != null && timeframe) {
+    const id = signalRecordId(snapshot.asset, timeframe, outcomeTargetStart, direction);
     if (!rows.some(row => row?.id === id)) {
       const record = {
         id,
@@ -492,7 +492,7 @@ function reconcileSignalHistory(state = {}, next = {}, snapshot = {}) {
         timeframe,
         expiration: snapshot.expiration || snapshot.targetExpiration || null,
         direction,
-        targetStart,
+        targetStart: outcomeTargetStart,
         score: num(signal.analysisScore ?? signal.score),
         setup: signal.setup || null,
         createdAt: Date.now(),
