@@ -383,16 +383,16 @@ async function runCentralAnalysis(force = false) {
       if (!force && inputSignature === lastInputSignature) return current;
 
       const session = current.diagnostics?.marketSession || {};
-      const focus = current.diagnostics?.focusedAsset || {};
       const marketKey = [
         snapshot.asset,
         snapshot.analysisTimeframe,
         Number(session.epoch || 0),
         getThresholds(current.analystPreferences?.sensitivityProfile || 'MEDIO').profile,
-        getOperationMode(current.analystPreferences?.operationMode || 'M1').timeframe,
-        Number(focus.frameId ?? -1),
-        clean(focus.frameHost).toLowerCase()
+        getOperationMode(current.analystPreferences?.operationMode || 'M1').timeframe
       ].join('|');
+      // Frame id/host are transport ownership details, not market identity.
+      // A shell -> trader handoff for the SAME asset must not erase the
+      // candidate/hold/confirm state while the candle is still running.
       if (lastMarketKey && lastMarketKey !== marketKey) resetOrchestrator();
       lastMarketKey = marketKey;
 
