@@ -12,7 +12,7 @@ import { consumeSignal, validateLicense } from './services/license.js';
 const ANALYSIS_CADENCE_MS = 650;
 const BURST_COALESCE_MS = 80;
 const CLOCK_FRESH_MS = 3200;
-const ALLOWED_CLOCK_SOURCES = new Set(['trader-dom-countdown', 'network-server-cycle', 'platform-cycle-derived']);
+const EXACT_CLOCK_SOURCES = new Set(['trader-dom-countdown', 'network-server-cycle']);
 
 const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
 const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
@@ -270,8 +270,8 @@ function consolidatedSnapshot(state = {}) {
   const clock = state.diagnostics?.marketClock || null;
   if (!asset || price == null || !focus?.asset || !sameMarket(focus.asset, asset)) return null;
   if (focus.reliable !== true || focus.chartScoped !== true || focus.trustedChartFrame !== true) return null;
-  if (!clock || clock.available === false || (!clock.verified && clock.operational !== true)) return null;
-  if (!ALLOWED_CLOCK_SOURCES.has(clean(clock.source))) return null;
+  if (!clock || clock.available === false || clock.verified !== true) return null;
+  if (!EXACT_CLOCK_SOURCES.has(clean(clock.source))) return null;
   if (!sameMarket(clock.asset, asset)) return null;
   if (!clockBoundToFocus(clock, focus)) return null;
   if (Number(clock.at || 0) <= 0 || Date.now() - Number(clock.at) > CLOCK_FRESH_MS) return null;
@@ -303,7 +303,7 @@ function consolidatedSnapshot(state = {}) {
     },
     diagnostics: {
       capture: 'central-consolidated-state',
-      clockQuality: clock.verified === true ? 'exact' : 'fallback',
+      clockQuality: 'exact',
       feedQuality: Number(state.diagnostics?.acquisition?.feedQuality || 0)
     }
   };
@@ -816,10 +816,15 @@ function acquisitionGaps(state = {}) {
   if (num(state.price) == null) gaps.push('preço');
   if (rows.length < 10) gaps.push('histórico 10 velas');
   const clockFresh = clock.available !== false
+    && clock.verified === true
+    && clock.role === 'candle-close'
+    && EXACT_CLOCK_SOURCES.has(clean(clock.source))
+    && sameMarket(clock.asset, state.asset)
+    && clockBoundToFocus(clock, focus)
     && Number.isFinite(Number(clock.secondsRemaining))
     && Number(clock.at || 0) > 0
     && Date.now() - Number(clock.at) < CLOCK_FRESH_MS;
-  if (!clockFresh) gaps.push('countdown');
+  if (!clockFresh) gaps.push('countdown exato');
   const expirationAt = Number(controls.expirationCheckedAt || controls.observed?.observedAt?.expiration || 0);
   const expirationFresh = expirationAt > 0 && Date.now() - expirationAt < 7000;
   if (!expirationFresh || !clean(controls.observed?.expiration)) gaps.push('expiração');
