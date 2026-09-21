@@ -166,9 +166,10 @@ function confirmationQuality(result = {}, direction = null, thresholds = getThre
   if (String(confirmationMode).toUpperCase() === 'SIMPLES') {
     const continuation = result.recent?.continuationDirection === direction && Number(score) >= 55;
     const momentum = metrics.momentumDirection === direction && Number(metrics.momentumScore || 0) >= 40;
+    const confirmations = [rejected, continuation, momentum, candleStrong].filter(Boolean).length;
     return Number(score) >= thresholds.confirmScore
-      && directionalPower >= 50
-      && (rejected || continuation || momentum || candleStrong);
+      && directionalPower >= 55
+      && confirmations >= 2;
   }
   // EXIGENTE is intentionally byte-for-byte equivalent in conditions to v0.11.51.
   const broke = result.recent?.breakout === direction;
