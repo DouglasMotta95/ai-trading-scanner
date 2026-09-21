@@ -38,7 +38,7 @@ test('backend requires strong production session secret and serializes payment p
   assert.match(server, /setPaymentEvent\(eventKey, 'completed'/);
   assert.match(server, /admin-login', 5, 60000/);
   assert.match(server, /duplicateOrder/);
-  assert.equal(JSON.parse(read('backend/package.json')).version, '0.11.47');
+  assert.equal(JSON.parse(read('backend/package.json')).version, '0.11.48');
 });
 
 test('customer portal escapes plan labels and exposes recovery/legal surfaces', () => {
@@ -114,4 +114,43 @@ test('heartbeat forces server validation and blocks runtime on authoritative lic
   assert.match(background, /scanner: 'idle'/);
   assert.match(background, /connection: 'offline'/);
   assert.match(background, /professionalDecision: null/);
+});
+
+
+test('video regression: possible can only publish with a final-entry-capable CasaTrade clock', () => {
+  const background = read('src/background.js');
+  const fastBg = read('src/background-fast-decision.js');
+  const clock = read('src/content/market-cycle-clock-v4.js');
+  assert.match(background, /clock\.verified !== true/);
+  assert.match(background, /EXACT_CLOCK_SOURCES/);
+  assert.match(fastBg, /exactClockReady\(observed\)/);
+  assert.match(clock, /structured-candle-boundary/);
+  assert.match(clock, /clockSource: 'network-server-cycle'/);
+  assert.match(clock, /currentStateBoundary\(state, focus, cycleTf\)/);
+});
+
+test('video regression: declared expiration is a usable authority until CasaTrade disproves it', () => {
+  const policy = read('src/background-decision-policy.js');
+  const control = read('src/background-control.js');
+  assert.match(policy, /guardActual/);
+  assert.match(policy, /source === 'user-declared'/);
+  assert.match(policy, /informada por você e aceita para este modo/);
+  assert.match(control, /const preserveDeclaredExpiration = sameTabBeforeReconnect && sameConfirmedAsset/);
+  assert.doesNotMatch(control, /const restartBase = enabled \? clearUserDeclaredExpirationState\(current\)/);
+});
+
+test('video regression: Gemini cannot remain loading after the primary entry disappears', () => {
+  const ai = read('src/background-ai-analysis.js');
+  const ui = read('src/sidepanel/ai-analysis-ui.js');
+  assert.match(ai, /async function publishWaiting/);
+  assert.match(ai, /if \(!stage\) \{[\s\S]*?await publishWaiting\(state\)/);
+  assert.match(ui, /ai\.status === 'waiting'/);
+});
+
+test('operational panel does not count POSSIBLE events as entries', () => {
+  const ui = read('src/sidepanel/ui-shell-v2.js');
+  assert.doesNotMatch(ui, /POSSÍVEIS HOJE/);
+  assert.match(ui, /ENTRADAS CONFIRMADAS/);
+  assert.match(ui, /FINALIZADAS HOJE/);
+  assert.match(ui, /state\.signalHistory/);
 });
