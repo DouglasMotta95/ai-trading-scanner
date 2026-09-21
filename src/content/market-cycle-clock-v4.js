@@ -352,20 +352,37 @@
       if (!cycleTf) return;
       const expiration = expirationFresh ? clean(state.platformControls?.observed?.expiration || '') || null : null;
       const domClock = verifiedDomCountdown(cycleTf);
+      const freshClock = freshExactClock(state, focus, cycleTf);
 
-      if (!domClock && freshExactClock(state, focus, cycleTf)) return;
+      if (!domClock && freshClock) return;
       if (!domClock && Date.now() - canvasVerifiedAt < 2300) return;
 
-      // Never synthesize an operational countdown from candle timestamps.
-      // If CasaTrade's real countdown is not currently verified, publish only
-      // a pending state. The 30s/10s decision gate therefore cannot consume a
-      // local/derived clock as authority.
+      // Mobile/tablet CasaTrade can temporarily hide the visible countdown while
+      // the structured candle feed remains live. When that happens, anchor the
+      // close time to the current candle's platform timestamp. This is accepted
+      // only after two consistent observations of the same live candle.
+      const structuredBoundary = !domClock
+        && structuredFeedTf(state, focus) === cycleTf
+        ? currentStateBoundary(state, focus, cycleTf)
+        : null;
+
       const payload = domClock ? {
         type: 'ATS_MARKET_CLOCK_V2', asset: focus.asset, timeframe: cycleTf,
         secondsRemaining: domClock.seconds, expiration, available: true, verified: true, operational: true,
         clockRole: 'candle-close', clockSource: 'trader-dom-countdown',
         clockMode: domClock.chartScoped ? 'chart-geometry-exact' : 'dom-exact',
         clockText: domClock.text, clockToken: domClock.token, confidence: 99, frameHost: host,
+        crossFrameControl: casaControlFrame && !sameFocusFrame,
+        boundFocusFrameId: Number(focus.frameId),
+        boundFocusFrameHost: String(focus.frameHost || '').toLowerCase(),
+        at: Date.now()
+      } : structuredBoundary ? {
+        type: 'ATS_MARKET_CLOCK_V2', asset: focus.asset, timeframe: cycleTf,
+        secondsRemaining: structuredBoundary.seconds, expiration, available: true, verified: true, operational: true,
+        clockRole: 'candle-close', clockSource: 'network-server-cycle',
+        clockMode: 'structured-candle-boundary',
+        clockText: `Vela CasaTrade • ${structuredBoundary.seconds}s`,
+        clockToken: `${structuredBoundary.seconds}s`, confidence: 92, frameHost: host,
         crossFrameControl: casaControlFrame && !sameFocusFrame,
         boundFocusFrameId: Number(focus.frameId),
         boundFocusFrameHost: String(focus.frameHost || '').toLowerCase(),
