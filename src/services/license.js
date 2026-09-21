@@ -176,11 +176,12 @@ export async function activateLicense(settings = {}, key = '') {
   return r;
 }
 
-export async function validateLicense(settings = {}) {
+export async function validateLicense(settings = {}, options = {}) {
+  const forceServer = options?.forceServer === true;
   const cached = await cachedLicenseSession();
   let licenseKey = await savedLicenseKey();
   if (!licenseKey && cached?.licenseKey) licenseKey = await saveLicenseKey(cached.licenseKey);
-  if (cached && cacheInsideReopenGrace(cached)) return cachedResponse(cached);
+  if (!forceServer && cached && cacheInsideReopenGrace(cached)) return cachedResponse(cached);
   if (!licenseKey) return { ok: false, error: 'license_required' };
 
   const r = await call(settings, '/v1/license/validate', {
@@ -196,13 +197,17 @@ export async function validateLicense(settings = {}) {
   return withCachedFallback(r, cached);
 }
 
-export async function consumeSignal(settings = {}) {
+export async function consumeSignal(settings = {}, signalId = '') {
   const cached = await cachedLicenseSession();
   let licenseKey = await savedLicenseKey();
   if (!licenseKey && cached?.licenseKey) licenseKey = await saveLicenseKey(cached.licenseKey);
   if (!licenseKey) return { ok: false, error: 'license_required' };
   const r = await call(settings, '/v1/license/consume', {
-    licenseKey, installationId: await installationId(), type: 'signal', version: chrome.runtime.getManifest().version
+    licenseKey,
+    installationId: await installationId(),
+    type: 'signal',
+    signalId: String(signalId || '').trim().slice(0, 96) || null,
+    version: chrome.runtime.getManifest().version
   });
   if (r.ok && r.license) await saveValidLicenseSession({ ...r, ok: true, license: normalizeActiveLicense(r.license) }, licenseKey);
   return r;
