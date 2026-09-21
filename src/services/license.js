@@ -10,7 +10,8 @@ const AUTHORITATIVE_LICENSE_ERRORS = new Set([
   'license_not_found',
   'license_inactive',
   'license_expired',
-  'device_limit_reached'
+  'device_limit_reached',
+  'device_locked'
 ]);
 
 export const PUBLIC_LICENSE_API = 'https://ats-control-center-v07-production.up.railway.app';
@@ -18,7 +19,9 @@ const base = () => PUBLIC_LICENSE_API;
 const normalizedError = error => String(error || '');
 
 export const isDevBuild = () => !chrome.runtime.getManifest().update_url;
-export const ownerDevMode = (settings = {}) => isDevBuild() && settings?.testLicenseBlock !== true;
+// Customer ZIPs are also loaded unpacked and therefore have no update_url.
+// Owner bypass must never be inferred from install type; it is explicit only.
+export const ownerDevMode = (settings = {}) => settings?.ownerDevMode === true && settings?.testLicenseBlock !== true;
 export const devOwnerLicense = () => ({
   status: 'active',
   plan: 'OWNER_DEV',

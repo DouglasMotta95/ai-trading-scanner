@@ -21,6 +21,14 @@ const activeLicense = license => {
     || license?.devMode === true
     || clean(license?.plan).toUpperCase() === 'OWNER_DEV';
 };
+const licenseFailureStatus = (error = '', fallback = 'unconfigured') => {
+  const code = clean(error).toLowerCase();
+  if (code === 'device_locked' || code === 'device_limit_reached') return 'device_locked';
+  if (code === 'license_expired') return 'expired';
+  if (code === 'daily_limit_reached' || code === 'trial_limit_reached') return 'limit';
+  if (code === 'license_inactive' || code === 'license_not_found') return 'unconfigured';
+  return clean(fallback).toLowerCase() === 'active' ? 'unconfigured' : (fallback || 'unconfigured');
+};
 const marketId = value => {
   const raw = clean(value).toUpperCase();
   if (!raw) return '';
@@ -766,23 +774,24 @@ async function probePlatformControlsDirect(tabId) {
 }
 
 async function recoverLicense(state = {}, force = false) {
-  if (!force && activeLicense(state.license)) return state.license;
-
-  const restored = await restoreCachedLicense().catch(() => null);
-  if (activeLicense(restored)) return restored;
-
   const { settings = {} } = await storageLocalGet('settings').catch(() => ({}));
   const validated = await validateLicense(settings).catch(() => null);
-  if (validated?.ok && activeLicense(validated.license)) return { ...validated.license, status: 'active', error: null };
-
-  if (activeLicense(state.license) && validated?.error === 'device_locked') {
-    return { ...state.license, status: 'active', error: 'device_locked', syncPending: true };
+  if (validated?.ok && activeLicense(validated.license)) {
+    return {
+      ...validated.license,
+      status: 'active',
+      error: validated.license?.error || null,
+      syncPending: validated.license?.syncPending === true
+    };
   }
+
+  const error = validated?.error || state.license?.error || 'license_required';
   return {
     ...(state.license || DEFAULT_LICENSE),
-    status: activeLicense(state.license) ? 'active' : String(state.license?.status || 'unconfigured'),
-    error: validated?.error || state.license?.error || null,
-    syncPending: validated?.error === 'device_locked' || validated?.error === 'backend_unreachable'
+    ...(validated?.license || {}),
+    status: licenseFailureStatus(error, validated?.license?.status || state.license?.status || 'unconfigured'),
+    error,
+    syncPending: error === 'backend_unreachable'
   };
 }
 
@@ -902,21 +911,16 @@ async function connectActiveTab({ automatic = false } = {}) {
 async function activate(key = '') {
   const { settings = {} } = await storageLocalGet('settings').catch(() => ({}));
   const response = await activateLicense(settings, clean(key));
-  let license = response?.license || null;
-
-  if (!response?.ok && response?.error === 'device_locked') {
-    const restored = await restoreCachedLicense().catch(() => null);
-    if (activeLicense(restored)) license = { ...restored, error: 'device_locked', syncPending: true };
-  }
-
-  const ok = activeLicense(license);
+  const license = response?.license || null;
+  const ok = response?.ok === true && activeLicense(license);
   const next = await updateScannerState(current => {
     if (ok) return { ...current, license: { ...license, status: 'active' } };
     const blockedLicense = {
       ...(current.license || DEFAULT_LICENSE),
       ...(license || {}),
-      status: String(license?.status || current.license?.status || 'unconfigured'),
-      error: response?.error || license?.error || 'license_inactive'
+      status: licenseFailureStatus(response?.error || license?.error || 'license_inactive', license?.status || current.license?.status || 'unconfigured'),
+      error: response?.error || license?.error || 'license_inactive',
+      syncPending: response?.error === 'backend_unreachable'
     };
     return clearMarket(current, { license: blockedLicense, diagnostics: licenseBlockedDiagnostics(blockedLicense) });
   });
