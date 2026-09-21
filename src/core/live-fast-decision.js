@@ -48,10 +48,10 @@ function quality(signal = {}, direction = null, thresholds = getThresholds(), co
     return {
       // In SIMPLES the final score check happens outside this helper. Power is
       // the only mandatory quality gate here; reasons are explanatory only.
-      strong: power >= 50,
+      strong: power >= 55 && reasons.length >= 2,
       power,
       reasons,
-      setup: reasons.length ? 'confirmação simples' : 'direção + score + poder'
+      setup: reasons.length >= 2 ? reasons.slice(0, 2).join(' + ') : null
     };
   }
 
@@ -65,7 +65,7 @@ function quality(signal = {}, direction = null, thresholds = getThresholds(), co
   if (momentum) reasons.push('momentum');
   if (rejection) reasons.push('rejeição');
   if (strength) reasons.push('força');
-  return { strong: power >= 50 && reasons.length > 0, power, reasons, setup: reasons[0] || null };
+  return { strong: power >= 55 && reasons.length >= 2, power, reasons, setup: reasons.slice(0, 2).join(' + ') || null };
 }
 
 function cycleKey(context = {}, signal = {}) {
@@ -116,7 +116,7 @@ function observe(key, direction, strong, at) {
 
 function possible(signal, direction, score, seconds, q) {
   const side = direction === 'BUY' ? 'COMPRA' : 'VENDA';
-  const reason = `POSSÍVEL ${side} • ${seconds}s — score ${Math.round(score)}/100${q.reasons.length ? ` • ${q.reasons.join(' + ')}` : ''}.`;
+  const reason = `POSSÍVEL ${side} — PADRÃO FORTE • ${seconds}s • confiança ${Math.round(score)}/100${q.reasons.length ? ` • ${q.reasons.join(' + ')}` : ''}.`;
   return {
     ...signal,
     state: 'WATCH', direction, diagnosis: direction,
@@ -128,7 +128,7 @@ function possible(signal, direction, score, seconds, q) {
 
 function enter(signal, direction, score, seconds, q) {
   const side = direction === 'BUY' ? 'COMPRA' : 'VENDA';
-  const reason = `ENTRAR NA PRÓXIMA VELA: ${side} • ${seconds}s — score ${Math.round(score)}/100 • ${q.setup || q.reasons.join(' + ') || 'setup confirmado'}.`;
+  const reason = `${side} — ALTA CONFIANÇA • ENTRAR NA PRÓXIMA VELA • ${seconds}s • ${Math.round(score)}/100 • ${q.setup || q.reasons.join(' + ') || 'setup forte confirmado'}.`;
   return {
     ...signal,
     state: 'CONFIRM', direction, diagnosis: direction,
@@ -139,7 +139,7 @@ function enter(signal, direction, score, seconds, q) {
 }
 
 function waitFinal(signal, score, reason = '') {
-  const text = `AGUARDAR — ${reason || `setup não confirmou (score ${Math.round(score)}/100)`}.`;
+  const text = `AGUARDAR — SEM CONFIANÇA ALTA${reason ? ` • ${reason}` : ''}.`;
   return {
     ...signal,
     state: 'NO_TRADE', direction: null, diagnosis: 'WAIT', uiState: 'WAIT',
@@ -178,7 +178,7 @@ export function fastLiveDecision(signal = {}, context = {}) {
 
   if (!rawDirection || score < thresholds.possibleScore) {
     trackers.delete(key);
-    const text = `AGUARDAR • ${seconds}s — leitura ainda fraca (${Math.round(score)}/${thresholds.possibleScore}).`;
+    const text = `AGUARDAR — SEM CONFIANÇA ALTA • ${seconds}s.`;
     return { ...signal, state: 'WAIT', direction: null, diagnosis: 'WAIT', uiState: 'WAIT', provisional: true, phase: seconds <= finalWindowSeconds ? 'FINAL' : 'LIVE', reason: text, hint: text, fastDecision: true };
   }
 
@@ -208,6 +208,7 @@ export function fastLiveDecision(signal = {}, context = {}) {
 
   if (seconds > finalWindowSeconds) {
     observe(key, direction, false, at);
+    if (!q.strong) return waitFinal(signal, score, 'padrão ainda não está forte o suficiente');
     return possible(signal, direction, score, seconds, q);
   }
 
