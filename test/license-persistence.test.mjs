@@ -53,11 +53,16 @@ function jsonResponse(body, status = 200) {
 test('manual activation persists key and last valid license even if backend omits client token', async () => {
   const storage = storageMock({ atsInstallationId: 'install-1' });
   const license = { key: 'ATS-ABC-123', status: 'active', plan: 'starter', planLabel: 'Starter', expiresAt: future() };
-  const mod = await loadLicenseModule(storage, async () => jsonResponse({ ok: true, license }));
+  const mod = await loadLicenseModule(storage, async () => jsonResponse({
+    ok: true,
+    license,
+    clientToken: 'client-token-epoch',
+    clientTokenExpiresAt: Date.now() + 60 * 60 * 1000
+  }));
   const result = await mod.activateLicense({}, license.key);
   assert.equal(result.ok, true);
   assert.equal(storage.data.get('atsLicenseKey'), license.key);
-  assert.equal(storage.data.get('atsLastValidLicense')?.license?.status, 'active');
+  assert.equal(storage.data.has('atsLastValidLicense'), false);
 });
 
 test('numeric epoch expiration remains cacheable inside reopen grace without backend request', async () => {
@@ -80,7 +85,12 @@ test('reopening inside five-minute grace restores active license before backend 
   const storage = storageMock({
     atsInstallationId: 'install-2',
     atsLicenseKey: license.key,
-    atsLastValidLicense: { license, licenseKey: license.key, validatedAt: Date.now() - 2 * 60 * 1000 }
+    atsLastValidLicense: {
+      license,
+      licenseKey: license.key,
+      validatedAt: Date.now() - 2 * 60 * 1000,
+      clientTokenExpiresAt: Date.now() + 60 * 60 * 1000
+    }
   });
   let requests = 0;
   const mod = await loadLicenseModule(storage, async () => { requests++; throw new Error('offline'); });
@@ -110,7 +120,7 @@ test('stale valid cache repairs missing key and revalidates once after grace exp
   assert.ok(Number(storage.data.get('atsLastValidLicense')?.validatedAt) > Date.now() - 5000);
 });
 
-test('device_locked after reopen grace never invalidates a valid cached license', async () => {
+test('device_locked after reopen grace is authoritative and invalidates cached access', async () => {
   const license = { key: 'ATS-SAFE-003', status: 'active', plan: 'pro', expiresAt: future() };
   const storage = storageMock({
     atsInstallationId: 'install-4',
@@ -123,16 +133,13 @@ test('device_locked after reopen grace never invalidates a valid cached license'
     return jsonResponse({ ok: false, error: 'device_locked' }, 403);
   });
   const result = await mod.validateLicense({});
-  assert.equal(result.ok, true);
-  assert.equal(result.cacheHit, true);
-  assert.equal(result.offlineFallback, true);
+  assert.equal(result.ok, false);
   assert.equal(result.error, 'device_locked');
-  assert.equal(result.license.status, 'active');
-  assert.equal(storage.data.get('atsLastValidLicense')?.licenseKey, license.key);
+  assert.equal(storage.data.has('atsLastValidLicense'), false);
   assert.equal(requests, 1);
 });
 
-test('manual activation device_locked response also preserves previous valid cache', async () => {
+test('manual activation device_locked response clears previous cached access', async () => {
   const license = { key: 'ATS-LOCK-SAFE', status: 'active', plan: 'pro', expiresAt: future() };
   const storage = storageMock({
     atsInstallationId: 'install-locked',
