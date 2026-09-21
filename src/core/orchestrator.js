@@ -115,10 +115,13 @@ function decisionQuality(signal = {}, direction = null, thresholds = getThreshol
         reason: `currentStrength ${Math.round(currentStrength)} ${strongCandle ? '>=' : '<'} ${thresholds.candleStrength}`
       }
     ];
-    const matched = commonReady ? setups.find(item => item.ok) || null : null;
+    const matched = setups.find(item => item.ok) || null;
     return {
-      qualifies: !!matched,
-      setup: matched ? 'confirmação simples' : null,
+      // SIMPLES deliberately has one final gate: stable direction + final score
+      // + directional power. The setup checks remain diagnostic context instead
+      // of becoming a second hidden veto after POSSÍVEL was already published.
+      qualifies: commonReady,
+      setup: matched ? matched.name : 'direção + score + poder',
       checks: setups,
       mode,
       commonReady,
