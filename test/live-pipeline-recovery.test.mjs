@@ -20,9 +20,10 @@ test('Build 5 wires owner access, exact clock projection and expiration probe in
   assert.equal(manifest.version_name, '0.11.13-build5-live-pipeline');
 });
 
-test('owner dev guard keeps unpacked diagnostic sessions active without weakening release builds', () => {
+test('owner dev guard requires explicit ownerDevMode and never infers bypass from unpacked install type', () => {
   const source = read('src/background-dev-owner.js');
-  assert.match(source, /const ownerDev = !chrome\.runtime\.getManifest\(\)\.update_url/);
+  assert.match(source, /settings\?\.ownerDevMode === true/);
+  assert.doesNotMatch(source, /!chrome\.runtime\.getManifest\(\)\.update_url/);
   assert.match(source, /status: 'active'/);
   assert.match(source, /plan: 'OWNER_DEV'/);
   assert.match(source, /chrome\.storage\?\.onChanged/);
