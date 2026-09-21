@@ -111,6 +111,7 @@ function performanceEmission(state = {}) {
     mode: operationMode.timeframe,
     profile: thresholds.label,
     profileKey: thresholds.profile,
+    confirmation: clean(state.analystPreferences?.confirmationMode).toUpperCase() === 'EXIGENTE' ? 'EXIGENTE' : 'SIMPLES',
     targetStart: Number(targetStart),
     entryPrice: null,
     exitPrice: null,
@@ -335,6 +336,7 @@ function rawInputSignature(state = {}, snapshot = null) {
     snapshot.secondsRemaining, Number(clock.at || 0), clean(clock.source),
     getThresholds(state.analystPreferences?.sensitivityProfile || 'MEDIO').profile,
     getOperationMode(state.analystPreferences?.operationMode || 'M1').timeframe,
+    clean(state.analystPreferences?.confirmationMode).toUpperCase() === 'EXIGENTE' ? 'EXIGENTE' : 'SIMPLES',
     Number(state.lastSeen || 0), tail
   ]);
 }
@@ -397,6 +399,7 @@ async function runCentralAnalysis(force = false) {
       lastMarketKey = marketKey;
 
       const processed = processSnapshot(snapshot, current);
+      const confirmationMode = clean(current.analystPreferences?.confirmationMode).toUpperCase() === 'EXIGENTE' ? 'EXIGENTE' : 'SIMPLES';
       lastInputSignature = inputSignature;
       lastRunAt = Date.now();
       revision += 1;
@@ -404,6 +407,7 @@ async function runCentralAnalysis(force = false) {
       const next = {
         ...current,
         ...processed,
+        signal: processed?.signal ? { ...processed.signal, confirmationMode } : processed?.signal,
         // Raw acquisition state remains authoritative.
         asset: current.asset,
         price: current.price,

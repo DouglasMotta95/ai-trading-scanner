@@ -63,40 +63,114 @@ function targetStartOf(snapshot = {}, signal = {}) {
   return num(signal.targetStart) ?? (sampleAt + Math.max(0, seconds) * 1000);
 }
 
-function decisionQuality(signal = {}, direction = null, thresholds = getThresholds()) {
-  if (!direction) return { qualifies: false, setup: null };
-  const score = Number(signal.analysisScore ?? signal.score ?? 0);
-  if (score < thresholds.confirmScore) return { qualifies: false, setup: null };
+function confirmationModeOf(state = {}) {
+  return clean(state.analystPreferences?.confirmationMode).toUpperCase() === 'EXIGENTE' ? 'EXIGENTE' : 'SIMPLES';
+}
 
+function decisionQuality(signal = {}, direction = null, thresholds = getThresholds(), confirmationMode = 'SIMPLES') {
+  const mode = clean(confirmationMode).toUpperCase() === 'EXIGENTE' ? 'EXIGENTE' : 'SIMPLES';
+  const score = Number(signal.analysisScore ?? signal.score ?? 0);
   const analytics = signal.analytics || {};
   const power = Number(direction === 'BUY' ? analytics.buyPower : analytics.sellPower) || 0;
-  if (power < 50) return { qualifies: false, setup: null };
   const currentStrength = Number(analytics.currentStrength || 0);
   const rejectionStrength = Number(analytics.rejectionStrength || 0);
+  const continuationScore = Number(analytics.continuationScore || 0);
+  const momentumScore = Number(analytics.momentumScore || 0);
   const directionalRejection = analytics.rejectionDirection === direction
     || Number(direction === 'BUY' ? analytics.rejectionBuy : analytics.rejectionSell) >= thresholds.rejectionStrength;
-  const continuation = analytics.continuationDirection === direction && Number(analytics.continuationScore || 0) >= 55;
-  const momentum = analytics.momentumDirection === direction && Number(analytics.momentumScore || 0) >= 40;
+  const continuation = analytics.continuationDirection === direction && continuationScore >= 55;
+  const momentum = analytics.momentumDirection === direction && momentumScore >= 40;
   const strongCandle = currentStrength >= thresholds.candleStrength;
   const rejection = directionalRejection && rejectionStrength >= thresholds.rejectionStrength;
   const regime = String(signal.regime?.type || '').toLowerCase();
+  const commonReady = !!direction && score >= thresholds.confirmScore && power >= 50;
+  const commonReason = !direction
+    ? 'sem direção'
+    : score < thresholds.confirmScore
+      ? `score ${Math.round(score)} < ${thresholds.confirmScore}`
+      : power < 50
+        ? `poder ${Math.round(power)} < 50`
+        : 'direção + score + poder aprovados';
 
-  // Setup-specific gates increase useful frequency without lowering the approved
-  // 44/58/62/50 analyst thresholds. A continuation no longer has to look like a
-  // rejection and a rejection no longer has to look like momentum.
+  if (mode === 'SIMPLES') {
+    const setups = [
+      {
+        name: 'rejeição',
+        ok: rejectionStrength >= thresholds.rejectionStrength,
+        reason: `rejectionStrength ${Math.round(rejectionStrength)} ${rejectionStrength >= thresholds.rejectionStrength ? '>=' : '<'} ${thresholds.rejectionStrength}`
+      },
+      {
+        name: 'continuação',
+        ok: continuationScore >= 55,
+        reason: `continuationScore ${Math.round(continuationScore)} ${continuationScore >= 55 ? '>=' : '<'} 55`
+      },
+      {
+        name: 'momentum',
+        ok: momentumScore >= 40,
+        reason: `momentumScore ${Math.round(momentumScore)} ${momentumScore >= 40 ? '>=' : '<'} 40`
+      },
+      {
+        name: 'força da vela',
+        ok: strongCandle,
+        reason: `currentStrength ${Math.round(currentStrength)} ${strongCandle ? '>=' : '<'} ${thresholds.candleStrength}`
+      }
+    ];
+    const matched = commonReady ? setups.find(item => item.ok) || null : null;
+    return {
+      qualifies: !!matched,
+      setup: matched ? 'confirmação simples' : null,
+      checks: setups,
+      mode,
+      commonReady,
+      commonReason
+    };
+  }
+
+  // EXIGENTE preserves the v0.11.43 decision gates exactly.
   const setups = regime === 'range'
     ? [
-        { name: 'rejeição no range', ok: power >= 52 && rejection },
-        { name: 'continuação confirmada no range', ok: power >= 55 && score >= 64 && continuation && momentum }
+        {
+          name: 'rejeição no range',
+          ok: power >= 52 && rejection,
+          reason: `power>=52=${power >= 52} | rejeição direcional>=${thresholds.rejectionStrength}=${rejection}`
+        },
+        {
+          name: 'continuação confirmada no range',
+          ok: power >= 55 && score >= 64 && continuation && momentum,
+          reason: `power>=55=${power >= 55} | score>=64=${score >= 64} | continuação>=55=${continuation} | momentum>=40=${momentum}`
+        }
       ]
     : [
-        { name: 'rejeição', ok: power >= 48 && rejection },
-        { name: 'continuação', ok: power >= 50 && continuation },
-        { name: 'momentum', ok: power >= 50 && strongCandle && momentum },
-        { name: 'confluência forte', ok: power >= 48 && score >= 68 && momentum && (strongCandle || continuation) }
+        {
+          name: 'rejeição',
+          ok: power >= 48 && rejection,
+          reason: `power>=48=${power >= 48} | rejeição direcional>=${thresholds.rejectionStrength}=${rejection}`
+        },
+        {
+          name: 'continuação',
+          ok: power >= 50 && continuation,
+          reason: `power>=50=${power >= 50} | continuação direcional>=55=${continuation}`
+        },
+        {
+          name: 'momentum',
+          ok: power >= 50 && strongCandle && momentum,
+          reason: `power>=50=${power >= 50} | currentStrength>=${thresholds.candleStrength}=${strongCandle} | momentum direcional>=40=${momentum}`
+        },
+        {
+          name: 'confluência forte',
+          ok: power >= 48 && score >= 68 && momentum && (strongCandle || continuation),
+          reason: `power>=48=${power >= 48} | score>=68=${score >= 68} | momentum=${momentum} | força/continuação=${strongCandle || continuation}`
+        }
       ];
-  const matched = setups.find(item => item.ok) || null;
-  return { qualifies: !!matched, setup: matched?.name || null };
+  const matched = commonReady ? setups.find(item => item.ok) || null : null;
+  return {
+    qualifies: !!matched,
+    setup: matched?.name || null,
+    checks: setups,
+    mode,
+    commonReady,
+    commonReason
+  };
 }
 
 function possibleQuality(signal = {}, direction = null, score = 0, thresholds = getThresholds()) {
@@ -161,6 +235,29 @@ function observeDecision(cycle, direction, qualifies, at) {
 function appendTrace(state = {}, row = {}) {
   const rows = Array.isArray(state.decisionTrace) ? state.decisionTrace : [];
   return [...rows.filter(item => item?.key !== row.key), row].slice(-40);
+}
+
+function upsertCandidateBlockerTrace(state = {}, row = {}) {
+  const rows = Array.isArray(state.candidateBlockerTrace) ? state.candidateBlockerTrace.slice(-20) : [];
+  if (!row?.key || !['BUY', 'SELL'].includes(row?.candidateDirection)) return rows;
+  const previous = rows.find(item => item?.key === row.key) || {};
+  const merged = {
+    ...previous,
+    ...row,
+    lastWaitSeconds: row.lastWaitSeconds ?? previous.lastWaitSeconds ?? null,
+    finalBlockMessage: row.finalBlockMessage ?? previous.finalBlockMessage ?? null
+  };
+  return [...rows.filter(item => item?.key !== row.key), merged].slice(-20);
+}
+
+function markCandidateWait(rows = [], key = '', secondsRemaining = null, message = '') {
+  return (Array.isArray(rows) ? rows : []).map(row => row?.key === key
+    ? {
+        ...row,
+        lastWaitSeconds: num(secondsRemaining),
+        finalBlockMessage: clean(message || row.finalBlockMessage || '')
+      }
+    : row);
 }
 
 function enterSignal(signal, cycle, direction, score, reason = null) {
@@ -297,6 +394,7 @@ function resolveWrapperDecision(snapshot = {}, result = {}, currentKey = '', sta
 
 export function processSnapshot(snapshot = {}, state = {}) {
   const thresholds = getThresholds(state.analystPreferences?.sensitivityProfile || 'MEDIO');
+  const confirmationMode = confirmationModeOf(state);
   const result = legacyProcessSnapshot(snapshot, state);
   const signal = result?.signal;
   if (!signal) return result;
@@ -309,41 +407,88 @@ export function processSnapshot(snapshot = {}, state = {}) {
   const at = num(snapshot.serverTime) ?? Date.now();
   const score = Number(signal.analysisScore ?? signal.score ?? 0);
   const direction = directionOf(signal);
+  const analytics = signal.analytics || {};
+  const power = Number(direction === 'BUY' ? analytics.buyPower : analytics.sellPower) || 0;
   const rawPossible = possibleQuality(signal, direction, score, thresholds);
+  const quality = decisionQuality(signal, direction, thresholds, confirmationMode);
+  const technicalFinal = signal.state === 'CONFIRM' || ['ENTER_BUY', 'ENTER_SELL'].includes(clean(signal.uiState).toUpperCase());
+  let candidateBlockerTrace = upsertCandidateBlockerTrace(state, {
+    key,
+    targetStart: cycle.targetStart,
+    candidateDirection: direction,
+    confirmationMode,
+    score,
+    power,
+    currentStrength: Number(analytics.currentStrength || 0),
+    rejectionStrength: Number(analytics.rejectionStrength || 0),
+    continuationScore: Number(analytics.continuationScore || 0),
+    momentumScore: Number(analytics.momentumScore || 0),
+    possibleQuality: rawPossible,
+    decisionQuality: {
+      qualifies: quality.qualifies,
+      setup: quality.setup,
+      commonReady: quality.commonReady,
+      commonReason: quality.commonReason,
+      setups: quality.checks || []
+    },
+    technicalFinal,
+    mandatoryPowerReady: power >= 50,
+    secondsRemaining,
+    updatedAt: at
+  });
   const possibleDirection = possibleWithHysteresis(cycle, rawPossible, direction, at);
   const canShowPossible = !!possibleDirection;
   const recovered = resolveWrapperDecision(snapshot, result, key, state);
   const rolledLastConfirmed = newerDecision(newerDecision(result.lastConfirmed, latestWrapperCompleted(snapshot)), recovered);
 
   if (cycle.locked === 'ENTER') {
-    return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: enterSignal(signal, cycle, cycle.direction, Math.max(score, Number(cycle.score || 0)), cycle.reason), decisionCycle: { ...cycle } };
+    return {
+      ...result,
+      lastConfirmed: rolledLastConfirmed || result.lastConfirmed,
+      signal: enterSignal(signal, cycle, cycle.direction, Math.max(score, Number(cycle.score || 0)), cycle.reason),
+      decisionCycle: { ...cycle },
+      candidateBlockerTrace
+    };
   }
   if (cycle.locked === 'WAIT') {
-    return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: waitSignal(signal, cycle.reason || 'AGUARDAR — padrão não confirmou a tempo.'), decisionCycle: { ...cycle } };
+    const reason = cycle.reason || 'AGUARDAR — padrão não confirmou a tempo.';
+    candidateBlockerTrace = markCandidateWait(candidateBlockerTrace, key, secondsRemaining, reason);
+    return {
+      ...result,
+      lastConfirmed: rolledLastConfirmed || result.lastConfirmed,
+      signal: waitSignal(signal, reason),
+      decisionCycle: { ...cycle },
+      candidateBlockerTrace
+    };
   }
 
   if (secondsRemaining > windows.pre) {
     const nextSignal = signal.state === 'WATCH' || signal.provisional ? buildingSignal(signal, windows) : signal;
-    return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: nextSignal, decisionCycle: { ...cycle } };
+    if (clean(nextSignal?.uiState).toUpperCase() === 'WAIT' || nextSignal?.state === 'NO_TRADE') {
+      candidateBlockerTrace = markCandidateWait(candidateBlockerTrace, key, secondsRemaining, nextSignal.reason);
+    }
+    return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: nextSignal, decisionCycle: { ...cycle }, candidateBlockerTrace };
   }
   if (secondsRemaining > windows.decision) {
     const nextSignal = canShowPossible ? possibleSignal(signal, windows, possibleDirection, score) : signal;
-    return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: nextSignal, decisionCycle: { ...cycle } };
+    if (clean(nextSignal?.uiState).toUpperCase() === 'WAIT' || nextSignal?.state === 'NO_TRADE') {
+      candidateBlockerTrace = markCandidateWait(candidateBlockerTrace, key, secondsRemaining, nextSignal.reason);
+    }
+    return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: nextSignal, decisionCycle: { ...cycle }, candidateBlockerTrace };
   }
 
   if (signal.state === 'CONFIRM' && ['BUY', 'SELL'].includes(signal.direction)) {
     cycle.locked = 'ENTER';
     cycle.direction = signal.direction;
     cycle.score = Math.max(score, Number(signal.score || 0));
-    cycle.setup = signal.setup || null;
+    cycle.setup = signal.setup || quality.setup || null;
     cycle.reason = signal.reason;
     cycle.decidedAt = at;
     cycles.set(key, cycle);
     const trace = appendTrace(state, { key, targetStart: cycle.targetStart, decision: 'ENTER', direction: cycle.direction, score: cycle.score, setup: cycle.setup, reason: cycle.reason, decidedAt: at });
-    return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, decisionCycle: { ...cycle }, decisionTrace: trace };
+    return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, decisionCycle: { ...cycle }, decisionTrace: trace, candidateBlockerTrace };
   }
 
-  const quality = decisionQuality(signal, direction, thresholds);
   const stable = observeDecision(cycle, direction, quality.qualifies, at);
   if (quality.qualifies) cycle.setup = quality.setup;
   if (stable) {
@@ -354,26 +499,41 @@ export function processSnapshot(snapshot = {}, state = {}) {
     cycle.decidedAt = at;
     cycles.set(key, cycle);
     const trace = appendTrace(state, { key, targetStart: cycle.targetStart, decision: 'ENTER', direction, score, setup: cycle.setup, reason: cycle.reason, decidedAt: at });
-    return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: enterSignal(signal, cycle, direction, score, cycle.reason), decisionCycle: { ...cycle }, decisionTrace: trace };
+    return {
+      ...result,
+      lastConfirmed: rolledLastConfirmed || result.lastConfirmed,
+      signal: enterSignal(signal, cycle, direction, score, cycle.reason),
+      decisionCycle: { ...cycle },
+      decisionTrace: trace,
+      candidateBlockerTrace
+    };
   }
 
   if (secondsRemaining <= windows.skip) {
-    const blocker = clean(signal.waitingFor?.text || signal.reason || 'qualidade insuficiente para a próxima vela');
+    const blocker = clean(signal.waitingFor?.text || signal.reason || quality.commonReason || 'qualidade insuficiente para a próxima vela');
     cycle.locked = 'WAIT';
     cycle.direction = null;
     cycle.score = score;
     cycle.reason = `AGUARDAR — ${blocker}`;
     cycle.decidedAt = at;
     cycles.set(key, cycle);
+    candidateBlockerTrace = markCandidateWait(candidateBlockerTrace, key, secondsRemaining, cycle.reason);
     const trace = appendTrace(state, { key, targetStart: cycle.targetStart, decision: 'WAIT', direction: null, score, setup: cycle.setup, reason: cycle.reason, decidedAt: at });
-    return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: waitSignal(signal, cycle.reason), decisionCycle: { ...cycle }, decisionTrace: trace };
+    return {
+      ...result,
+      lastConfirmed: rolledLastConfirmed || result.lastConfirmed,
+      signal: waitSignal(signal, cycle.reason),
+      decisionCycle: { ...cycle },
+      decisionTrace: trace,
+      candidateBlockerTrace
+    };
   }
 
   cycles.set(key, cycle);
   const nextSignal = canShowPossible
     ? possibleSignal(signal, windows, possibleDirection, score)
     : decidingSignal(signal, windows);
-  return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: nextSignal, decisionCycle: { ...cycle } };
+  return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: nextSignal, decisionCycle: { ...cycle }, candidateBlockerTrace };
 }
 
 export function resetOrchestrator() {

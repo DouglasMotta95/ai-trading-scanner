@@ -15,6 +15,68 @@ const marketId = value => {
   return pair ? `${pair[1]}/${pair[2]}${otc ? ' (OTC)' : ''}` : raw;
 };
 const sameMarket = (a,b) => !!marketId(a) && marketId(a) === marketId(b);
+const normalizeConfirmationMode = value => clean(value).toUpperCase() === 'EXIGENTE' ? 'EXIGENTE' : 'SIMPLES';
+
+function ensureConfirmationModeUi() {
+  let select = $('confirmationMode');
+  if (select) return select;
+  const sensitivity = $('signalSensitivityProfile');
+  const sensitivityRow = sensitivity?.closest?.('.setting-row');
+  if (!sensitivityRow) return null;
+
+  const row = document.createElement('label');
+  row.className = 'setting-row';
+  row.setAttribute('for', 'confirmationMode');
+
+  const copy = document.createElement('span');
+  const title = document.createElement('b');
+  title.textContent = 'Confirmação de entrada';
+  const note = document.createElement('small');
+  note.textContent = 'SIMPLES usa uma evidência técnica; EXIGENTE mantém a regra anterior.';
+  copy.append(title, note);
+
+  select = document.createElement('select');
+  select.id = 'confirmationMode';
+  select.setAttribute('aria-label', 'Confirmação de entrada');
+  for (const mode of ['SIMPLES', 'EXIGENTE']) {
+    const option = document.createElement('option');
+    option.value = mode;
+    option.textContent = mode;
+    select.append(option);
+  }
+  select.value = 'SIMPLES';
+  select.addEventListener('change', () => persistConfirmationMode(select.value).catch(() => {}));
+  row.append(copy, select);
+  sensitivityRow.insertAdjacentElement('afterend', row);
+  return select;
+}
+
+function syncConfirmationMode(state = lastState || {}, storedPrefs = null) {
+  const select = ensureConfirmationModeUi();
+  if (!select) return;
+  const fromState = state?.analystPreferences?.confirmationMode;
+  const fromStorage = storedPrefs?.confirmationMode;
+  select.value = normalizeConfirmationMode(fromState ?? fromStorage ?? 'SIMPLES');
+}
+
+async function persistConfirmationMode(value) {
+  const confirmationMode = normalizeConfirmationMode(value);
+  const stored = await chrome.storage.local.get(PREF_KEY).catch(() => ({}));
+  await chrome.storage.local.set({
+    [PREF_KEY]: {
+      ...(stored?.[PREF_KEY] || {}),
+      confirmationMode
+    }
+  }).catch(() => {});
+  const response = await chrome.runtime.sendMessage({
+    type: 'ATS_SET_ANALYST_PREFERENCES',
+    confirmationMode
+  }).catch(() => null);
+  if (response?.state) {
+    lastState = response.state;
+    renderShell(lastState);
+  }
+}
 
 function activeLicense(state = {}) {
   const status = clean(state?.license?.status).toLowerCase();
@@ -103,6 +165,7 @@ function setBadge(id, label, tone) {
 }
 
 function renderShell(state = {}) {
+  syncConfirmationMode(state);
   const session = state.diagnostics?.marketSession || {};
   const pendingAsset = clean(session.pendingAsset || session.asset || '');
   const switching = session.transitioning === true && !!pendingAsset;
@@ -457,6 +520,18 @@ function expirationDiagnosticText(response = {}) {
       }).join('\n\n')
     : '- Nenhum frame disponível para diagnóstico de canvas.';
 
+  const candidateRows = (Array.isArray(lastState?.candidateBlockerTrace) ? lastState.candidateBlockerTrace : []).slice(-20);
+  const candidateBlockerLines = candidateRows.length
+    ? candidateRows.map(item => {
+        const setups = Array.isArray(item?.decisionQuality?.setups) ? item.decisionQuality.setups : [];
+        const setupText = setups.length
+          ? setups.map(setup => `${clean(setup?.name || 'setup')}=${setup?.ok === true ? 'true' : 'false'} (${clean(setup?.reason || 'sem motivo')})`).join('; ')
+          : 'sem setups registrados';
+        const lastWait = Number.isFinite(Number(item?.lastWaitSeconds)) ? `${Number(item.lastWaitSeconds)}s` : '—';
+        return `- direção=${item?.candidateDirection || '—'} | confirmação=${normalizeConfirmationMode(item?.confirmationMode)} | score=${Number(item?.score ?? 0)} | poder=${Number(item?.power ?? 0)} | currentStrength=${Number(item?.currentStrength ?? 0)} | rejectionStrength=${Number(item?.rejectionStrength ?? 0)} | continuationScore=${Number(item?.continuationScore ?? 0)} | momentumScore=${Number(item?.momentumScore ?? 0)} | possibleQuality=${item?.possibleQuality === true ? 'true' : 'false'} | decisionQuality=${item?.decisionQuality?.qualifies === true ? 'true' : 'false'} [${setupText}] | technicalFinal=${item?.technicalFinal === true ? 'true' : 'false'} | mandatoryPowerReady=${item?.mandatoryPowerReady === true ? 'true' : 'false'} | último AGUARDAR=${lastWait} | bloqueio=${clean(item?.finalBlockMessage || '—')}`;
+      }).join('\n')
+    : '- Nenhum dos últimos ciclos registrou direção candidata.';
+
   return [
     'AI Trading Scanner — diagnóstico de leitura de expiração',
     `Frames examinados: ${Number(response.frameCount || response.frames?.length || 0)}`,
@@ -498,6 +573,7 @@ function expirationDiagnosticText(response = {}) {
     '6. RELÓGIO DA VELA E FEED',
     `Modo de operação ativo: ${clean(lastState?.analystPreferences?.operationMode || 'M1')} + ${clean(lastState?.analystPreferences?.operationExpiration || '60s')}`,
     `Perfil de sensibilidade ativo: ${clean(lastState?.analystPreferences?.sensitivityLabel || lastState?.analystPreferences?.sensitivityProfile || 'MÉDIO')}`,
+    `Confirmação ativa: ${normalizeConfirmationMode(lastState?.analystPreferences?.confirmationMode)}`,
     '',
     'A) state.diagnostics.marketClock',
     marketClockLine,
@@ -514,7 +590,10 @@ function expirationDiagnosticText(response = {}) {
     bridgeDiagnosticLines,
     '',
     'E) network-probe',
-    networkDiagnosticLines
+    networkDiagnosticLines,
+    '',
+    '7. BLOQUEIO DO CANDIDATO',
+    candidateBlockerLines
   ].join('\n');
 }
 
@@ -601,7 +680,9 @@ function syncToggleClasses(prefs = {}) {
 
 async function loadPrefs() {
   const stored = await chrome.storage.local.get(PREF_KEY).catch(() => ({}));
-  syncToggleClasses(stored?.[PREF_KEY] || {});
+  const storedPrefs = stored?.[PREF_KEY] || {};
+  syncToggleClasses(storedPrefs);
+  syncConfirmationMode(lastState, storedPrefs);
 }
 
 $('geminiToggle')?.addEventListener('change', event => {
@@ -636,7 +717,11 @@ chrome.storage.onChanged.addListener(changes => {
     renderShell(lastState);
     if (activeLicense(lastState)) $('activateLicense')?.classList.remove('loading');
   }
-  if (changes[PREF_KEY]) syncToggleClasses(changes[PREF_KEY].newValue || {});
+  if (changes[PREF_KEY]) {
+    const nextPrefs = changes[PREF_KEY].newValue || {};
+    syncToggleClasses(nextPrefs);
+    syncConfirmationMode(lastState, nextPrefs);
+  }
 });
 
 // Freshness is time-based; re-render even when Chrome storage is quiet so the

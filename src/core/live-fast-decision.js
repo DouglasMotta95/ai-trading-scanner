@@ -24,11 +24,32 @@ function directionOf(signal = {}) {
   return buy > sell ? 'BUY' : 'SELL';
 }
 
-function quality(signal = {}, direction = null, thresholds = getThresholds()) {
-  if (!direction) return { strong: false, power: 0, reasons: [] };
+function quality(signal = {}, direction = null, thresholds = getThresholds(), confirmationMode = 'SIMPLES') {
+  if (!direction) return { strong: false, power: 0, reasons: [], setup: null };
   const a = signal.analytics || {};
   const buy = direction === 'BUY';
   const power = Number(buy ? a.buyPower : a.sellPower) || 0;
+  const mode = clean(confirmationMode).toUpperCase() === 'EXIGENTE' ? 'EXIGENTE' : 'SIMPLES';
+
+  if (mode === 'SIMPLES') {
+    const continuationScore = Number(a.continuationScore || 0);
+    const momentumScore = Number(a.momentumScore || 0);
+    const rejectionStrength = Number(a.rejectionStrength || 0);
+    const currentStrength = Number(a.currentStrength || 0);
+    const reasons = [];
+    if (rejectionStrength >= thresholds.rejectionStrength) reasons.push('rejeição');
+    if (continuationScore >= 55) reasons.push('continuação');
+    if (momentumScore >= 40) reasons.push('momentum');
+    if (currentStrength >= thresholds.candleStrength) reasons.push('força');
+    return {
+      strong: power >= 50 && reasons.length > 0,
+      power,
+      reasons,
+      setup: reasons.length ? 'confirmação simples' : null
+    };
+  }
+
+  // EXIGENTE preserves the v0.11.43 fast-path quality rule exactly.
   const continuation = a.continuationDirection === direction && Number(a.continuationScore || 0) >= 55;
   const momentum = a.momentumDirection === direction && Number(a.momentumScore || 0) >= 40;
   const rejection = a.rejectionDirection === direction && Number(a.rejectionStrength || 0) >= thresholds.rejectionStrength;
@@ -38,7 +59,7 @@ function quality(signal = {}, direction = null, thresholds = getThresholds()) {
   if (momentum) reasons.push('momentum');
   if (rejection) reasons.push('rejeição');
   if (strength) reasons.push('força');
-  return { strong: power >= 50 && reasons.length > 0, power, reasons };
+  return { strong: power >= 50 && reasons.length > 0, power, reasons, setup: reasons[0] || null };
 }
 
 function cycleKey(context = {}, signal = {}) {
@@ -101,7 +122,7 @@ function possible(signal, direction, score, seconds, q) {
 
 function enter(signal, direction, score, seconds, q) {
   const side = direction === 'BUY' ? 'COMPRA' : 'VENDA';
-  const reason = `ENTRAR NA PRÓXIMA VELA: ${side} • ${seconds}s — score ${Math.round(score)}/100 • ${q.reasons.join(' + ') || 'setup confirmado'}.`;
+  const reason = `ENTRAR NA PRÓXIMA VELA: ${side} • ${seconds}s — score ${Math.round(score)}/100 • ${q.setup || q.reasons.join(' + ') || 'setup confirmado'}.`;
   return {
     ...signal,
     state: 'CONFIRM', direction, diagnosis: direction,
@@ -124,6 +145,7 @@ function waitFinal(signal, score, reason = '') {
 export function fastLiveDecision(signal = {}, context = {}) {
   if (!signal || typeof signal !== 'object') return signal;
   const thresholds = getThresholds(context.sensitivityProfile || 'MEDIO');
+  const confirmationMode = clean(context.confirmationMode || signal.confirmationMode).toUpperCase() === 'EXIGENTE' ? 'EXIGENTE' : 'SIMPLES';
   const operationMode = getOperationMode(context.operationMode || context.timeframe || 'M1');
   const preSignalWindowSeconds = operationMode.timeframe === 'M5' ? 90 : 30;
   const finalWindowSeconds = thresholds.entryWindowSeconds;
@@ -176,7 +198,7 @@ export function fastLiveDecision(signal = {}, context = {}) {
     };
   }
   const direction = stabilized.direction;
-  const q = quality(signal, direction, thresholds);
+  const q = quality(signal, direction, thresholds, confirmationMode);
 
   if (seconds > finalWindowSeconds) {
     observe(key, direction, false, at);
