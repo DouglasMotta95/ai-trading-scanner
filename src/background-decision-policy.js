@@ -7,7 +7,7 @@ import { getThresholds, getOperationMode } from './core/analysis.js';
 const EXACT_CLOCK_SOURCES = new Set(['trader-dom-countdown', 'network-server-cycle']);
 const CLOCK_FRESH_MS = 3000;
 const FOCUS_FRESH_MS = 5500;
-const DEFAULT_PREFS = Object.freeze({ mode: 'NORMAL', geminiEnabled: true, sensitivityProfile: 'MEDIO', operationMode: 'M1', preferredExpiration: null });
+const DEFAULT_PREFS = Object.freeze({ mode: 'NORMAL', geminiEnabled: true, sensitivityProfile: 'MEDIO', confirmationMode: 'SIMPLES', operationMode: 'M1', preferredExpiration: null });
 
 const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
 const text = value => String(value ?? '').trim();
@@ -60,6 +60,7 @@ function preferences(state = {}) {
     operation: operationMode,
     sensitivityProfile: thresholds.profile,
     sensitivityLabel: thresholds.label,
+    confirmationMode: text(raw.confirmationMode || DEFAULT_PREFS.confirmationMode).toUpperCase() === 'EXIGENTE' ? 'EXIGENTE' : 'SIMPLES',
     thresholds,
     holdSeconds: thresholds.holdSeconds,
     preferredExpiration: null
@@ -201,6 +202,7 @@ function baseDecision(state = {}) {
     operationMode: pref.operationMode,
     sensitivityProfile: pref.sensitivityProfile,
     sensitivityLabel: pref.sensitivityLabel,
+    confirmationMode: pref.confirmationMode,
     holdSeconds: pref.holdSeconds,
     cycleKey: cycle,
     score,
@@ -274,15 +276,20 @@ function baseDecision(state = {}) {
     };
   }
   if (!finalQuality || heldFor < holdMs) {
+    // Keep the candidate alive inside the final window. Returning WAIT here used
+    // to clear direction on the next policy tick, restart possibleSince and make
+    // the hold impossible to complete after a late technical confirmation.
     return {
       ...common,
-      uiState: 'WAIT',
-      direction: null,
+      uiState: direction === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL',
+      direction,
       actionable: false,
-      alert: 'silent',
+      alert: 'discrete',
       possibleSince,
       holdRemainingMs: Math.max(0, holdMs - heldFor),
-      reason: `AGUARDAR — decisão final sem confirmação suficiente. ${reason}`
+      reason: finalQuality
+        ? `POSSÍVEL ${direction === 'BUY' ? 'COMPRA' : 'VENDA'} — confirmação final recebida; mantendo hold estável. ${reason}`
+        : `POSSÍVEL ${direction === 'BUY' ? 'COMPRA' : 'VENDA'} — aguardando confirmação técnica final. ${reason}`
     };
   }
 
@@ -307,6 +314,7 @@ function signature(value = {}) {
     operationMode: value.operationMode || null,
     sensitivityProfile: value.sensitivityProfile || null,
     sensitivityLabel: value.sensitivityLabel || null,
+    confirmationMode: value.confirmationMode || null,
     holdSeconds: value.holdSeconds || null,
     cycleKey: value.cycleKey || null,
     score: value.score || 0,

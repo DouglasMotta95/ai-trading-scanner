@@ -35,6 +35,7 @@ async function applyFastDecision(observed = {}) {
     timeframe: observed.analysisTimeframe || observed.timeframe || 'M1',
     operationMode: observed.analystPreferences?.operationMode || 'M1',
     sensitivityProfile: observed.analystPreferences?.sensitivityProfile || 'MEDIO',
+    confirmationMode: observed.analystPreferences?.confirmationMode || 'SIMPLES',
     secondsRemaining: observed.diagnostics?.marketClock?.secondsRemaining ?? observed.signal?.secondsRemaining,
     targetStart: observed.diagnostics?.marketClock?.closeAt ?? observed.signal?.targetStart,
     serverTime: observed.serverTime || Date.now()
@@ -60,6 +61,7 @@ async function applyFastDecision(observed = {}) {
             uiState: decided.uiState || '',
             direction: decided.direction || '',
             score: Number(decided.score || 0),
+            confirmationMode: observed.analystPreferences?.confirmationMode || 'SIMPLES',
             at: Date.now()
           }
         }
