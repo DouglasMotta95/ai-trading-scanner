@@ -412,7 +412,12 @@ export function processSnapshot(snapshot = {}, state = {}) {
   const analytics = signal.analytics || {};
   const power = Number(direction === 'BUY' ? analytics.buyPower : analytics.sellPower) || 0;
   const quality = decisionQuality(signal, direction, thresholds, confirmationMode);
-  const rawPossible = possibleQuality(signal, direction, score, thresholds) && quality.qualifies;
+  const possibleConfirmations = Array.isArray(quality.checks) ? quality.checks.filter(item => item?.ok).length : 0;
+  // Pre-signal keeps its own higher possibleScore gate instead of borrowing the
+  // final confirmScore. It still requires strong power and two technical confirmations.
+  const rawPossible = possibleQuality(signal, direction, score, thresholds)
+    && power >= 55
+    && possibleConfirmations >= 2;
   const technicalFinal = signal.state === 'CONFIRM' || ['ENTER_BUY', 'ENTER_SELL'].includes(clean(signal.uiState).toUpperCase());
   let candidateBlockerTrace = upsertCandidateBlockerTrace(state, {
     key,
@@ -435,7 +440,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
     },
     technicalFinal,
     relogio_verificado: state.diagnostics?.marketClock?.verified === true,
-    mandatoryPowerReady: power >= 50,
+    mandatoryPowerReady: power >= 55,
     secondsRemaining,
     updatedAt: at
   });
