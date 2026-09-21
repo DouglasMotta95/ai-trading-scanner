@@ -201,11 +201,20 @@ function baseDecision(state = {}) {
   const mandatoryPowerReady = directionalPower >= 50;
   const technicalCandidate = ['POSSIBLE_BUY', 'POSSIBLE_SELL', 'ENTER_BUY', 'ENTER_SELL'].includes(ui);
   const technicalFinal = ['ENTER_BUY', 'ENTER_SELL'].includes(ui);
+  const persistenceEvidence = signal.candidatePersistence || {};
+  const persistenceCandidate = technicalFinal
+    && text(signal.confirmationMode).toUpperCase() === 'PERSISTENCE'
+    && persistenceEvidence.armed === true
+    && Number(persistenceEvidence.sampleCount || 0) >= 4
+    && Number(persistenceEvidence.ratio || 0) >= 0.70
+    && Number(persistenceEvidence.averageScore || 0) >= 55
+    && persistenceEvidence.strongOpposite !== true;
   const diagnosticCycleKey = state.decisionCycle?.key || cycle;
   const candidateBlockerPolicy = {
     cycleKey: diagnosticCycleKey,
     technicalCandidate,
     technicalFinal,
+    persistenceCandidate,
     mandatoryPowerReady,
     directionalPower,
     expirationReady: expiration.ready,
@@ -260,7 +269,7 @@ function baseDecision(state = {}) {
     return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: 'AGUARDAR — fechamento da vela em andamento.' };
   }
 
-  if (!technicalCandidate || !direction || score < possibleScore || !mandatoryPowerReady || !additionalConfluenceReady) {
+  if (!technicalCandidate || !direction || score < possibleScore || (!mandatoryPowerReady && !persistenceCandidate) || !additionalConfluenceReady) {
     return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: 'AGUARDAR — motor técnico ainda não liberou um candidato.' };
   }
 
@@ -269,7 +278,9 @@ function baseDecision(state = {}) {
   const possibleSince = sameCandidate && Number(previous.possibleSince || 0) > 0 ? Number(previous.possibleSince) : now;
   const holdMs = pref.holdSeconds * 1000;
   const heldFor = Math.max(0, now - possibleSince);
-  const finalQuality = technicalFinal && score >= finalScore && mandatoryPowerReady && additionalConfluenceReady;
+  const strongFinalQuality = technicalFinal && score >= finalScore && mandatoryPowerReady && additionalConfluenceReady;
+  const persistenceFinalQuality = persistenceCandidate && score >= possibleScore && additionalConfluenceReady;
+  const finalQuality = strongFinalQuality || persistenceFinalQuality;
   const reason = shortReason(direction, factors.factors, signal.reason);
 
   // Expiration is an execution gate, not a technical-analysis gate. Keep the
