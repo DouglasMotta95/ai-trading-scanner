@@ -38,7 +38,7 @@ test('backend requires strong production session secret and serializes payment p
   assert.match(server, /setPaymentEvent\(eventKey, 'completed'/);
   assert.match(server, /admin-login', 5, 60000/);
   assert.match(server, /duplicateOrder/);
-  assert.equal(JSON.parse(read('backend/package.json')).version, '0.11.49');
+  assert.equal(JSON.parse(read('backend/package.json')).version, '0.11.50');
 });
 
 test('customer portal escapes plan labels and exposes recovery/legal surfaces', () => {
@@ -199,4 +199,48 @@ test('v0.11.49 passive asset radar retains real candles without changing its leg
   assert.match(radarCore, /const qualityCandles = candles\.slice\(-12\)/);
   assert.match(radarCore, /candles: candles\.slice\(-40\)/);
   assert.match(radarCore, /assessAssetQuality\(\{ asset: candidate\.asset, price: candidate\.price, candles: qualityCandles \}\)/);
+});
+
+
+test('v0.11.50 adds saved SIGNAL and COMPLETO panel modes without touching scanner state', () => {
+  const html = read('src/sidepanel/index.html');
+  const layout = read('src/sidepanel/layout-mode-ui.js');
+  const css = read('src/sidepanel/ui-polish.css');
+  assert.match(html, /ui-polish\.css/);
+  assert.match(html, /layout-mode-ui\.js/);
+  assert.match(layout, /atsPanelViewV1/);
+  assert.match(layout, /viewSignal/);
+  assert.match(layout, /viewFull/);
+  assert.match(css, /data-panel-mode="signal"/);
+  assert.match(css, /data-panel-mode="full"/);
+  assert.doesNotMatch(layout, /processSnapshot|consumeSignal|ATS_SET_ANALYST_PREFERENCES|ATS_SET_USER_DECLARED_EXPIRATION/);
+});
+
+test('v0.11.50 compact signal mode removes repeated operational surfaces instead of deleting them', () => {
+  const layout = read('src/sidepanel/layout-mode-ui.js');
+  const css = read('src/sidepanel/ui-polish.css');
+  assert.match(layout, /moveOperationalPulse/);
+  assert.match(layout, /ensureChartDisclosure/);
+  assert.match(css, /#operationalPulse/);
+  assert.match(css, /#marketChartPanel/);
+  assert.match(css, /#advancedPanel/);
+  assert.match(css, /#syncStrip\.live/);
+  assert.match(css, /#decisionCard \.decision-compact-grid/);
+});
+
+test('v0.11.50 UI motion is presentation-only', () => {
+  const layout = read('src/sidepanel/layout-mode-ui.js');
+  const css = read('src/sidepanel/ui-polish.css');
+  assert.match(css, /atsConnectRing/);
+  assert.match(css, /atsAnalysisSweep/);
+  assert.match(css, /atsPossibleBreath/);
+  assert.match(css, /atsEntryFlash/);
+  assert.match(layout, /renderConnectionAnimation/);
+  assert.doesNotMatch(layout, /chrome\.tabs|chrome\.scripting|fetch\(|WebSocket|XMLHttpRequest/);
+});
+
+test('extension build is v0.11.50 UI polish', () => {
+  const manifest = JSON.parse(read('manifest.json'));
+  assert.equal(manifest.version, '0.11.50');
+  assert.equal(manifest.version_name, '0.11.50-ui-polish');
 });
