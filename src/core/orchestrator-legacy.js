@@ -358,7 +358,10 @@ export function processSnapshot(snapshot = {}, state = {}) {
   const preSignalWindowSeconds = String(analysisTimeframe || '').toUpperCase() === 'M5' ? 90 : 30;
   const progress = Math.max(0, Math.min(100, Math.round(((tfMs - remainingMs) / tfMs) * 100)));
   const targetStart = clockRemaining != null ? sampleAt + remainingMs : currentBucket + tfMs;
-  const direction = ['BUY', 'SELL'].includes(liveResult.direction) ? liveResult.direction : null;
+  const analysisDirection = ['BUY', 'SELL'].includes(liveResult.direction) ? liveResult.direction : null;
+  const professional = liveResult.analytics?.professional || {};
+  const professionalReady = professional.contextReady === true && professional.triggerReady === true;
+  const direction = professionalReady ? analysisDirection : null;
   const score = Number(liveResult.score || 0);
   const expiration = snapshot.targetExpiration || state.targetExpiration || snapshot.expiration || state.expiration || null;
   const tracker = trackerFor(key, currentBucket, sampleAt);
@@ -371,7 +374,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
     progress,
     currentCandle: current ? { ...current } : null,
     score,
-    analysisDirection: direction,
+    analysisDirection,
     analysisScore: score,
     analytics: liveResult.analytics || {},
     waitingFor: liveResult.waitingFor || null,
@@ -602,7 +605,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
     };
   }
 
-  const buildingPattern = !!direction && score >= 30;
+  const buildingPattern = !!analysisDirection && score >= 30;
   return {
     candles: closed,
     currentCandle: current,
@@ -615,7 +618,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
       phase: buildingPattern ? 'BUILDING' : 'ANALYZING',
       uiState: buildingPattern ? 'BUILDING_PATTERN' : 'ANALYZING_MARKET',
       reason: liveResult.waitingFor?.text || (buildingPattern
-        ? `Montando padrão da próxima vela: ${analyticsSummary(liveResult, direction)}.`
+        ? `Montando padrão da próxima vela: ${analyticsSummary(liveResult, analysisDirection)}.`
         : 'Analisando poder de compra/venda, rejeição, força e momentum do mercado atual.'),
       stability: stabilitySnapshot(tracker)
     })
