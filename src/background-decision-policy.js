@@ -168,15 +168,20 @@ export function CasaTradeExpiration(state = {}, timeframe = null) {
       reason: `Ajuste a expiração da CasaTrade para ${expirationLabel}`
     };
   }
+  const verified = guard.verified === true || (source !== 'user-declared' && observedFresh);
+  const manualFallback = source === 'user-declared';
+  const ready = actual === operationMode.expiration && (manualFallback || verified);
   return {
-    ready: actual === operationMode.expiration,
+    ready,
     actual,
     required: operationMode.expiration,
     source,
-    verified: guard.verified === true || (source !== 'user-declared' && observedFresh),
-    reason: source === 'user-declared'
+    verified,
+    reason: manualFallback
       ? `Expiração de ${expirationLabel} informada por você e aceita para este modo.`
-      : `Expiração de ${expirationLabel} confirmada para o modo ${operationMode.timeframe}.`
+      : !verified
+        ? `Revalidando a expiração real de ${expirationLabel} na CasaTrade.`
+        : `Expiração de ${expirationLabel} confirmada para o modo ${operationMode.timeframe}.`
   };
 }
 
