@@ -589,19 +589,18 @@ export function analyzeCandles(candles = [], indicatorCandles = candles, profile
   const professional = professionalContextScore(recent, indicators, thresholds);
   const score = professional.score;
   const candidateReady = professional.contextReady && professional.triggerReady;
-  const publishedDirection = candidateReady ? recent.direction : null;
   const professionalReason = candidateReady
     ? `Leitura profissional: contexto + região + gatilho confirmados (${Math.round(score)}/100).`
     : `AGUARDAR — leitura profissional incompleta: ${!professional.contextReady ? 'contexto/região' : 'gatilho'} ainda não confirmado.`;
   return {
     state: candidateReady && score >= thresholds.possibleScore ? 'WATCH' : 'WAIT',
     score,
-    baseScore: professional.legacyScore,
-    direction: publishedDirection,
+    baseScore: recent.score,
+    direction: recent.direction,
     reasons: [...recent.reasons, ...indicators.reasons, professionalReason],
     recent,
     indicators,
-    waitingFor: waitingFor(recent, publishedDirection, score, thresholds.profile),
+    waitingFor: waitingFor(recent, recent.direction, score, thresholds.profile),
     analytics: {
       ...(recent.metrics || {}),
       ...levelAnalytics,
@@ -609,6 +608,7 @@ export function analyzeCandles(candles = [], indicatorCandles = candles, profile
       continuationScore: Number(recent.continuationScore || 0),
       rsi: indicators.rsi?.value ?? null,
       macdHistogram: indicators.macd?.histogram ?? null,
+      legacyScore: professional.legacyScore,
       professional
     }
   };
