@@ -231,11 +231,10 @@
       if (runnerUpGap < minimumGap) return null;
 
       // Video 15292 exposed a dangerous boot case: with several CasaTrade asset
-      // tabs visible, a passive chart-header guess could win over the actually
-      // selected tab. If multiple distinct assets are visible, a passive winner
-      // must be tied to the real chart canvas. Explicit selection or a fresh
-      // user interaction may still establish authority immediately.
-      if (!first.interaction && !first.explicit && Number(first.directChartHits || 0) < 1) return null;
+      // tabs visible, a passive chart/header guess can point at a stale market.
+      // In an ambiguous multi-asset layout we never guess: only explicit DOM
+      // selection or a fresh user interaction may establish market authority.
+      if (!first.interaction && !first.explicit) return null;
     }
     return {
       ...first,
@@ -307,7 +306,7 @@
         ambiguityCount: Number(winner.ambiguityCount || 0),
         runnerUpAsset: winner.runnerUpAsset || null,
         runnerUpGap: winner.runnerUpGap == null ? null : Number(winner.runnerUpGap),
-        visualAuthority: winner.interaction === true || winner.explicit === true || Number(winner.directChartHits || 0) > 0 || Number(winner.ambiguityCount || 0) === 0,
+        visualAuthority: Number(winner.ambiguityCount || 0) === 0 || winner.interaction === true || winner.explicit === true,
         frameHost: host,
         frameRole,
         at: now,
