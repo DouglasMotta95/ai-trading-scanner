@@ -267,6 +267,9 @@ export function fastLiveDecision(signal = {}, context = {}) {
   if (strong && hits > 0) return possible(signal, direction, score, seconds, q);
   if (!strong && hits > 0) return heldPossible(signal, direction, score, seconds);
 
+  // Fast path is an accelerator, never a veto against a stronger central signal.
+  // It cannot manufacture ENTER; below the hard gate it only preserves a recent
+  // candidate briefly or returns WAIT.
   return waitFinal(signal, score, 'confiança final abaixo do nível exigido');
 }
 
