@@ -93,16 +93,24 @@ function activeLicense(state = {}) {
     || state?.diagnostics?.access?.state === 'owner_dev';
 }
 
-function baseHandshake(state = {}) {
+function linkedSession(state = {}) {
   const focus = state.diagnostics?.focusedAsset || null;
   return activeLicense(state)
-    && state.connection === 'online'
+    && !!state.targetTabId
+    && state.platformId === 'casatrade'
+    && state.connection !== 'offline'
     && !!state.asset
-    && Number.isFinite(Number(state.price))
     && focus?.reliable === true
     && focus?.chartScoped === true
     && focus?.trustedChartFrame === true
-    && sameMarket(focus?.asset, state.asset)
+    && sameMarket(focus?.asset, state.asset);
+}
+
+function baseHandshake(state = {}) {
+  const focus = state.diagnostics?.focusedAsset || null;
+  return linkedSession(state)
+    && state.connection === 'online'
+    && Number.isFinite(Number(state.price))
     && Number(state.lastSeen || 0) > 0
     && Date.now() - Number(state.lastSeen) < 7000;
 }
@@ -310,7 +318,8 @@ function renderShell(state = {}) {
   const pendingAsset = clean(session.pendingAsset || session.asset || '');
   const switching = session.transitioning === true && !!pendingAsset;
   const dataConnected = baseHandshake(state);
-  const connected = dataConnected || switching;
+  const sessionLinked = linkedSession(state);
+  const connected = dataConnected || switching || sessionLinked;
   const platformLinked = connected;
   const tradeReady = exactLiveTime(state);
   const failure = connectionFailure(state);
