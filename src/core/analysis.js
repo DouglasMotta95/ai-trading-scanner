@@ -426,6 +426,126 @@ export function recentPriceAction(candles = [], profile = 'MEDIO') {
   };
 }
 
+
+function professionalContextScore(recent = {}, indicators = {}, thresholds = getThresholds()) {
+  const direction = ['BUY', 'SELL'].includes(recent?.direction) ? recent.direction : null;
+  const metrics = recent?.metrics || {};
+  if (!direction) {
+    return {
+      score: clamp(Number(recent?.score || 0)),
+      legacyScore: clamp(Number(recent?.score || 0)),
+      direction: null,
+      contextReady: false,
+      positionReady: false,
+      triggerReady: false,
+      blocks: { structure: 0, location: 0, trigger: 0, momentum: 0, indicators: 0, quality: 0 },
+      reasons: ['Contexto profissional ainda sem direção definida.']
+    };
+  }
+
+  const buy = direction === 'BUY';
+  const agreement = Number(recent.agreement || 0);
+  const momentumScore = Number(metrics.momentumScore || 0);
+  const continuationScore = Number(recent.continuationScore || 0);
+  const directionalPower = Number(buy ? metrics.buyPower : metrics.sellPower) || 0;
+  const avgRange = Math.max(1e-12, Number(recent.averageRange || 0) || 1);
+  const lastClose = Number(recent.lastClose);
+  const keyLevel = buy ? Number(recent.support) : Number(recent.resistance);
+  const distanceToLevel = Number.isFinite(lastClose) && Number.isFinite(keyLevel)
+    ? Math.abs(lastClose - keyLevel) / avgRange
+    : Infinity;
+
+  const breakout = recent.breakout === direction;
+  const rejection = recent.rejection === direction
+    && Number(metrics.rejectionStrength || 0) >= thresholds.rejectionStrength;
+  const continuation = recent.continuationDirection === direction && continuationScore >= 60;
+  const momentumAligned = metrics.momentumDirection === direction && momentumScore >= 45;
+  const nearKeyLevel = distanceToLevel <= 0.75;
+  const strongCandle = Number(metrics.currentStrength || 0) >= thresholds.candleStrength;
+
+  let structure = 0;
+  if (agreement >= .7) structure += 12;
+  else if (agreement >= .6) structure += 9;
+  else if (agreement >= .55) structure += 6;
+  if (momentumAligned) structure += momentumScore >= 70 ? 8 : momentumScore >= 55 ? 6 : 4;
+  if (continuation) structure += 5;
+  structure = clamp(structure, 0, 25);
+
+  let location = 0;
+  if (nearKeyLevel) location += distanceToLevel <= .4 ? 10 : 7;
+  if (breakout) location += 10;
+  if (rejection) location += 8;
+  location = clamp(location, 0, 20);
+
+  let trigger = 0;
+  if (breakout) trigger += 10;
+  if (rejection) trigger += 10;
+  if (continuation) trigger += 8;
+  if (strongCandle) trigger += 5;
+  trigger = clamp(trigger, 0, 25);
+
+  let momentum = 0;
+  if (directionalPower >= 65) momentum += 7;
+  else if (directionalPower >= 58) momentum += 5;
+  else if (directionalPower >= 52) momentum += 3;
+  if (momentumAligned) momentum += momentumScore >= 65 ? 5 : 3;
+  if (continuation) momentum += 3;
+  momentum = clamp(momentum, 0, 15);
+
+  let indicatorScore = 0;
+  const rsiValue = Number(indicators?.rsi?.value);
+  const macdHistogram = Number(indicators?.macd?.histogram);
+  const rsiAligned = Number.isFinite(rsiValue) && (buy ? rsiValue > 50 : rsiValue < 50);
+  const macdAligned = Number.isFinite(macdHistogram) && macdHistogram !== 0 && (buy ? macdHistogram > 0 : macdHistogram < 0);
+  if (rsiAligned) indicatorScore += 4;
+  if (macdAligned) indicatorScore += 6;
+  indicatorScore = clamp(indicatorScore, 0, 10);
+
+  let quality = 0;
+  if (!recent.lateral) quality += 2;
+  if (!recent.doji) quality += 1;
+  if (Number(metrics.lossOfStrength || 0) < 55) quality += 2;
+  quality = clamp(quality, 0, 5);
+
+  const positionReady = breakout || rejection || nearKeyLevel;
+  const triggerReady = breakout || rejection || continuation;
+  const contextReady = structure >= 10 && positionReady;
+  const score = clamp(structure + location + trigger + momentum + indicatorScore + quality);
+  const reasons = [
+    `Estrutura ${Math.round(structure)}/25`,
+    `Região ${Math.round(location)}/20`,
+    `Gatilho ${Math.round(trigger)}/25`,
+    `Momentum ${Math.round(momentum)}/15`,
+    `Indicadores ${Math.round(indicatorScore)}/10`,
+    `Qualidade ${Math.round(quality)}/5`
+  ];
+
+  return {
+    score,
+    legacyScore: clamp(Number(recent.score || 0) + Number(indicators?.adjustment || 0)),
+    direction,
+    contextReady,
+    positionReady,
+    triggerReady,
+    breakout,
+    rejection,
+    continuation,
+    momentumAligned,
+    nearKeyLevel,
+    distanceToLevel: Number.isFinite(distanceToLevel) ? distanceToLevel : null,
+    directionalPower,
+    blocks: {
+      structure,
+      location,
+      trigger,
+      momentum,
+      indicators: indicatorScore,
+      quality
+    },
+    reasons
+  };
+}
+
 export function analyzeCandles(candles = [], indicatorCandles = candles, profile = 'MEDIO') {
   const thresholds = getThresholds(profile);
   const rows = (Array.isArray(candles) ? candles : []).filter(c => [c?.open, c?.high, c?.low, c?.close].every(v => finite(v) != null));
@@ -466,13 +586,18 @@ export function analyzeCandles(candles = [], indicatorCandles = candles, profile
   }
 
   const indicators = indicatorReinforcement(indicatorRows, recent.direction);
-  const score = clamp(recent.score + indicators.adjustment);
+  const professional = professionalContextScore(recent, indicators, thresholds);
+  const score = professional.score;
+  const candidateReady = professional.contextReady && professional.triggerReady;
+  const professionalReason = candidateReady
+    ? `Leitura profissional: contexto + região + gatilho confirmados (${Math.round(score)}/100).`
+    : `AGUARDAR — leitura profissional incompleta: ${!professional.contextReady ? 'contexto/região' : 'gatilho'} ainda não confirmado.`;
   return {
-    state: score >= thresholds.possibleScore ? 'WATCH' : 'WAIT',
+    state: candidateReady && score >= thresholds.possibleScore ? 'WATCH' : 'WAIT',
     score,
     baseScore: recent.score,
     direction: recent.direction,
-    reasons: [...recent.reasons, ...indicators.reasons],
+    reasons: [...recent.reasons, ...indicators.reasons, professionalReason],
     recent,
     indicators,
     waitingFor: waitingFor(recent, recent.direction, score, thresholds.profile),
@@ -482,7 +607,9 @@ export function analyzeCandles(candles = [], indicatorCandles = candles, profile
       continuationDirection: recent.continuationDirection || null,
       continuationScore: Number(recent.continuationScore || 0),
       rsi: indicators.rsi?.value ?? null,
-      macdHistogram: indicators.macd?.histogram ?? null
+      macdHistogram: indicators.macd?.histogram ?? null,
+      legacyScore: professional.legacyScore,
+      professional
     }
   };
 }

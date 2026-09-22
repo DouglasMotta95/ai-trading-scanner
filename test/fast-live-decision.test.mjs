@@ -12,7 +12,13 @@ function base(overrides = {}) {
       momentumDirection: 'SELL',
       momentumScore: 52,
       continuationDirection: 'SELL',
-      continuationScore: 64
+      continuationScore: 64,
+      professional: {
+        contextReady: true,
+        positionReady: true,
+        triggerReady: true,
+        blocks: { structure: 18, location: 10, trigger: 12, momentum: 10, indicators: 6, quality: 4 }
+      }
     },
     ...overrides
   };

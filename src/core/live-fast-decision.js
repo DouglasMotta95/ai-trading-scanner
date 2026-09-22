@@ -37,7 +37,12 @@ function quality(signal = {}, direction = null, thresholds = getThresholds(), co
   const a = signal.analytics || {};
   const buy = direction === 'BUY';
   const power = Number(buy ? a.buyPower : a.sellPower) || 0;
+  const professional = a.professional || {};
+  const professionalReady = professional.contextReady === true && professional.triggerReady === true;
   const mode = clean(confirmationMode).toUpperCase() === 'EXIGENTE' ? 'EXIGENTE' : 'SIMPLES';
+  if (!professionalReady) {
+    return { strong: false, power, reasons: [], setup: null, professionalReady: false };
+  }
 
   if (mode === 'SIMPLES') {
     const continuationScore = Number(a.continuationScore || 0);

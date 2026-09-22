@@ -159,6 +159,8 @@ function observePossible(tracker, direction, score, at, thresholds) {
 function confirmationQuality(result = {}, direction = null, thresholds = getThresholds()) {
   if (!direction || !result?.recent?.ready) return false;
   const metrics = result.analytics || result.recent?.metrics || {};
+  const professional = metrics.professional || {};
+  if (professional.contextReady !== true || professional.triggerReady !== true) return false;
   const directionalPower = direction === 'BUY' ? Number(metrics.buyPower || 0) : Number(metrics.sellPower || 0);
   const candleStrong = Number(metrics.currentStrength || 0) >= thresholds.candleStrength;
   const rejected = result.recent?.rejection === direction
@@ -175,6 +177,8 @@ function confirmationQuality(result = {}, direction = null, thresholds = getThre
 function rangeOverrideQuality(result = {}, direction = null, thresholds = getThresholds()) {
   if (!direction || !result?.recent?.ready) return false;
   const metrics = result.analytics || result.recent?.metrics || {};
+  const professional = metrics.professional || {};
+  if (professional.contextReady !== true || professional.triggerReady !== true) return false;
   const directionalPower = direction === 'BUY' ? Number(metrics.buyPower || 0) : Number(metrics.sellPower || 0);
   const broke = result.recent?.breakout === direction;
   const rejected = result.recent?.rejection === direction
@@ -214,6 +218,11 @@ function analyticsSummary(result = {}, direction = null) {
   if (!direction) return 'Mercado sem domínio claro entre compra e venda.';
   const power = direction === 'BUY' ? Number(metrics.buyPower || 0) : Number(metrics.sellPower || 0);
   const parts = [`poder ${direction === 'BUY' ? 'comprador' : 'vendedor'} ${Math.round(power)}%`];
+  const professional = metrics.professional || {};
+  if (professional.blocks) {
+    parts.push(`estrutura ${Math.round(Number(professional.blocks.structure || 0))}/25`);
+    parts.push(`gatilho ${Math.round(Number(professional.blocks.trigger || 0))}/25`);
+  }
   if (Number(metrics.currentStrength || 0) > 0) parts.push(`força da vela ${Math.round(Number(metrics.currentStrength || 0))}%`);
   if (result.recent?.rejection === direction) parts.push(`rejeição ${Math.round(Number(metrics.rejectionStrength || 0))}%`);
   if (result.recent?.breakout === direction) parts.push('rompimento recente');
@@ -349,7 +358,10 @@ export function processSnapshot(snapshot = {}, state = {}) {
   const preSignalWindowSeconds = String(analysisTimeframe || '').toUpperCase() === 'M5' ? 90 : 30;
   const progress = Math.max(0, Math.min(100, Math.round(((tfMs - remainingMs) / tfMs) * 100)));
   const targetStart = clockRemaining != null ? sampleAt + remainingMs : currentBucket + tfMs;
-  const direction = ['BUY', 'SELL'].includes(liveResult.direction) ? liveResult.direction : null;
+  const analysisDirection = ['BUY', 'SELL'].includes(liveResult.direction) ? liveResult.direction : null;
+  const professional = liveResult.analytics?.professional || {};
+  const professionalReady = professional.contextReady === true && professional.triggerReady === true;
+  const direction = professionalReady ? analysisDirection : null;
   const score = Number(liveResult.score || 0);
   const expiration = snapshot.targetExpiration || state.targetExpiration || snapshot.expiration || state.expiration || null;
   const tracker = trackerFor(key, currentBucket, sampleAt);
@@ -362,7 +374,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
     progress,
     currentCandle: current ? { ...current } : null,
     score,
-    analysisDirection: direction,
+    analysisDirection,
     analysisScore: score,
     analytics: liveResult.analytics || {},
     waitingFor: liveResult.waitingFor || null,
@@ -593,7 +605,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
     };
   }
 
-  const buildingPattern = !!direction && score >= 30;
+  const buildingPattern = !!analysisDirection && score >= 30;
   return {
     candles: closed,
     currentCandle: current,
@@ -606,7 +618,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
       phase: buildingPattern ? 'BUILDING' : 'ANALYZING',
       uiState: buildingPattern ? 'BUILDING_PATTERN' : 'ANALYZING_MARKET',
       reason: liveResult.waitingFor?.text || (buildingPattern
-        ? `Montando padrão da próxima vela: ${analyticsSummary(liveResult, direction)}.`
+        ? `Montando padrão da próxima vela: ${analyticsSummary(liveResult, analysisDirection)}.`
         : 'Analisando poder de compra/venda, rejeição, força e momentum do mercado atual.'),
       stability: stabilitySnapshot(tracker)
     })
