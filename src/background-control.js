@@ -743,9 +743,11 @@ async function probePlatformControlsDirect(tabId) {
       validForM1: operationMode.timeframe === 'M1' ? expirationReady : false,
       validForMode: expirationReady,
       operationMode: operationMode.timeframe,
-      reason: !expiration
-        ? 'Expiração real da CasaTrade ainda não confirmada.'
-        : expiration !== operationMode.expiration
+      reason: !realExpiration
+        ? (expiration
+          ? `Expiração de ${expirationLabel} informada, mas ainda não verificada pela CasaTrade.`
+          : 'Expiração real da CasaTrade ainda não confirmada.')
+        : realExpiration !== operationMode.expiration
           ? `Ajuste a expiração da CasaTrade para ${expirationLabel}`
           : effectiveTf !== operationMode.timeframe
             ? `Ajuste o timeframe da CasaTrade para ${operationMode.timeframe}.`
@@ -757,7 +759,7 @@ async function probePlatformControlsDirect(tabId) {
       ...(diagnostics.platformTime || {}),
       timeframe: effectiveTf || timeframe || null,
       expiration,
-      source: 'background-direct-dom',
+      source: realExpiration ? 'background-direct-dom' : (state.diagnostics?.platformTime?.source || previousControls.expirationSource || null),
       ready: expirationReady,
       at: now
     };
@@ -767,6 +769,8 @@ async function probePlatformControlsDirect(tabId) {
       platformControls: {
         ...(state.platformControls || {}),
         observed,
+        userDeclaredExpiration: realExpiration ? null : previousControls.userDeclaredExpiration || null,
+        userDeclaredAt: realExpiration ? 0 : Number(previousControls.userDeclaredAt || 0),
         checkedAt: now,
         expirationCheckedAt: exp?.expiration ? now : Number(state.platformControls?.expirationCheckedAt || 0),
         timeframeCheckedAt: tf?.timeframe ? now : Number(state.platformControls?.timeframeCheckedAt || 0),
