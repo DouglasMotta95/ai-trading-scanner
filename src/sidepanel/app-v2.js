@@ -128,7 +128,6 @@ function fmtPrice(value) {
 function focusReady(state = {}) {
   const focus = state.diagnostics?.focusedAsset || {};
   const ambiguousPassive = Number(focus.ambiguityCount || 0) > 0
-    && focus.directChart !== true
     && focus.explicit !== true
     && focus.interactionHint !== true;
   return focus.reliable === true
