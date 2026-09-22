@@ -617,20 +617,30 @@ async function runCentralAnalysis(force = false) {
 
       const session = current.diagnostics?.marketSession || {};
       const focus = current.diagnostics?.focusedAsset || {};
+      const confirmationMode = clean(current.analystPreferences?.confirmationMode).toUpperCase() === 'EXIGENTE' ? 'EXIGENTE' : 'SIMPLES';
       const marketKey = [
         snapshot.asset,
         snapshot.analysisTimeframe,
         Number(session.epoch || 0),
         getThresholds(current.analystPreferences?.sensitivityProfile || 'MEDIO').profile,
         getOperationMode(current.analystPreferences?.operationMode || 'M1').timeframe,
+        confirmationMode,
         Number(focus.frameId ?? -1),
         clean(focus.frameHost).toLowerCase()
       ].join('|');
-      if (lastMarketKey && lastMarketKey !== marketKey) resetOrchestrator();
+      const analysisContextChanged = !!lastMarketKey && lastMarketKey !== marketKey;
+      if (analysisContextChanged) resetOrchestrator();
       lastMarketKey = marketKey;
 
-      let processed = processSnapshot(snapshot, current);
-      const allowance = signalAllowance(current);
+      // A profile/mode/focus change must not reuse confirmation hits or a
+      // user-facing decision from the previous context. Market/history data is
+      // preserved; only the current decision cycle is restarted.
+      const analysisState = analysisContextChanged
+        ? { ...current, decisionCycle: null, professionalDecision: null, aiAudit: null }
+        : current;
+
+      let processed = processSnapshot(snapshot, analysisState);
+      const allowance = signalAllowance(analysisState);
       const processedUi = clean(processed?.signal?.uiState).toUpperCase();
       const processedConfirmed = processed?.signal?.state === 'CONFIRM' || processedUi === 'ENTER_BUY' || processedUi === 'ENTER_SELL';
       if (processedConfirmed && !allowance.allowed) {
@@ -644,13 +654,12 @@ async function runCentralAnalysis(force = false) {
           }
         };
       }
-      const confirmationMode = clean(current.analystPreferences?.confirmationMode).toUpperCase() === 'EXIGENTE' ? 'EXIGENTE' : 'SIMPLES';
       lastInputSignature = inputSignature;
       lastRunAt = Date.now();
       revision += 1;
 
       const next = {
-        ...current,
+        ...analysisState,
         ...processed,
         signal: processed?.signal ? { ...processed.signal, confirmationMode } : processed?.signal,
         // Raw acquisition state remains authoritative.
@@ -682,7 +691,7 @@ async function runCentralAnalysis(force = false) {
         }
       };
 
-      const history = reconcileSignalHistory(current, next, snapshot);
+      const history = reconcileSignalHistory(analysisState, next, snapshot);
       const usageNow = Date.now();
       confirmedForUsage = history.rows.filter(row => {
         const status = clean(row?.usageStatus).toLowerCase();
