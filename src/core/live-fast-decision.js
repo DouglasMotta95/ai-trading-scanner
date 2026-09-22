@@ -4,7 +4,8 @@ const num = value => value == null || value === '' ? null : Number.isFinite(Numb
 
 export const FAST_DECISION = Object.freeze({
   confirmHits: 2,
-  maxHitGapMs: 5000
+  maxHitGapMs: 5000,
+  weakDropHits: 3
 });
 
 const HIGH_CONFIDENCE = Object.freeze({
@@ -114,14 +115,23 @@ function stabilizeDirection(key, rawDirection, at, score) {
 }
 
 function observe(key, direction, strong, at) {
+  const old = trackers.get(key);
   if (!strong || !direction) {
+    const sameCandidate = !!old?.direction && (!direction || old.direction === direction)
+      && at - Number(old?.at || 0) <= FAST_DECISION.maxHitGapMs;
+    if (sameCandidate) {
+      const weakHits = Number(old.weakHits || 0) + 1;
+      if (weakHits < FAST_DECISION.weakDropHits) {
+        trackers.set(key, { ...old, weakHits });
+        return Number(old.hits || 0);
+      }
+    }
     trackers.delete(key);
     return 0;
   }
-  const old = trackers.get(key);
   const same = old?.direction === direction && at - Number(old?.at || 0) <= FAST_DECISION.maxHitGapMs;
   const hits = same ? Number(old.hits || 0) + 1 : 1;
-  trackers.set(key, { direction, hits, at });
+  trackers.set(key, { direction, hits, at, weakHits: 0 });
   return hits;
 }
 
@@ -134,6 +144,18 @@ function possible(signal, direction, score, seconds, q) {
     uiState: direction === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL',
     provisional: true, phase: 'POSSIBLE', score, analysisScore: score,
     reason, hint: reason, fastDecision: true
+  };
+}
+
+function heldPossible(signal, direction, score, seconds) {
+  const side = direction === 'BUY' ? 'COMPRA' : 'VENDA';
+  const reason = `${side} — PRÉ-SINAL EM CONFIRMAÇÃO • ${seconds}s — mantendo o candidato estável; aguardando a próxima leitura forte.`;
+  return {
+    ...signal,
+    state: 'WATCH', direction, diagnosis: direction,
+    uiState: direction === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL',
+    provisional: true, phase: 'FINAL', score, analysisScore: score,
+    reason, hint: reason, fastDecision: true, confirmationHeld: true
   };
 }
 
@@ -223,7 +245,8 @@ export function fastLiveDecision(signal = {}, context = {}) {
   const q = quality(signal, direction, thresholds, confirmationMode);
 
   if (!q.strong) {
-    observe(key, direction, false, at);
+    const heldHits = observe(key, direction, false, at);
+    if (seconds <= finalWindowSeconds && heldHits > 0) return heldPossible(signal, direction, score, seconds);
     return waitFinal(signal, score, `confiança insuficiente: poder ${Math.round(q.power)}/${HIGH_CONFIDENCE.possiblePower}, confluências ${q.reasons.length}/${HIGH_CONFIDENCE.minimumEvidence}`);
   }
 
@@ -239,12 +262,11 @@ export function fastLiveDecision(signal = {}, context = {}) {
   if (strong && hits >= FAST_DECISION.confirmHits) return enter(signal, direction, score, seconds, q);
 
   // The first valid final-window hit stays visible as POSSÍVEL. Only the second
-  // hit inside the confirmation gap upgrades it to ENTRAR.
+  // strong hit upgrades it to ENTRAR. Brief weak ticks preserve, but never add
+  // to, the confirmation count.
   if (strong && hits > 0) return possible(signal, direction, score, seconds, q);
+  if (!strong && hits > 0) return heldPossible(signal, direction, score, seconds);
 
-  // Fast path is an accelerator, never a veto against a stronger central signal.
-  // It only promotes its own candidate when the hard high-confidence gate is met.
-  // Inside the final window, anything below that gate is WAIT.
   return waitFinal(signal, score, 'confiança final abaixo do nível exigido');
 }
 
