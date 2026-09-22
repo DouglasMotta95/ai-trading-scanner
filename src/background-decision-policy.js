@@ -235,6 +235,8 @@ function confluence(signal = {}, direction = null, thresholds = getThresholds())
   if (text(a.momentumDirection).toUpperCase() === direction && Number(a.momentumScore || 0) >= 45) factors.push('momentum');
   const setup = text(signal.setup).toLowerCase();
   if (/romp|breakout|support|resist|suporte|resistência|resistencia/.test(setup)) factors.push('estrutura');
+  if (a.professional?.contextReady === true) factors.push('contexto');
+  if (a.professional?.triggerReady === true) factors.push('gatilho');
   return { count: new Set(factors).size, factors: [...new Set(factors)] };
 }
 
@@ -283,6 +285,9 @@ function baseDecision(state = {}) {
   const finalPowerReady = directionalPower >= HIGH_CONFIDENCE.finalPower;
   const technicalCandidate = ['POSSIBLE_BUY', 'POSSIBLE_SELL', 'ENTER_BUY', 'ENTER_SELL'].includes(ui);
   const technicalFinal = ['ENTER_BUY', 'ENTER_SELL'].includes(ui);
+  const professional = signal.analytics?.professional || {};
+  const professionalContextReady = professional.contextReady === true;
+  const professionalTriggerReady = professional.triggerReady === true;
 
   const common = {
     profile: pref.mode,
@@ -295,6 +300,9 @@ function baseDecision(state = {}) {
     score,
     confluence: factors.count,
     factors: factors.factors,
+    professionalContextReady,
+    professionalTriggerReady,
+    professionalScoreBlocks: professional.blocks || null,
     timeReady: time.ready,
     expirationReady: expiration.ready,
     actualExpiration: expiration.actual || null,
@@ -327,6 +335,10 @@ function baseDecision(state = {}) {
     return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: 'AGUARDAR — fechamento da vela em andamento.' };
   }
 
+  if (!professionalContextReady || !professionalTriggerReady) {
+    return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: 'AGUARDAR — tendência/contexto, região e gatilho ainda não estão confirmados juntos.' };
+  }
+
   if (!technicalCandidate || !direction || score < possibleScore || !mandatoryPowerReady || !additionalConfluenceReady) {
     return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: 'AGUARDAR — motor técnico ainda não liberou um candidato.' };
   }
@@ -342,7 +354,8 @@ function baseDecision(state = {}) {
     : technicalSinceValid ? technicalPossibleSince : now;
   const holdMs = pref.holdSeconds * 1000;
   const heldFor = Math.max(0, now - possibleSince);
-  const finalQuality = technicalFinal && score >= finalScore && finalPowerReady && additionalConfluenceReady;
+  const finalQuality = technicalFinal && score >= finalScore && finalPowerReady && additionalConfluenceReady
+    && professionalContextReady && professionalTriggerReady;
   const reason = shortReason(direction, factors.factors, signal.reason);
   const side = direction === 'BUY' ? 'COMPRA' : 'VENDA';
 
