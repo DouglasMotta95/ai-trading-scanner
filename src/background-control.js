@@ -209,14 +209,25 @@ function inspectCasaTradeControlsDirect() {
     } catch {}
     if (!own || own.length > 180) continue;
 
-    let parent = '';
-    try { parent = clean0(el.parentElement?.innerText || el.parentElement?.textContent || ''); } catch {}
-    const local = clean0(`${own} ${parent}`).slice(0, 420);
+    const localParts = [own];
+    try {
+      localParts.push(
+        el.getAttribute?.('aria-valuetext') || '',
+        el.getAttribute?.('data-value') || '',
+        el.getAttribute?.('value') || ''
+      );
+      let cursor = el.parentElement;
+      for (let depth = 0; cursor && depth < 4; depth += 1, cursor = cursor.parentElement) {
+        localParts.push(clean0(cursor.innerText || cursor.textContent || '').slice(0, 260));
+      }
+    } catch {}
+    const local = clean0(localParts.join(' ')).slice(0, 900);
     const folded = fold0(local);
 
     if (/expira|expiry|expiration|duracao|duration/.test(folded)) {
-      const direct = local.match(/(?:expira(?:ção|cao)?|expiry|expiration|duracao|duração|duration)[^0-9]{0,60}(\d{1,4})\s*(s|seg|segundo|segundos|m|min|minuto|minutos)\b/i);
-      const token = direct || local.match(/\b(\d{1,4})\s*(s|seg|segundo|segundos|m|min|minuto|minutos)\b/i);
+      const direct = local.match(/(?:expira(?:ção|cao)?|expiry|expiration|duracao|duração|duration)[^0-9]{0,90}(\d{1,4})\s*(s|seg|segundo|segundos|m|min|minuto|minutos)\b/i);
+      const reversed = local.match(/\b(\d{1,4})\s*(s|seg|segundo|segundos|m|min|minuto|minutos)\b[^0-9]{0,90}(?:expira(?:ção|cao)?|expiry|expiration|duracao|duração|duration)/i);
+      const token = direct || reversed || local.match(/\b(\d{1,4})\s*(s|seg|segundo|segundos|m|min|minuto|minutos)\b/i);
       if (token) {
         const expiration = normExp0(`${token[1]}${token[2]}`);
         if (expiration) {
@@ -245,7 +256,8 @@ function inspectCasaTradeControlsDirect() {
   }
 
   const page = clean0(parts.join(' ')).slice(0, 300000);
-  const pageExp = page.match(/(?:expira(?:ção|cao)?|expiry|expiration|duracao|duração|duration)[^0-9]{0,80}(\d{1,4})\s*(s|seg|segundo|segundos|m|min|minuto|minutos)\b/i);
+  const pageExp = page.match(/(?:expira(?:ção|cao)?|expiry|expiration|duracao|duração|duration)[^0-9]{0,100}(\d{1,4})\s*(s|seg|segundo|segundos|m|min|minuto|minutos)\b/i)
+    || page.match(/\b(\d{1,4})\s*(s|seg|segundo|segundos|m|min|minuto|minutos)\b[^0-9]{0,100}(?:expira(?:ção|cao)?|expiry|expiration|duracao|duração|duration)/i);
   if (pageExp) {
     const expiration = normExp0(`${pageExp[1]}${pageExp[2]}`);
     if (expiration) candidates.push({ expiration, score: 100, text: 'page-expiration-label' });
@@ -693,8 +705,10 @@ async function probePlatformControlsDirect(tabId) {
   const now = Date.now();
   const next = await updateScannerState(state => {
     if (Number(state.targetTabId || 0) && Number(state.targetTabId) !== Number(tabId)) return state;
-    const previous = state.platformControls?.observed || {};
-    const expiration = exp?.expiration || previous.expiration || null;
+    const previousControls = state.platformControls || {};
+    const previous = previousControls.observed || {};
+    const realExpiration = exp?.expiration || null;
+    const expiration = realExpiration || previous.expiration || null;
     const timeframe = tf?.timeframe || previous.timeframe || null;
     const observedAt = {
       ...(previous.observedAt || {}),
@@ -710,38 +724,42 @@ async function probePlatformControlsDirect(tabId) {
       ...previous,
       expiration,
       timeframe,
-      source: 'background-direct-dom',
+      source: realExpiration ? 'background-direct-dom' : (previous.source || 'background-direct-dom'),
       observedAt,
       confidence
     };
     const diagnostics = { ...(state.diagnostics || {}) };
     const operationMode = getOperationMode(state.analystPreferences?.operationMode || 'M1');
     const effectiveTf = clean(state.diagnostics?.marketClock?.timeframe || state.diagnostics?.marketSession?.timeframe || state.analysisTimeframe || state.timeframe || timeframe).toUpperCase();
-    const expirationReady = expiration === operationMode.expiration && effectiveTf === operationMode.timeframe;
+    const expirationReady = !!realExpiration && realExpiration === operationMode.expiration && effectiveTf === operationMode.timeframe;
     const expirationLabel = operationMode.expiration === '300s' ? '5 minutos' : '1 minuto';
     diagnostics.expirationGuard = {
       ...(diagnostics.expirationGuard || {}),
       required: operationMode.expiration,
       actual: expiration,
+      real: realExpiration || previousControls.realExpiration || null,
       ready: expirationReady,
+      verified: !!realExpiration,
       validForM1: operationMode.timeframe === 'M1' ? expirationReady : false,
       validForMode: expirationReady,
       operationMode: operationMode.timeframe,
-      reason: !expiration
-        ? 'Expiração real da CasaTrade ainda não confirmada.'
-        : expiration !== operationMode.expiration
+      reason: !realExpiration
+        ? (expiration
+          ? `Expiração de ${expirationLabel} informada, mas ainda não verificada pela CasaTrade.`
+          : 'Expiração real da CasaTrade ainda não confirmada.')
+        : realExpiration !== operationMode.expiration
           ? `Ajuste a expiração da CasaTrade para ${expirationLabel}`
           : effectiveTf !== operationMode.timeframe
             ? `Ajuste o timeframe da CasaTrade para ${operationMode.timeframe}.`
             : `Expiração ao vivo de ${expirationLabel} confirmada pela CasaTrade.`,
       at: now,
-      source: 'background-direct-dom'
+      source: realExpiration ? 'background-direct-dom' : (state.diagnostics?.expirationGuard?.source || previousControls.expirationSource || null)
     };
     diagnostics.platformTime = {
       ...(diagnostics.platformTime || {}),
       timeframe: effectiveTf || timeframe || null,
       expiration,
-      source: 'background-direct-dom',
+      source: realExpiration ? 'background-direct-dom' : (state.diagnostics?.platformTime?.source || previousControls.expirationSource || null),
       ready: expirationReady,
       at: now
     };
@@ -751,13 +769,20 @@ async function probePlatformControlsDirect(tabId) {
       platformControls: {
         ...(state.platformControls || {}),
         observed,
+        userDeclaredExpiration: realExpiration ? null : previousControls.userDeclaredExpiration || null,
+        userDeclaredAt: realExpiration ? 0 : Number(previousControls.userDeclaredAt || 0),
         checkedAt: now,
         expirationCheckedAt: exp?.expiration ? now : Number(state.platformControls?.expirationCheckedAt || 0),
         timeframeCheckedAt: tf?.timeframe ? now : Number(state.platformControls?.timeframeCheckedAt || 0),
         frameId: exp?.frameId ?? tf?.frameId ?? state.platformControls?.frameId ?? null,
-        source: 'background-direct-dom',
-        aligned: effectiveTf === operationMode.timeframe && expiration === operationMode.expiration,
-        liveAuthority: true
+        source: realExpiration ? 'background-direct-dom' : (previousControls.source || observed.source || null),
+        expirationSource: realExpiration ? 'background-direct-dom' : (previousControls.expirationSource || observed.source || null),
+        expirationVerified: !!realExpiration,
+        aligned: expirationReady,
+        liveAuthority: !!realExpiration,
+        realExpiration: realExpiration || previousControls.realExpiration || null,
+        realExpirationAt: realExpiration ? now : Number(previousControls.realExpirationAt || 0),
+        realExpirationSource: realExpiration ? 'background-direct-dom' : clean(previousControls.realExpirationSource || '')
       },
       diagnostics
     };

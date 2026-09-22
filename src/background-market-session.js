@@ -13,7 +13,7 @@ const licenseActive = state => {
     || state?.diagnostics?.access?.ownerDev === true
     || state?.diagnostics?.access?.state === 'owner_dev';
 };
-const CLOCK_FRESH_MS = 2600;
+const CLOCK_FRESH_MS = 4500;
 const FOCUS_FRESH_MS = 5000;
 const EXACT_CLOCK_SOURCES = new Set(['trader-dom-countdown', 'network-server-cycle']);
 const FALLBACK_CLOCK_SOURCE = 'platform-cycle-derived';
@@ -388,7 +388,7 @@ function clockRecord(message = {}, info = {}, asset = '', timeframe = null, seco
 export async function applyFocus(message = {}, sender = {}) {
   const info = senderMeta(sender);
   const role = clean(message.frameRole || '');
-  if (!info.trusted || message.chartScoped !== true || message.reliable !== true || !['trader-frame', 'casa-chart-frame'].includes(role)) return null;
+  if (!info.trusted || message.chartScoped !== true || message.reliable !== true || message.visualAuthority === false || !['trader-frame', 'casa-chart-frame'].includes(role)) return null;
   const asset = normAsset(message.asset);
   if (!asset) return null;
   return updateScannerState(state => {
@@ -514,6 +514,11 @@ export async function applyFocus(message = {}, sender = {}) {
           asset, at: now, stableSince: changed ? now : previousStableSince,
           score: Number(message.score || 0), samples: Number(message.samples || 0), reliable: true,
           visual: message.visual !== false, explicit: message.explicit === true, chartScoped: true,
+          visualAuthority: message.visualAuthority !== false,
+          directChart: message.directChart === true,
+          ambiguityCount: Number(message.ambiguityCount || 0),
+          runnerUpAsset: normAsset(message.runnerUpAsset || '') || null,
+          runnerUpGap: num(message.runnerUpGap),
           interactionHint: userSelected,
           interactionAt: userSelected ? interactionAt : null,
           trustedChartFrame: true, embeddedTrader: incomingEmbeddedTrader, casaTradeFrame: incomingCasaFrame,

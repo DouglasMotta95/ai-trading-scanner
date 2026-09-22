@@ -46,25 +46,44 @@ function transitionAsset(state = {}) {
 }
 function marketDataReady(state = {}) {
   const session = sessionInfo(state);
+  const signal = state.signal || {};
   const rows = (Array.isArray(state.candles) ? state.candles : []).filter(row => [row?.open,row?.high,row?.low,row?.close].every(value => num(value) != null));
+  const signalMatches = !signal.asset || sameMarket(signal.asset, state.asset);
+  const candleMatches = !state.currentCandle?.asset || sameMarket(state.currentCandle.asset, state.asset);
   return session.dataReady === true
     && !!state.asset
     && sameMarket(session.confirmedAsset, state.asset)
+    && signalMatches
+    && candleMatches
     && num(state.price) != null
     && rows.length >= 2;
+}
+
+function marketIdentityReady(state = {}) {
+  const session = sessionInfo(state);
+  const focus = state.diagnostics?.focusedAsset || {};
+  const signal = state.signal || {};
+  const asset = marketId(state.asset || '');
+  if (!asset || !sameMarket(session.confirmedAsset, asset) || !sameMarket(focus.asset, asset)) return false;
+  if (signal.asset && !sameMarket(signal.asset, asset)) return false;
+  if (state.currentCandle?.asset && !sameMarket(state.currentCandle.asset, asset)) return false;
+  return true;
 }
 function expirationObservation(state = {}) {
   const controls = state.platformControls || {};
   const observedAt = Number(controls.expirationCheckedAt || controls.observed?.observedAt?.expiration || 0);
   const realAt = Number(controls.realExpirationAt || 0);
   const realValue = normExp(controls.realExpiration || '');
+  const realSource = clean(controls.realExpirationSource || controls.expirationSource || '');
   // A verified CasaTrade expiration survives short control re-renders. Manual
-  // fallback never receives this grace period.
-  const realFresh = !!realValue && realAt > 0 && Date.now() - realAt < 15000;
+  // fallback is visible to the user but never counts as verified timing.
+  const realFresh = !!realValue && realAt > 0 && Date.now() - realAt < 15000 && realSource !== 'user-declared';
   const at = realFresh ? realAt : observedAt;
-  const fresh = realFresh || (observedAt > 0 && Date.now() - observedAt < 7000);
-  const value = realFresh ? realValue : fresh ? normExp(controls.observed?.expiration) : null;
-  return { value, fresh, at, ageMs: at > 0 ? Date.now() - at : Infinity };
+  const manualFresh = observedAt > 0 && Date.now() - observedAt < 7000;
+  const manualValue = manualFresh ? normExp(controls.observed?.expiration || controls.userDeclaredExpiration || '') : null;
+  const value = realFresh ? realValue : manualValue;
+  const source = realFresh ? (realSource || 'casatrade-observed') : manualValue ? 'user-declared' : '';
+  return { value, fresh: realFresh || manualFresh, verified: realFresh, source, at, ageMs: at > 0 ? Date.now() - at : Infinity };
 }
 function sessionAgeMs(state = {}) {
   const at = Number(sessionInfo(state).startedAt || state.diagnostics?.target?.connectedAt || 0);
@@ -124,9 +143,14 @@ function fmtPrice(value) {
 
 function focusReady(state = {}) {
   const focus = state.diagnostics?.focusedAsset || {};
+  const ambiguousPassive = Number(focus.ambiguityCount || 0) > 0
+    && focus.explicit !== true
+    && focus.interactionHint !== true;
   return focus.reliable === true
     && focus.chartScoped === true
     && focus.trustedChartFrame === true
+    && focus.visualAuthority !== false
+    && !ambiguousPassive
     && (focus.embeddedTrader === true || focus.casaTradeFrame === true)
     && sameMarket(focus.asset, state.asset)
     && Number(focus.at || 0) > 0
@@ -151,7 +175,7 @@ function clockBaseReady(state = {}) {
     && sameMarket(clock.asset, state.asset)
     && clockBoundToFocus(clock, focus)
     && Number(clock.at || 0) > 0
-    && Date.now() - Number(clock.at) < 3000
+    && Date.now() - Number(clock.at) < 4500
     && num(clock.secondsRemaining) != null;
 }
 
@@ -180,7 +204,7 @@ function liveTimingReady(state = {}) {
   const clock = state.diagnostics?.marketClock || {};
   const expiration = expirationObservation(state);
   const operation = operationRequirement(state);
-  return expiration.fresh === true
+  return expiration.verified === true
     && expiration.value === operation.expiration
     && normTf(clock.timeframe) === operation.timeframe;
 }
@@ -190,7 +214,7 @@ function entryTimeReady(state = {}) {
   const clock = state.diagnostics?.marketClock || {};
   const expiration = expirationObservation(state);
   const actualExpiration = expiration.value;
-  if (!actualExpiration || !expiration.fresh) return false;
+  if (!actualExpiration || expiration.verified !== true) return false;
   const operation = operationRequirement(state);
   const clockTf = normTf(clock.timeframe);
   const stateTf = normTf(state.analysisTimeframe || state.timeframe);
@@ -255,7 +279,8 @@ function entryBlockReason(state = {}) {
   const operation = operationRequirement(state);
   const expirationLabel = operation.expiration === '300s' ? '5 MINUTOS' : '1 MINUTO';
   const expiration = expirationObservation(state);
-  if (!expiration.value) return 'EXPIRAÇÃO PENDENTE — INFORME A EXPIRAÇÃO NO CAMPO DO TOPO DO PAINEL';
+  if (!expiration.value) return 'EXPIRAÇÃO REAL PENDENTE — AGUARDANDO LEITURA DA CASATRADE';
+  if (expiration.verified !== true) return 'EXPIRAÇÃO INFORMADA, MAS NÃO VERIFICADA — AGUARDANDO A CASATRADE';
   if (expiration.value !== operation.expiration) return `AJUSTE A EXPIRAÇÃO DA CASATRADE PARA ${expirationLabel}`;
 
   const clock = state.diagnostics?.marketClock || {};
@@ -270,6 +295,7 @@ function gateKind(state = {}) {
   const operation = operationRequirement(state);
   const expiration = expirationObservation(state);
   if (!expiration.value) return 'waiting';
+  if (expiration.verified !== true) return 'waiting';
   if (expiration.value !== operation.expiration) return 'rule';
   if (!exactClockReady(state)) return 'waiting';
   const clockTf = normTf(state.diagnostics?.marketClock?.timeframe);
@@ -279,6 +305,7 @@ function gateKind(state = {}) {
 
 function decisionModel(state = {}) {
   if (!activeLicense(state)) return { uiState: 'WAIT', title: 'AGUARDAR', text: 'AGUARDAR', sub: 'Ative o acesso para iniciar a leitura.', tone: 'waiting', reason: 'Aguardando licença ativa.', score: 0, actionable: false };
+  if (!marketIdentityReady(state)) return { uiState: 'ANALYZING_MARKET', title: 'ATUALIZANDO ATIVO', text: 'AGUARDAR', sub: 'Bloqueio de segurança: confirmando que gráfico, sessão, velas e sinal pertencem ao mesmo ativo.', tone: 'waiting', reason: 'Ativo técnico divergiu do gráfico atual da CasaTrade.', score: 0, actionable: false };
   const pending = transitionAsset(state);
   if (pending) return { uiState: 'ANALYZING_MARKET', title: 'ATUALIZANDO ATIVO', text: `ATUALIZANDO PARA ${pending}`, sub: 'Limpando dados anteriores e confirmando preço + velas do novo ativo.', tone: 'waiting', reason: 'Troca de ativo em validação.', score: 0, actionable: false };
   if (!marketDataReady(state) || !focusReady(state)) return { uiState: 'ANALYZING_MARKET', title: 'AGUARDAR', text: 'AGUARDAR', sub: 'Confirmando ativo, preço e velas reais.', tone: 'waiting', reason: 'Identificando o gráfico atual da CasaTrade.', score: 0, actionable: false };
@@ -466,8 +493,8 @@ function render(state = {}) {
   else setSourceState('assetSource', 'STALE', 'stale', 'Ativo ainda não confirmado.');
 
   if (actualExp) {
-    const expirationGuardSource = clean(state.diagnostics?.expirationGuard?.source || '');
-    if (expirationGuardSource === 'user-declared') {
+    const expirationGuardSource = expirationObs.source || clean(state.diagnostics?.expirationGuard?.source || '');
+    if (expirationObs.verified !== true || expirationGuardSource === 'user-declared') {
       const informedLabel = `${expLabel(actualExp)} (informada)`;
       setText('heroExpiration', informedLabel);
       setText('expiration', informedLabel);

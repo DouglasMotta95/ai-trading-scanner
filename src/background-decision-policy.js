@@ -5,7 +5,7 @@ import { getThresholds, getOperationMode } from './core/analysis.js';
 // estimated clock, but the user-facing decision is never promoted while CasaTrade
 // time is not authoritative. This also owns Normal/A+ confluence and the stable hold.
 const EXACT_CLOCK_SOURCES = new Set(['trader-dom-countdown', 'network-server-cycle']);
-const CLOCK_FRESH_MS = 3000;
+const CLOCK_FRESH_MS = 4500;
 const FOCUS_FRESH_MS = 5500;
 const DEFAULT_PREFS = Object.freeze({ mode: 'NORMAL', geminiEnabled: true, sensitivityProfile: 'MEDIO', confirmationMode: 'SIMPLES', operationMode: 'M1', preferredExpiration: null });
 
@@ -78,9 +78,14 @@ function preferences(state = {}) {
 function focusReady(state = {}) {
   const focus = state.diagnostics?.focusedAsset || null;
   if (!focus?.asset || !state.asset) return false;
+  const ambiguousPassive = Number(focus.ambiguityCount || 0) > 0
+    && focus.explicit !== true
+    && focus.interactionHint !== true;
   return focus.reliable === true
     && focus.chartScoped === true
     && focus.trustedChartFrame === true
+    && focus.visualAuthority !== false
+    && !ambiguousPassive
     && (focus.embeddedTrader === true || focus.casaTradeFrame === true)
     && sameMarket(focus.asset, state.asset)
     && Number(focus.at || 0) > 0
@@ -97,8 +102,11 @@ export function exactCasaTradeTime(state = {}) {
   if (!EXACT_CLOCK_SOURCES.has(text(clock.source))) return { ready: false, reason: 'Fonte de tempo não autoritativa.' };
   if (!sameMarket(clock.asset, state.asset)) return { ready: false, reason: 'Relógio pertence a outro ativo.' };
   if (!clockBoundToFocus(clock, focus)) return { ready: false, reason: 'Relógio ainda não foi vinculado ao gráfico ativo.' };
-  if (Date.now() - Number(clock.at || 0) >= CLOCK_FRESH_MS) return { ready: false, reason: 'Relógio da CasaTrade ficou desatualizado.' };
-  if (num(clock.secondsRemaining) == null) return { ready: false, reason: 'Countdown da CasaTrade indisponível.' };
+  const clockAt = Number(clock.at || 0);
+  const clockAgeMs = Date.now() - clockAt;
+  if (clockAgeMs >= CLOCK_FRESH_MS) return { ready: false, reason: 'Relógio da CasaTrade ficou desatualizado.' };
+  const rawRemaining = num(clock.secondsRemaining);
+  if (rawRemaining == null) return { ready: false, reason: 'Countdown da CasaTrade indisponível.' };
 
   const operationMode = getOperationMode(state.analystPreferences?.operationMode || 'M1');
   const liveTf = normTf(clock.timeframe);
@@ -108,7 +116,12 @@ export function exactCasaTradeTime(state = {}) {
   if (liveTf !== operationMode.timeframe) return { ready: false, reason: `Ajuste o timeframe da CasaTrade para ${operationMode.timeframe}.` };
   if (stateTf && liveTf !== stateTf) return { ready: false, reason: 'Timeframe interno divergiu do gráfico.' };
   if (controlTf && liveTf !== controlTf) return { ready: false, reason: 'Timeframe visível divergiu do clock da vela.' };
-  return { ready: true, timeframe: liveTf, secondsRemaining: Number(clock.secondsRemaining), source: clock.source, operationMode: operationMode.timeframe };
+  // Bridge one missed DOM/feed observation with a bounded projection from the
+  // latest exact CasaTrade sample. We never roll a decision into the next candle:
+  // once projected time reaches zero the entry gate closes until a new exact sample.
+  const elapsedSeconds = Math.max(0, clockAgeMs / 1000);
+  const projectedRemaining = Math.max(0, Number(rawRemaining) - elapsedSeconds);
+  return { ready: true, timeframe: liveTf, secondsRemaining: projectedRemaining, source: clock.source, operationMode: operationMode.timeframe, projectedFromExact: clockAgeMs > 250 };
 }
 
 export function CasaTradeExpiration(state = {}, timeframe = null) {
@@ -117,21 +130,20 @@ export function CasaTradeExpiration(state = {}, timeframe = null) {
   const guard = state.diagnostics?.expirationGuard || {};
   const expirationLabel = operationMode.expiration === '300s' ? '5 minutos' : '1 minuto';
 
-  // background-platform-controls already resolves one authority for expiration:
-  // a fresh CasaTrade observation wins; otherwise a user-declared value is
-  // accepted, and any later real divergence blocks the entry.
+  // Only a fresh, real CasaTrade observation may unlock execution. A manual
+  // value is display/fallback context only and can never make a signal actionable.
   const guardAt = Number(guard.at || 0);
   const guardFresh = guardAt > 0 && Date.now() - guardAt < 10000;
   const guardActual = guardFresh ? normExp(guard.actual || controls.userDeclaredExpiration || '') : null;
   const guardSource = guardFresh ? text(guard.source || '') : '';
   const guardDivergence = guardFresh && guard.divergence === true;
 
-  const expirationAt = Number(controls.expirationCheckedAt || controls.observed?.observedAt?.expiration || 0);
-  const observedFresh = expirationAt > 0 && Date.now() - expirationAt < 7000;
-  const observed = observedFresh ? normExp(controls.observed?.expiration) : null;
-  const observedSource = text(controls.expirationSource || controls.observed?.source || '');
-  const actual = guardActual || observed || null;
-  const source = guardSource || observedSource || (observed ? 'casatrade-observed' : '');
+  const realExpirationAt = Number(controls.realExpirationAt || 0);
+  const realExpiration = normExp(controls.realExpiration || '');
+  const realFresh = !!realExpiration && realExpirationAt > 0 && Date.now() - realExpirationAt < 15000;
+  const observedSource = text(controls.realExpirationSource || controls.expirationSource || controls.observed?.source || '');
+  const actual = realFresh ? realExpiration : guardActual || null;
+  const source = realFresh ? (text(controls.realExpirationSource) || 'casatrade-observed') : guardSource || '';
   const liveTf = normTf(timeframe || state.analysisTimeframe || state.timeframe);
 
   if (guardDivergence) {
@@ -144,18 +156,17 @@ export function CasaTradeExpiration(state = {}, timeframe = null) {
       reason: text(guard.reason || 'A expiração real da CasaTrade diverge do valor informado.')
     };
   }
-  if (!actual) {
-    const startedAt = Number(state.diagnostics?.marketSession?.startedAt || state.diagnostics?.target?.connectedAt || 0);
-    const waiting = startedAt > 0 && Date.now() - startedAt < 5000;
+  if (!realFresh) {
+    const manual = normExp(controls.userDeclaredExpiration || guardActual || '');
     return {
       ready: false,
-      actual: null,
+      actual: manual || null,
       required: operationMode.expiration,
-      source: null,
+      source: manual ? 'user-declared' : null,
       verified: false,
-      reason: waiting
-        ? 'Lendo expiração da CasaTrade'
-        : 'Informe a expiração que você está usando no campo do topo do painel'
+      reason: manual
+        ? `Expiração de ${expirationLabel} informada, aguardando verificação real da CasaTrade`
+        : 'Expiração real da CasaTrade ainda não confirmada'
     };
   }
   if (liveTf === operationMode.timeframe && actual !== operationMode.expiration) {
@@ -164,19 +175,20 @@ export function CasaTradeExpiration(state = {}, timeframe = null) {
       actual,
       required: operationMode.expiration,
       source,
-      verified: guard.verified === true || observedFresh,
+      verified: realFresh && guard.verified === true,
       reason: `Ajuste a expiração da CasaTrade para ${expirationLabel}`
     };
   }
+  const verified = realFresh && guard.verified === true && source !== 'user-declared';
   return {
-    ready: actual === operationMode.expiration,
+    ready: verified && actual === operationMode.expiration,
     actual,
     required: operationMode.expiration,
     source,
-    verified: guard.verified === true || (source !== 'user-declared' && observedFresh),
-    reason: source === 'user-declared'
-      ? `Expiração de ${expirationLabel} informada por você e aceita para este modo.`
-      : `Expiração de ${expirationLabel} confirmada para o modo ${operationMode.timeframe}.`
+    verified,
+    reason: verified
+      ? `Expiração de ${expirationLabel} confirmada pela CasaTrade para o modo ${operationMode.timeframe}.`
+      : `Expiração de ${expirationLabel} ainda não verificada diretamente na CasaTrade.`
   };
 }
 
@@ -184,6 +196,23 @@ function completeCandles(state = {}) {
   return (Array.isArray(state.candles) ? state.candles : []).filter(row =>
     [row?.open, row?.high, row?.low, row?.close].every(value => num(value) != null)
   );
+}
+
+function marketIdentity(state = {}, signal = {}) {
+  const expected = marketId(state.asset || '');
+  const focus = marketId(state.diagnostics?.focusedAsset?.asset || '');
+  const confirmed = marketId(state.diagnostics?.marketSession?.confirmedAsset || '');
+  const signalAsset = marketId(signal.asset || '');
+  const candleAsset = marketId(state.currentCandle?.asset || '');
+  if (!expected || !focus || !confirmed) {
+    return { ready: false, reason: 'Ativo visual, sessão e feed ainda não foram confirmados juntos.' };
+  }
+  const rows = [focus, confirmed, signalAsset, candleAsset].filter(Boolean);
+  const mismatch = rows.find(value => value !== expected);
+  if (mismatch) {
+    return { ready: false, reason: `Bloqueio de segurança: gráfico ${focus || '—'}, sessão ${confirmed || '—'} e sinal ${signalAsset || expected} não pertencem ao mesmo ativo.` };
+  }
+  return { ready: true, asset: expected };
 }
 
 function signalDirection(signal = {}) {
@@ -229,6 +258,7 @@ function baseDecision(state = {}) {
   const pref = preferences(state);
   const signal = state.signal || {};
   const now = Date.now();
+  const identity = marketIdentity(state, signal);
   const time = exactCasaTradeTime(state);
   const expiration = CasaTradeExpiration(state, time.timeframe || state.analysisTimeframe || state.timeframe);
   const rows = completeCandles(state);
@@ -271,9 +301,14 @@ function baseDecision(state = {}) {
     timeSource: time.source || null,
     timeframe: time.timeframe || normTf(state.analysisTimeframe || state.timeframe),
     secondsRemaining: time.secondsRemaining ?? num(state.diagnostics?.marketClock?.secondsRemaining),
+    marketIdentityReady: identity.ready,
+    marketIdentityReason: identity.reason || null,
     updatedAt: now
   };
 
+  if (!identity.ready) {
+    return { ...common, uiState: 'ANALYZING_MARKET', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: identity.reason };
+  }
   if (!state.asset || num(state.price) == null || !focusReady(state)) {
     return { ...common, uiState: 'ANALYZING_MARKET', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: 'Identificando o ativo e a cotação do gráfico atual.' };
   }
@@ -298,7 +333,13 @@ function baseDecision(state = {}) {
 
   const previous = state.professionalDecision || {};
   const sameCandidate = previous.cycleKey === cycle && previous.direction === direction && ['POSSIBLE_BUY','POSSIBLE_SELL','ENTER_BUY','ENTER_SELL'].includes(text(previous.uiState).toUpperCase());
-  const possibleSince = sameCandidate && Number(previous.possibleSince || 0) > 0 ? Number(previous.possibleSince) : now;
+  const technicalPossibleSince = Number(signal.stability?.possibleSince || 0);
+  const technicalSinceValid = technicalPossibleSince > 0 && technicalPossibleSince <= now && now - technicalPossibleSince < 45000;
+  // Seed the presentation hold from the technical candidate's stable lifetime.
+  // A transient policy WAIT must not restart a 2s hold at 4..1s remaining.
+  const possibleSince = sameCandidate && Number(previous.possibleSince || 0) > 0
+    ? Number(previous.possibleSince)
+    : technicalSinceValid ? technicalPossibleSince : now;
   const holdMs = pref.holdSeconds * 1000;
   const heldFor = Math.max(0, now - possibleSince);
   const finalQuality = technicalFinal && score >= finalScore && finalPowerReady && additionalConfluenceReady;
@@ -392,6 +433,8 @@ function signature(value = {}) {
     timeSource: value.timeSource || null,
     timeframe: value.timeframe || null,
     secondsRemaining: value.secondsRemaining ?? null,
+    marketIdentityReady: value.marketIdentityReady !== false,
+    marketIdentityReason: value.marketIdentityReason || null,
     possibleSince: value.possibleSince || null,
     holdRemainingBucket: value.holdRemainingMs == null ? null : Math.ceil(Number(value.holdRemainingMs) / 250),
     reason: value.reason || ''

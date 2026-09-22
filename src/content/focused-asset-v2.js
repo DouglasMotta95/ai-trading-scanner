@@ -180,7 +180,8 @@
       if (selection.rejected) continue;
       const context = contextOf(el);
       const geometricHeader = chartHeaderGeometry(rect, text);
-      const chartScoped = nearChart(rect, chart) || geometricHeader || /chart|tradingview|instrument|symbol|asset|header/.test(context);
+      const directChart = !!chart && nearChart(rect, chart);
+      const chartScoped = directChart || geometricHeader || /chart|tradingview|instrument|symbol|asset|header/.test(context);
       const listContext = /watchlist|asset-list|instrument-list|listbox|search|history|portfolio|ranking|modal|drawer|dropdown|menu/.test(context);
       const interaction = interactionFresh(asset);
       // A visible dropdown/watchlist can contain dozens of symbols over the chart.
@@ -195,17 +196,19 @@
       if (/chart|tradingview|instrument|symbol|header/.test(context)) score += 180;
       if (interaction) score += 900;
       if (text.length <= 40) score += 70;
-      rows.push({ asset, score, explicit: selection.explicit, interaction, chartScoped, top: rect.top, left: rect.left });
+      rows.push({ asset, score, explicit: selection.explicit, interaction, chartScoped, directChart, geometricHeader, top: rect.top, left: rect.left });
     }
 
     const grouped = new Map();
     for (const row of rows) {
       const id = identity(row.asset);
-      const current = grouped.get(id) || { asset: row.asset, score: -Infinity, explicit: false, interaction: false, chartHits: 0, hits: 0, top: row.top, left: row.left };
+      const current = grouped.get(id) || { asset: row.asset, score: -Infinity, explicit: false, interaction: false, chartHits: 0, directChartHits: 0, geometricHits: 0, hits: 0, top: row.top, left: row.left };
       current.score = Math.max(current.score, row.score);
       current.explicit ||= row.explicit;
       current.interaction ||= row.interaction;
       current.chartHits += row.chartScoped ? 1 : 0;
+      current.directChartHits += row.directChart ? 1 : 0;
+      current.geometricHits += row.geometricHeader ? 1 : 0;
       current.hits += 1;
       current.top = Math.min(current.top, row.top);
       current.left = Math.min(current.left, row.left);
@@ -215,16 +218,31 @@
     const winners = [...grouped.values()].map(row => ({ ...row, score: row.score + Math.min(150, row.chartHits * 35) }));
     winners.sort((a, b) => Number(b.interaction) - Number(a.interaction)
       || Number(b.explicit) - Number(a.explicit)
+      || b.directChartHits - a.directChartHits
       || b.chartHits - a.chartHits || b.score - a.score || a.top - b.top || a.left - b.left);
     const first = winners[0] || null;
     const second = winners[1] || null;
     if (!first || first.chartHits < 1) return null;
+    let runnerUpGap = null;
+    const ambiguousAssets = winners.filter(row => !sameAsset(row.asset, first.asset));
     if (second && !sameAsset(first.asset, second.asset)) {
-      const gap = Number(first.score || 0) - Number(second.score || 0);
+      runnerUpGap = Number(first.score || 0) - Number(second.score || 0);
       const minimumGap = first.interaction ? 70 : first.explicit ? 120 : 280;
-      if (gap < minimumGap) return null;
+      if (runnerUpGap < minimumGap) return null;
+
+      // Video 15292 exposed a dangerous boot case: with several CasaTrade asset
+      // tabs visible, a passive chart/header guess can point at a stale market.
+      // In an ambiguous multi-asset layout we never guess: only explicit DOM
+      // selection or a fresh user interaction may establish market authority.
+      if (!first.interaction && !first.explicit) return null;
     }
-    return { ...first, chartFound: !!chart };
+    return {
+      ...first,
+      chartFound: !!chart,
+      ambiguityCount: ambiguousAssets.length,
+      runnerUpAsset: second && !sameAsset(first.asset, second.asset) ? second.asset : null,
+      runnerUpGap
+    };
   }
 
   let candidate = '';
@@ -284,6 +302,11 @@
         interactionAt: winner.interaction ? Number(recentInteraction.at || now) : null,
         chartScoped: true,
         chartFound: winner.chartFound === true,
+        directChart: Number(winner.directChartHits || 0) > 0,
+        ambiguityCount: Number(winner.ambiguityCount || 0),
+        runnerUpAsset: winner.runnerUpAsset || null,
+        runnerUpGap: winner.runnerUpGap == null ? null : Number(winner.runnerUpGap),
+        visualAuthority: Number(winner.ambiguityCount || 0) === 0 || winner.interaction === true || winner.explicit === true,
         frameHost: host,
         frameRole,
         at: now,
