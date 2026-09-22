@@ -96,7 +96,6 @@ function activeLicense(state = {}) {
 function baseHandshake(state = {}) {
   const focus = state.diagnostics?.focusedAsset || null;
   const ambiguousPassive = Number(focus?.ambiguityCount || 0) > 0
-    && focus?.directChart !== true
     && focus?.explicit !== true
     && focus?.interactionHint !== true;
   return activeLicense(state)
