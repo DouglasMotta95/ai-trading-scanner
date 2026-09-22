@@ -6,11 +6,11 @@ export const read = path => fs.readFileSync(new URL('../' + path, import.meta.ur
 const manifest = () => JSON.parse(read('manifest.json'));
 
 export function registerBuildContracts(label='build') {
-  test(label + ': current extension package is the v0.11.54 single-authority build', () => {
+  test(label + ': current extension package is the v0.11.55 video-15290 stability build', () => {
     const m = manifest();
     assert.equal(m.manifest_version, 3);
-    assert.equal(m.version, '0.11.54');
-    assert.equal(m.version_name, '0.11.54-single-market-authority');
+    assert.equal(m.version, '0.11.55');
+    assert.equal(m.version_name, '0.11.55-video15290-stability');
     assert.equal(m.background?.service_worker, 'src/background-entry.js');
     assert.equal(m.side_panel?.default_path, 'src/sidepanel/index.html');
   });
@@ -81,7 +81,7 @@ export function registerTimeContracts(label='time') {
 export function registerExpirationContracts(label='expiration') {
   test(label + ': real CasaTrade expiration supersedes and invalidates manual fallback', () => {
     const controls = read('src/background-platform-controls.js');
-    assert.match(controls, /const invalidatedDeclared = realFresh && declared \? declared : null/);
+    assert.match(controls, /const invalidatedDeclared = realKnown && declared \? declared : null/);
     assert.match(controls, /const effectiveDeclared = invalidatedDeclared \? null : declared/);
     assert.match(controls, /userDeclaredExpiration: resolved\.authority\.invalidatedDeclared \? null/);
     assert.match(controls, /manualInvalidated: authority\.invalidatedDeclared \|\| null/);
@@ -163,6 +163,61 @@ export function registerRadarContracts(label='radar') {
     assert.match(html, /market-radar-ui\.js/);
     assert.doesNotMatch(radar, /processSnapshot|consumeSignal|ATS_SET_USER_DECLARED_EXPIRATION/);
     assert.doesNotMatch(radar, /\.click\s*\(.*COMPRAR|\.click\s*\(.*VENDER/);
+  });
+}
+
+export function registerVideo15290Contracts(label='video-15290') {
+  test(label + ': final-window weak ticks do not erase the first strong confirmation', async () => {
+    const { fastLiveDecision, resetFastLiveDecision } = await import('../src/core/live-fast-decision.js');
+    const targetStart = 1_700_000_120_000;
+    const strong = {
+      state: 'WATCH', uiState: 'POSSIBLE_SELL', direction: 'SELL', analysisDirection: 'SELL',
+      score: 84, analysisScore: 84,
+      analytics: {
+        buyPower: 30, sellPower: 70, currentStrength: 72,
+        momentumDirection: 'SELL', momentumScore: 62,
+        continuationDirection: 'SELL', continuationScore: 67,
+        rejectionDirection: 'SELL', rejectionStrength: 55
+      }
+    };
+    const weak = { ...strong, analytics: { ...strong.analytics, sellPower: 52 } };
+    resetFastLiveDecision();
+    const first = fastLiveDecision(strong, { asset: 'AUD/CAD (OTC)', timeframe: 'M1', operationMode: 'M1', secondsRemaining: 5, targetStart, serverTime: 1_700_000_115_000 });
+    assert.equal(first.uiState, 'POSSIBLE_SELL');
+    const jitter = fastLiveDecision(weak, { asset: 'AUD/CAD (OTC)', timeframe: 'M1', operationMode: 'M1', secondsRemaining: 4, targetStart, serverTime: 1_700_000_115_700 });
+    assert.equal(jitter.uiState, 'POSSIBLE_SELL');
+    assert.equal(jitter.confirmationHeld, true);
+    const second = fastLiveDecision(strong, { asset: 'AUD/CAD (OTC)', timeframe: 'M1', operationMode: 'M1', secondsRemaining: 3, targetStart, serverTime: 1_700_000_116_400 });
+    assert.equal(second.uiState, 'ENTER_SELL');
+  });
+
+  test(label + ': rollover releases stale zero instead of pinning 0s', () => {
+    const clock = read('src/content/market-cycle-clock-v4.js');
+    const market = read('src/background-market-session.js');
+    assert.match(clock, /staleZeroClock/);
+    assert.match(clock, /canvasZeroExpired/);
+    assert.match(clock, />= 850/);
+    assert.match(market, /const staleZeroClock = !!previousClock/);
+    assert.match(market, /previousAge >= 850/);
+  });
+
+  test(label + ': automatic refresh preserves a linked same-tab session', () => {
+    const control = read('src/background-control.js');
+    const shell = read('src/sidepanel/ui-shell-v2.js');
+    assert.match(control, /const automaticSameSession = automatic && sameTab/);
+    assert.match(control, /if \(!\(automatic && next\.connection === 'online'\)\) scheduleConnectionTimeout/);
+    assert.match(shell, /function linkedSession\(state = \{\}\)/);
+    assert.match(shell, /const sessionLinked = linkedSession\(state\)/);
+  });
+
+  test(label + ': real expiration cache cannot become an unsafe entry authority', () => {
+    const controls = read('src/background-platform-controls.js');
+    const policy = read('src/background-decision-policy.js');
+    assert.match(controls, /REAL_EXPIRATION_READY_MS = 7000/);
+    assert.match(controls, /REAL_EXPIRATION_CACHE_MS = 15000/);
+    assert.match(controls, /const realKnown =/);
+    assert.match(controls, /const authorityReady = authority\.source === 'user-declared' \|\| authority\.realFresh/);
+    assert.match(policy, /const ready = actual === operationMode\.expiration && \(manualFallback \|\| verified\)/);
   });
 }
 

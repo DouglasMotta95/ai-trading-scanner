@@ -353,9 +353,19 @@
       const expiration = expirationFresh ? clean(state.platformControls?.observed?.expiration || '') || null : null;
       const domClock = verifiedDomCountdown(cycleTf);
       const freshClock = freshExactClock(state, focus, cycleTf);
+      const freshClockAge = freshClock ? Math.max(0, Date.now() - Number(freshClock.at || 0)) : Infinity;
+      const freshClockSeconds = freshClock ? Number(freshClock.secondsRemaining) : null;
+      const staleZeroClock = !!freshClock && Number.isFinite(freshClockSeconds) && freshClockSeconds <= 0 && freshClockAge >= 850;
+      const canvasZeroExpired = !!lastCanvas
+        && Number(lastCanvas.seconds) <= 0
+        && Date.now() - Number(lastCanvas.at || 0) >= 850;
 
-      if (!domClock && freshClock) return;
-      if (!domClock && Date.now() - canvasVerifiedAt < 2300) return;
+      // Never pin the UI at 0s for several seconds during CasaTrade rollover.
+      // A positive exact clock remains authoritative; a zero clock gets only a
+      // short grace period, after which the new DOM/canvas/structured boundary
+      // may replace it as soon as the next real cycle is observable.
+      if (!domClock && freshClock && !staleZeroClock) return;
+      if (!domClock && Date.now() - canvasVerifiedAt < 2300 && !staleZeroClock && !canvasZeroExpired) return;
 
       // Mobile/tablet CasaTrade can temporarily hide the visible countdown while
       // the structured candle feed remains live. When that happens, anchor the

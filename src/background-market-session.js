@@ -561,10 +561,13 @@ export async function applyClock(message = {}, sender = {}) {
 
     if ((!exact && !fallback) || !validRemaining) {
       const previousClock = exactClock(state, info);
+      const previousRemaining = num(previousClock?.secondsRemaining);
+      const previousAge = previousClock ? Math.max(0, Date.now() - Number(previousClock.at || 0)) : Infinity;
+      const staleZeroClock = !!previousClock && previousRemaining != null && previousRemaining <= 0 && previousAge >= 850;
       // A probe can briefly miss the countdown node at candle rollover or while
-      // CasaTrade re-renders controls. Do not erase a still-fresh authoritative
-      // clock with that transient pending observation.
-      if (previousClock) return state;
+      // CasaTrade re-renders controls. Preserve a positive exact clock, but do
+      // not keep a stale 0s record pinned while the next real cycle is loading.
+      if (previousClock && !staleZeroClock) return state;
       return {
         ...state,
         diagnostics: {

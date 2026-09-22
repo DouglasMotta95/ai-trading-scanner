@@ -848,8 +848,13 @@ async function connectActiveTab({ automatic = false } = {}) {
     const focus = restartBase.diagnostics?.focusedAsset || null;
     const focusFresh = Number(focus?.at || 0) > 0 && Date.now() - Number(focus.at) < 2500;
     const dataFresh = Number(restartBase.lastSeen || 0) > 0 && Date.now() - Number(restartBase.lastSeen) < 2500;
-    const preserveLive = sameTab && restartBase.connection === 'online' && focusFresh && dataFresh
-      && focus?.reliable === true && focus?.trustedChartFrame === true;
+    const automaticSameSession = automatic && sameTab && restartBase.connection === 'online'
+      && sameConfirmedAsset
+      && focus?.reliable === true
+      && focus?.chartScoped === true
+      && focus?.trustedChartFrame === true;
+    const preserveLive = automaticSameSession || (sameTab && restartBase.connection === 'online' && focusFresh && dataFresh
+      && focus?.reliable === true && focus?.trustedChartFrame === true);
 
     const diagnostics = { ...(restartBase.diagnostics || {}) };
     delete diagnostics.connectionError;
@@ -904,7 +909,10 @@ async function connectActiveTab({ automatic = false } = {}) {
   }
   const probed = await probePlatformControlsDirect(tab.id).catch(() => null);
   const connectedAt = Number(next.diagnostics?.target?.connectedAt || Date.now());
-  scheduleConnectionTimeout(tab.id, connectedAt);
+  // Automatic reader refreshes must never turn an already-linked same-tab
+  // CasaTrade session into OFFLINE just because feed/focus heartbeats paused
+  // briefly. Fresh readers will update readiness without clearing the session.
+  if (!(automatic && next.connection === 'online')) scheduleConnectionTimeout(tab.id, connectedAt);
   return { ok: true, platform: { id: platform.id, name: platform.name }, tabId: tab.id, controls: probed || null, state: probed?.state || await readScannerState() || next };
 }
 

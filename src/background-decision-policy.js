@@ -168,15 +168,20 @@ export function CasaTradeExpiration(state = {}, timeframe = null) {
       reason: `Ajuste a expiração da CasaTrade para ${expirationLabel}`
     };
   }
+  const verified = guard.verified === true || (source !== 'user-declared' && observedFresh);
+  const manualFallback = source === 'user-declared';
+  const ready = actual === operationMode.expiration && (manualFallback || verified);
   return {
-    ready: actual === operationMode.expiration,
+    ready,
     actual,
     required: operationMode.expiration,
     source,
-    verified: guard.verified === true || (source !== 'user-declared' && observedFresh),
-    reason: source === 'user-declared'
+    verified,
+    reason: manualFallback
       ? `Expiração de ${expirationLabel} informada por você e aceita para este modo.`
-      : `Expiração de ${expirationLabel} confirmada para o modo ${operationMode.timeframe}.`
+      : !verified
+        ? `Revalidando a expiração real de ${expirationLabel} na CasaTrade.`
+        : `Expiração de ${expirationLabel} confirmada para o modo ${operationMode.timeframe}.`
   };
 }
 
@@ -334,15 +339,19 @@ function baseDecision(state = {}) {
     };
   }
   if (!finalQuality) {
+    // Inside the final window a still-valid technical candidate must remain
+    // visible as POSSÍVEL while the central engine waits for its second strong
+    // confirmation. This is presentation hysteresis only: it never makes the
+    // signal actionable and never bypasses the final quality gate.
     return {
       ...common,
-      uiState: 'WAIT',
-      direction: null,
+      uiState: direction === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL',
+      direction,
       actionable: false,
       alert: 'silent',
-      possibleSince: null,
-      holdRemainingMs: 0,
-      reason: `AGUARDAR — confiança final insuficiente para ${side.toLowerCase()}.`
+      possibleSince,
+      holdRemainingMs: Math.max(0, holdMs - heldFor),
+      reason: `${side} — PRÉ-SINAL EM CONFIRMAÇÃO • aguardando a segunda leitura forte da janela final.`
     };
   }
 
