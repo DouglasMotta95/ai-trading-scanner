@@ -13,7 +13,7 @@ const licenseActive = state => {
     || state?.diagnostics?.access?.ownerDev === true
     || state?.diagnostics?.access?.state === 'owner_dev';
 };
-const CLOCK_FRESH_MS = 2600;
+const CLOCK_FRESH_MS = 4500;
 const FOCUS_FRESH_MS = 5000;
 const EXACT_CLOCK_SOURCES = new Set(['trader-dom-countdown', 'network-server-cycle']);
 const FALLBACK_CLOCK_SOURCE = 'platform-cycle-derived';
