@@ -55,9 +55,15 @@ function marketDataReady(state = {}) {
 }
 function expirationObservation(state = {}) {
   const controls = state.platformControls || {};
-  const at = Number(controls.expirationCheckedAt || controls.observed?.observedAt?.expiration || 0);
-  const fresh = at > 0 && Date.now() - at < 7000;
-  const value = fresh ? normExp(controls.observed?.expiration) : null;
+  const observedAt = Number(controls.expirationCheckedAt || controls.observed?.observedAt?.expiration || 0);
+  const realAt = Number(controls.realExpirationAt || 0);
+  const realValue = normExp(controls.realExpiration || '');
+  // A verified CasaTrade expiration survives short control re-renders. Manual
+  // fallback never receives this grace period.
+  const realFresh = !!realValue && realAt > 0 && Date.now() - realAt < 15000;
+  const at = realFresh ? realAt : observedAt;
+  const fresh = realFresh || (observedAt > 0 && Date.now() - observedAt < 7000);
+  const value = realFresh ? realValue : fresh ? normExp(controls.observed?.expiration) : null;
   return { value, fresh, at, ageMs: at > 0 ? Date.now() - at : Infinity };
 }
 function sessionAgeMs(state = {}) {
