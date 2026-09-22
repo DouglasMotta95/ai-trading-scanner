@@ -11,6 +11,7 @@ import { getThresholds } from './analysis.js';
 const CONFIRM_HITS = 2;
 const DECISION_HIT_GAP_MS = 7000;
 const POSSIBLE_DROP_HITS = 2;
+const FINAL_WEAK_HITS = 2;
 const cycles = new Map();
 const wrapperCompletedDecisions = new Map();
 const WRAPPER_ROW_PREFIX = 'wrapper-cycle:';
@@ -258,9 +259,18 @@ function seedCycle(key, snapshot, signal, state = {}) {
 
 function observeDecision(cycle, direction, qualifies, at) {
   if (!qualifies || !direction) {
+    // Preserve one valid final-window hit through one weak/throttled snapshot.
+    // Video 15290 showed a valid SELL candidate at 5s being erased at 4s and
+    // recreated at 3s, so two-hit confirmation could never complete.
+    if (cycle.candidateDirection && cycle.confirmHits > 0 && cycle.lastHitAt != null
+      && at - Number(cycle.lastHitAt) <= DECISION_HIT_GAP_MS) {
+      cycle.finalWeakHits = Number(cycle.finalWeakHits || 0) + 1;
+      if (cycle.finalWeakHits < FINAL_WEAK_HITS) return false;
+    }
     cycle.candidateDirection = null;
     cycle.confirmHits = 0;
     cycle.lastHitAt = null;
+    cycle.finalWeakHits = 0;
     return false;
   }
   const same = cycle.candidateDirection === direction
@@ -269,6 +279,7 @@ function observeDecision(cycle, direction, qualifies, at) {
   cycle.candidateDirection = direction;
   cycle.confirmHits = same ? Number(cycle.confirmHits || 0) + 1 : 1;
   cycle.lastHitAt = at;
+  cycle.finalWeakHits = 0;
   return cycle.confirmHits >= CONFIRM_HITS;
 }
 
