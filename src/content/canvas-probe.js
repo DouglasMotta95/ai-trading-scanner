@@ -122,7 +122,7 @@
   const normalizeExp = value => {
     const s = clean(value).toLowerCase().replace(/\s+/g, '');
     let m = s.match(/^(\d{1,4})(?:s|seg|segundo|segundos)$/); if (m) return `${Number(m[1])}s`;
-    m = s.match(/^(\d{1,3})(?:m|min|minuto|minutos)$/); if (m) return Number(m[1]) === 1 ? '60s' : `${Number(m[1])}m`;
+    m = s.match(/^(\d{1,3})(?:m|min|minuto|minutos)$/); if (m) return `${Number(m[1]) * 60}s`;
     return null;
   };
 
@@ -254,8 +254,14 @@
   }
 
   function expirationFrom(text) {
-    const m = String(text || '').match(/(?:EXPIRA(?:ÇÃO|CAO)|EXPIRY|DURATION)[^0-9]{0,45}(\d{1,4})\s*(s|seg|segundo|segundos|m|min|minuto|minutos)/i);
-    return m ? normalizeExp(`${m[1]}${m[2]}`) : null;
+    const raw = String(text || '');
+    const labeled = raw.match(/(?:EXPIRA(?:ÇÃO|CAO)|EXPIRY|EXPIRATION|DURA(?:ÇÃO|CAO)|DURATION|TEMPO DE EXPIRA(?:ÇÃO|CAO)|TEMPO DA OPERA(?:ÇÃO|CAO))[^0-9]{0,80}(\d{1,4})\s*(s|seg|segundo|segundos|m|min|minuto|minutos)/i);
+    if (labeled) return normalizeExp(`${labeled[1]}${labeled[2]}`);
+    // Canvas/custom controls can be painted value-first even when they look
+    // label-first on screen. Accept the reverse order only next to an explicit
+    // expiration semantic so unrelated durations cannot become authority.
+    const reversed = raw.match(/(\d{1,4})\s*(s|seg|segundo|segundos|m|min|minuto|minutos)[^0-9]{0,80}(?:EXPIRA(?:ÇÃO|CAO)|EXPIRY|EXPIRATION|DURA(?:ÇÃO|CAO)|DURATION|TEMPO DE EXPIRA(?:ÇÃO|CAO)|TEMPO DA OPERA(?:ÇÃO|CAO))/i);
+    return reversed ? normalizeExp(`${reversed[1]}${reversed[2]}`) : null;
   }
 
   function candidateFromObject(o) {
