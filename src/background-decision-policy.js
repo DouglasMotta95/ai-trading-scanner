@@ -1,5 +1,5 @@
 import { readScannerState, updateScannerState } from './services/scanner-state-atomic.js';
-import { getThresholds, getOperationMode } from './core/analysis.js';
+import { getThresholds, getOperationMode, getSignalPolicy } from './core/analysis.js';
 
 // Product policy layer. The technical engine can keep collecting evidence with an
 // estimated clock, but the user-facing decision is never promoted while CasaTrade
@@ -9,13 +9,7 @@ const CLOCK_FRESH_MS = 4500;
 const FOCUS_FRESH_MS = 5500;
 const DEFAULT_PREFS = Object.freeze({ mode: 'NORMAL', geminiEnabled: true, sensitivityProfile: 'MEDIO', confirmationMode: 'SIMPLES', operationMode: 'M1', preferredExpiration: null });
 
-const HIGH_CONFIDENCE = Object.freeze({
-  possibleScore: 60,
-  finalScore: 70,
-  possiblePower: 58,
-  finalPower: 60,
-  minimumConfluence: 2
-});
+
 
 const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
 const text = value => String(value ?? '').trim();
@@ -269,11 +263,11 @@ function baseDecision(state = {}) {
   const ui = text(signal.uiState).toUpperCase();
   const cycle = cycleKey(state, signal);
   const factors = confluence(signal, direction, pref.thresholds);
-  // Presentation policy mirrors the technical high-confidence gate so no
-  // weaker candidate can reappear in the user-facing funnel.
-  const additionalConfluenceReady = factors.count >= HIGH_CONFIDENCE.minimumConfluence;
-  const possibleScore = Math.max(pref.thresholds.possibleScore, HIGH_CONFIDENCE.possibleScore);
-  const finalScore = Math.max(pref.thresholds.finalScore, HIGH_CONFIDENCE.finalScore);
+  const signalPolicy = getSignalPolicy(pref.sensitivityProfile);
+  // The selected rhythm changes selectivity, but never bypasses context + trigger.
+  const additionalConfluenceReady = factors.count >= signalPolicy.minimumConfluence;
+  const possibleScore = signalPolicy.possibleScore;
+  const finalScore = signalPolicy.finalScore;
   const entryWindowSeconds = pref.operationMode === 'M1'
     ? 5
     : pref.operationMode === 'M5'
@@ -281,8 +275,8 @@ function baseDecision(state = {}) {
       : pref.thresholds.entryWindowSeconds;
   const preSignalWindowSeconds = 30;
   const directionalPower = Number(direction === 'BUY' ? signal.analytics?.buyPower : signal.analytics?.sellPower) || 0;
-  const mandatoryPowerReady = directionalPower >= HIGH_CONFIDENCE.possiblePower;
-  const finalPowerReady = directionalPower >= HIGH_CONFIDENCE.finalPower;
+  const mandatoryPowerReady = directionalPower >= signalPolicy.possiblePower;
+  const finalPowerReady = directionalPower >= signalPolicy.finalPower;
   const technicalCandidate = ['POSSIBLE_BUY', 'POSSIBLE_SELL', 'ENTER_BUY', 'ENTER_SELL'].includes(ui);
   const technicalFinal = ['ENTER_BUY', 'ENTER_SELL'].includes(ui);
   const professional = signal.analytics?.professional || {};
@@ -303,6 +297,7 @@ function baseDecision(state = {}) {
     professionalContextReady,
     professionalTriggerReady,
     professionalScoreBlocks: professional.blocks || null,
+    signalPolicy,
     timeReady: time.ready,
     expirationReady: expiration.ready,
     actualExpiration: expiration.actual || null,
