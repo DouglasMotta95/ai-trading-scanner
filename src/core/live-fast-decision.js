@@ -244,8 +244,8 @@ export function fastLiveDecision(signal = {}, context = {}) {
     return possible(signal, direction, score, seconds, q);
   }
 
-  const strong = score >= Math.max(HIGH_CONFIDENCE.finalScore, thresholds.confirmScore)
-    && q.power >= HIGH_CONFIDENCE.finalPower
+  const strong = score >= signalPolicy.finalScore
+    && q.power >= signalPolicy.finalPower
     && q.reasons.length >= signalPolicy.minimumConfluence;
   const hits = observe(key, direction, strong, at);
   if (strong && hits >= FAST_DECISION.confirmHits) return enter(signal, direction, score, seconds, q);
