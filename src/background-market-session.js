@@ -320,9 +320,14 @@ export function resetForSession(state = {}, { asset, timeframe = null, info, rea
     }] : [])
   ].slice(-12);
 
+  const platformStillOnline = clean(sessionBase.connection).toLowerCase() === 'online';
+
   return {
     ...sessionBase,
-    connection: 'connecting',
+    // Switching instrument inside the same live CasaTrade tab is a market-data
+    // transition, not a transport disconnect. Keep the connection badge online
+    // while asset/price/candles are deliberately cleared and resynchronized.
+    connection: platformStillOnline ? 'online' : 'connecting',
     // Do not publish the new asset as live until price + real candle history for
     // that exact instrument have passed the identity/scale guard below.
     asset: null,
@@ -415,11 +420,11 @@ export async function applyFocus(message = {}, sender = {}) {
     const recentVisualSelection = old?.visual !== false
       && old?.interactionHint === true
       && Number(old?.interactionAt || old?.at || 0) > 0
-      && now - Number(old.interactionAt || old.at) < 8000;
+      && now - Number(old.interactionAt || old.at) < 3500;
     const selectionLock = state.diagnostics?.visualSelectionLock || null;
     const selectionLockFresh = !!selectionLock?.asset
       && Number(selectionLock.at || 0) > 0
-      && now - Number(selectionLock.at) < 8000;
+      && now - Number(selectionLock.at) < 3500;
     const protocolContradictsSelectionLock = incomingProtocolOnly
       && selectionLockFresh
       && !sameMarket(asset, selectionLock.asset);
@@ -608,9 +613,10 @@ export async function applyClock(message = {}, sender = {}) {
     }
 
     const record = clockRecord(message, info, asset, timeframe, secondsRemaining, focus);
+    const keepPlatformOnline = clean(next.connection).toLowerCase() === 'online';
     let clockState = {
       ...next,
-      connection: next.price != null ? 'online' : 'connecting',
+      connection: next.price != null || keepPlatformOnline ? 'online' : 'connecting',
       timeframe: timeframe || next.timeframe,
       analysisTimeframe: timeframe || next.analysisTimeframe,
       expiration: message.expiration || next.expiration || null,
