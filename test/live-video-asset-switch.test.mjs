@@ -42,7 +42,10 @@ test('asset or timeframe switch clears every operational field that could leak t
 
   const central = read('src/background.js');
   assert.match(central, /Single owner of technical analysis/);
-  assert.match(central, /if \(lastMarketKey && lastMarketKey !== marketKey\) resetOrchestrator\(\)/);
+  assert.match(central, /const analysisContextChanged = !!lastMarketKey && lastMarketKey !== marketKey/);
+  assert.match(central, /if \(analysisContextChanged\) resetOrchestrator\(\)/);
+  assert.match(central, /decisionCycle: null/);
+  assert.match(central, /professionalDecision: null/);
 });
 
 test('runtime trusts only CasaTrade-owned charts or legacy trader frames under a CasaTrade top tab', () => {
