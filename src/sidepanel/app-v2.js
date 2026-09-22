@@ -55,9 +55,15 @@ function marketDataReady(state = {}) {
 }
 function expirationObservation(state = {}) {
   const controls = state.platformControls || {};
-  const at = Number(controls.expirationCheckedAt || controls.observed?.observedAt?.expiration || 0);
-  const fresh = at > 0 && Date.now() - at < 7000;
-  const value = fresh ? normExp(controls.observed?.expiration) : null;
+  const observedAt = Number(controls.expirationCheckedAt || controls.observed?.observedAt?.expiration || 0);
+  const realAt = Number(controls.realExpirationAt || 0);
+  const realValue = normExp(controls.realExpiration || '');
+  // A verified CasaTrade expiration survives short control re-renders. Manual
+  // fallback never receives this grace period.
+  const realFresh = !!realValue && realAt > 0 && Date.now() - realAt < 15000;
+  const at = realFresh ? realAt : observedAt;
+  const fresh = realFresh || (observedAt > 0 && Date.now() - observedAt < 7000);
+  const value = realFresh ? realValue : fresh ? normExp(controls.observed?.expiration) : null;
   return { value, fresh, at, ageMs: at > 0 ? Date.now() - at : Infinity };
 }
 function sessionAgeMs(state = {}) {
@@ -399,11 +405,23 @@ let lastRenderedState = {};
 let countdownUi = { value: null, at: 0, cycle: '' };
 
 function projectedRemaining(state = {}) {
-  // Never locally decrement/project the last second. Display and decision timing
-  // must reflect the latest exact CasaTrade observation only.
+  // Keep the real CasaTrade observation as the only clock authority, but project
+  // between two exact samples so the UI does not freeze at 0s during the DOM
+  // rollover. Projection is bounded to one candle and never invents a source.
   if (!exactClockReady(state)) return null;
-  const raw = num(state.diagnostics?.marketClock?.secondsRemaining);
-  return raw == null ? null : Math.max(0, raw);
+  const clock = state.diagnostics?.marketClock || {};
+  const raw = num(clock.secondsRemaining);
+  const observedAt = Number(clock.at || 0);
+  if (raw == null) return null;
+  const elapsed = observedAt > 0 ? Math.max(0, (Date.now() - observedAt) / 1000) : 0;
+  const duration = timeframeSeconds(clock.timeframe || state.analysisTimeframe || state.timeframe);
+  const projected = raw - elapsed;
+  if (projected > 0) return projected;
+  if (duration && elapsed <= 4) {
+    const wrapped = duration + projected;
+    if (wrapped > 0 && wrapped <= duration) return wrapped;
+  }
+  return Math.max(0, projected);
 }
 
 function smoothedRemaining(state = {}) {

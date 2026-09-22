@@ -115,7 +115,7 @@ function expirationContext(state = {}, observed = {}, expirationSource = '') {
     && observedSource
     && observedSource !== 'user-declared'
     && observedAt > 0
-    && now - observedAt < 7000;
+    && now - observedAt < 15000;
 
   if (observedIsReal) {
     realExpiration = observedExpiration;
@@ -123,7 +123,7 @@ function expirationContext(state = {}, observed = {}, expirationSource = '') {
     realExpirationSource = observedSource;
   }
 
-  const realFresh = !!realExpiration && realExpirationAt > 0 && now - realExpirationAt < 7000;
+  const realFresh = !!realExpiration && realExpirationAt > 0 && now - realExpirationAt < 15000;
   // A real CasaTrade observation always supersedes the temporary manual
   // fallback. Once real expiration exists, the declaration is invalidated
   // instead of remaining stuck and creating a false divergence/block.
@@ -178,7 +178,7 @@ function applyExpirationAuthority(state = {}, observedInput = {}, expirationSour
   }
 
   const actualTimeframeAt = Number(observed.observedAt?.timeframe || 0);
-  const actualTimeframe = actualTimeframeAt > 0 && now - actualTimeframeAt < 7000
+  const actualTimeframe = actualTimeframeAt > 0 && now - actualTimeframeAt < 15000
     ? normTf(observed.timeframe)
     : null;
   const oldTf = normTf(state.analysisTimeframe || state.timeframe);

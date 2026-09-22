@@ -9,8 +9,8 @@ export function registerBuildContracts(label='build') {
   test(label + ': current extension package is the v0.11.54 single-authority build', () => {
     const m = manifest();
     assert.equal(m.manifest_version, 3);
-    assert.equal(m.version, '0.11.54');
-    assert.equal(m.version_name, '0.11.54-single-market-authority');
+    assert.equal(m.version, '0.11.55');
+    assert.equal(m.version_name, '0.11.55-video-15290-runtime-stability');
     assert.equal(m.background?.service_worker, 'src/background-entry.js');
     assert.equal(m.side_panel?.default_path, 'src/sidepanel/index.html');
   });
@@ -176,5 +176,35 @@ export function registerAudioContracts(label='audio') {
     assert.match(html, /value="strong"/);
     assert.match(panel, /navigator\?\.vibrate/);
     assert.match(panel, /function play\(kind\)/);
+  });
+}
+
+
+export function registerVideo15290Contracts(label='video-15290') {
+  test(label + ': final candidate survives one weak tick in both decision paths', () => {
+    const central = read('src/core/orchestrator.js');
+    const fast = read('src/core/live-fast-decision.js');
+    assert.match(central, /FINAL_WEAK_HITS = 2/);
+    assert.match(central, /cycle\.finalWeakHits/);
+    assert.match(fast, /weakHits < 2/);
+    assert.match(fast, /heldHits > 0/);
+  });
+  test(label + ': verified expiration survives a short CasaTrade control rerender', () => {
+    const controls = read('src/background-platform-controls.js');
+    const panel = read('src/sidepanel/app-v2.js');
+    assert.match(controls, /now - realExpirationAt < 15000/);
+    assert.match(panel, /Date\.now\(\) - realAt < 15000/);
+  });
+  test(label + ': exact countdown UI rolls over without freezing at zero', () => {
+    const panel = read('src/sidepanel/app-v2.js');
+    assert.match(panel, /duration \+ projected/);
+    assert.match(panel, /elapsed <= 4/);
+    assert.match(panel, /if \(!exactClockReady\(state\)\) return null/);
+  });
+  test(label + ': automatic refresh preserves an owned live session through a brief reader gap', () => {
+    const control = read('src/background-control.js');
+    assert.match(control, /sessionStillOwned/);
+    assert.match(control, /briefReaderGap/);
+    assert.match(control, /< 12000/);
   });
 }

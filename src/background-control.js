@@ -848,8 +848,17 @@ async function connectActiveTab({ automatic = false } = {}) {
     const focus = restartBase.diagnostics?.focusedAsset || null;
     const focusFresh = Number(focus?.at || 0) > 0 && Date.now() - Number(focus.at) < 2500;
     const dataFresh = Number(restartBase.lastSeen || 0) > 0 && Date.now() - Number(restartBase.lastSeen) < 2500;
-    const preserveLive = sameTab && restartBase.connection === 'online' && focusFresh && dataFresh
-      && focus?.reliable === true && focus?.trustedChartFrame === true;
+    const liveSession = restartBase.diagnostics?.marketSession || {};
+    const sessionStillOwned = sameTab
+      && sameAsset(liveSession.confirmedAsset || liveSession.asset, currentConfirmedAsset)
+      && liveSession.dataReady === true
+      && liveSession.transitioning !== true;
+    const briefReaderGap = Number(restartBase.lastSeen || 0) > 0
+      && Date.now() - Number(restartBase.lastSeen) < 12000;
+    const preserveLive = sameTab && restartBase.connection === 'online'
+      && focus?.reliable === true && focus?.trustedChartFrame === true
+      && sessionStillOwned
+      && ((focusFresh && dataFresh) || briefReaderGap);
 
     const diagnostics = { ...(restartBase.diagnostics || {}) };
     delete diagnostics.connectionError;
