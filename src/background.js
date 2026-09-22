@@ -712,10 +712,14 @@ async function runCentralAnalysis(force = false) {
       };
 
       const seconds = num(snapshot.secondsRemaining);
-      const activeThresholds = getThresholds(current.analystPreferences?.sensitivityProfile || 'MEDIO');
+      const activeOperation = getOperationMode(current.analystPreferences?.operationMode || 'M1');
+      const confirmationWindowSeconds = activeOperation.timeframe === 'M5' ? 8 : 5;
       const locked = clean(nextWithHistory.decisionCycle?.locked).toUpperCase();
       const confirmed = nextWithHistory.signal?.state === 'CONFIRM' || ['ENTER_BUY', 'ENTER_SELL'].includes(clean(nextWithHistory.signal?.uiState).toUpperCase());
-      needsConfirmationFollowup = seconds != null && seconds > 0 && seconds <= activeThresholds.entryWindowSeconds && !confirmed && locked !== 'WAIT';
+      // Forced follow-up exists only for the real final-decision window. Keeping
+      // it open for the old 10-15s sensitivity window caused unnecessary churn
+      // on Android/Quetta and could contribute to UI lag.
+      needsConfirmationFollowup = seconds != null && seconds > 0 && seconds <= confirmationWindowSeconds && !confirmed && locked !== 'WAIT';
       return nextWithHistory;
     });
   } finally {
