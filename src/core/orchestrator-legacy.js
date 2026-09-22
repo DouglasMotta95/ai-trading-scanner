@@ -314,6 +314,13 @@ function stabilitySnapshot(tracker = {}) {
 
 export function processSnapshot(snapshot = {}, state = {}) {
   const thresholds = getThresholds(state.analystPreferences?.sensitivityProfile || 'MEDIO');
+  const signalPolicy = getSignalPolicy(thresholds.profile);
+  const gateThresholds = {
+    ...thresholds,
+    possibleScore: signalPolicy.possibleScore,
+    confirmScore: signalPolicy.finalScore,
+    finalScore: signalPolicy.finalScore
+  };
   const price = num(snapshot.price);
   if (!snapshot.asset || price == null) {
     return {
@@ -367,7 +374,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
   const score = Number(liveResult.score || 0);
   const expiration = snapshot.targetExpiration || state.targetExpiration || snapshot.expiration || state.expiration || null;
   const tracker = trackerFor(key, currentBucket, sampleAt);
-  const possibleDirection = observePossible(tracker, direction, score, sampleAt, thresholds);
+  const possibleDirection = observePossible(tracker, direction, score, sampleAt, gateThresholds);
   const common = {
     timeframe: analysisTimeframe,
     expiration,
@@ -448,13 +455,13 @@ export function processSnapshot(snapshot = {}, state = {}) {
   }
 
   if (secondsRemaining <= thresholds.entryWindowSeconds) {
-    const rangeBlocked = regime?.type === 'range' && !rangeOverrideQuality(liveResult, direction, thresholds);
+    const rangeBlocked = regime?.type === 'range' && !rangeOverrideQuality(liveResult, direction, gateThresholds);
     if (rangeBlocked) {
       tracker.confirmDirection = null;
       tracker.confirmHits = 0;
       tracker.lastConfirmAt = null;
     }
-    const canConfirm = !rangeBlocked && observeConfirmation(tracker, liveResult, direction, score, sampleAt, thresholds);
+    const canConfirm = !rangeBlocked && observeConfirmation(tracker, liveResult, direction, score, sampleAt, gateThresholds);
     if (canConfirm) {
       const latestDecision = {
         bucket: currentBucket,
