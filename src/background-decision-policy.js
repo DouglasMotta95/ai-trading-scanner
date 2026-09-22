@@ -79,7 +79,6 @@ function focusReady(state = {}) {
   const focus = state.diagnostics?.focusedAsset || null;
   if (!focus?.asset || !state.asset) return false;
   const ambiguousPassive = Number(focus.ambiguityCount || 0) > 0
-    && focus.directChart !== true
     && focus.explicit !== true
     && focus.interactionHint !== true;
   return focus.reliable === true
