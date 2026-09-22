@@ -15,6 +15,11 @@ const DEFAULT_PREFS = Object.freeze({
   expectedAsset: ''
 });
 
+const profileHoldSeconds = value => {
+  const profile = String(value || '').toUpperCase();
+  return profile === 'RIGIDO' ? 3 : profile === 'SOLTO' ? 1 : 2;
+};
+
 const PANEL_OPENED_AT = Date.now();
 let prefs = { ...DEFAULT_PREFS };
 let liveOhlc = null;
@@ -658,11 +663,11 @@ function syncSettingsUi(state = null) {
   if ($('overlayToggle')) $('overlayToggle').checked = !!prefs.overlayEnabled;
   if ($('geminiToggle')) $('geminiToggle').checked = prefs.geminiEnabled !== false;
   if ($('signalSensitivityProfile')) $('signalSensitivityProfile').value = ['RIGIDO','MEDIO','SOLTO'].includes(prefs.sensitivityProfile) ? prefs.sensitivityProfile : 'MEDIO';
-  if ($('signalHoldDisplay')) $('signalHoldDisplay').textContent = prefs.sensitivityProfile === 'RIGIDO' ? '3 s' : prefs.sensitivityProfile === 'SOLTO' ? '1 s' : '2 s';
+  if ($('signalHoldDisplay')) $('signalHoldDisplay').textContent = `${profileHoldSeconds(prefs.sensitivityProfile)} s`;
   if ($('analystMode')) $('analystMode').value = prefs.analystMode === 'A_PLUS' ? 'A_PLUS' : 'NORMAL';
   if ($('notificationToggle')) $('notificationToggle').checked = prefs.notificationsEnabled !== false;
   if ($('alertLevel')) $('alertLevel').value = ['off','discrete','strong'].includes(prefs.alertLevel) ? prefs.alertLevel : DEFAULT_PREFS.alertLevel;
-  if ($('holdSeconds')) $('holdSeconds').value = String(prefs.sensitivityProfile === 'RIGIDO' ? 3 : prefs.sensitivityProfile === 'SOLTO' ? 1 : 2);
+  if ($('holdSeconds')) $('holdSeconds').value = String(profileHoldSeconds(prefs.sensitivityProfile));
   if ($('possibleSoundToggle')) $('possibleSoundToggle').checked = prefs.alertLevel === 'discrete' || prefs.alertLevel === 'strong';
   if ($('confirmSoundToggle')) $('confirmSoundToggle').checked = prefs.alertLevel === 'strong';
   if ($('expectedAsset')) $('expectedAsset').value = clean(prefs.expectedAsset || '');
@@ -687,6 +692,7 @@ async function savePrefs() {
 
 async function setPref(key, value) {
   prefs = { ...prefs, [key]: value };
+  if (key === 'sensitivityProfile') prefs = { ...prefs, holdSeconds: profileHoldSeconds(value) };
   if (key === 'possibleSoundEnabled' && value) play('possible');
   if (key === 'confirmSoundEnabled' && value) play('confirm');
   if (key === 'alertLevel' && value === 'discrete') play('possible');
@@ -713,7 +719,7 @@ async function loadPrefs() {
       M5: Math.max(1, Math.min(200, Number(raw.payoutByMode?.M5 ?? 88) || 88))
     },
     sensitivityProfile: ['RIGIDO','MEDIO','SOLTO'].includes(String(raw.sensitivityProfile || '').toUpperCase()) ? String(raw.sensitivityProfile).toUpperCase() : 'MEDIO',
-    holdSeconds: String(raw.sensitivityProfile || '').toUpperCase() === 'RIGIDO' ? 3 : 2,
+    holdSeconds: profileHoldSeconds(raw.sensitivityProfile || 'MEDIO'),
     expectedAsset: clean(raw.expectedAsset || '')
   };
   syncSettingsUi();
@@ -746,7 +752,7 @@ $('signalPayout')?.addEventListener('change', async event => {
 $('notificationToggle')?.addEventListener('change', event => setPref('notificationsEnabled', !!event.currentTarget.checked));
 $('analystMode')?.addEventListener('change', event => setPref('analystMode', event.currentTarget.value === 'A_PLUS' ? 'A_PLUS' : 'NORMAL'));
 $('alertLevel')?.addEventListener('change', event => setPref('alertLevel', event.currentTarget.value));
-$('holdSeconds')?.addEventListener('change', () => setPref('holdSeconds', prefs.sensitivityProfile === 'RIGIDO' ? 3 : 2));
+$('holdSeconds')?.addEventListener('change', () => setPref('holdSeconds', profileHoldSeconds(prefs.sensitivityProfile)));
 $('possibleSoundToggle')?.addEventListener('change', event => setPref('possibleSoundEnabled', !!event.currentTarget.checked));
 $('confirmSoundToggle')?.addEventListener('change', event => setPref('confirmSoundEnabled', !!event.currentTarget.checked));
 $('expectedAsset')?.addEventListener('change', event => setPref('expectedAsset', clean(event.currentTarget.value || '')));

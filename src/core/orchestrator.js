@@ -4,7 +4,7 @@ import {
   serializeCompletedDecisions as legacySerializeCompletedDecisions,
   restoreCompletedDecisions as legacyRestoreCompletedDecisions
 } from './orchestrator-legacy.js';
-import { getThresholds } from './analysis.js';
+import { getThresholds, getSignalPolicy } from './analysis.js';
 
 // Price action/indicators remain in the legacy analyst. This wrapper owns exactly
 // one bounded decision for each target candle: ENTER BUY, ENTER SELL or WAIT.
@@ -15,14 +15,6 @@ const FINAL_WEAK_HITS = 2;
 const cycles = new Map();
 const wrapperCompletedDecisions = new Map();
 const WRAPPER_ROW_PREFIX = 'wrapper-cycle:';
-
-const HIGH_CONFIDENCE = Object.freeze({
-  possibleScore: 60,
-  finalScore: 70,
-  possiblePower: 58,
-  finalPower: 60,
-  minimumEvidence: 2
-});
 
 const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
 const clean = value => String(value ?? '').trim();
@@ -88,12 +80,12 @@ function highConfidenceEvidence(signal = {}, direction = null, thresholds = getT
   const continuationScore = Number(analytics.continuationScore || 0);
   const momentumScore = Number(analytics.momentumScore || 0);
   const directionalRejection = analytics.rejectionDirection === direction
-    || Number(direction === 'BUY' ? analytics.rejectionBuy : analytics.rejectionSell) >= Math.max(50, thresholds.rejectionStrength);
+    || Number(direction === 'BUY' ? analytics.rejectionBuy : analytics.rejectionSell) >= thresholds.rejectionStrength;
   const evidence = [];
-  if (directionalRejection && rejectionStrength >= Math.max(50, thresholds.rejectionStrength)) evidence.push('rejeição');
-  if (analytics.continuationDirection === direction && continuationScore >= 60) evidence.push('continuação');
-  if (analytics.momentumDirection === direction && momentumScore >= 45) evidence.push('momentum');
-  if (currentStrength >= Math.max(60, thresholds.candleStrength)) evidence.push('força');
+  if (directionalRejection && rejectionStrength >= thresholds.rejectionStrength) evidence.push('rejeição');
+  if (analytics.continuationDirection === direction && continuationScore >= 55) evidence.push('continuação');
+  if (analytics.momentumDirection === direction && momentumScore >= 40) evidence.push('momentum');
+  if (currentStrength >= thresholds.candleStrength) evidence.push('força');
   return evidence;
 }
 
@@ -113,21 +105,27 @@ function decisionQuality(signal = {}, direction = null, thresholds = getThreshol
   const strongCandle = currentStrength >= thresholds.candleStrength;
   const rejection = directionalRejection && rejectionStrength >= thresholds.rejectionStrength;
   const regime = String(signal.regime?.type || '').toLowerCase();
+  const professional = analytics.professional || {};
+  const professionalReady = professional.contextReady === true && professional.triggerReady === true;
+  const signalPolicy = getSignalPolicy(thresholds.profile);
   const evidence = highConfidenceEvidence(signal, direction, thresholds);
-  const finalScore = Math.max(HIGH_CONFIDENCE.finalScore, thresholds.confirmScore);
+  const finalScore = signalPolicy.finalScore;
   const commonReady = !!direction
+    && professionalReady
     && score >= finalScore
-    && power >= HIGH_CONFIDENCE.finalPower
-    && evidence.length >= HIGH_CONFIDENCE.minimumEvidence;
+    && power >= signalPolicy.finalPower
+    && evidence.length >= signalPolicy.minimumConfluence;
   const commonReason = !direction
     ? 'sem direção'
-    : score < finalScore
-      ? `score ${Math.round(score)} < ${finalScore}`
-      : power < HIGH_CONFIDENCE.finalPower
-        ? `poder ${Math.round(power)} < ${HIGH_CONFIDENCE.finalPower}`
-        : evidence.length < HIGH_CONFIDENCE.minimumEvidence
-          ? `confluências fortes ${evidence.length}/${HIGH_CONFIDENCE.minimumEvidence}`
-          : 'alta confiança confirmada';
+    : !professionalReady
+      ? 'contexto/região/gatilho profissional incompleto'
+      : score < finalScore
+        ? `score ${Math.round(score)} < ${finalScore}`
+        : power < signalPolicy.finalPower
+          ? `poder ${Math.round(power)} < ${signalPolicy.finalPower}`
+          : evidence.length < signalPolicy.minimumConfluence
+            ? `confluências fortes ${evidence.length}/${signalPolicy.minimumConfluence}`
+            : 'alta confiança confirmada';
 
   if (mode === 'SIMPLES') {
     const setups = [
@@ -213,12 +211,14 @@ function decisionQuality(signal = {}, direction = null, thresholds = getThreshol
 }
 
 function possibleQuality(signal = {}, direction = null, score = 0, thresholds = getThresholds()) {
-  const possibleScore = Math.max(HIGH_CONFIDENCE.possibleScore, thresholds.possibleScore);
-  if (!direction || Number(score) < possibleScore) return false;
+  const signalPolicy = getSignalPolicy(thresholds.profile);
   const analytics = signal.analytics || {};
+  const professional = analytics.professional || {};
+  if (professional.contextReady !== true || professional.triggerReady !== true) return false;
+  if (!direction || Number(score) < signalPolicy.possibleScore) return false;
   const power = Number(direction === 'BUY' ? analytics.buyPower : analytics.sellPower) || 0;
-  if (power < HIGH_CONFIDENCE.possiblePower) return false;
-  if (highConfidenceEvidence(signal, direction, thresholds).length < HIGH_CONFIDENCE.minimumEvidence) return false;
+  if (power < signalPolicy.possiblePower) return false;
+  if (highConfidenceEvidence(signal, direction, thresholds).length < signalPolicy.minimumConfluence) return false;
   const stableDirection = clean(signal.stability?.possibleDirection).toUpperCase();
   const publishedDirection = clean(signal.direction).toUpperCase();
   return stableDirection === direction || (signal.state === 'WATCH' && publishedDirection === direction);
@@ -459,8 +459,12 @@ export function processSnapshot(snapshot = {}, state = {}) {
   const analytics = signal.analytics || {};
   const power = Number(direction === 'BUY' ? analytics.buyPower : analytics.sellPower) || 0;
   const rawPossible = possibleQuality(signal, direction, score, thresholds);
+  const signalPolicy = getSignalPolicy(thresholds.profile);
   const quality = decisionQuality(signal, direction, thresholds, confirmationMode);
-  const technicalFinal = signal.state === 'CONFIRM' || ['ENTER_BUY', 'ENTER_SELL'].includes(clean(signal.uiState).toUpperCase());
+  const technicalDirection = clean(signal.direction).toUpperCase();
+  const technicalFinal = (signal.state === 'CONFIRM' || ['ENTER_BUY', 'ENTER_SELL'].includes(clean(signal.uiState).toUpperCase()))
+    && ['BUY', 'SELL'].includes(technicalDirection)
+    && technicalDirection === direction;
   let candidateBlockerTrace = upsertCandidateBlockerTrace(state, {
     key,
     targetStart: cycle.targetStart,
@@ -481,7 +485,8 @@ export function processSnapshot(snapshot = {}, state = {}) {
       setups: quality.checks || []
     },
     technicalFinal,
-    mandatoryPowerReady: power >= 50,
+    mandatoryPowerReady: power >= signalPolicy.possiblePower,
+    signalPolicy,
     secondsRemaining,
     updatedAt: at
   });
@@ -526,16 +531,23 @@ export function processSnapshot(snapshot = {}, state = {}) {
     return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: nextSignal, decisionCycle: { ...cycle }, candidateBlockerTrace };
   }
 
-  if (signal.state === 'CONFIRM' && ['BUY', 'SELL'].includes(signal.direction) && quality.qualifies) {
+  if (technicalFinal && quality.qualifies) {
     cycle.locked = 'ENTER';
-    cycle.direction = signal.direction;
+    cycle.direction = direction;
     cycle.score = Math.max(score, Number(signal.score || 0));
     cycle.setup = signal.setup || quality.setup || null;
     cycle.reason = signal.reason;
     cycle.decidedAt = at;
     cycles.set(key, cycle);
     const trace = appendTrace(state, { key, targetStart: cycle.targetStart, decision: 'ENTER', direction: cycle.direction, score: cycle.score, setup: cycle.setup, reason: cycle.reason, decidedAt: at });
-    return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, decisionCycle: { ...cycle }, decisionTrace: trace, candidateBlockerTrace };
+    return {
+      ...result,
+      lastConfirmed: rolledLastConfirmed || result.lastConfirmed,
+      signal: enterSignal(signal, cycle, direction, cycle.score, cycle.reason),
+      decisionCycle: { ...cycle },
+      decisionTrace: trace,
+      candidateBlockerTrace
+    };
   }
 
   const stable = observeDecision(cycle, direction, quality.qualifies, at);

@@ -723,7 +723,7 @@ function expirationDiagnosticText(response = {}) {
     '',
     '6. RELÓGIO DA VELA E FEED',
     `Modo de operação ativo: ${clean(lastState?.analystPreferences?.operationMode || 'M1')} + ${clean(lastState?.analystPreferences?.operationExpiration || '60s')}`,
-    `Perfil de sensibilidade ativo: ${clean(lastState?.analystPreferences?.sensitivityLabel || lastState?.analystPreferences?.sensitivityProfile || 'MÉDIO')}`,
+    `Ritmo de sinais ativo: ${clean(lastState?.analystPreferences?.sensitivityLabel || lastState?.analystPreferences?.sensitivityProfile || 'EQUILIBRADO')}`,
     `Confirmação ativa: ${normalizeConfirmationMode(lastState?.analystPreferences?.confirmationMode)}`,
     '',
     'A) state.diagnostics.marketClock',
