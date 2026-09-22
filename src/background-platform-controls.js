@@ -93,6 +93,8 @@ function mergeObserved(previous = {}, incoming = {}, previousExpirationSource = 
 
 const USER_DECLARED_EXPIRATIONS = new Set(['5s','15s','30s','60s','300s']);
 const USER_DECLARED_FRESH_OFFSET_MS = 10 * 365 * 24 * 60 * 60 * 1000;
+const REAL_EXPIRATION_READY_MS = 7000;
+const REAL_EXPIRATION_CACHE_MS = 15000;
 
 function expLabel(value = '') {
   const exp = normExp(value);
@@ -115,7 +117,7 @@ function expirationContext(state = {}, observed = {}, expirationSource = '') {
     && observedSource
     && observedSource !== 'user-declared'
     && observedAt > 0
-    && now - observedAt < 7000;
+    && now - observedAt < REAL_EXPIRATION_CACHE_MS;
 
   if (observedIsReal) {
     realExpiration = observedExpiration;
@@ -123,22 +125,26 @@ function expirationContext(state = {}, observed = {}, expirationSource = '') {
     realExpirationSource = observedSource;
   }
 
-  const realFresh = !!realExpiration && realExpirationAt > 0 && now - realExpirationAt < 7000;
-  // A real CasaTrade observation always supersedes the temporary manual
-  // fallback. Once real expiration exists, the declaration is invalidated
-  // instead of remaining stuck and creating a false divergence/block.
-  const invalidatedDeclared = realFresh && declared ? declared : null;
+  const realAge = realExpirationAt > 0 ? now - realExpirationAt : Infinity;
+  const realFresh = !!realExpiration && realExpirationAt > 0 && realAge < REAL_EXPIRATION_READY_MS;
+  const realKnown = !!realExpiration && realExpirationAt > 0 && realAge < REAL_EXPIRATION_CACHE_MS;
+  // A recent real CasaTrade observation always owns the display authority and
+  // invalidates the manual fallback. After 7s it must be revalidated before an
+  // entry, but we keep it for a short cache grace so the UI never falls back to
+  // a stale manual dropdown during a transient DOM re-render.
+  const invalidatedDeclared = realKnown && declared ? declared : null;
   const effectiveDeclared = invalidatedDeclared ? null : declared;
-  const actual = realFresh ? realExpiration : effectiveDeclared || null;
-  const source = realFresh ? (realExpirationSource || 'real') : effectiveDeclared ? 'user-declared' : null;
+  const actual = realKnown ? realExpiration : effectiveDeclared || null;
+  const source = realKnown ? (realExpirationSource || 'real') : effectiveDeclared ? 'user-declared' : null;
 
   return {
     declared: effectiveDeclared,
     invalidatedDeclared,
-    realExpiration: realFresh ? realExpiration : null,
-    realExpirationAt: realFresh ? realExpirationAt : 0,
-    realExpirationSource: realFresh ? (realExpirationSource || 'real') : '',
+    realExpiration: realKnown ? realExpiration : null,
+    realExpirationAt: realKnown ? realExpirationAt : 0,
+    realExpirationSource: realKnown ? (realExpirationSource || 'real') : '',
     realFresh,
+    realKnown,
     divergence: false,
     actual,
     source
@@ -170,7 +176,7 @@ function applyExpirationAuthority(state = {}, observedInput = {}, expirationSour
     observed.source = 'user-declared';
     storedExpirationSource = 'user-declared';
     expirationCheckedAt = declaredAt;
-  } else if (authority.realFresh) {
+  } else if (authority.realKnown) {
     observed.expiration = authority.realExpiration;
     observed.observedAt.expiration = authority.realExpirationAt;
     storedExpirationSource = authority.realExpirationSource;
@@ -189,7 +195,8 @@ function applyExpirationAuthority(state = {}, observedInput = {}, expirationSour
   const operationMode = getOperationMode(state.analystPreferences?.operationMode || 'M1');
   const modeReady = effectiveTf === operationMode.timeframe;
   const expirationValid = authority.actual === operationMode.expiration;
-  const ready = !!authority.actual && modeReady && expirationValid && !authority.divergence;
+  const authorityReady = authority.source === 'user-declared' || authority.realFresh;
+  const ready = !!authority.actual && modeReady && expirationValid && authorityReady && !authority.divergence;
   const preferred = normExp(state.analystPreferences?.preferredExpiration || state.executionPreferences?.expiration || '');
   const expirationLabel = operationMode.expiration === '300s' ? '5 minutos' : '1 minuto';
 
@@ -203,7 +210,9 @@ function applyExpirationAuthority(state = {}, observedInput = {}, expirationSour
           ? `Ajuste a expiração da CasaTrade para ${expirationLabel}`
           : authority.source === 'user-declared'
             ? `Expiração de ${expirationLabel} informada por você, não verificada.`
-            : `Expiração ao vivo de ${expirationLabel} confirmada pela CasaTrade.`;
+            : !authority.realFresh
+              ? `Revalidando a expiração real de ${expirationLabel} na CasaTrade.`
+              : `Expiração ao vivo de ${expirationLabel} confirmada pela CasaTrade.`;
 
   const diagnostics = { ...(state.diagnostics || {}) };
   diagnostics.expirationGuard = {
@@ -217,7 +226,11 @@ function applyExpirationAuthority(state = {}, observedInput = {}, expirationSour
     real: authority.realExpiration,
     divergence: false,
     manualInvalidated: authority.invalidatedDeclared || null,
-    label: authority.source === 'user-declared' ? 'informada por você, não verificada' : authority.source ? 'confirmada pela CasaTrade' : 'pendente',
+    label: authority.source === 'user-declared'
+      ? 'informada por você, não verificada'
+      : authority.source
+        ? authority.realFresh ? 'confirmada pela CasaTrade' : 'revalidando leitura real'
+        : 'pendente',
     ready,
     validForM1: operationMode.timeframe === 'M1' ? ready : false,
     validForMode: ready,
