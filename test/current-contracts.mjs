@@ -6,11 +6,11 @@ export const read = path => fs.readFileSync(new URL('../' + path, import.meta.ur
 const manifest = () => JSON.parse(read('manifest.json'));
 
 export function registerBuildContracts(label='build') {
-  test(label + ': current extension package is the v0.11.54 single-authority build', () => {
+  test(label + ': current extension package is the v0.11.56 video-15292 authority build', () => {
     const m = manifest();
     assert.equal(m.manifest_version, 3);
-    assert.equal(m.version, '0.11.55');
-    assert.equal(m.version_name, '0.11.55-video-15290-runtime-stability');
+    assert.equal(m.version, '0.11.56');
+    assert.equal(m.version_name, '0.11.56-video-15292-authority-final-window');
     assert.equal(m.background?.service_worker, 'src/background-entry.js');
     assert.equal(m.side_panel?.default_path, 'src/sidepanel/index.html');
   });
@@ -206,5 +206,74 @@ export function registerVideo15290Contracts(label='video-15290') {
     assert.match(control, /sessionStillOwned/);
     assert.match(control, /briefReaderGap/);
     assert.match(control, /< 12000/);
+  });
+}
+
+
+export function registerVideo15292Contracts(label='video-15292') {
+  test(label + ': ambiguous multi-asset CasaTrade layouts cannot guess the active asset', () => {
+    const focus = read('src/content/focused-asset-v2.js');
+    const market = read('src/background-market-session.js');
+    const policy = read('src/background-decision-policy.js');
+    assert.match(focus, /if \(!first\.interaction && !first\.explicit\) return null/);
+    assert.match(focus, /ambiguityCount/);
+    assert.match(focus, /visualAuthority/);
+    assert.match(market, /message\.visualAuthority === false/);
+    assert.match(policy, /marketIdentityReady/);
+    assert.match(policy, /marketIdentity\(state, signal\)/);
+  });
+
+  test(label + ': manual expiration can never unlock an actionable signal', () => {
+    const controls = read('src/background-platform-controls.js');
+    const policy = read('src/background-decision-policy.js');
+    const panel = read('src/sidepanel/app-v2.js');
+    const shell = read('src/sidepanel/ui-shell-v2.js');
+    assert.match(controls, /ready = authority\.realFresh === true/);
+    assert.match(policy, /Only a fresh, real CasaTrade observation may unlock execution/);
+    assert.match(policy, /source !== 'user-declared'/);
+    assert.match(panel, /expiration\.verified !== true/);
+    assert.match(shell, /realExpirationAt/);
+    assert.match(shell, /realExpirationSource/);
+    assert.match(shell, /O campo manual não libera entrada/);
+  });
+
+  test(label + ': direct DOM probe publishes real expiration authority instead of promoting fallback', () => {
+    const control = read('src/background-control.js');
+    assert.match(control, /const realExpiration = exp\?\.expiration \|\| null/);
+    assert.match(control, /realExpirationAt: realExpiration \? now/);
+    assert.match(control, /realExpirationSource: realExpiration \? 'background-direct-dom'/);
+    assert.match(control, /liveAuthority: !!realExpiration/);
+    assert.match(control, /userDeclaredExpiration: realExpiration \? null/);
+  });
+
+  test(label + ': responsive expiration reader accepts label/value in either DOM order', () => {
+    const direct = read('src/background-control.js');
+    const observer = read('src/content/casatrade-ui-observer-v2.js');
+    assert.match(direct, /const reversed = local\.match/);
+    assert.match(observer, /const reversed = ctx\.match/);
+    assert.match(observer, /neighborhood\(el, 4\)/);
+  });
+
+  test(label + ': short exact-clock gaps are bridged without authorizing the next candle', () => {
+    const market = read('src/background-market-session.js');
+    const policy = read('src/background-decision-policy.js');
+    const panel = read('src/sidepanel/app-v2.js');
+    assert.match(market, /CLOCK_FRESH_MS = 4500/);
+    assert.match(policy, /CLOCK_FRESH_MS = 4500/);
+    assert.match(policy, /projectedRemaining = Math\.max\(0/);
+    assert.match(panel, /Date\.now\(\) - Number\(clock\.at\) < 4500/);
+  });
+
+  test(label + ': final hold inherits the technical candidate lifetime instead of restarting late', () => {
+    const policy = read('src/background-decision-policy.js');
+    assert.match(policy, /technicalPossibleSince/);
+    assert.match(policy, /signal\.stability\?\.possibleSince/);
+    assert.match(policy, /technicalSinceValid \? technicalPossibleSince : now/);
+  });
+
+  test(label + ': high numeric asset quality is never labeled poor solely because of range context', () => {
+    const quality = read('src/core/asset-quality.js');
+    assert.match(quality, /\|\| score >= 68/);
+    assert.match(quality, /ATIVO EM OBSERVAÇÃO/);
   });
 }
