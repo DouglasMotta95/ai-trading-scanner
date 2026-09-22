@@ -44,7 +44,7 @@ export function registerMarketContracts(label='market') {
     const background = read('src/background.js');
     const market = read('src/background-market-session.js');
     assert.match(background, /Single owner of technical analysis/);
-    assert.match(background, /processSnapshot\(snapshot, current\)/);
+    assert.match(background, /processSnapshot\(snapshot, analysisState\)/);
     assert.doesNotMatch(market, /processSnapshot\(/);
   });
 }
