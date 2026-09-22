@@ -359,9 +359,12 @@ function renderRadar(state = {}, force = false) {
     renderTf('radarM5', current.m5);
     const best = current.best;
     const mismatch = current.recommendation !== 'AGUARDAR' && current.currentTf && current.recommendation !== current.currentTf;
-    const recommendation = current.recommendation === 'AGUARDAR' ? 'AGUARDAR' : `PREFERIR ${current.recommendation}`;
+    const recommendation = current.recommendation === 'AGUARDAR' ? 'AGUARDAR' : `RADAR: MELHOR CENÁRIO ${current.recommendation}`;
     const reason = best ? [labelDirection(best.direction), ...(best.reasons || [])].join(' • ') : 'sem leitura suficiente';
-    summary.innerHTML = `<strong>${current.asset} • ${recommendation}</strong><p>${reason}${mismatch ? ` • Seu modo atual é ${current.currentTf}` : ''}</p>`;
+    const modeNote = mismatch
+      ? ` • Modo técnico ativo: ${current.currentTf}. O Radar não troca o modo automaticamente.`
+      : '';
+    summary.innerHTML = `<strong>${current.asset} • ${recommendation}</strong><p>${reason}${modeNote}</p>`;
   }
 
   const list = document.getElementById('radarOpportunities');

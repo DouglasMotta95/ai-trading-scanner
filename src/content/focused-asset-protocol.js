@@ -39,12 +39,14 @@
     if (source === 'protocol-selected') return false;
 
     // A direct user asset selection is stronger evidence than a stale network/app
-    // "selected" flag. Keep it authoritative until the protocol catches up to the
-    // same market or another visual interaction replaces it.
+    // "selected" flag, but the lock must be short-lived. Video 15319 showed that
+    // an old interactionHint could otherwise block the newly active market until
+    // the visual reader happened to rediscover it.
+    const age = Math.max(0, Date.now() - Number(meta.at));
     const explicitTransition = source === 'user-selected-transition' || meta.interactionHint === true;
-    if (explicitTransition) return !same(current, asset);
+    if (explicitTransition && age <= 2200) return !same(current, asset);
 
-    if (Date.now() - Number(meta.at) > 5000) return false;
+    if (age > 2200) return false;
     return !same(current, asset);
   }
 

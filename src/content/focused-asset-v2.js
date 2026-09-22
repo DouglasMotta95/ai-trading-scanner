@@ -134,8 +134,11 @@
   // strong evidence. This intentionally excludes the very top tab strip.
   function chartHeaderGeometry(rect, text = '') {
     if (!rect || !text || text.length > 48) return false;
-    const minTop = Math.max(90, innerHeight * .18);
-    const maxTop = Math.max(260, innerHeight * .50);
+    // Tablet CasaTrade places the real chart instrument header noticeably
+    // higher than desktop. Keep the browser/tab strip excluded, but include the
+    // ~125px+ chart-header band seen in video 15319.
+    const minTop = Math.max(120, innerHeight * .11);
+    const maxTop = Math.max(260, innerHeight * .42);
     return rect.top >= minTop
       && rect.top <= maxTop
       && rect.left >= 0
@@ -143,7 +146,7 @@
       && rect.width <= innerWidth * .46;
   }
 
-  const INTERACTION_TRANSITION_MS = 8000;
+  const INTERACTION_TRANSITION_MS = 1800;
   let recentInteraction = { asset: '', at: 0 };
   const interactionFresh = asset => sameAsset(recentInteraction.asset, asset) && Date.now() - Number(recentInteraction.at || 0) < INTERACTION_TRANSITION_MS;
 
@@ -216,8 +219,10 @@
     }
 
     const winners = [...grouped.values()].map(row => ({ ...row, score: row.score + Math.min(150, row.chartHits * 35) }));
-    winners.sort((a, b) => Number(b.interaction) - Number(a.interaction)
-      || Number(b.explicit) - Number(a.explicit)
+    // A current explicit DOM selection outranks an older click hint. This
+    // prevents the previous asset from winning for several seconds after a tab switch.
+    winners.sort((a, b) => Number(b.explicit) - Number(a.explicit)
+      || Number(b.interaction) - Number(a.interaction)
       || b.directChartHits - a.directChartHits
       || b.chartHits - a.chartHits || b.score - a.score || a.top - b.top || a.left - b.left);
     const first = winners[0] || null;
