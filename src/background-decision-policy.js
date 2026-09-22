@@ -198,6 +198,23 @@ function completeCandles(state = {}) {
   );
 }
 
+function marketIdentity(state = {}, signal = {}) {
+  const expected = marketId(state.asset || '');
+  const focus = marketId(state.diagnostics?.focusedAsset?.asset || '');
+  const confirmed = marketId(state.diagnostics?.marketSession?.confirmedAsset || '');
+  const signalAsset = marketId(signal.asset || '');
+  const candleAsset = marketId(state.currentCandle?.asset || '');
+  if (!expected || !focus || !confirmed) {
+    return { ready: false, reason: 'Ativo visual, sessão e feed ainda não foram confirmados juntos.' };
+  }
+  const rows = [focus, confirmed, signalAsset, candleAsset].filter(Boolean);
+  const mismatch = rows.find(value => value !== expected);
+  if (mismatch) {
+    return { ready: false, reason: `Bloqueio de segurança: gráfico ${focus || '—'}, sessão ${confirmed || '—'} e sinal ${signalAsset || expected} não pertencem ao mesmo ativo.` };
+  }
+  return { ready: true, asset: expected };
+}
+
 function signalDirection(signal = {}) {
   const ui = text(signal.uiState).toUpperCase();
   if (ui.includes('BUY')) return 'BUY';
@@ -241,6 +258,7 @@ function baseDecision(state = {}) {
   const pref = preferences(state);
   const signal = state.signal || {};
   const now = Date.now();
+  const identity = marketIdentity(state, signal);
   const time = exactCasaTradeTime(state);
   const expiration = CasaTradeExpiration(state, time.timeframe || state.analysisTimeframe || state.timeframe);
   const rows = completeCandles(state);
@@ -283,9 +301,14 @@ function baseDecision(state = {}) {
     timeSource: time.source || null,
     timeframe: time.timeframe || normTf(state.analysisTimeframe || state.timeframe),
     secondsRemaining: time.secondsRemaining ?? num(state.diagnostics?.marketClock?.secondsRemaining),
+    marketIdentityReady: identity.ready,
+    marketIdentityReason: identity.reason || null,
     updatedAt: now
   };
 
+  if (!identity.ready) {
+    return { ...common, uiState: 'ANALYZING_MARKET', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: identity.reason };
+  }
   if (!state.asset || num(state.price) == null || !focusReady(state)) {
     return { ...common, uiState: 'ANALYZING_MARKET', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: 'Identificando o ativo e a cotação do gráfico atual.' };
   }
@@ -410,6 +433,8 @@ function signature(value = {}) {
     timeSource: value.timeSource || null,
     timeframe: value.timeframe || null,
     secondsRemaining: value.secondsRemaining ?? null,
+    marketIdentityReady: value.marketIdentityReady !== false,
+    marketIdentityReason: value.marketIdentityReason || null,
     possibleSince: value.possibleSince || null,
     holdRemainingBucket: value.holdRemainingMs == null ? null : Math.ceil(Number(value.holdRemainingMs) / 250),
     reason: value.reason || ''
