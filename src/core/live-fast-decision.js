@@ -1,4 +1,4 @@
-import { getThresholds, getOperationMode } from './analysis.js';
+import { getThresholds, getOperationMode, getSignalPolicy } from './analysis.js';
 const clean = value => String(value ?? '').trim();
 const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
 
@@ -7,13 +7,7 @@ export const FAST_DECISION = Object.freeze({
   maxHitGapMs: 5000
 });
 
-const HIGH_CONFIDENCE = Object.freeze({
-  possibleScore: 60,
-  finalScore: 70,
-  possiblePower: 58,
-  finalPower: 60,
-  minimumEvidence: 2
-});
+
 
 const trackers = new Map();
 const directionTrackers = new Map();
@@ -32,7 +26,7 @@ function directionOf(signal = {}) {
   return buy > sell ? 'BUY' : 'SELL';
 }
 
-function quality(signal = {}, direction = null, thresholds = getThresholds(), confirmationMode = 'SIMPLES') {
+function quality(signal = {}, direction = null, thresholds = getThresholds(), confirmationMode = 'SIMPLES', signalPolicy = getSignalPolicy(thresholds.profile)) {
   if (!direction) return { strong: false, power: 0, reasons: [], setup: null };
   const a = signal.analytics || {};
   const buy = direction === 'BUY';
@@ -59,10 +53,10 @@ function quality(signal = {}, direction = null, thresholds = getThresholds(), co
     if (momentum) reasons.push('momentum');
     if (currentStrength >= thresholds.candleStrength) reasons.push('força');
     return {
-      strong: power >= HIGH_CONFIDENCE.possiblePower && reasons.length >= HIGH_CONFIDENCE.minimumEvidence,
+      strong: power >= signalPolicy.possiblePower && reasons.length >= signalPolicy.minimumConfluence,
       power,
       reasons,
-      setup: reasons.length >= HIGH_CONFIDENCE.minimumEvidence ? reasons.slice(0, 2).join(' + ') : null
+      setup: reasons.length >= signalPolicy.minimumConfluence ? reasons.slice(0, 2).join(' + ') : null
     };
   }
 
@@ -77,10 +71,10 @@ function quality(signal = {}, direction = null, thresholds = getThresholds(), co
   if (rejection) reasons.push('rejeição');
   if (strength) reasons.push('força');
   return {
-    strong: power >= HIGH_CONFIDENCE.possiblePower && reasons.length >= HIGH_CONFIDENCE.minimumEvidence,
+    strong: power >= signalPolicy.possiblePower && reasons.length >= signalPolicy.minimumConfluence,
     power,
     reasons,
-    setup: reasons.length >= HIGH_CONFIDENCE.minimumEvidence ? reasons.slice(0, 2).join(' + ') : null
+    setup: reasons.length >= signalPolicy.minimumConfluence ? reasons.slice(0, 2).join(' + ') : null
   };
 }
 
@@ -176,6 +170,7 @@ function waitFinal(signal, score, reason = '') {
 export function fastLiveDecision(signal = {}, context = {}) {
   if (!signal || typeof signal !== 'object') return signal;
   const thresholds = getThresholds(context.sensitivityProfile || 'MEDIO');
+  const signalPolicy = getSignalPolicy(thresholds.profile);
   const confirmationMode = clean(context.confirmationMode || signal.confirmationMode).toUpperCase() === 'EXIGENTE' ? 'EXIGENTE' : 'SIMPLES';
   const operationMode = getOperationMode(context.operationMode || context.timeframe || 'M1');
   const preSignalWindowSeconds = 30;
@@ -205,7 +200,7 @@ export function fastLiveDecision(signal = {}, context = {}) {
     return { ...signal, state: 'WAIT', direction: null, diagnosis: 'WAIT', uiState: 'BUILDING_PATTERN', provisional: true, phase: 'BUILDING', reason: text, hint: text, fastDecision: true };
   }
 
-  const possibleScore = Math.max(HIGH_CONFIDENCE.possibleScore, thresholds.possibleScore);
+  const possibleScore = signalPolicy.possibleScore;
   if (!rawDirection || score < possibleScore) {
     trackers.delete(key);
     const text = `AGUARDAR • ${seconds}s — confiança insuficiente (score ${Math.round(score)}/${possibleScore}).`;
@@ -234,14 +229,14 @@ export function fastLiveDecision(signal = {}, context = {}) {
     };
   }
   const direction = stabilized.direction;
-  const q = quality(signal, direction, thresholds, confirmationMode);
+  const q = quality(signal, direction, thresholds, confirmationMode, signalPolicy);
 
   if (!q.strong) {
     const heldHits = observe(key, direction, false, at);
     if (seconds <= finalWindowSeconds && heldHits > 0) {
       return possible(signal, direction, score, seconds, q);
     }
-    return waitFinal(signal, score, `confiança insuficiente: poder ${Math.round(q.power)}/${HIGH_CONFIDENCE.possiblePower}, confluências ${q.reasons.length}/${HIGH_CONFIDENCE.minimumEvidence}`);
+    return waitFinal(signal, score, `confiança insuficiente: poder ${Math.round(q.power)}/${signalPolicy.possiblePower}, confluências ${q.reasons.length}/${signalPolicy.minimumConfluence}`);
   }
 
   if (seconds > finalWindowSeconds) {
@@ -249,9 +244,9 @@ export function fastLiveDecision(signal = {}, context = {}) {
     return possible(signal, direction, score, seconds, q);
   }
 
-  const strong = score >= Math.max(HIGH_CONFIDENCE.finalScore, thresholds.confirmScore)
-    && q.power >= HIGH_CONFIDENCE.finalPower
-    && q.reasons.length >= HIGH_CONFIDENCE.minimumEvidence;
+  const strong = score >= signalPolicy.finalScore
+    && q.power >= signalPolicy.finalPower
+    && q.reasons.length >= signalPolicy.minimumConfluence;
   const hits = observe(key, direction, strong, at);
   if (strong && hits >= FAST_DECISION.confirmHits) return enter(signal, direction, score, seconds, q);
 

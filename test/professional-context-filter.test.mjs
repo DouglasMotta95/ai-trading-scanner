@@ -21,8 +21,8 @@ test('trend alone cannot become an actionable signal', () => {
   const fast = read('src/core/live-fast-decision.js');
   const policy = read('src/background-decision-policy.js');
 
-  assert.match(analysis, /positionReady = breakout \|\| rejection \|\| nearKeyLevel/);
-  assert.match(analysis, /triggerReady = breakout \|\| rejection \|\| continuation/);
+  assert.match(analysis, /positionReady = .*location >= policy\.minimumLocation/);
+  assert.match(analysis, /triggerReady = .*trigger >= policy\.minimumTrigger/);
   assert.match(central, /professional\.contextReady !== true \|\| professional\.triggerReady !== true/);
   assert.match(fast, /professionalReady = professional\.contextReady === true && professional\.triggerReady === true/);
   assert.match(policy, /professionalContextReady/);

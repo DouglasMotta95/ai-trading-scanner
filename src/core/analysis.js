@@ -16,7 +16,7 @@ export const INDICATOR_SCORE_WEIGHTS = Object.freeze({
 const THRESHOLD_PROFILES = Object.freeze({
   RIGIDO: Object.freeze({
     profile: 'RIGIDO',
-    label: 'RÍGIDO',
+    label: 'MAIS SELETIVO',
     minimumClosedCandles: 2,
     preferredClosedCandles: 3,
     minimumPatternRows: 3,
@@ -30,7 +30,7 @@ const THRESHOLD_PROFILES = Object.freeze({
   }),
   MEDIO: Object.freeze({
     profile: 'MEDIO',
-    label: 'MÉDIO',
+    label: 'EQUILIBRADO',
     minimumClosedCandles: 2,
     preferredClosedCandles: 3,
     minimumPatternRows: 3,
@@ -44,7 +44,7 @@ const THRESHOLD_PROFILES = Object.freeze({
   }),
   SOLTO: Object.freeze({
     profile: 'SOLTO',
-    label: 'SOLTO',
+    label: 'MAIS SINAIS',
     minimumClosedCandles: 2,
     preferredClosedCandles: 3,
     minimumPatternRows: 3,
@@ -54,13 +54,59 @@ const THRESHOLD_PROFILES = Object.freeze({
     candleStrength: 50,
     rejectionStrength: 40,
     entryWindowSeconds: 15,
-    holdSeconds: 2
+    holdSeconds: 1
+  })
+});
+
+const SIGNAL_POLICIES = Object.freeze({
+  RIGIDO: Object.freeze({
+    possibleScore: 64,
+    finalScore: 74,
+    possiblePower: 60,
+    finalPower: 63,
+    minimumConfluence: 3,
+    minimumStructure: 13,
+    minimumLocation: 10,
+    minimumTrigger: 10
+  }),
+  MEDIO: Object.freeze({
+    possibleScore: 56,
+    finalScore: 66,
+    possiblePower: 56,
+    finalPower: 59,
+    minimumConfluence: 2,
+    minimumStructure: 10,
+    minimumLocation: 7,
+    minimumTrigger: 8
+  }),
+  SOLTO: Object.freeze({
+    possibleScore: 50,
+    finalScore: 60,
+    possiblePower: 52,
+    finalPower: 55,
+    minimumConfluence: 2,
+    minimumStructure: 8,
+    minimumLocation: 7,
+    minimumTrigger: 8
   })
 });
 
 export function getThresholds(profile = 'MEDIO') {
   const raw = String(profile ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toUpperCase();
   return THRESHOLD_PROFILES[raw] || THRESHOLD_PROFILES.MEDIO;
+}
+
+export function getSignalPolicy(profile = 'MEDIO') {
+  const thresholds = getThresholds(profile);
+  const policy = SIGNAL_POLICIES[thresholds.profile] || SIGNAL_POLICIES.MEDIO;
+  return Object.freeze({
+    profile: thresholds.profile,
+    label: thresholds.label,
+    possibleScore: policy.possibleScore,
+    finalScore: policy.finalScore,
+    holdSeconds: thresholds.holdSeconds,
+    ...policy
+  });
 }
 
 export function getOperationMode(value = 'M1') {
@@ -428,6 +474,7 @@ export function recentPriceAction(candles = [], profile = 'MEDIO') {
 
 
 function professionalContextScore(recent = {}, indicators = {}, thresholds = getThresholds()) {
+  const policy = getSignalPolicy(thresholds.profile);
   const direction = ['BUY', 'SELL'].includes(recent?.direction) ? recent.direction : null;
   const metrics = recent?.metrics || {};
   if (!direction) {
@@ -507,9 +554,9 @@ function professionalContextScore(recent = {}, indicators = {}, thresholds = get
   if (Number(metrics.lossOfStrength || 0) < 55) quality += 2;
   quality = clamp(quality, 0, 5);
 
-  const positionReady = breakout || rejection || nearKeyLevel;
-  const triggerReady = breakout || rejection || continuation;
-  const contextReady = structure >= 10 && positionReady;
+  const positionReady = (breakout || rejection || nearKeyLevel) && location >= policy.minimumLocation;
+  const triggerReady = (breakout || rejection || continuation) && trigger >= policy.minimumTrigger;
+  const contextReady = structure >= policy.minimumStructure && positionReady;
   const score = clamp(structure + location + trigger + momentum + indicatorScore + quality);
   const reasons = [
     `Estrutura ${Math.round(structure)}/25`,
@@ -534,6 +581,7 @@ function professionalContextScore(recent = {}, indicators = {}, thresholds = get
     nearKeyLevel,
     distanceToLevel: Number.isFinite(distanceToLevel) ? distanceToLevel : null,
     directionalPower,
+    profilePolicy: policy,
     blocks: {
       structure,
       location,

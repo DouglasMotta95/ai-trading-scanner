@@ -1,5 +1,5 @@
 import { CandleBuilder, TIMEFRAMES } from './candles.js';
-import { analyzeCandles, getThresholds } from './analysis.js';
+import { analyzeCandles, getThresholds, getSignalPolicy } from './analysis.js';
 import { marketRegime } from './market-regime.js';
 
 const builders = new Map();
@@ -158,6 +158,7 @@ function observePossible(tracker, direction, score, at, thresholds) {
 
 function confirmationQuality(result = {}, direction = null, thresholds = getThresholds()) {
   if (!direction || !result?.recent?.ready) return false;
+  const signalPolicy = getSignalPolicy(thresholds.profile);
   const metrics = result.analytics || result.recent?.metrics || {};
   const professional = metrics.professional || {};
   if (professional.contextReady !== true || professional.triggerReady !== true) return false;
@@ -171,11 +172,12 @@ function confirmationQuality(result = {}, direction = null, thresholds = getThre
   const trendAligned = Number(result.recent?.agreement || 0) >= .7
     && metrics.momentumDirection === direction
     && Number(metrics.momentumScore || 0) >= 45;
-  return directionalPower >= 50 && (candleStrong || rejected || broke || continuation || trendAligned);
+  return directionalPower >= signalPolicy.finalPower && (candleStrong || rejected || broke || continuation || trendAligned);
 }
 
 function rangeOverrideQuality(result = {}, direction = null, thresholds = getThresholds()) {
   if (!direction || !result?.recent?.ready) return false;
+  const signalPolicy = getSignalPolicy(thresholds.profile);
   const metrics = result.analytics || result.recent?.metrics || {};
   const professional = metrics.professional || {};
   if (professional.contextReady !== true || professional.triggerReady !== true) return false;
@@ -187,7 +189,7 @@ function rangeOverrideQuality(result = {}, direction = null, thresholds = getThr
     && Number(result.recent?.continuationScore || 0) >= 68
     && metrics.momentumDirection === direction
     && Number(metrics.momentumScore || 0) >= 55;
-  return directionalPower >= 50 && (broke || rejected || continuation);
+  return directionalPower >= signalPolicy.finalPower && (broke || rejected || continuation);
 }
 
 function observeConfirmation(tracker, result, direction, score, at, thresholds) {
@@ -312,6 +314,13 @@ function stabilitySnapshot(tracker = {}) {
 
 export function processSnapshot(snapshot = {}, state = {}) {
   const thresholds = getThresholds(state.analystPreferences?.sensitivityProfile || 'MEDIO');
+  const signalPolicy = getSignalPolicy(thresholds.profile);
+  const gateThresholds = {
+    ...thresholds,
+    possibleScore: signalPolicy.possibleScore,
+    confirmScore: signalPolicy.finalScore,
+    finalScore: signalPolicy.finalScore
+  };
   const price = num(snapshot.price);
   if (!snapshot.asset || price == null) {
     return {
@@ -365,7 +374,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
   const score = Number(liveResult.score || 0);
   const expiration = snapshot.targetExpiration || state.targetExpiration || snapshot.expiration || state.expiration || null;
   const tracker = trackerFor(key, currentBucket, sampleAt);
-  const possibleDirection = observePossible(tracker, direction, score, sampleAt, thresholds);
+  const possibleDirection = observePossible(tracker, direction, score, sampleAt, gateThresholds);
   const common = {
     timeframe: analysisTimeframe,
     expiration,
@@ -446,13 +455,13 @@ export function processSnapshot(snapshot = {}, state = {}) {
   }
 
   if (secondsRemaining <= thresholds.entryWindowSeconds) {
-    const rangeBlocked = regime?.type === 'range' && !rangeOverrideQuality(liveResult, direction, thresholds);
+    const rangeBlocked = regime?.type === 'range' && !rangeOverrideQuality(liveResult, direction, gateThresholds);
     if (rangeBlocked) {
       tracker.confirmDirection = null;
       tracker.confirmHits = 0;
       tracker.lastConfirmAt = null;
     }
-    const canConfirm = !rangeBlocked && observeConfirmation(tracker, liveResult, direction, score, sampleAt, thresholds);
+    const canConfirm = !rangeBlocked && observeConfirmation(tracker, liveResult, direction, score, sampleAt, gateThresholds);
     if (canConfirm) {
       const latestDecision = {
         bucket: currentBucket,

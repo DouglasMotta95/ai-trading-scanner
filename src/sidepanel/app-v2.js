@@ -658,11 +658,11 @@ function syncSettingsUi(state = null) {
   if ($('overlayToggle')) $('overlayToggle').checked = !!prefs.overlayEnabled;
   if ($('geminiToggle')) $('geminiToggle').checked = prefs.geminiEnabled !== false;
   if ($('signalSensitivityProfile')) $('signalSensitivityProfile').value = ['RIGIDO','MEDIO','SOLTO'].includes(prefs.sensitivityProfile) ? prefs.sensitivityProfile : 'MEDIO';
-  if ($('signalHoldDisplay')) $('signalHoldDisplay').textContent = prefs.sensitivityProfile === 'RIGIDO' ? '3 s' : '2 s';
+  if ($('signalHoldDisplay')) $('signalHoldDisplay').textContent = prefs.sensitivityProfile === 'RIGIDO' ? '3 s' : prefs.sensitivityProfile === 'SOLTO' ? '1 s' : '2 s';
   if ($('analystMode')) $('analystMode').value = prefs.analystMode === 'A_PLUS' ? 'A_PLUS' : 'NORMAL';
   if ($('notificationToggle')) $('notificationToggle').checked = prefs.notificationsEnabled !== false;
   if ($('alertLevel')) $('alertLevel').value = ['off','discrete','strong'].includes(prefs.alertLevel) ? prefs.alertLevel : DEFAULT_PREFS.alertLevel;
-  if ($('holdSeconds')) $('holdSeconds').value = String(prefs.sensitivityProfile === 'RIGIDO' ? 3 : 2);
+  if ($('holdSeconds')) $('holdSeconds').value = String(prefs.sensitivityProfile === 'RIGIDO' ? 3 : prefs.sensitivityProfile === 'SOLTO' ? 1 : 2);
   if ($('possibleSoundToggle')) $('possibleSoundToggle').checked = prefs.alertLevel === 'discrete' || prefs.alertLevel === 'strong';
   if ($('confirmSoundToggle')) $('confirmSoundToggle').checked = prefs.alertLevel === 'strong';
   if ($('expectedAsset')) $('expectedAsset').value = clean(prefs.expectedAsset || '');
