@@ -95,6 +95,10 @@ function activeLicense(state = {}) {
 
 function baseHandshake(state = {}) {
   const focus = state.diagnostics?.focusedAsset || null;
+  const ambiguousPassive = Number(focus?.ambiguityCount || 0) > 0
+    && focus?.directChart !== true
+    && focus?.explicit !== true
+    && focus?.interactionHint !== true;
   return activeLicense(state)
     && state.connection === 'online'
     && !!state.asset
@@ -102,6 +106,8 @@ function baseHandshake(state = {}) {
     && focus?.reliable === true
     && focus?.chartScoped === true
     && focus?.trustedChartFrame === true
+    && focus?.visualAuthority !== false
+    && !ambiguousPassive
     && sameMarket(focus?.asset, state.asset)
     && Number(state.lastSeen || 0) > 0
     && Date.now() - Number(state.lastSeen) < 7000;
