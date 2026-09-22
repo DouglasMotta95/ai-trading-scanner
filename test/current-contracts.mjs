@@ -277,3 +277,37 @@ export function registerVideo15292Contracts(label='video-15292') {
     assert.match(quality, /ATIVO EM OBSERVAÇÃO/);
   });
 }
+
+
+export function registerVideo15319Contracts(label='video-15319') {
+  test(label + ': stale visual interaction cannot pin the previous asset', () => {
+    const protocol = read('src/content/focused-asset-protocol.js');
+    const focus = read('src/content/focused-asset-v2.js');
+    const market = read('src/background-market-session.js');
+    assert.match(protocol, /explicitTransition && age <= 2200/);
+    assert.match(focus, /INTERACTION_TRANSITION_MS = 1800/);
+    assert.match(focus, /Number\(b\.explicit\) - Number\(a\.explicit\)[\s\S]*Number\(b\.interaction\) - Number\(a\.interaction\)/);
+    assert.match(market, /selectionLock\.at\) < 3500/);
+  });
+
+  test(label + ': expiration is read from embedded DOM and reversed canvas order', () => {
+    const observer = read('src/content/casatrade-ui-observer-v2.js');
+    const canvas = read('src/content/canvas-probe.js');
+    assert.doesNotMatch(observer, /window !== window\.top/);
+    assert.match(canvas, /const reversed = raw\.match/);
+    assert.match(canvas, /Number\(m\[1\]\) \* 60/);
+  });
+
+  test(label + ': asset transition does not masquerade as a platform disconnect', () => {
+    const market = read('src/background-market-session.js');
+    assert.match(market, /const platformStillOnline/);
+    assert.match(market, /connection: platformStillOnline \? 'online' : 'connecting'/);
+    assert.match(market, /next\.price != null \|\| keepPlatformOnline \? 'online' : 'connecting'/);
+  });
+
+  test(label + ': radar copy is explicitly advisory', () => {
+    const radar = read('src/sidepanel/market-radar-ui.js');
+    assert.match(radar, /RADAR: MELHOR CENÁRIO/);
+    assert.match(radar, /O Radar não troca o modo automaticamente/);
+  });
+}
