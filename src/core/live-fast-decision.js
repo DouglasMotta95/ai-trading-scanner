@@ -114,14 +114,23 @@ function stabilizeDirection(key, rawDirection, at, score) {
 }
 
 function observe(key, direction, strong, at) {
+  const old = trackers.get(key);
   if (!strong || !direction) {
+    // Match the central decision hysteresis: one weak sample must not erase a
+    // valid first final hit. This prevents POSSÍVEL/AGUARDAR flicker at 5..1s.
+    if (old?.direction && Number(old.hits || 0) > 0 && at - Number(old.at || 0) <= FAST_DECISION.maxHitGapMs) {
+      const weakHits = Number(old.weakHits || 0) + 1;
+      if (weakHits < 2) {
+        trackers.set(key, { ...old, weakHits, lastWeakAt: at });
+        return Number(old.hits || 0);
+      }
+    }
     trackers.delete(key);
     return 0;
   }
-  const old = trackers.get(key);
   const same = old?.direction === direction && at - Number(old?.at || 0) <= FAST_DECISION.maxHitGapMs;
   const hits = same ? Number(old.hits || 0) + 1 : 1;
-  trackers.set(key, { direction, hits, at });
+  trackers.set(key, { direction, hits, at, weakHits: 0 });
   return hits;
 }
 
@@ -223,7 +232,10 @@ export function fastLiveDecision(signal = {}, context = {}) {
   const q = quality(signal, direction, thresholds, confirmationMode);
 
   if (!q.strong) {
-    observe(key, direction, false, at);
+    const heldHits = observe(key, direction, false, at);
+    if (seconds <= finalWindowSeconds && heldHits > 0) {
+      return possible(signal, direction, score, seconds, q);
+    }
     return waitFinal(signal, score, `confiança insuficiente: poder ${Math.round(q.power)}/${HIGH_CONFIDENCE.possiblePower}, confluências ${q.reasons.length}/${HIGH_CONFIDENCE.minimumEvidence}`);
   }
 
