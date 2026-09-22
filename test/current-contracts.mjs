@@ -178,3 +178,33 @@ export function registerAudioContracts(label='audio') {
     assert.match(panel, /function play\(kind\)/);
   });
 }
+
+
+export function registerVideo15290Contracts(label='video-15290') {
+  test(label + ': final candidate survives one weak tick in both decision paths', () => {
+    const central = read('src/core/orchestrator.js');
+    const fast = read('src/core/live-fast-decision.js');
+    assert.match(central, /FINAL_WEAK_HITS = 2/);
+    assert.match(central, /cycle\.finalWeakHits/);
+    assert.match(fast, /weakHits < 2/);
+    assert.match(fast, /heldHits > 0/);
+  });
+  test(label + ': verified expiration survives a short CasaTrade control rerender', () => {
+    const controls = read('src/background-platform-controls.js');
+    const panel = read('src/sidepanel/app-v2.js');
+    assert.match(controls, /now - realExpirationAt < 15000/);
+    assert.match(panel, /Date\.now\(\) - realAt < 15000/);
+  });
+  test(label + ': exact countdown UI rolls over without freezing at zero', () => {
+    const panel = read('src/sidepanel/app-v2.js');
+    assert.match(panel, /duration \+ projected/);
+    assert.match(panel, /elapsed <= 4/);
+    assert.match(panel, /if \(!exactClockReady\(state\)\) return null/);
+  });
+  test(label + ': automatic refresh preserves an owned live session through a brief reader gap', () => {
+    const control = read('src/background-control.js');
+    assert.match(control, /sessionStillOwned/);
+    assert.match(control, /briefReaderGap/);
+    assert.match(control, /< 12000/);
+  });
+}
