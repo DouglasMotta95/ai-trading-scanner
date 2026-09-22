@@ -44,3 +44,14 @@ test('package remains manual and has one runtime processSnapshot owner', () => {
   assert.doesNotMatch(handoff, /\.click\s*\(/);
   assert.doesNotMatch(handoff, /new\s+MouseEvent|dispatchEvent\s*\(/);
 });
+
+
+test('changing rhythm or confirmation mode cannot reuse the previous decision cycle', () => {
+  const background = read('src/background.js');
+  assert.match(background, /confirmationMode,/);
+  assert.match(background, /analysisContextChanged/);
+  assert.match(background, /decisionCycle: null/);
+  assert.match(background, /professionalDecision: null/);
+  assert.match(background, /aiAudit: null/);
+  assert.match(background, /reconcileSignalHistory\(analysisState, next, snapshot\)/);
+});
