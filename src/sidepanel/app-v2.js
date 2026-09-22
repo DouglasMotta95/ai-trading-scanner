@@ -46,12 +46,28 @@ function transitionAsset(state = {}) {
 }
 function marketDataReady(state = {}) {
   const session = sessionInfo(state);
+  const signal = state.signal || {};
   const rows = (Array.isArray(state.candles) ? state.candles : []).filter(row => [row?.open,row?.high,row?.low,row?.close].every(value => num(value) != null));
+  const signalMatches = !signal.asset || sameMarket(signal.asset, state.asset);
+  const candleMatches = !state.currentCandle?.asset || sameMarket(state.currentCandle.asset, state.asset);
   return session.dataReady === true
     && !!state.asset
     && sameMarket(session.confirmedAsset, state.asset)
+    && signalMatches
+    && candleMatches
     && num(state.price) != null
     && rows.length >= 2;
+}
+
+function marketIdentityReady(state = {}) {
+  const session = sessionInfo(state);
+  const focus = state.diagnostics?.focusedAsset || {};
+  const signal = state.signal || {};
+  const asset = marketId(state.asset || '');
+  if (!asset || !sameMarket(session.confirmedAsset, asset) || !sameMarket(focus.asset, asset)) return false;
+  if (signal.asset && !sameMarket(signal.asset, asset)) return false;
+  if (state.currentCandle?.asset && !sameMarket(state.currentCandle.asset, asset)) return false;
+  return true;
 }
 function expirationObservation(state = {}) {
   const controls = state.platformControls || {};
@@ -289,6 +305,7 @@ function gateKind(state = {}) {
 
 function decisionModel(state = {}) {
   if (!activeLicense(state)) return { uiState: 'WAIT', title: 'AGUARDAR', text: 'AGUARDAR', sub: 'Ative o acesso para iniciar a leitura.', tone: 'waiting', reason: 'Aguardando licença ativa.', score: 0, actionable: false };
+  if (!marketIdentityReady(state)) return { uiState: 'ANALYZING_MARKET', title: 'ATUALIZANDO ATIVO', text: 'AGUARDAR', sub: 'Bloqueio de segurança: confirmando que gráfico, sessão, velas e sinal pertencem ao mesmo ativo.', tone: 'waiting', reason: 'Ativo técnico divergiu do gráfico atual da CasaTrade.', score: 0, actionable: false };
   const pending = transitionAsset(state);
   if (pending) return { uiState: 'ANALYZING_MARKET', title: 'ATUALIZANDO ATIVO', text: `ATUALIZANDO PARA ${pending}`, sub: 'Limpando dados anteriores e confirmando preço + velas do novo ativo.', tone: 'waiting', reason: 'Troca de ativo em validação.', score: 0, actionable: false };
   if (!marketDataReady(state) || !focusReady(state)) return { uiState: 'ANALYZING_MARKET', title: 'AGUARDAR', text: 'AGUARDAR', sub: 'Confirmando ativo, preço e velas reais.', tone: 'waiting', reason: 'Identificando o gráfico atual da CasaTrade.', score: 0, actionable: false };
