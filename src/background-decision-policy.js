@@ -334,15 +334,19 @@ function baseDecision(state = {}) {
     };
   }
   if (!finalQuality) {
+    // Inside the final window a still-valid technical candidate must remain
+    // visible as POSSÍVEL while the central engine waits for its second strong
+    // confirmation. This is presentation hysteresis only: it never makes the
+    // signal actionable and never bypasses the final quality gate.
     return {
       ...common,
-      uiState: 'WAIT',
-      direction: null,
+      uiState: direction === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL',
+      direction,
       actionable: false,
       alert: 'silent',
-      possibleSince: null,
-      holdRemainingMs: 0,
-      reason: `AGUARDAR — confiança final insuficiente para ${side.toLowerCase()}.`
+      possibleSince,
+      holdRemainingMs: Math.max(0, holdMs - heldFor),
+      reason: `${side} — PRÉ-SINAL EM CONFIRMAÇÃO • aguardando a segunda leitura forte da janela final.`
     };
   }
 
