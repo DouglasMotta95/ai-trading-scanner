@@ -20,9 +20,9 @@ const THRESHOLD_PROFILES = Object.freeze({
     minimumClosedCandles: 2,
     preferredClosedCandles: 3,
     minimumPatternRows: 3,
-    possibleScore: 64,
-    confirmScore: 74,
-    finalScore: 74,
+    possibleScore: 44,
+    confirmScore: 58,
+    finalScore: 58,
     candleStrength: 62,
     rejectionStrength: 50,
     entryWindowSeconds: 10,
@@ -34,9 +34,9 @@ const THRESHOLD_PROFILES = Object.freeze({
     minimumClosedCandles: 2,
     preferredClosedCandles: 3,
     minimumPatternRows: 3,
-    possibleScore: 56,
-    confirmScore: 66,
-    finalScore: 66,
+    possibleScore: 40,
+    confirmScore: 52,
+    finalScore: 52,
     candleStrength: 55,
     rejectionStrength: 45,
     entryWindowSeconds: 12,
@@ -48,9 +48,9 @@ const THRESHOLD_PROFILES = Object.freeze({
     minimumClosedCandles: 2,
     preferredClosedCandles: 3,
     minimumPatternRows: 3,
-    possibleScore: 50,
-    confirmScore: 60,
-    finalScore: 60,
+    possibleScore: 36,
+    confirmScore: 48,
+    finalScore: 48,
     candleStrength: 50,
     rejectionStrength: 40,
     entryWindowSeconds: 15,
@@ -60,6 +60,8 @@ const THRESHOLD_PROFILES = Object.freeze({
 
 const SIGNAL_POLICIES = Object.freeze({
   RIGIDO: Object.freeze({
+    possibleScore: 64,
+    finalScore: 74,
     possiblePower: 60,
     finalPower: 63,
     minimumConfluence: 3,
@@ -68,6 +70,8 @@ const SIGNAL_POLICIES = Object.freeze({
     minimumTrigger: 10
   }),
   MEDIO: Object.freeze({
+    possibleScore: 56,
+    finalScore: 66,
     possiblePower: 56,
     finalPower: 59,
     minimumConfluence: 2,
@@ -76,6 +80,8 @@ const SIGNAL_POLICIES = Object.freeze({
     minimumTrigger: 8
   }),
   SOLTO: Object.freeze({
+    possibleScore: 50,
+    finalScore: 60,
     possiblePower: 52,
     finalPower: 55,
     minimumConfluence: 2,
@@ -96,8 +102,8 @@ export function getSignalPolicy(profile = 'MEDIO') {
   return Object.freeze({
     profile: thresholds.profile,
     label: thresholds.label,
-    possibleScore: thresholds.possibleScore,
-    finalScore: thresholds.finalScore,
+    possibleScore: policy.possibleScore,
+    finalScore: policy.finalScore,
     holdSeconds: thresholds.holdSeconds,
     ...policy
   });
