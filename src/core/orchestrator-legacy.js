@@ -159,6 +159,8 @@ function observePossible(tracker, direction, score, at, thresholds) {
 function confirmationQuality(result = {}, direction = null, thresholds = getThresholds()) {
   if (!direction || !result?.recent?.ready) return false;
   const metrics = result.analytics || result.recent?.metrics || {};
+  const professional = metrics.professional || {};
+  if (professional.contextReady !== true || professional.triggerReady !== true) return false;
   const directionalPower = direction === 'BUY' ? Number(metrics.buyPower || 0) : Number(metrics.sellPower || 0);
   const candleStrong = Number(metrics.currentStrength || 0) >= thresholds.candleStrength;
   const rejected = result.recent?.rejection === direction
@@ -175,6 +177,8 @@ function confirmationQuality(result = {}, direction = null, thresholds = getThre
 function rangeOverrideQuality(result = {}, direction = null, thresholds = getThresholds()) {
   if (!direction || !result?.recent?.ready) return false;
   const metrics = result.analytics || result.recent?.metrics || {};
+  const professional = metrics.professional || {};
+  if (professional.contextReady !== true || professional.triggerReady !== true) return false;
   const directionalPower = direction === 'BUY' ? Number(metrics.buyPower || 0) : Number(metrics.sellPower || 0);
   const broke = result.recent?.breakout === direction;
   const rejected = result.recent?.rejection === direction
@@ -214,6 +218,11 @@ function analyticsSummary(result = {}, direction = null) {
   if (!direction) return 'Mercado sem domínio claro entre compra e venda.';
   const power = direction === 'BUY' ? Number(metrics.buyPower || 0) : Number(metrics.sellPower || 0);
   const parts = [`poder ${direction === 'BUY' ? 'comprador' : 'vendedor'} ${Math.round(power)}%`];
+  const professional = metrics.professional || {};
+  if (professional.blocks) {
+    parts.push(`estrutura ${Math.round(Number(professional.blocks.structure || 0))}/25`);
+    parts.push(`gatilho ${Math.round(Number(professional.blocks.trigger || 0))}/25`);
+  }
   if (Number(metrics.currentStrength || 0) > 0) parts.push(`força da vela ${Math.round(Number(metrics.currentStrength || 0))}%`);
   if (result.recent?.rejection === direction) parts.push(`rejeição ${Math.round(Number(metrics.rejectionStrength || 0))}%`);
   if (result.recent?.breakout === direction) parts.push('rompimento recente');
