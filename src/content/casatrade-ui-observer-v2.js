@@ -124,20 +124,21 @@
     for (const el of nodes()) {
       if (!visible(el)) continue;
       const own = fold(text(el));
-      const ctx = neighborhood(el, 2);
+      const ctx = neighborhood(el, 4);
       const folded = fold(ctx);
       if (!/expira|expiry|expiration/.test(folded)) continue;
 
       // Strong evidence: the visible Expiração label and its value are in the
       // same local card/container. This is exactly the tablet layout seen in
       // the live video ("Expiração" + "1 min"/"5 seg").
-      const strong = ctx.match(/(?:expira(?:cao|ção)?|expiry|expiration)[^0-9]{0,48}(\d{1,4})\s*(s|seg|segundo|segundos|m|min|minuto|minutos)\b/i);
+      const strong = ctx.match(/(?:expira(?:cao|ção)?|expiry|expiration)[^0-9]{0,90}(\d{1,4})\s*(s|seg|segundo|segundos|m|min|minuto|minutos)\b/i);
+      const reversed = ctx.match(/\b(\d{1,4})\s*(s|seg|segundo|segundos|m|min|minuto|minutos)\b[^0-9]{0,90}(?:expira(?:cao|ção)?|expiry|expiration)/i);
       // Weak fallback is allowed only on the label element itself, never from a
       // broad ancestor that may contain unrelated durations.
-      const weak = !strong && /expira|expiry|expiration/.test(own)
+      const weak = !strong && !reversed && /expira|expiry|expiration/.test(own)
         ? ctx.match(/(\d{1,4})\s*(s|seg|segundo|segundos|m|min|minuto|minutos)\b/i)
         : null;
-      const m = strong || weak;
+      const m = strong || reversed || weak;
       if (!m) continue;
 
       const n = Number(m[1]);
@@ -146,8 +147,8 @@
       const expiration = /^(m|min|minuto|minutos)$/.test(unit) ? `${n * 60}s` : `${n}s`;
       rows.push({
         expiration,
-        score: strong ? 96 : 68,
-        evidence: strong ? 'explicit-expiration-card' : 'expiration-label-near-value'
+        score: strong || reversed ? 96 : 68,
+        evidence: strong ? 'explicit-expiration-card' : reversed ? 'explicit-expiration-card-reversed' : 'expiration-label-near-value'
       });
     }
     rows.sort((a, b) => b.score - a.score);
