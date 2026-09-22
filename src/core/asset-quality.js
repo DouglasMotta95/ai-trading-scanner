@@ -133,7 +133,10 @@ export function assessAssetQuality(state = {}) {
 
   if (lateral || compressed) {
     const context = compressed ? 'MERCADO COMPRIMIDO' : 'MERCADO LATERAL';
-    const hasLocalSetup = activeSetup && Number(signal.analysisScore ?? signal.score ?? 0) >= 44;
+    // Keep the label semantically consistent with the numeric quality. A
+    // lateral/compressed market may still deserve caution, but a 68+ quality
+    // score must never be presented as "ATIVO RUIM PARA OPERAR".
+    const hasLocalSetup = (activeSetup && Number(signal.analysisScore ?? signal.score ?? 0) >= 44) || score >= 68;
     return {
       status: hasLocalSetup ? 'WATCH' : 'POOR', tone: hasLocalSetup ? 'warn' : 'bad',
       label: hasLocalSetup ? 'ATIVO EM OBSERVAÇÃO' : 'ATIVO RUIM PARA OPERAR',
