@@ -403,7 +403,7 @@
       'AI Trading Scanner — RELATÓRIO DE DESEMPENHO DOS SINAIS',
       `Gerado em: ${new Date().toISOString()}`,
       `Modo ativo: ${clean(state.analystPreferences?.operationMode || 'M1', 8)}`,
-      `Perfil ativo: ${clean(state.analystPreferences?.sensitivityLabel || state.analystPreferences?.sensitivityProfile || 'MÉDIO', 24)}`,
+      `Ritmo de sinais: ${clean(state.analystPreferences?.sensitivityLabel || state.analystPreferences?.sensitivityProfile || 'EQUILIBRADO', 24)}`,
       `Confirmação ativa: ${clean(state.analystPreferences?.confirmationMode || 'SIMPLES', 16).toUpperCase() === 'EXIGENTE' ? 'EXIGENTE' : 'SIMPLES'}`,
       `Payout M1: ${pct(payouts.M1)} | equilíbrio M1: ${pct(breakEvenByMode.M1)}`,
       `Payout M5: ${pct(payouts.M5)} | equilíbrio M5: ${pct(breakEvenByMode.M5)}`,
