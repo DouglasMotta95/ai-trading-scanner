@@ -39,7 +39,7 @@ test('package remains manual and has one runtime processSnapshot owner', () => {
   const background = read('src/background.js');
   const market = read('src/background-market-session.js');
   const handoff = read('src/content/trade-handoff-v2.js');
-  assert.match(background, /processSnapshot\(snapshot, current\)/);
+  assert.match(background, /processSnapshot\(snapshot, analysisState\)/);
   assert.doesNotMatch(market, /processSnapshot\(/);
   assert.doesNotMatch(handoff, /\.click\s*\(/);
   assert.doesNotMatch(handoff, /new\s+MouseEvent|dispatchEvent\s*\(/);
