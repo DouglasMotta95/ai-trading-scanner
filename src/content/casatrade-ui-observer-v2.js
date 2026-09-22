@@ -4,7 +4,10 @@
 
   const host = String(location.hostname || '').toLowerCase().replace(/\.$/, '');
   const allowed = value => value === 'casatrade.com' || value.endsWith('.casatrade.com') || value === 'casatrade.io' || value.endsWith('.casatrade.io') || value === 'casatraders.online' || value.endsWith('.casatraders.online') || value === 'ivcasatraders.online' || value.endsWith('.ivcasatraders.online');
-  if (!allowed(host) || window !== window.top) return;
+  // Expiração/tempo can live inside the embedded trader frame on tablet.
+  // The manifest already injects this observer into all trusted CasaTrade
+  // frames, so do not discard child-frame observations here.
+  if (!allowed(host)) return;
   const sendMessage = globalThis.__ATS_SEND_MESSAGE__;
   if (typeof sendMessage !== 'function') return;
 
