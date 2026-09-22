@@ -10,7 +10,8 @@ import { getThresholds } from './analysis.js';
 // one bounded decision for each target candle: ENTER BUY, ENTER SELL or WAIT.
 const CONFIRM_HITS = 2;
 const DECISION_HIT_GAP_MS = 7000;
-const POSSIBLE_DROP_HITS = 2;
+const POSSIBLE_DROP_HITS = 3;
+const DECISION_DROP_HITS = 3;
 const cycles = new Map();
 const wrapperCompletedDecisions = new Map();
 const WRAPPER_ROW_PREFIX = 'wrapper-cycle:';
@@ -258,9 +259,18 @@ function seedCycle(key, snapshot, signal, state = {}) {
 
 function observeDecision(cycle, direction, qualifies, at) {
   if (!qualifies || !direction) {
+    const candidateStillSame = !direction || cycle.candidateDirection === direction;
+    const recentHit = cycle.lastHitAt != null && at - Number(cycle.lastHitAt) <= DECISION_HIT_GAP_MS;
+    if (cycle.candidateDirection && Number(cycle.confirmHits || 0) > 0 && candidateStillSame && recentHit) {
+      cycle.decisionWeakHits = Number(cycle.decisionWeakHits || 0) + 1;
+      // A short mobile/DOM jitter must not erase the first valid final-window
+      // confirmation. Two weak samples are tolerated, but never counted as hits.
+      if (cycle.decisionWeakHits < DECISION_DROP_HITS) return false;
+    }
     cycle.candidateDirection = null;
     cycle.confirmHits = 0;
     cycle.lastHitAt = null;
+    cycle.decisionWeakHits = 0;
     return false;
   }
   const same = cycle.candidateDirection === direction
@@ -269,6 +279,7 @@ function observeDecision(cycle, direction, qualifies, at) {
   cycle.candidateDirection = direction;
   cycle.confirmHits = same ? Number(cycle.confirmHits || 0) + 1 : 1;
   cycle.lastHitAt = at;
+  cycle.decisionWeakHits = 0;
   return cycle.confirmHits >= CONFIRM_HITS;
 }
 
