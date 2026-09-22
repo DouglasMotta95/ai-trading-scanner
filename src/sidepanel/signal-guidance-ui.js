@@ -17,15 +17,25 @@ const sameMarket = (a, b) => !!marketId(a) && marketId(a) === marketId(b);
 function marketReady(state = {}) {
   const session = state.diagnostics?.marketSession || {};
   const focus = state.diagnostics?.focusedAsset || {};
+  const signal = state.signal || {};
   const rows = (Array.isArray(state.candles) ? state.candles : [])
     .filter(row => [row?.open,row?.high,row?.low,row?.close].every(value => num(value) != null));
+  const ambiguousPassive = Number(focus.ambiguityCount || 0) > 0
+    && focus.explicit !== true
+    && focus.interactionHint !== true;
+  const signalMatches = !signal.asset || sameMarket(signal.asset, state.asset);
+  const candleMatches = !state.currentCandle?.asset || sameMarket(state.currentCandle.asset, state.asset);
   return state.connection === 'online'
     && session.dataReady === true
     && !!state.asset
     && sameMarket(session.confirmedAsset, state.asset)
     && sameMarket(focus.asset, state.asset)
+    && signalMatches
+    && candleMatches
     && focus.reliable === true
     && focus.chartScoped === true
+    && focus.visualAuthority !== false
+    && !ambiguousPassive
     && num(state.price) != null
     && rows.length >= 2;
 }
@@ -51,11 +61,14 @@ function timingReady(state = {}) {
   const operationMode = getOperationMode(state.analystPreferences?.operationMode || 'M1');
   const focus = state.diagnostics?.focusedAsset || {};
   const clock = state.diagnostics?.marketClock || {};
-  const expAt = Number(state.platformControls?.expirationCheckedAt || state.platformControls?.observed?.observedAt?.expiration || 0);
-  const expiration = expAt > 0 && Date.now() - expAt < 7000
-    ? clean(state.platformControls?.observed?.expiration)
+  const controls = state.platformControls || {};
+  const expAt = Number(controls.realExpirationAt || 0);
+  const expSource = clean(controls.realExpirationSource || controls.expirationSource || '');
+  const expiration = expAt > 0 && Date.now() - expAt < 15000 && expSource !== 'user-declared'
+    ? clean(controls.realExpiration)
     : '';
   return expiration === operationMode.expiration
+    && state.diagnostics?.expirationGuard?.verified === true
     && clock.verified === true
     && clock.available !== false
     && ['trader-dom-countdown','network-server-cycle'].includes(clean(clock.source))
@@ -63,7 +76,7 @@ function timingReady(state = {}) {
     && sameMarket(clock.asset, state.asset)
     && clockBoundToFocus(clock, focus)
     && Number(clock.at || 0) > 0
-    && Date.now() - Number(clock.at) < 3200
+    && Date.now() - Number(clock.at) < 4500
     && num(clock.secondsRemaining) != null;
 }
 
