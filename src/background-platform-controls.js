@@ -189,7 +189,9 @@ function applyExpirationAuthority(state = {}, observedInput = {}, expirationSour
   const operationMode = getOperationMode(state.analystPreferences?.operationMode || 'M1');
   const modeReady = effectiveTf === operationMode.timeframe;
   const expirationValid = authority.actual === operationMode.expiration;
-  const ready = !!authority.actual && modeReady && expirationValid && !authority.divergence;
+  // Manual expiration is only a temporary display hint. Execution stays blocked
+  // until CasaTrade itself confirms a fresh matching expiration.
+  const ready = authority.realFresh === true && !!authority.actual && modeReady && expirationValid && !authority.divergence;
   const preferred = normExp(state.analystPreferences?.preferredExpiration || state.executionPreferences?.expiration || '');
   const expirationLabel = operationMode.expiration === '300s' ? '5 minutos' : '1 minuto';
 
@@ -202,7 +204,7 @@ function applyExpirationAuthority(state = {}, observedInput = {}, expirationSour
         : !expirationValid
           ? `Ajuste a expiração da CasaTrade para ${expirationLabel}`
           : authority.source === 'user-declared'
-            ? `Expiração de ${expirationLabel} informada por você, não verificada.`
+            ? `Expiração de ${expirationLabel} informada por você; aguardando verificação real da CasaTrade.`
             : `Expiração ao vivo de ${expirationLabel} confirmada pela CasaTrade.`;
 
   const diagnostics = { ...(state.diagnostics || {}) };
