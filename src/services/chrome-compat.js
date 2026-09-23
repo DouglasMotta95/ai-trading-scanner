@@ -81,4 +81,5 @@ export const sidePanelSetBehavior = options => invoke(chrome?.sidePanel, 'setPan
 export const windowsCreate = createProperties => invoke(chrome?.windows, 'create', [createProperties]);
 export const windowsGet = windowId => invoke(chrome?.windows, 'get', [windowId], { optional: true });
 export const windowsUpdate = (windowId, updateInfo) => invoke(chrome?.windows, 'update', [windowId, updateInfo], { optional: true });
+export const windowsRemove = windowId => invoke(chrome?.windows, 'remove', [windowId], { optional: true });
 export const windowsApiAvailable = () => !!chrome?.windows?.create;
