@@ -18,8 +18,10 @@
   const CANDLE_CONTAINER = /candle|candles|kline|klines|ohlc|bars|history|chart/i;
   const QUOTE_CONTAINER = /quote|quotes|tick|ticks|price|prices|market|symbols|assets|instruments/i;
   const COMMON_QUOTES = ['USDT', 'USDC', 'USD', 'EUR', 'GBP', 'JPY', 'AUD', 'CAD', 'CHF', 'NZD', 'BRL', 'BTC', 'ETH'];
+  const GENERIC_ASSET_LABEL = /^(?:BLITZ|OPTION|BLITZ\/OPTION|BINARY|TURBO|CFD|DIGITAL|TRADE|OPERATION|OPERACAO)(?:\s*\/\s*(?:OPTION|BLITZ))?$/i;
 
   const stats = {
+    networkSessionId: 0,
     messages: { ws: 0, fetch: 0, xhr: 0 },
     connections: { ws: 0 },
     endpoints: new Set(),
@@ -137,6 +139,8 @@
       };
     }
   };
+  const isGenericAssetLabel = v => GENERIC_ASSET_LABEL.test(String(v ?? '').trim().replace(/\s+/g, ' '));
+
   const canonicalAsset = v => {
     let raw = String(v ?? '').trim().toUpperCase();
     if (!raw || raw.length > 64 || SENSITIVE.test(raw)) return '';
@@ -228,8 +232,34 @@
 
   const candidateFromObject = (o, inheritedAsset = '') => {
     if (!o || typeof o !== 'object' || Array.isArray(o)) return null;
-    const rawAsset = pick(o, ASSET_KEYS);
-    const asset = canonicalAsset(rawAsset) || canonicalAsset(inheritedAsset) || assetFromText(rawAsset);
+    const primaryAssetEntry = pickEntry(o, ASSET_KEYS);
+    const rawAsset = primaryAssetEntry?.value ?? '';
+    const rawAssetText = String(rawAsset ?? '').trim();
+    let asset = canonicalAsset(rawAsset);
+    let assetSource = asset ? 'original' : '';
+    if (asset && isGenericAssetLabel(rawAssetText)) {
+      asset = '';
+      assetSource = '';
+    }
+    if (!asset) {
+      for (const key of ASSET_KEYS) {
+        const entry = pickEntry(o, [key]);
+        const value = entry?.value;
+        const parsed = canonicalAsset(value) || assetFromText(value);
+        if (parsed && !isGenericAssetLabel(value)) {
+          asset = parsed;
+          assetSource = 'fallback';
+          break;
+        }
+      }
+    }
+    if (!asset) {
+      const inherited = canonicalAsset(inheritedAsset);
+      if (inherited && !isGenericAssetLabel(inheritedAsset)) {
+        asset = inherited;
+        assetSource = 'fallback';
+      }
+    }
     if (!asset) return null;
     const bid = num(pick(o, BID_KEYS));
     const ask = num(pick(o, ASK_KEYS));
@@ -264,7 +294,7 @@
     if (timestamp != null) confidence += 7;
     if (selected) confidence += 10;
     if (iType) confidence += 5;
-    const c = { asset, observedAt: now(), confidence: Math.min(100, confidence), selected };
+    const c = { asset, assetRaw: rawAssetText.slice(0, 120), assetSource: assetSource || 'original', observedAt: now(), confidence: Math.min(100, confidence), selected };
     if (price != null) c.price = price;
     if (bid != null) c.bid = bid;
     if (ask != null) c.ask = ask;
@@ -390,6 +420,7 @@
             ? { expiration: stats.controlExpiration.expiration, confidence: stats.controlExpiration.confidence, sourceKey: stats.controlExpiration.sourceKey, observedAt: stats.controlExpiration.observedAt }
             : null,
           feedQuality: feedQuality(), parser: { ...stats.parse }, primaryTransport: stats.connections.ws > 0 ? 'ws' : 'http',
+          networkSessionId: Number(stats.networkSessionId || 0),
           privacy: 'Somente respostas de mercado recebidas pela página são observadas. Cookies, headers, corpos de requisição, tokens e campos de autenticação não são coletados.'
         }
       }, '*');
@@ -415,8 +446,10 @@
   if (window.WebSocket) {
     const Native = window.WebSocket;
     const Wrapped = function(url, protocols) {
+      const wasDisconnected = Number(stats.connections.ws || 0) === 0;
       const ws = protocols === undefined ? new Native(url) : new Native(url, protocols);
       stats.connections.ws++;
+      if (wasDisconnected) stats.networkSessionId = Number(stats.networkSessionId || 0) + 1;
       rememberDiagnosticEndpoint('ws', url);
       const endpoint = safeUrl(url); if (endpoint) stats.endpoints.add(`ws:${endpoint}`);
       flushTimer();
