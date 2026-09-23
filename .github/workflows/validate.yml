@@ -17,6 +17,46 @@ jobs:
         run: test -f src/background.js && test -f src/background-augment.js && test -f src/background-ai-analysis.js && test -f src/core/orchestrator.js && test -f src/core/analysis.js && test -f src/core/candles.js && test -f src/services/license.js && test -f src/services/ai-analysis.js && test -f src/content/network-probe.js && test -f src/content/network-bridge.js && test -f src/content/generic-adapter.js && test -f src/content/platform-sync.js && test -f src/content/trade-handoff.js && test -f src/platforms/registry.js && test -f src/sidepanel/index.html && test -f src/sidepanel/app.js && test -f src/sidepanel/ai-analysis-ui.js && test -f src/sidepanel/account-login.js && test ! -e src/core/ai-scoring.js && test ! -e src/core/backtest.js && test ! -e src/core/correlation.js && test ! -e src/core/market-structure.js && test ! -e src/core/reporting.js && test ! -e src/content/chart-overlay.js && test ! -e src/content/history-adapter.js && test ! -e src/background-platform-sync.js
       - name: Check Gemini gateway files
         run: test -f backend-ai/package.json && test -f backend-ai/src/server.js
+      - name: Smoke load extension in Chromium (critical background)
+        run: |
+          set -euo pipefail
+          rm -rf dist/ci-extension "$RUNNER_TEMP/ats-chrome-profile"
+          mkdir -p dist/ci-extension
+          cp manifest.json dist/ci-extension/manifest.json
+          cp -R src dist/ci-extension/src
+          chromium --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage \\
+            --user-data-dir="$RUNNER_TEMP/ats-chrome-profile" \\
+            --remote-debugging-port=9222 \\
+            --load-extension="$GITHUB_WORKSPACE/dist/ci-extension" \\
+            --disable-extensions-except="$GITHUB_WORKSPACE/dist/ci-extension" \\
+            about:blank >"$RUNNER_TEMP/ats-chromium.log" 2>&1 &
+          CHROME_PID=$!
+          trap 'kill "$CHROME_PID" 2>/dev/null || true' EXIT
+          node <<'NODE'
+          const http = require('http');
+          const get = path => new Promise((resolve, reject) => {
+            http.get({host:'127.0.0.1', port:9222, path}, res => {
+              let body=''; res.setEncoding('utf8');
+              res.on('data', c => body += c);
+              res.on('end', () => { try { resolve(JSON.parse(body)); } catch (e) { reject(e); } });
+            }).on('error', reject);
+          });
+          (async () => {
+            let targets = [];
+            for (let i=0;i<30;i++) {
+              try { targets = await get('/json/list'); } catch {}
+              const sw = targets.find(t => t.type === 'service_worker' && String(t.url || '').startsWith('chrome-extension://'));
+              if (sw) {
+                console.log('CRITICAL_SMOKE_OK service worker registered:', sw.url);
+                process.exit(0);
+              }
+              await new Promise(r => setTimeout(r, 500));
+            }
+            console.error('CRITICAL_SMOKE_FAIL extension service worker did not register');
+            process.exit(1);
+          })();
+          NODE
+          grep -Ei "Uncaught SyntaxError|does not provide an export named|SyntaxError" "$RUNNER_TEMP/ats-chromium.log" && { echo "CRITICAL_SMOKE_FAIL console syntax error detected"; cat "$RUNNER_TEMP/ats-chromium.log"; exit 1; } || true
       - name: Syntax check extension
         run: find src -name '*.js' -print0 | xargs -0 -n1 node --check
       - name: Syntax check backend
