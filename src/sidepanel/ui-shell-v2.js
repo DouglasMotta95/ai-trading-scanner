@@ -740,6 +740,24 @@ function expirationDiagnosticText(response = {}) {
       }).join('\n\n')
     : '- Nenhum frame disponível para diagnóstico de canvas.';
 
+  const focusedAssetDiagnosticLines = allFrames.length
+    ? allFrames.map(frame => {
+        const diag = frame.focusedAssetDiagnostic || null;
+        if (!diag) {
+          return `- frame=${frame.frameId ?? '—'} | snapshot indisponível | erro=${frame.focusedAssetDiagnosticError || '—'}`;
+        }
+        const winner = diag.winner || {};
+        const rawAssets = Array.isArray(diag.rawCandidateAssets) ? diag.rawCandidateAssets : [];
+        return [
+          `- frame=${frame.frameId ?? '—'} | host=${clean(diag.frame?.host || frame.host || '—')} | top=${diag.frame?.isTop === true ? 'sim' : 'não'}`,
+          `  último winner.asset bruto=${clean(diag.rawWinnerAsset || '—')} | scoreBruto=${Number(diag.rawWinnerScore || 0)}`,
+          `  winner.asset=${clean(winner.asset || '—')} | winner.blocked=${winner.blocked === true} | winner.blockedReason=${clean(winner.blockedReason || '—')}`,
+          `  candidatos de texto na varredura=${Number(diag.rawCandidateCount || 0)} | ativos distintos=${Number(diag.uniqueTextCandidateCount || 0)} | achou algum texto candidato=${diag.hasTextCandidate === true ? 'sim' : 'não'}`,
+          `  candidatos brutos observados=${rawAssets.length ? rawAssets.map(clean).join(', ') : '[nenhum]'}`
+        ].join('\\n');
+      }).join('\\n\\n')
+    : '- Nenhum frame disponível para diagnóstico do focused-asset-v2.';
+
   const candidateRows = (Array.isArray(lastState?.candidateBlockerTrace) ? lastState.candidateBlockerTrace : []).slice(-20);
   const candidateBlockerLines = candidateRows.length
     ? candidateRows.map(item => {
@@ -801,6 +819,9 @@ function expirationDiagnosticText(response = {}) {
     'B) state.diagnostics.focusedAsset / embedded-feed-bridge',
     focusedAssetLine,
     `embedded-feed-bridge host=${bridgeHostLine}`,
+    '',
+    'B.1) focused-asset-v2 — diagnóstico bruto mesmo sem reliable=true',
+    focusedAssetDiagnosticLines,
     '',
     'C) state.candles',
     `quantidade total=${scannerCandles.length} | com timestamp=${candlesWithTimestamp}`,
