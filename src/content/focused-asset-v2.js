@@ -205,7 +205,7 @@
     const grouped = new Map();
     for (const row of rows) {
       const id = identity(row.asset);
-      const current = grouped.get(id) || { asset: row.asset, score: -Infinity, explicit: false, interaction: false, chartHits: 0, directChartHits: 0, geometricHits: 0, hits: 0, top: row.top, left: row.left };
+      const current = grouped.get(id) || { asset: row.asset, score: -Infinity, explicit: false, interaction: false, chartHits: 0, directChartHits: 0, geometricHits: 0, hits: 0, top: row.top, maxTop: row.top, left: row.left, bands: new Set() };
       current.score = Math.max(current.score, row.score);
       current.explicit ||= row.explicit;
       current.interaction ||= row.interaction;
@@ -214,17 +214,26 @@
       current.geometricHits += row.geometricHeader ? 1 : 0;
       current.hits += 1;
       current.top = Math.min(current.top, row.top);
+      current.maxTop = Math.max(current.maxTop, row.top);
       current.left = Math.min(current.left, row.left);
+      current.bands.add(Math.round(Number(row.top || 0) / 28));
       grouped.set(id, current);
     }
 
-    const winners = [...grouped.values()].map(row => ({ ...row, score: row.score + Math.min(150, row.chartHits * 35) }));
+    const winners = [...grouped.values()].map(row => ({
+      ...row,
+      bandCount: row.bands?.size || 0,
+      repeatedVisual: (row.bands?.size || 0) >= 2 && Number(row.maxTop || 0) - Number(row.top || 0) >= 24,
+      score: row.score + Math.min(180, row.chartHits * 35) + Math.min(140, Math.max(0, (row.bands?.size || 0) - 1) * 70)
+    }));
     // A current explicit DOM selection outranks an older click hint. This
     // prevents the previous asset from winning for several seconds after a tab switch.
-    winners.sort((a, b) => Number(b.explicit) - Number(a.explicit)
-      || Number(b.interaction) - Number(a.interaction)
+    winners.sort((a, b) => Number(b.interaction) - Number(a.interaction)
+      || Number(b.explicit) - Number(a.explicit)
+      || Number(b.repeatedVisual) - Number(a.repeatedVisual)
+      || Number(b.bandCount || 0) - Number(a.bandCount || 0)
       || b.directChartHits - a.directChartHits
-      || b.chartHits - a.chartHits || b.score - a.score || a.top - b.top || a.left - b.left);
+      || b.chartHits - a.chartHits || b.score - a.score || b.maxTop - a.maxTop || a.left - b.left);
     const first = winners[0] || null;
     const second = winners[1] || null;
     if (!first || first.chartHits < 1) return null;
@@ -232,14 +241,15 @@
     const ambiguousAssets = winners.filter(row => !sameAsset(row.asset, first.asset));
     if (second && !sameAsset(first.asset, second.asset)) {
       runnerUpGap = Number(first.score || 0) - Number(second.score || 0);
-      const minimumGap = first.interaction ? 70 : first.explicit ? 120 : 280;
-      if (runnerUpGap < minimumGap) return null;
+      const repeatedWins = first.repeatedVisual === true
+        && Number(first.bandCount || 0) > Number(second.bandCount || 0);
+      const minimumGap = first.interaction ? 70 : first.explicit ? 120 : repeatedWins ? 70 : 280;
+      if (runnerUpGap < minimumGap && !repeatedWins) return null;
 
-      // Video 15292 exposed a dangerous boot case: with several CasaTrade asset
-      // tabs visible, a passive chart/header guess can point at a stale market.
-      // In an ambiguous multi-asset layout we never guess: only explicit DOM
-      // selection or a fresh user interaction may establish market authority.
-      if (!first.interaction && !first.explicit) return null;
+      // With several CasaTrade tabs visible, the active market is also repeated
+      // in the chart header. That two-band evidence is stronger than a stale
+      // one-off tab label and fixes tablet layouts where aria-selected is absent.
+      if (!first.interaction && !first.explicit && !repeatedWins) return null;
     }
     return {
       ...first,
@@ -311,11 +321,13 @@
         ambiguityCount: Number(winner.ambiguityCount || 0),
         runnerUpAsset: winner.runnerUpAsset || null,
         runnerUpGap: winner.runnerUpGap == null ? null : Number(winner.runnerUpGap),
-        visualAuthority: Number(winner.ambiguityCount || 0) === 0 || winner.interaction === true || winner.explicit === true,
+        repeatedVisual: winner.repeatedVisual === true,
+        bandCount: Number(winner.bandCount || 0),
+        visualAuthority: Number(winner.ambiguityCount || 0) === 0 || winner.interaction === true || winner.explicit === true || winner.repeatedVisual === true,
         frameHost: host,
         frameRole,
         at: now,
-        source: winner.interaction ? 'chart-frame-user-confirmed' : winner.explicit ? 'chart-frame-explicit' : 'chart-frame-scoped'
+        source: winner.interaction ? 'chart-frame-user-confirmed' : winner.explicit ? 'chart-frame-explicit' : winner.repeatedVisual ? 'chart-frame-repeated-active' : 'chart-frame-scoped'
       };
       sendFocus(common);
     } finally {
