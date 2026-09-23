@@ -135,7 +135,7 @@
     if (lastSent.asset === asset && now - lastSent.at < 650) return;
     lastSent = { asset, at: now };
     globalThis.__ATS_FOCUSED_ASSET_VALUE__ = asset;
-    const explicit = source === 'user-selected-alias' || source === 'user-selected-token' || source === 'visible-selected-asset';
+    const explicit = source === 'user-selected-alias' || source === 'user-selected-token' || source === 'visible-selected-asset' || source === 'visible-repeated-active';
     globalThis.__ATS_FOCUSED_ASSET_META__ = {
       asset, reliable: true, explicit, chartScoped: true,
       frameHost: host, frameRole, source, at: now
@@ -173,14 +173,35 @@
       if (isSelected) score += 900;
       if (interacted) score += 1200;
       if (text.length <= 24) score += 80;
-      rows.push({ asset, score, source: interacted ? 'user-selected-alias' : isSelected ? 'visible-selected-asset' : 'visible-direct-pair' });
+      rows.push({ asset, score, top: el.getBoundingClientRect().top, source: interacted ? 'user-selected-alias' : isSelected ? 'visible-selected-asset' : 'visible-direct-pair' });
     }
-    rows.sort((a, b) => b.score - a.score);
-    const first = rows[0];
-    const second = rows[1];
+    const grouped = new Map();
+    for (const row of rows) {
+      const rectTop = Number(row.top || 0);
+      const current = grouped.get(row.asset) || { asset: row.asset, score: -Infinity, source: row.source, bands: new Set(), selected: false, interacted: false };
+      current.score = Math.max(current.score, row.score);
+      current.source = row.score >= current.score ? row.source : current.source;
+      current.bands.add(Math.round(rectTop / 28));
+      current.selected ||= row.source === 'visible-selected-asset';
+      current.interacted ||= row.source.startsWith('user-selected');
+      grouped.set(row.asset, current);
+    }
+    const ranked = [...grouped.values()].map(row => ({
+      ...row,
+      bandCount: row.bands.size,
+      repeatedVisual: row.bands.size >= 2,
+      score: row.score + Math.min(160, Math.max(0, row.bands.size - 1) * 80)
+    })).sort((a, b) => Number(b.interacted) - Number(a.interacted)
+      || Number(b.selected) - Number(a.selected)
+      || Number(b.repeatedVisual) - Number(a.repeatedVisual)
+      || b.bandCount - a.bandCount || b.score - a.score);
+    const first = ranked[0];
+    const second = ranked[1];
     if (!first) return;
-    if (second && second.asset !== first.asset && first.score - second.score < 180 && !first.source.startsWith('user-selected')) return;
-    publish(first.asset, first.source, first.score).catch(() => {});
+    const repeatedWins = first.repeatedVisual && (!second || first.bandCount > second.bandCount);
+    if (second && second.asset !== first.asset && first.score - second.score < 180 && !first.interacted && !first.selected && !repeatedWins) return;
+    const source = first.interacted ? 'user-selected-alias' : first.selected ? 'visible-selected-asset' : repeatedWins ? 'visible-repeated-active' : first.source;
+    publish(first.asset, source, first.score).catch(() => {});
   }
 
   const note = event => {
