@@ -571,7 +571,9 @@ export function processSnapshot(snapshot = {}, state = {}) {
     };
   }
 
-  const stable = observeDecision(cycle, direction, quality.qualifies, at);
+  const stable = timingVerified
+    ? observeDecision(cycle, direction, quality.qualifies, at)
+    : false;
   if (quality.qualifies) cycle.setup = quality.setup;
   if (stable) {
     cycle.locked = 'ENTER';
