@@ -272,6 +272,7 @@ export function clearMarketAuthorityState(state = {}, extra = {}) {
   delete safeExtra.currentCandle;
   delete safeExtra.diagnostics;
   delete safeExtra.marketSessionSource;
+  delete safeExtra.marketSessionNetworkId;
 
   return {
     ...state,
