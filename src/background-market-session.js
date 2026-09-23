@@ -512,9 +512,7 @@ export async function applyFocus(message = {}, sender = {}) {
       const existingFocusFresh = existingFocus?.reliable === true
         && Number(existingFocus.at || 0) > 0
         && Date.now() - Number(existingFocus.at) < 7000;
-      const contextChanged = message.contextChanged === true
-        || (!!existingFocus?.frameId && (Number(existingFocus.frameId) !== Number(info.frameId)
-          || clean(existingFocus.frameHost).toLowerCase() !== clean(info.frameHost).toLowerCase()));
+      const contextChanged = message.contextChanged === true;
 
       if (contextChanged) {
         return clearMarketAuthorityState(state, {
