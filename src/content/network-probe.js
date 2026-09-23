@@ -18,7 +18,8 @@
   const CANDLE_CONTAINER = /candle|candles|kline|klines|ohlc|bars|history|chart/i;
   const QUOTE_CONTAINER = /quote|quotes|tick|ticks|price|prices|market|symbols|assets|instruments/i;
   const COMMON_QUOTES = ['USD','EUR','GBP','JPY','AUD','CAD','CHF','NZD','BRL','HKD','SGD','NOK','SEK','DKK','PLN','CZK','HUF','TRY','MXN','ZAR','INR','CNY','CNH','KRW','THB','MYR','PHP','IDR','VND','TWD','ILS','AED','SAR','QAR','KWD','BHD','OMR','ARS','CLP','COP','PEN','UYU','BOB','PYG','USDT','USDC','BTC','ETH'];
-  const GENERIC_ASSET_TOKENS = new Set(['BLITZ','OPTION','BINARY','BINARIA','DIGITAL','TURBO','CALL','PUT','TRADE','TRADING','OPERATION','OPERACAO','OPÇÃO','OPCAO']);
+  const GENERIC_ASSET_TOKENS = new Set(['BLITZ','OPTION','OPTIONS','BINARY','BINARIA','BINARIO','DIGITAL','TURBO','CALL','PUT','BUY','SELL','COMPRA','VENDA','TRADE','TRADING','OPERATION','OPERACAO','OPÇÃO','OPCAO','INFO','FAVORITO','FAVORITES','ATIVO','ASSET','INSTRUMENT','INSTRUMENTO','MARKET','PRECO','PRICE','EXPIRACAO','EXPIRATION','VALOR','SALDO','PAYOUT','LUCRO','LIVE','CONECTAR','ENTRAR','VELA','GRAFICO','GRÁFICO']);
+  const INSTRUMENT_WORDS = GENERIC_ASSET_TOKENS;
 
   let trustedVisualFallback = { asset: '', at: 0, source: '' };
   let fallbackRequestAt = 0;
@@ -68,7 +69,12 @@
     const payload = data.payload || {};
     const asset = canonicalAsset(payload.asset);
     if (!asset) return;
-    trustedVisualFallback = { asset, at: Number(payload.at || now()), source: String(payload.source || 'focused-asset-v2') };
+    trustedVisualFallback = {
+      asset,
+      at: Number(payload.at || now()),
+      source: String(payload.source || 'focused-asset-v2'),
+      lowConfidence: payload.lowConfidence === true
+    };
   });
   const announceNetworkContext = (transport, url, sessionId = 0) => {
     const endpoint = safeHostPath(url);
@@ -177,8 +183,30 @@
       };
     }
   };
+  const namedInstrumentFromText = value => {
+    let raw = String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim().toUpperCase();
+    if (!raw || raw.length > 64 || SENSITIVE.test(raw)) return '';
+    const otc = /\bOTC\b|\(\s*OTC\s*\)/i.test(raw);
+    raw = raw.replace(/\(\s*OTC\s*\)/gi, ' ').replace(/\bOTC\b/gi, ' ').trim();
+    raw = raw.replace(/(?:^|[\s|•·_-])(BLITZ|OPTION|OPTIONS|BINARY|BINARIA|BINARIO|DIGITAL|TURBO|CALL|PUT)\s*$/i, '').trim();
+    raw = raw.replace(/^(?:ATIVO|ASSET|INSTRUMENTO|INSTRUMENT)\s*[:|-]\s*/i, '').trim();
+    raw = raw.replace(/\s+/g, ' ').replace(/^[|•·\-_:]+|[|•·\-_:]+$/g, '').trim();
+    if (!raw || raw.length < 2 || INSTRUMENT_WORDS.has(raw)) return '';
+    if (/^(?:S|M|H)\d{1,4}$/.test(raw)) return '';
+    if (!/[A-Z]/.test(raw) || /^[\d\s.,:+_/-]+$/.test(raw)) return '';
+    if (/^(?:\d+\s*(?:SEG|SEC|MIN|MINUTO|MINUTOS|S|M|H)|\d{1,2}:\d{2})$/i.test(raw)) return '';
+    const tokens = raw.split(/\s+/).filter(Boolean);
+    if (tokens.length === 1 && INSTRUMENT_WORDS.has(tokens[0])) return '';
+    // Network payload values are often longer labels/messages. A short,
+    // instrument-shaped label is the conservative path that we can safely
+    // reuse for names such as COCA-COLA, MELAMINA or MCDONALD'S.
+    if (tokens.length > 5) return '';
+    return `${raw}${otc ? ' (OTC)' : ''}`;
+  };
+
   const canonicalAsset = v => {
-    let raw = String(v ?? '').trim().toUpperCase();
+    const originalRaw = String(v ?? '').trim().toUpperCase();
+    let raw = originalRaw;
     if (!raw || raw.length > 64 || SENSITIVE.test(raw)) return '';
     raw = raw.replace(/^FRX[:_-]?/, '').replace(/^OTC[:_-]?/, '');
     const otc = /(?:\(|\b|[_-])OTC(?:\)|\b)?/.test(raw);
@@ -190,9 +218,13 @@
       else if (/^[A-Z]{6}$/.test(s)) s = `${s.slice(0, 3)}/${s.slice(3)}`;
     }
     const [base, quote] = s.split('/');
-    if (!COMMON_QUOTES.includes(quote) || GENERIC_ASSET_TOKENS.has(base) || GENERIC_ASSET_TOKENS.has(quote)) return '';
-    if (!/^[A-Z0-9]{2,16}\/[A-Z0-9]{2,12}$/.test(s)) return '';
-    return `${s}${otc ? ' (OTC)' : ''}`;
+    if (COMMON_QUOTES.includes(quote)
+      && !GENERIC_ASSET_TOKENS.has(base)
+      && !GENERIC_ASSET_TOKENS.has(quote)
+      && /^[A-Z0-9]{2,16}\/[A-Z0-9]{2,12}$/.test(s)) {
+      return `${s}${otc ? ' (OTC)' : ''}`;
+    }
+    return namedInstrumentFromText(originalRaw);
   };
   const assetFromText = v => {
     const text = String(v ?? '').toUpperCase();
@@ -204,7 +236,7 @@
       const asset = canonicalAsset(compact[0]);
       if (asset) return asset;
     }
-    return '';
+    return namedInstrumentFromText(text);
   };
   const instrumentType = v => {
     const s = String(v ?? '').toLowerCase();
