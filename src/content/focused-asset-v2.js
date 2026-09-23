@@ -137,16 +137,16 @@
     // Tablet CasaTrade places the real chart instrument header noticeably
     // higher than desktop. Keep the browser/tab strip excluded, but include the
     // ~125px+ chart-header band seen in video 15319.
-    const minTop = Math.max(120, innerHeight * .11);
-    const maxTop = Math.max(260, innerHeight * .42);
+    const minTop = Math.max(90, innerHeight * .08);
+    const maxTop = Math.max(360, innerHeight * .58);
     return rect.top >= minTop
       && rect.top <= maxTop
       && rect.left >= 0
-      && rect.left <= innerWidth * .42
-      && rect.width <= innerWidth * .46;
+      && rect.left <= innerWidth * .82
+      && rect.width <= innerWidth * .80;
   }
 
-  const INTERACTION_TRANSITION_MS = 1800;
+  const INTERACTION_TRANSITION_MS = 5000;
   let recentInteraction = { asset: '', at: 0 };
   const interactionFresh = asset => sameAsset(recentInteraction.asset, asset) && Date.now() - Number(recentInteraction.at || 0) < INTERACTION_TRANSITION_MS;
 
@@ -205,10 +205,11 @@
     const grouped = new Map();
     for (const row of rows) {
       const id = identity(row.asset);
-      const current = grouped.get(id) || { asset: row.asset, score: -Infinity, explicit: false, interaction: false, chartHits: 0, directChartHits: 0, geometricHits: 0, hits: 0, top: row.top, maxTop: row.top, left: row.left, bands: new Set() };
+      const current = grouped.get(id) || { asset: row.asset, score: -Infinity, explicit: false, interaction: false, chartHits: 0, directChartHits: 0, geometricHits: 0, geometricHeader: false, hits: 0, top: row.top, maxTop: row.top, left: row.left, bands: new Set() };
       current.score = Math.max(current.score, row.score);
       current.explicit ||= row.explicit;
       current.interaction ||= row.interaction;
+      current.geometricHeader ||= row.geometricHeader;
       current.chartHits += row.chartScoped ? 1 : 0;
       current.directChartHits += row.directChart ? 1 : 0;
       current.geometricHits += row.geometricHeader ? 1 : 0;
@@ -264,7 +265,7 @@
 
     if (rival) {
       runnerUpGap = Number(first.score || 0) - Number(rival.score || 0);
-      const minimumGap = first.interaction ? 70 : first.explicit ? 120 : (repeatedWins || chartEvidenceWins) ? 70 : 280;
+      const minimumGap = first.interaction ? 70 : first.explicit ? 120 : (repeatedWins || chartEvidenceWins || first.geometricHeader || Number(first.directChartHits || 0) > 0) ? 40 : 280;
       if (runnerUpGap < minimumGap && !repeatedWins && !chartEvidenceWins) {
         return {
           ...first,
@@ -282,7 +283,8 @@
       // Internal CasaTrade tabs/watchlists may expose several symbols even with
       // only one browser tab open. Do not treat those labels as equal market
       // authorities when one symbol is uniquely bound to the real chart/header.
-      if (!first.interaction && !first.explicit && !repeatedWins && !chartEvidenceWins) {
+      if (!first.interaction && !first.explicit && !repeatedWins && !chartEvidenceWins
+        && !first.geometricHeader && Number(first.directChartHits || 0) <= 0) {
         return {
           ...first,
           blocked: true,
