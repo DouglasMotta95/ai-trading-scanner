@@ -146,8 +146,19 @@ async function activePlatformTab() {
   // The scanner can now run in an extension popup window. When that window
   // is focused, currentWindow's active tab is no longer CasaTrade. Search
   // the browser tabs first, then prefer an actually active CasaTrade tab.
-  const allTabs = await tabsQuery({}).catch(() => []);
-  const platformTabs = allTabs
+  const casaTabs = await tabsQuery({
+    url: [
+      'https://casatrade.com/*',
+      'https://*.casatrade.com/*',
+      'https://casatrade.io/*',
+      'https://*.casatrade.io/*',
+      'https://casatraders.online/*',
+      'https://*.casatraders.online/*',
+      'https://ivcasatraders.online/*',
+      'https://*.ivcasatraders.online/*'
+    ]
+  }).catch(() => []);
+  const platformTabs = casaTabs
     .map(tab => ({ tab, platform: tab?.url ? platformFromUrl(tab.url) : null }))
     .filter(item => item.tab?.id && item.platform);
 
