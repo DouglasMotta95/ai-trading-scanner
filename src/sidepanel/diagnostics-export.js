@@ -595,12 +595,27 @@
     const status = document.getElementById(STATUS_ID);
     if (button) { button.disabled = true; button.textContent = 'GERANDO…'; }
     try {
-      const [stateReply, manualReply] = await Promise.all([
+      const [stateReply, manualReply, panelDiagnosticReply] = await Promise.all([
         message({ type: 'ATS_READ_SCANNER_STATE' }),
-        message({ type: 'ATS_GET_MANUAL_TRADE_LEDGER' })
+        message({ type: 'ATS_GET_MANUAL_TRADE_LEDGER' }),
+        chrome.storage.session.get('atsLastPanelConnectDiagnostic').catch(() => ({}))
       ]);
-      const report = stripSensitive(sanitizeState(stateReply?.state || {}, manualReply?.ok ? manualReply : null));
-      const text = `AI Trading Scanner — diagnóstico seguro\n${JSON.stringify(report, null, 2)}`;
+      const report = sanitizeState(stateReply?.state || {}, manualReply?.ok ? manualReply : null);
+      const panel = panelDiagnosticReply?.atsLastPanelConnectDiagnostic || {};
+      report.panelConnectDiagnostic = {
+        attemptId: clean(panel.attemptId || ''),
+        stage: clean(panel.stage || ''),
+        startedAt: num(panel.startedAt),
+        responseAt: num(panel.responseAt),
+        responseMs: num(panel.responseMs),
+        outcome: clean(panel.outcome || ''),
+        error: clean(panel.error || '', 160),
+        diagnosticError: clean(panel.diagnosticError || '', 240),
+        backgroundStateRead: clean(panel.backgroundStateRead || ''),
+        stateReadAt: num(panel.stateReadAt),
+        updatedAt: num(panel.updatedAt)
+      };
+      const text = `AI Trading Scanner — diagnóstico seguro\n${JSON.stringify(stripSensitive(report), null, 2)}`;
       const ok = await writeText(text);
       if (status) status.textContent = ok ? 'DIAGNÓSTICO COPIADO — pode colar no chat.' : 'Não consegui copiar automaticamente.';
       if (button) button.textContent = ok ? 'COPIADO ✓' : 'FALHA AO COPIAR';
