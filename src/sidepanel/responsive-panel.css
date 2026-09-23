@@ -499,3 +499,120 @@ button{
     margin-top:4px;
   }
 }
+
+
+/* v0.11.70: true compact scanner window + visible technical analysis. */
+html[data-container-mode="window"],
+html[data-container-mode="window"] body{
+  width:100%;
+  min-width:0!important;
+  max-width:100%;
+  overflow-x:hidden;
+}
+
+html[data-container-mode="window"] .compact-shell{
+  width:100%;
+  max-width:390px;
+  margin:0 auto;
+  padding:7px 7px 10px;
+  gap:6px;
+}
+
+html[data-container-mode="window"] .topbar{
+  position:sticky;
+  top:0;
+  z-index:20;
+  margin:0 -7px;
+  padding:6px 7px 5px;
+  background:rgba(6,16,26,.96);
+  backdrop-filter:blur(8px);
+}
+
+/* The SINAL view is the operational view: keep the technical engine visible,
+   but remove the bulky settings/licence/AI sections from this compact mode. */
+body[data-panel-mode="signal"] #advancedPanel,
+body[data-panel-mode="signal"] #licenseCard{
+  display:none!important;
+}
+
+body[data-panel-mode="signal"] #decisionCard .decision-compact-grid{
+  display:grid!important;
+  grid-template-columns:minmax(0,1fr) minmax(0,1fr);
+  gap:6px;
+  margin-top:6px;
+}
+
+body[data-panel-mode="signal"] #decisionCard .compact-clock-stage,
+body[data-panel-mode="signal"] #decisionCard .compact-trigger{
+  min-width:0;
+}
+
+body[data-panel-mode="signal"] #decisionCard .compact-clock-stage{
+  grid-template-columns:52px minmax(0,1fr);
+  padding:6px;
+}
+
+body[data-panel-mode="signal"] #decisionCard .compact-clock{
+  width:48px;
+  height:48px;
+}
+
+body[data-panel-mode="signal"] #decisionCard .compact-clock b{
+  font-size:19px;
+}
+
+body[data-panel-mode="signal"] #decisionCard .compact-clock-details{
+  grid-template-columns:1fr 1fr;
+}
+
+body[data-panel-mode="signal"] #decisionCard .compact-clock-details span{
+  padding:4px 5px;
+  font-size:6.5px;
+}
+
+body[data-panel-mode="signal"] #decisionCard .compact-clock-details b{
+  font-size:7.5px;
+}
+
+body[data-panel-mode="signal"] #decisionCard .compact-trigger{
+  padding:7px;
+  gap:4px;
+}
+
+body[data-panel-mode="signal"] #decisionCard .compact-trigger>strong{
+  font-size:12px;
+}
+
+body[data-panel-mode="signal"] #decisionCard .compact-trigger p{
+  font-size:7.5px;
+  line-height:1.25;
+}
+
+body[data-panel-mode="signal"] #decisionCard #tradeActionStatus{
+  display:block;
+  font-size:7.5px;
+  margin-top:5px;
+}
+
+body[data-panel-mode="signal"] #decisionCard #signalReason{
+  display:block;
+  margin-top:4px;
+  font-size:7.5px;
+}
+
+body[data-panel-mode="signal"] #decisionCard .progress-track{
+  display:block;
+}
+
+@media(max-width:359px){
+  body[data-panel-mode="signal"] #decisionCard .decision-compact-grid{
+    grid-template-columns:1fr;
+  }
+}
+
+@media(max-width:340px){
+  html[data-container-mode="window"] .compact-shell{
+    padding-left:5px;
+    padding-right:5px;
+  }
+}
