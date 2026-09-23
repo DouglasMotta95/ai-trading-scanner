@@ -121,6 +121,7 @@
     const inspector = state.diagnostics?.dataInspector || {};
     const tradeEvidence = inspector.tradeEvidence || {};
     const signal = state.signal || {};
+    const marketCandidate = state.diagnostics?.marketCandidate || {};
     const account = state.accountMetrics || {};
     const quality = state.assetQuality || {};
     const runtimeInjection = state.diagnostics?.runtimeInjection || {};
@@ -160,6 +161,13 @@
         asset: clean(focus.asset || ''), reliable: focus.reliable === true, chartScoped: focus.chartScoped === true,
         frameId: num(focus.frameId), source: clean(focus.source || '')
       },
+      marketCandidate: {
+        asset: clean(marketCandidate.asset || ''),
+        assetRaw: clean(marketCandidate.assetRaw || '', 120),
+        assetSource: clean(marketCandidate.assetSource || ''),
+        networkSessionId: num(marketCandidate.networkSessionId),
+        at: num(marketCandidate.at)
+      },
       clock: {
         verified: clock.verified === true, available: clock.available !== false, role: clean(clock.role || ''),
         source: clean(clock.source || ''), secondsRemaining: num(clock.secondsRemaining), timeframe: clean(clock.timeframe || ''),
@@ -167,7 +175,8 @@
       },
       session: {
         epoch: num(session.epoch), asset: clean(session.asset || ''), timeframe: clean(session.timeframe || ''),
-        dataMode: clean(session.dataMode || ''), frameId: num(session.frameId)
+        dataMode: clean(session.dataMode || ''), frameId: num(session.frameId),
+        networkSessionId: num(session.networkSessionId)
       },
       acquisition: { stage: clean(acquisition.stage || ''), reason: clean(acquisition.reason || '', 240) },
       runtime: {
