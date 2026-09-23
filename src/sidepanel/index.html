@@ -120,6 +120,16 @@
       <div id="recentCandles" class="recent-candles compact-recent-candles" aria-label="Últimas 10 velas"></div>
     </section>
 
+    <section id="licenseCard" class="card license-card">
+          <div class="section-head"><div><span class="eyebrow">ACESSO E DIAGNÓSTICO</span><h2 id="licenseTitle">Verificando acesso…</h2></div><span id="licenseHealth" class="badge">—</span></div>
+          <p id="licenseText" class="muted">Aguardando status do acesso.</p>
+          <div id="activationBox" class="activation-box" hidden><input id="licenseKey" autocomplete="off" placeholder="Cole sua chave ATS"><button id="activateLicense" class="primary">ATIVAR</button></div>
+          <button id="copyScannerDiagnostics" class="secondary" type="button">COPIAR DIAGNÓSTICO</button>
+          <button id="copySignalPerformance" class="secondary" type="button">COPIAR RELATÓRIO DE DESEMPENHO</button>
+          <button id="clearSignalPerformance" class="secondary" type="button">LIMPAR REGISTRO</button>
+        </section>
+ 
+
     <details id="advancedPanel" class="advanced-panel">
       <summary><span>AVANÇADO ▸</span><small>Gemini • qualidade • ajustes • diagnóstico</small></summary>
       <div class="advanced-stack">
@@ -156,15 +166,7 @@
           <p id="operationModeNote" class="fixed-strategy-note">Modo M1: timeframe M1 + expiração de 1 minuto. A execução continua manual na CasaTrade.</p>
         </section>
 
-        <section id="licenseCard" class="card license-card">
-          <div class="section-head"><div><span class="eyebrow">ACESSO E DIAGNÓSTICO</span><h2 id="licenseTitle">Verificando acesso…</h2></div><span id="licenseHealth" class="badge">—</span></div>
-          <p id="licenseText" class="muted">Aguardando status do acesso.</p>
-          <div id="activationBox" class="activation-box" hidden><input id="licenseKey" autocomplete="off" placeholder="Cole sua chave ATS"><button id="activateLicense" class="primary">ATIVAR</button></div>
-          <button id="copyScannerDiagnostics" class="secondary" type="button">COPIAR DIAGNÓSTICO</button>
-          <button id="copySignalPerformance" class="secondary" type="button">COPIAR RELATÓRIO DE DESEMPENHO</button>
-          <button id="clearSignalPerformance" class="secondary" type="button">LIMPAR REGISTRO</button>
-        </section>
-      </div>
+     </div>
     </details>
   </main>
 
