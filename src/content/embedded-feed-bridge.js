@@ -79,7 +79,8 @@
     stateBoundaryIntervalCycles: 0,
     stateBoundaryPublications: 0,
     stateBoundaryLastRefusalReason: '',
-    stateBoundaryLastDelayMs: null
+    stateBoundaryLastDelayMs: null,
+    networkContext: { contextKey: '', transport: '', endpoint: '', observedAt: 0, changed: false }
   };
   let lastBoundaryDiagnosticReason = null;
   let clockBusy = false;
@@ -364,7 +365,31 @@
 
   const networkMessageHandler = event => {
     const data = event.data;
-    if (!data || data.source !== 'ATS_NETWORK_PROBE' || data.type !== 'summary') return;
+    if (!data || data.source !== 'ATS_NETWORK_PROBE') return;
+
+    if (data.type === 'context') {
+      const context = data.payload && typeof data.payload === 'object' ? data.payload : {};
+      const contextKey = clean(context.contextKey || '');
+      const transport = clean(context.transport || '');
+      const endpoint = clean(context.endpoint || '');
+      const observedAt = Number(context.observedAt || Date.now());
+      const changed = !!feedDiagnostic.networkContext.contextKey && feedDiagnostic.networkContext.contextKey !== contextKey;
+      feedDiagnostic.networkContext = { contextKey, transport, endpoint, observedAt, changed };
+      sendMessage({
+        type: 'ATS_NETWORK_CONTEXT_CHANGED',
+        payload: {
+          contextKey,
+          transport,
+          endpoint,
+          observedAt,
+          changed,
+          source: 'network-probe'
+        }
+      }).catch(() => {});
+      return;
+    }
+
+    if (data.type !== 'summary') return;
     feedDiagnostic.summaryReceived += 1;
     const diagnosticCandidates = Array.isArray(data.payload?.candidates) ? data.payload.candidates : [];
     feedDiagnostic.candidatesWithTimestamp += diagnosticCandidates.filter(row => row?.timestamp != null).length;
@@ -374,7 +399,9 @@
       timestamp: row?.timestamp ?? null,
       confidence: Number(row?.confidence || 0),
       selected: row?.selected === true,
-      observedAt: Number(row?.observedAt || 0)
+      observedAt: Number(row?.observedAt || 0),
+      assetRaw: clean(row?.assetRaw || ''),
+      assetSource: clean(row?.assetSource || '')
     }));
     const now = Date.now();
     if (now - lastSentAt < 80) {
@@ -435,6 +462,7 @@
           summaryReceived: Number(feedDiagnostic.summaryReceived || 0),
           candidatesWithTimestamp: Number(feedDiagnostic.candidatesWithTimestamp || 0),
           lastSummaryCandidates: feedDiagnostic.lastSummaryCandidates.slice(0, 5),
+          networkContext: { ...feedDiagnostic.networkContext },
           maybePublishStructuredClock: {
             calls: Number(feedDiagnostic.maybeClockCalls || 0),
             earlyReturns: Number(feedDiagnostic.maybeClockEarlyReturns || 0),
