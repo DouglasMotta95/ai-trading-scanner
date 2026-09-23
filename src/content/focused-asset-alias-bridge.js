@@ -80,11 +80,17 @@
     return `${ticker}/USD${otc ? ' (OTC)' : ''}`;
   }
 
-  const metaText = el => clean([
-    el?.getAttribute?.('aria-label'), el?.getAttribute?.('title'), el?.getAttribute?.('data-symbol'),
-    el?.getAttribute?.('data-asset'), el?.getAttribute?.('data-instrument'), el?.getAttribute?.('data-testid'),
-    el?.innerText, el?.textContent
-  ].filter(Boolean).join(' ')).slice(0, 120);
+  const metaValues = el => [
+    el?.getAttribute?.('data-symbol'),
+    el?.getAttribute?.('data-asset'),
+    el?.getAttribute?.('data-instrument'),
+    el?.getAttribute?.('aria-label'),
+    el?.getAttribute?.('title'),
+    el?.innerText,
+    el?.textContent
+  ].map(clean).filter(value => value && value.length <= 120);
+
+  const metaText = el => metaValues(el).join(' ').slice(0, 120);
 
   function contextOf(el) {
     const parts = [];
@@ -131,9 +137,11 @@
     const path = typeof event?.composedPath === 'function' ? event.composedPath() : [event?.target];
     for (const node of path.slice(0, 10)) {
       if (!(node instanceof Element) || !visible(node)) continue;
-      const text = metaText(node);
-      const direct = canonicalFromText(text, false);
-      if (direct) return direct;
+      const values = metaValues(node);
+      for (const text of values) {
+        const direct = canonicalFromText(text, false);
+        if (direct) return direct;
+      }
       const context = contextOf(node);
       if (/asset|ativo|instrument|symbol|market|list|option|row/.test(context)) {
         const generic = canonicalFromText(text, true);
@@ -172,10 +180,15 @@
       const text = metaText(el);
       if (!text) continue;
       const context = contextOf(el);
-      const direct = directPairFromText(text);
       const strongContext = /chart|header|asset|ativo|instrument|symbol|market|selected|current/.test(context);
-      const asset = direct || canonicalFromText(text, strongContext && text.length <= 28);
-      if (!asset) continue;
+      const candidates = [];
+      for (const value of metaValues(el)) {
+        const asset = directPairFromText(value) || canonicalFromText(value, strongContext && value.length <= 64);
+        if (asset && !candidates.includes(asset)) candidates.push(asset);
+      }
+      if (candidates.length !== 1) continue;
+      const asset = candidates[0];
+      const direct = directPairFromText(text);
       const isSelected = selected(el);
       const interacted = recentInteraction.asset === asset && Date.now() - recentInteraction.at < 3500;
       const geometricHeader = !!direct && chartHeaderGeometry(el, text);
