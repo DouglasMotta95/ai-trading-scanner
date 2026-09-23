@@ -754,8 +754,8 @@ function expirationDiagnosticText(response = {}) {
           `  winner.asset=${clean(winner.asset || '—')} | winner.blocked=${winner.blocked === true} | winner.blockedReason=${clean(winner.blockedReason || '—')}`,
           `  candidatos de texto na varredura=${Number(diag.rawCandidateCount || 0)} | ativos distintos=${Number(diag.uniqueTextCandidateCount || 0)} | achou algum texto candidato=${diag.hasTextCandidate === true ? 'sim' : 'não'}`,
           `  candidatos brutos observados=${rawAssets.length ? rawAssets.map(clean).join(', ') : '[nenhum]'}`
-        ].join('\\n');
-      }).join('\\n\\n')
+        ].join('\n');
+      }).join('\n\n')
     : '- Nenhum frame disponível para diagnóstico do focused-asset-v2.';
 
   const candidateRows = (Array.isArray(lastState?.candidateBlockerTrace) ? lastState.candidateBlockerTrace : []).slice(-20);
