@@ -769,7 +769,8 @@ export async function applyFeed(payload = {}, sender = {}) {
     // asset to match the authoritative visual focus before accepting it.
     const crossFrameFeed = info.embeddedTrader === true
       && focus.casaTradeFrame === true
-      && sameMarket(focus.asset, focus.asset);
+      && Array.isArray(payload.candidates)
+      && payload.candidates.some(row => sameMarket(row?.asset, focus.asset));
     if (!sameFocusFrame && !crossFrameFeed) return;
     const asset = normAsset(focus.asset);
     const candidate = bestForFocus(payload, asset);
