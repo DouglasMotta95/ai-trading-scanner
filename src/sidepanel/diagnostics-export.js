@@ -123,6 +123,9 @@
     const signal = state.signal || {};
     const account = state.accountMetrics || {};
     const quality = state.assetQuality || {};
+    const assetIdentity = state.diagnostics?.assetIdentity || {};
+    const networkContext = state.diagnostics?.networkContext || {};
+    const connectionHandshake = state.diagnostics?.connectionHandshake || {};
     const runtimeInjection = state.diagnostics?.runtimeInjection || {};
     const runtimeBoot = state.diagnostics?.runtimeBoot || {};
     const probe = runtimeInjection.probe || {};
@@ -228,6 +231,63 @@
           ageMs: age(runtimeBoot.lastBootAt),
           count: num(runtimeBoot.count),
           rows: safeBootRows(runtimeBoot.boots)
+        }
+      },
+      assetIdentity: {
+        networkRawAssetName: clean(assetIdentity.networkRawAssetName || '', 120),
+        networkAsset: clean(assetIdentity.networkAsset || '', 80),
+        finalAsset: clean(assetIdentity.finalAsset || ''),
+        finalSource: clean(assetIdentity.finalSource || ''),
+        fallbackUsed: assetIdentity.fallbackUsed === true,
+        fallbackSource: clean(assetIdentity.fallbackSource || ''),
+        contextChanged: assetIdentity.contextChanged === true,
+        contextChangeSource: clean(assetIdentity.contextChangeSource || ''),
+        contextKey: clean(assetIdentity.contextKey || networkContext.contextKey || '', 240),
+        previousContextKey: clean(assetIdentity.previousContextKey || '', 240),
+        at: num(assetIdentity.at)
+      },
+      networkContext: {
+        contextKey: clean(networkContext.contextKey || '', 240),
+        transport: clean(networkContext.transport || ''),
+        endpoint: clean(networkContext.endpoint || '', 240),
+        changed: networkContext.changed === true,
+        observedAt: num(networkContext.observedAt),
+        at: num(networkContext.at)
+      },
+      connectionHandshake: {
+        attemptId: clean(connectionHandshake.attemptId || ''),
+        stage: clean(connectionHandshake.stage || ''),
+        targetTabId: num(connectionHandshake.targetTabId),
+        targetHost: clean(connectionHandshake.targetHost || ''),
+        startedAt: num(connectionHandshake.startedAt),
+        lastStageAt: num(connectionHandshake.lastStageAt),
+        completedAt: num(connectionHandshake.completedAt),
+        timeoutMs: num(connectionHandshake.timeoutMs),
+        outcome: clean(connectionHandshake.outcome || ''),
+        errorCode: clean(connectionHandshake.errorCode || ''),
+        errorMessage: clean(connectionHandshake.errorMessage || '', 240),
+        stageDurationsMs: connectionHandshake.stageDurationsMs && typeof connectionHandshake.stageDurationsMs === 'object'
+          ? Object.fromEntries(Object.entries(connectionHandshake.stageDurationsMs).map(([key, value]) => [clean(key, 80), num(value)]))
+          : {},
+        runtimeInjection: {
+          durationMs: num(connectionHandshake.runtimeInjection?.durationMs),
+          probeOk: connectionHandshake.runtimeInjection?.probe?.ok === true,
+          probeMode: clean(connectionHandshake.runtimeInjection?.probe?.mode || ''),
+          firstError: clean(connectionHandshake.runtimeInjection?.probe?.firstError || '', 220),
+          error: clean(connectionHandshake.runtimeInjection?.probe?.error || '', 220),
+          failures: Array.isArray(connectionHandshake.runtimeInjection?.failures)
+            ? connectionHandshake.runtimeInjection.failures.slice(0, 20).map(row => ({
+                file: clean(row?.file || '', 120),
+                world: clean(row?.world || '', 16),
+                error: clean(row?.error || '', 220)
+              }))
+            : []
+        },
+        controlsProbe: {
+          durationMs: num(connectionHandshake.controlsProbe?.durationMs),
+          ok: connectionHandshake.controlsProbe?.ok === true,
+          error: clean(connectionHandshake.controlsProbe?.error || '', 220),
+          frames: num(connectionHandshake.controlsProbe?.frames)
         }
       },
       signal: {
