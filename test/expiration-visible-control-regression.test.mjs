@@ -6,7 +6,7 @@ const read = path => fs.readFileSync(new URL('../' + path, import.meta.url), 'ut
 test('expiration probe searches the whole visible CasaTrade text around the Expiração label', () => {
   const source = read('src/content/casatrade-expiration-probe.js');
   assert.match(source, /function bodyExpiration\(\)/);
-  assert.match(source, /slice\(0, 260000\)/);
+  assert.match(source, /slice\(0, 1200000\)/);
   assert.match(source, /body\.indexOf\(marker, from\)/);
   assert.match(source, /index \+ marker\.length/);
 });
