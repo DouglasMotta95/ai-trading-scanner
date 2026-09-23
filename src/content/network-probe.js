@@ -226,7 +226,7 @@
     }
     return namedInstrumentFromText(originalRaw);
   };
-  const assetFromText = v => {
+  const assetFromText = (v, allowNamed = true) => {
     const text = String(v ?? '').toUpperCase();
     for (const direct of text.matchAll(/\b[A-Z0-9]{2,16}\s*[\/_-]\s*[A-Z0-9]{2,12}(?:\s*\(?OTC\)?)?/g)) {
       const asset = canonicalAsset(direct[0]);
@@ -236,7 +236,7 @@
       const asset = canonicalAsset(compact[0]);
       if (asset) return asset;
     }
-    return namedInstrumentFromText(text);
+    return allowNamed ? namedInstrumentFromText(text) : '';
   };
   const instrumentType = v => {
     const s = String(v ?? '').toLowerCase();
@@ -305,17 +305,25 @@
     while (stats.candles.size > 60) stats.candles.delete(stats.candles.keys().next().value);
   };
 
+  const NAMED_ASSET_KEY_RE = /^(?:name|displayName|display_name|label|title|asset|assetName|asset_name|instrument|instrumentName|instrument_name|symbol|symbolName|symbol_name|ticker|tickerName|ticker_name|underlying|underlyingAsset|underlying_asset|market|company|companyName|company_name)$/i;
+
   const assetFromObjectPayload = o => {
     if (!o || typeof o !== 'object') return { asset: '', raw: '' };
     const ordered = [];
-    for (const key of ASSET_KEYS) if (Object.prototype.hasOwnProperty.call(o, key) && o[key] != null) ordered.push(o[key]);
-    for (const [key, value] of Object.entries(o)) {
-      if (SENSITIVE.test(key) || ordered.includes(value)) continue;
-      if (typeof value === 'string' && value.length <= 240) ordered.push(value);
+    for (const key of ASSET_KEYS) {
+      if (Object.prototype.hasOwnProperty.call(o, key) && o[key] != null) {
+        ordered.push({ key, value: o[key], allowNamed: true });
+      }
     }
-    for (const value of ordered) {
-      const asset = assetFromText(value);
-      if (asset) return { asset, raw: String(value).slice(0, 120) };
+    for (const [key, value] of Object.entries(o)) {
+      if (SENSITIVE.test(key) || ordered.some(entry => entry.value === value)) continue;
+      if (typeof value === 'string' && value.length <= 240) {
+        ordered.push({ key, value, allowNamed: NAMED_ASSET_KEY_RE.test(key) });
+      }
+    }
+    for (const entry of ordered) {
+      const asset = assetFromText(entry.value, entry.allowNamed === true);
+      if (asset) return { asset, raw: String(entry.value).slice(0, 120) };
     }
     return { asset: '', raw: '' };
   };
@@ -454,8 +462,8 @@
           endpoint: meta.endpoint
         });
         let childAsset = ownAsset;
-        if (!childAsset && QUOTE_CONTAINER.test(key || k)) childAsset = canonicalAsset(k) || assetFromText(k);
-        if (!childAsset) childAsset = canonicalAsset(k) || '';
+        if (!childAsset && QUOTE_CONTAINER.test(key || k)) childAsset = assetFromText(k, true);
+        if (!childAsset) childAsset = assetFromText(k, false);
         if (val && typeof val === 'object') stack.push({ v: val, d: d + 1, asset: childAsset, key: k, tf: ownTf });
       }
     }
