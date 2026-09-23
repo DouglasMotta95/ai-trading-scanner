@@ -17,7 +17,13 @@
   const TYPE_KEYS = ['type', 'instrumentType', 'instrument_type', 'mode', 'optionType', 'option_type'];
   const CANDLE_CONTAINER = /candle|candles|kline|klines|ohlc|bars|history|chart/i;
   const QUOTE_CONTAINER = /quote|quotes|tick|ticks|price|prices|market|symbols|assets|instruments/i;
-  const COMMON_QUOTES = ['USDT', 'USDC', 'USD', 'EUR', 'GBP', 'JPY', 'AUD', 'CAD', 'CHF', 'NZD', 'BRL', 'BTC', 'ETH'];
+  const COMMON_QUOTES = ['USD','EUR','GBP','JPY','AUD','CAD','CHF','NZD','BRL','HKD','SGD','NOK','SEK','DKK','PLN','CZK','HUF','TRY','MXN','ZAR','INR','CNY','CNH','KRW','THB','MYR','PHP','IDR','VND','TWD','ILS','AED','SAR','QAR','KWD','BHD','OMR','ARS','CLP','COP','PEN','UYU','BOB','PYG','USDT','USDC','BTC','ETH'];
+  const GENERIC_ASSET_TOKENS = new Set(['BLITZ','OPTION','BINARY','BINARIA','DIGITAL','TURBO','CALL','PUT','TRADE','TRADING','OPERATION','OPERACAO','OPÇÃO','OPCAO']);
+
+  let trustedVisualFallback = { asset: '', at: 0, source: '' };
+  let fallbackRequestAt = 0;
+  let networkContextKey = '';
+  let lastNetworkAssetIdentity = { raw: '', asset: '', source: '', at: 0 };
 
   const stats = {
     messages: { ws: 0, fetch: 0, xhr: 0 },
@@ -44,6 +50,38 @@
   };
 
   const now = () => Date.now();
+  const recentTrustedVisualAsset = () => {
+    if (!trustedVisualFallback.asset || now() - Number(trustedVisualFallback.at || 0) > 3500) return '';
+    return trustedVisualFallback.asset;
+  };
+  const requestTrustedVisualAssetFallback = () => {
+    if (now() - fallbackRequestAt < 450) return;
+    fallbackRequestAt = now();
+    try {
+      window.postMessage({ source: 'ATS_NETWORK_ASSET_FALLBACK_REQUEST', requestId: `ats-asset-fallback-${Date.now()}-${Math.random().toString(36).slice(2)}` }, '*');
+    } catch {}
+  };
+  window.addEventListener('message', event => {
+    const data = event.data;
+    if (!data || data.source !== 'ATS_FOCUSED_ASSET_FALLBACK_RESPONSE') return;
+    const payload = data.payload || {};
+    const asset = canonicalAsset(payload.asset);
+    if (!asset) return;
+    trustedVisualFallback = { asset, at: Number(payload.at || now()), source: String(payload.source || 'focused-asset-v2') };
+  });
+  const announceNetworkContext = (transport, url) => {
+    if (networkContextKey) return;
+    const endpoint = safeHostPath(url);
+    if (!endpoint) return;
+    networkContextKey = `${transport}|${endpoint}`;
+    try {
+      window.postMessage({
+        source: 'ATS_NETWORK_PROBE',
+        type: 'context',
+        payload: { contextKey: networkContextKey, transport, endpoint, observedAt: now() }
+      }, '*');
+    } catch {}
+  };
   const trimSet = (set, max) => { while (set.size > max) set.delete(set.values().next().value); };
   const safeUrl = u => {
     try { const x = new URL(String(u || ''), location.href); return x.origin + x.pathname; }
@@ -149,15 +187,22 @@
       if (quote) s = `${s.slice(0, -quote.length)}/${quote}`;
       else if (/^[A-Z]{6}$/.test(s)) s = `${s.slice(0, 3)}/${s.slice(3)}`;
     }
+    const [base, quote] = s.split('/');
+    if (!COMMON_QUOTES.includes(quote) || GENERIC_ASSET_TOKENS.has(base) || GENERIC_ASSET_TOKENS.has(quote)) return '';
     if (!/^[A-Z0-9]{2,16}\/[A-Z0-9]{2,12}$/.test(s)) return '';
     return `${s}${otc ? ' (OTC)' : ''}`;
   };
   const assetFromText = v => {
     const text = String(v ?? '').toUpperCase();
-    const direct = text.match(/\b[A-Z0-9]{2,16}\s*[\/_-]\s*[A-Z0-9]{2,12}(?:\s*\(?OTC\)?)?/);
-    if (direct) return canonicalAsset(direct[0]);
-    const compact = text.match(/\b[A-Z]{6}(?:[_-]?OTC)?\b/);
-    return compact ? canonicalAsset(compact[0]) : '';
+    for (const direct of text.matchAll(/\b[A-Z0-9]{2,16}\s*[\/_-]\s*[A-Z0-9]{2,12}(?:\s*\(?OTC\)?)?/g)) {
+      const asset = canonicalAsset(direct[0]);
+      if (asset) return asset;
+    }
+    for (const compact of text.matchAll(/\b[A-Z]{6}(?:[_-]?OTC)?\b/g)) {
+      const asset = canonicalAsset(compact[0]);
+      if (asset) return asset;
+    }
+    return '';
   };
   const instrumentType = v => {
     const s = String(v ?? '').toLowerCase();
@@ -226,11 +271,38 @@
     while (stats.candles.size > 60) stats.candles.delete(stats.candles.keys().next().value);
   };
 
+  const assetFromObjectPayload = o => {
+    if (!o || typeof o !== 'object') return { asset: '', raw: '' };
+    const ordered = [];
+    for (const key of ASSET_KEYS) if (Object.prototype.hasOwnProperty.call(o, key) && o[key] != null) ordered.push(o[key]);
+    for (const [key, value] of Object.entries(o)) {
+      if (SENSITIVE.test(key) || ordered.includes(value)) continue;
+      if (typeof value === 'string' && value.length <= 240) ordered.push(value);
+    }
+    for (const value of ordered) {
+      const asset = assetFromText(value);
+      if (asset) return { asset, raw: String(value).slice(0, 120) };
+    }
+    return { asset: '', raw: '' };
+  };
+
   const candidateFromObject = (o, inheritedAsset = '') => {
     if (!o || typeof o !== 'object' || Array.isArray(o)) return null;
-    const rawAsset = pick(o, ASSET_KEYS);
-    const asset = canonicalAsset(rawAsset) || canonicalAsset(inheritedAsset) || assetFromText(rawAsset);
-    if (!asset) return null;
+    const rawAssetValue = pick(o, ASSET_KEYS);
+    const rawAsset = String(rawAssetValue ?? '').trim();
+    const inherited = canonicalAsset(inheritedAsset);
+    const original = canonicalAsset(rawAssetValue);
+    const payloadFallback = original ? { asset: '', raw: '' } : assetFromObjectPayload(o);
+    const visualFallback = recentTrustedVisualAsset();
+    const asset = original || inherited || payloadFallback.asset || visualFallback;
+    if (!asset) { requestTrustedVisualAssetFallback(); return null; }
+    const assetSource = original
+      ? 'network-asset-key'
+      : inherited
+        ? 'network-inherited'
+        : payloadFallback.asset
+          ? 'network-payload-fallback'
+          : 'trusted-visual-fallback';
     const bid = num(pick(o, BID_KEYS));
     const ask = num(pick(o, ASK_KEYS));
     let price = num(pick(o, PRICE_KEYS));
@@ -264,7 +336,8 @@
     if (timestamp != null) confidence += 7;
     if (selected) confidence += 10;
     if (iType) confidence += 5;
-    const c = { asset, observedAt: now(), confidence: Math.min(100, confidence), selected };
+    const c = { asset, assetRaw: rawAsset || null, assetSource, observedAt: now(), confidence: Math.min(100, confidence), selected };
+    lastNetworkAssetIdentity = { raw: rawAsset || payloadFallback.raw || null, asset, source: assetSource, at: now() };
     if (price != null) c.price = price;
     if (bid != null) c.bid = bid;
     if (ask != null) c.ask = ask;
@@ -303,7 +376,9 @@
       if (v == null || d > 9) continue;
       if (Array.isArray(v)) {
         if (CANDLE_CONTAINER.test(key)) {
-          const candle = arrayCandle(v, node.asset, node.tf); if (candle) recordCandle(candle);
+          const candleAsset = canonicalAsset(node.asset) || recentTrustedVisualAsset();
+          if (!candleAsset) requestTrustedVisualAssetFallback();
+          const candle = arrayCandle(v, candleAsset, node.tf); if (candle) recordCandle(candle);
         }
         for (let i = Math.min(v.length, 350) - 1; i >= 0; i--) stack.push({ v: v[i], d: d + 1, asset: node.asset, key, tf: node.tf });
         continue;
@@ -420,6 +495,7 @@
       rememberDiagnosticEndpoint('ws', url);
       const endpoint = safeUrl(url); if (endpoint) stats.endpoints.add(`ws:${endpoint}`);
       flushTimer();
+      announceNetworkContext('ws', url);
       ws.addEventListener('message', e => {
         networkDiagnostic.transport.ws.seen += 1;
         if (typeof e.data === 'string') {
@@ -492,6 +568,8 @@
           },
           endpoints: [...networkDiagnostic.endpoints].slice(0, 5),
           wsFrames: { ...networkDiagnostic.wsFrames },
+          assetIdentity: { ...lastNetworkAssetIdentity },
+          networkContext: { contextKey: networkContextKey || '', transport: networkContextKey.split('|')[0] || '', endpoint: networkContextKey.split('|').slice(1).join('|') || '' },
           startedAt: networkDiagnostic.startedAt,
           observedAt: Date.now()
         }
