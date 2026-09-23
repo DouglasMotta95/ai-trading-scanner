@@ -597,6 +597,7 @@ async function inspectExpirationDiagnostic() {
     let canvas = null;
     let bridge = null;
     let network = null;
+    let focusedAsset = null;
     let settled = false;
 
     const finish = () => {
@@ -612,6 +613,7 @@ async function inspectExpirationDiagnostic() {
       if (data.source === 'ATS_CANVAS_DIAGNOSTIC_SNAPSHOT') canvas = data.payload || null;
       if (data.source === 'ATS_EMBEDDED_FEED_DIAGNOSTIC_SNAPSHOT') bridge = data.payload || null;
       if (data.source === 'ATS_NETWORK_DIAGNOSTIC_SNAPSHOT') network = data.payload || null;
+      if (data.source === 'ATS_FOCUSED_ASSET_DIAGNOSTIC_SNAPSHOT') focusedAsset = data.payload || null;
       if (canvas && bridge && network) finish();
     };
 
@@ -646,6 +648,8 @@ async function inspectExpirationDiagnostic() {
     embeddedFeedDiagnosticError: diagnosticSnapshots.bridge ? '' : 'ATS_EMBEDDED_FEED_DIAGNOSTIC_SNAPSHOT não respondeu dentro de 260 ms',
     networkDiagnostic: diagnosticSnapshots.network,
     networkDiagnosticError: diagnosticSnapshots.network ? '' : 'ATS_NETWORK_DIAGNOSTIC_SNAPSHOT não respondeu dentro de 260 ms',
+    focusedAssetDiagnostic: diagnosticSnapshots.focusedAsset,
+    focusedAssetDiagnosticError: diagnosticSnapshots.focusedAsset ? '' : 'ATS_FOCUSED_ASSET_DIAGNOSTIC_SNAPSHOT não respondeu dentro de 260 ms',
     selectedSelector,
     rawText: rawText || containerText || '',
     containerOuterHTML: outerHTML,
