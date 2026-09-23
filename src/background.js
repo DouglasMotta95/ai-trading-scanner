@@ -412,6 +412,27 @@ function historyFor(state = {}, asset = '') {
   return rows.filter(row => [row?.open, row?.high, row?.low, row?.close].every(value => num(value) != null)).slice(-180);
 }
 
+function deriveCandleRemaining(candles = [], timeframe = '', now = Date.now()) {
+  const tfMs = performanceTimeframeMs(timeframe);
+  if (!tfMs || !Array.isArray(candles) || !candles.length) return null;
+  const rows = candles
+    .map(row => ({ row, time: candleTimestamp(row) }))
+    .filter(item => item.time != null)
+    .sort((a, b) => a.time - b.time);
+  const latest = rows.at(-1);
+  if (!latest) return null;
+  const currentBucket = Math.floor(now / tfMs) * tfMs;
+  const openAt = Math.floor(Number(latest.time) / tfMs) * tfMs;
+  // Only use a candle whose timestamp is on the active timeframe grid and
+  // belongs to the candle that is open right now. Historical candles are never
+  // rolled forward by guesswork.
+  if (openAt !== currentBucket) return null;
+  if (Math.abs(Number(latest.time) - currentBucket) > 1500) return null;
+  const remainingMs = openAt + tfMs - now;
+  if (remainingMs < -1500 || remainingMs > tfMs + 1500) return null;
+  return Math.max(0, Math.min(Math.round(tfMs / 1000), Math.ceil(Math.max(0, remainingMs) / 1000)));
+}
+
 function consolidatedSnapshot(state = {}) {
   if (!activeAccess(state) || state.scanner !== 'scanning' || state.connection !== 'online') return null;
   const asset = marketId(state.asset);
@@ -435,15 +456,19 @@ function consolidatedSnapshot(state = {}) {
     && EXACT_CLOCK_SOURCES.has(clean(clock.source))
     && Number(clock.at || 0) > 0
     && Date.now() - Number(clock.at) <= CLOCK_FRESH_MS;
-  const secondsRemaining = exactClock ? num(clock.secondsRemaining) : null;
   const timeframe = normTf((exactClock ? clock.timeframe : null) || state.analysisTimeframe || state.timeframe || state.diagnostics?.marketSession?.timeframe);
-  if (exactClock && (secondsRemaining == null || secondsRemaining < 0)) return null;
   if (!timeframe) return null;
   const candles = historyFor(state, asset).filter(row => {
     const rowTf = normTf(row?.timeframe);
     return !rowTf || rowTf === timeframe;
   });
   if (candles.length < 2) return null;
+  const derivedSecondsRemaining = deriveCandleRemaining(candles, timeframe);
+  const secondsRemaining = exactClock
+    ? num(clock.secondsRemaining)
+    : derivedSecondsRemaining;
+  if (exactClock && (secondsRemaining == null || secondsRemaining < 0)) return null;
+  if (secondsRemaining == null) return null;
 
   return {
     platformId: state.platformId || 'casatrade',
