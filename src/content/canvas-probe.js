@@ -106,11 +106,18 @@
       else if (/^[A-Z]{6}$/.test(s)) s = `${s.slice(0, 3)}/${s.slice(3)}`;
     }
     const m = s.match(/^([A-Z0-9]{2,16})\/([A-Z0-9]{2,12})$/);
-    if (!m || !QUOTES.includes(m[2])) return '';
+    if (m && QUOTES.includes(m[2])) return `${m[1]}/${m[2]}${otc ? ' (OTC)' : ''}`;
+    let named = raw.replace(/\(\s*OTC\s*\)/gi, ' ').replace(/\bOTC\b/gi, ' ').trim();
+    named = named.replace(/(?:^|[\s|•·_-])(BLITZ|OPTION|OPTIONS|BINARY|BINARIA|BINARIO|DIGITAL|TURBO|CALL|PUT)\s*$/i, '').trim();
+    if (named.length >= 2 && named.length <= 64 && /[A-Z]/.test(named) && !/^[\d\s.,:+_/-]+$/.test(named)) {
+      const blocked = new Set(['BLITZ','OPTION','OPTIONS','BINARY','BINARIA','BINARIO','DIGITAL','TURBO','CALL','PUT','BUY','SELL','COMPRA','VENDA','TRADE','TRADING','INFO','ATIVO','ASSET','INSTRUMENT','MARKET','PRICE','PRECO','EXPIRACAO','EXPIRATION','VALOR','SALDO','PAYOUT','LUCRO','LIVE']);
+      if (!blocked.has(named)) return `${named}${otc ? ' (OTC)' : ''}`;
+    }
+    return '';
     return `${m[1]}/${m[2]}${otc ? ' (OTC)' : ''}`;
   };
 
-  const assetRegex = /\b(?:[A-Z0-9]{2,16}\s*[\/_-]\s*(?:USDT|USDC|USD|EUR|GBP|JPY|AUD|CAD|CHF|NZD|BRL|BTC|ETH)|[A-Z]{6})(?:\s*\(\s*OTC\s*\)|\s+OTC)?/gi;
+  const assetRegex = /\b(?:[A-Z0-9]{2,16}\s*[\/_-]\s*(?:USDT|USDC|USD|EUR|GBP|JPY|AUD|CAD|CHF|NZD|BRL|HKD|SGD|NOK|SEK|DKK|PLN|CZK|HUF|TRY|MXN|ZAR|INR|CNY|CNH|KRW|THB|MYR|PHP|IDR|VND|TWD|ILS|AED|SAR|QAR|KWD|BHD|OMR|ARS|CLP|COP|PEN|UYU|BOB|PYG|BTC|ETH)|[A-Z]{6})(?:\s*\(\s*OTC\s*\)|\s+OTC)?/gi;
   const assetsIn = text => {
     const out = [];
     for (const m of String(text || '').matchAll(assetRegex)) {
