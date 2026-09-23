@@ -222,11 +222,15 @@
       if (!isVisibleElement(el)) continue;
       const t = clean(el.innerText || el.textContent || '');
       if (!t || t.length > 100) continue;
-      const found = [...new Set(assetsIn(t))];
-      if (found.length !== 1) continue;
-      let extra = 0;
+      let found = [...new Set(assetsIn(t))];
       const cls = `${el.className || ''} ${el.getAttribute?.('aria-selected') || ''} ${el.getAttribute?.('aria-current') || ''} ${el.getAttribute?.('data-state') || ''}`;
       const isSelected = /true|active|selected|current|checked/i.test(cls);
+      if (found.length === 0 && (isSelected || /chart|header|instrument|symbol|asset|market|watchlist|option|digital|blitz|binary/i.test(cls) || /tab|button|option/i.test(String(el.getAttribute?.('role') || '')))) {
+        const named = canonicalAsset(t);
+        if (named) found = [named];
+      }
+      if (found.length !== 1) continue;
+      let extra = 0;
       if (isSelected) extra += 12;
       try {
         const r = el.getBoundingClientRect();
