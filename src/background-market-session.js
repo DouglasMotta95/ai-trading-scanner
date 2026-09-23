@@ -18,6 +18,8 @@ const FOCUS_FRESH_MS = 5000;
 const EXACT_CLOCK_SOURCES = new Set(['trader-dom-countdown', 'network-server-cycle']);
 const FALLBACK_CLOCK_SOURCE = 'platform-cycle-derived';
 const FALLBACK_MIN_CONFIDENCE = 50;
+const COMMON_QUOTES = new Set(['USD','EUR','GBP','JPY','AUD','CAD','CHF','NZD','BRL','HKD','SGD','NOK','SEK','DKK','PLN','CZK','HUF','TRY','MXN','ZAR','INR','CNY','CNH','KRW','THB','MYR','PHP','IDR','VND','TWD','ILS','AED','SAR','QAR','KWD','BHD','OMR','ARS','CLP','COP','PEN','UYU','BOB','PYG','USDT','USDC','BTC','ETH']);
+const GENERIC_ASSET_TOKENS = new Set(['BLITZ','OPTION','BINARY','BINARIA','DIGITAL','TURBO','CALL','PUT','TRADE','TRADING','OPERATION','OPERACAO','OPÇÃO','OPCAO']);
 
 function normAsset(value = '') {
   const raw = clean(value).toUpperCase();
@@ -25,12 +27,17 @@ function normAsset(value = '') {
   const otc = /(?:\(|\b|[_-])OTC(?:\)|\b)?/i.test(raw);
   const stripped = raw.replace(/\(\s*OTC\s*\)|\bOTC\b/g, ' ').trim();
   const direct = stripped.match(/\b([A-Z0-9]{2,20})\s*[\/_-]\s*([A-Z0-9]{2,12})/i);
-  if (direct) return `${direct[1]}/${direct[2]}${otc ? ' (OTC)' : ''}`;
+  if (direct) {
+    const base = direct[1];
+    const quote = direct[2];
+    if (!COMMON_QUOTES.has(quote) || GENERIC_ASSET_TOKENS.has(base) || GENERIC_ASSET_TOKENS.has(quote)) return '';
+    return `${base}/${quote}${otc ? ' (OTC)' : ''}`;
+  }
   const compact = stripped.replace(/[^A-Z0-9]/g, '');
-  for (const quote of ['USDT','USD','EUR','GBP','JPY','CAD','AUD','CHF','NZD','BTC','ETH']) {
+  for (const quote of COMMON_QUOTES) {
     if (!compact.endsWith(quote) || compact.length <= quote.length + 1) continue;
     const base = compact.slice(0, -quote.length);
-    if (/^[A-Z0-9]{2,12}$/.test(base)) return `${base}/${quote}${otc ? ' (OTC)' : ''}`;
+    if (/^[A-Z0-9]{2,12}$/.test(base) && !GENERIC_ASSET_TOKENS.has(base)) return `${base}/${quote}${otc ? ' (OTC)' : ''}`;
   }
   return '';
 }
@@ -400,6 +407,75 @@ function clockRecord(message = {}, info = {}, asset = '', timeframe = null, seco
   };
 }
 
+export async function applyNetworkContext(message = {}, sender = {}) {
+  const info = senderMeta(sender);
+  if (!info.trusted || !info.tabOwned) return null;
+  return updateScannerState(state => {
+    if (!licenseActive(state)) return state;
+    if (state.targetTabId && Number(state.targetTabId) !== Number(info.tabId)) return state;
+
+    const payload = message.payload && typeof message.payload === 'object' ? message.payload : {};
+    const contextKey = clean(payload.contextKey || '');
+    if (!contextKey) return state;
+
+    const previous = state.diagnostics?.networkContext || {};
+    const previousKey = clean(previous.contextKey || '');
+    const hasMarketAuthority = !!state.asset
+      || !!state.diagnostics?.focusedAsset?.asset
+      || !!state.diagnostics?.marketSession?.asset
+      || (Array.isArray(state.candles) && state.candles.length > 0)
+      || Object.keys(state.marketHistory || {}).length > 0;
+    const changed = !!previousKey && previousKey !== contextKey
+      || (!previousKey && hasMarketAuthority);
+
+    const networkContext = {
+      contextKey,
+      transport: clean(payload.transport || ''),
+      endpoint: clean(payload.endpoint || '', 240),
+      observedAt: num(payload.observedAt) || Date.now(),
+      changed,
+      at: Date.now(),
+      source: clean(payload.source || 'network-probe')
+    };
+
+    if (!changed) {
+      return {
+        ...state,
+        diagnostics: {
+          ...(state.diagnostics || {}),
+          networkContext
+        }
+      };
+    }
+
+    return clearMarketAuthorityState(state, {
+      scanner: 'scanning',
+      connection: state.connection === 'offline' ? 'connecting' : state.connection,
+      targetTabId: info.tabId,
+      diagnostics: {
+        ...(state.diagnostics || {}),
+        networkContext,
+        focusRejected: {
+          ...(state.diagnostics?.focusRejected || {}),
+          reason: 'network-context-changed',
+          previousContextKey: previousKey || null,
+          contextKey,
+          at: Date.now()
+        },
+        assetIdentity: {
+          ...(state.diagnostics?.assetIdentity || {}),
+          contextChanged: true,
+          contextChangeSource: 'network-probe',
+          contextKey,
+          previousContextKey: previousKey || null,
+          at: Date.now()
+        }
+      },
+      marketSessionSource: 'network-context-change'
+    });
+  });
+}
+
 export async function applyFocus(message = {}, sender = {}) {
   const info = senderMeta(sender);
   const role = clean(message.frameRole || '');
@@ -436,6 +512,36 @@ export async function applyFocus(message = {}, sender = {}) {
       const existingFocusFresh = existingFocus?.reliable === true
         && Number(existingFocus.at || 0) > 0
         && Date.now() - Number(existingFocus.at) < 7000;
+      const contextChanged = message.contextChanged === true
+        || (!!existingFocus?.frameId && (Number(existingFocus.frameId) !== Number(info.frameId)
+          || clean(existingFocus.frameHost).toLowerCase() !== clean(info.frameHost).toLowerCase()));
+
+      if (contextChanged) {
+        return clearMarketAuthorityState(state, {
+          scanner: 'scanning',
+          connection: state.connection === 'offline' ? 'connecting' : state.connection,
+          targetTabId: info.tabId,
+          diagnostics: {
+            ...(state.diagnostics || {}),
+            focusDiagnostic: {
+              asset: asset || null,
+              reliable: false,
+              reliableReason: reason,
+              contextChanged: true,
+              frameId: info.frameId,
+              frameHost: info.frameHost,
+              at: Number(message.at || Date.now())
+            },
+            assetIdentity: {
+              ...(state.diagnostics?.assetIdentity || {}),
+              contextChanged: true,
+              contextChangeSource: 'visual-focus',
+              at: Number(message.at || Date.now())
+            }
+          },
+          marketSessionSource: 'visual-context-change'
+        });
+      }
 
       const rejectedFocus = {
         asset: asset || null,
@@ -774,6 +880,16 @@ export async function applyFeed(payload = {}, sender = {}) {
     const candidate = bestForFocus(payload, asset);
     if (!candidate) return;
 
+    const assetIdentity = {
+      networkRawAssetName: clean(candidate.assetRaw || ''),
+      networkAsset: clean(candidate.asset || ''),
+      finalAsset: clean(asset || ''),
+      finalSource: clean(candidate.assetSource || 'network'),
+      fallbackUsed: ['network-payload-fallback', 'trusted-visual-fallback'].includes(clean(candidate.assetSource)),
+      contextChanged: false,
+      at: Date.now()
+    };
+
     const candidateTimeframe = normTf(candidate.timeframe);
     const stateTimeframe = normTf(state.diagnostics?.marketClock?.timeframe || state.analysisTimeframe || state.timeframe);
     if (candidateTimeframe && stateTimeframe && candidateTimeframe !== stateTimeframe) {
@@ -881,7 +997,14 @@ export async function applyFeed(payload = {}, sender = {}) {
           priceSource: candidate.transport || payload.primaryTransport || 'market', candleCount: acceptedHistory.length, requiredCandles: 2,
           feedQuality: Number(payload.feedQuality || 0), at: Date.now()
         },
-        inspector: state.diagnostics?.inspector || null
+        inspector: state.diagnostics?.inspector || null,
+        assetIdentity: {
+          ...(state.diagnostics?.assetIdentity || {}),
+          ...assetIdentity,
+          contextKey: clean(state.diagnostics?.networkContext?.contextKey || ''),
+          fallbackSource: clean(candidate.assetSource || ''),
+          at: Date.now()
+        }
       }
     };
   });
@@ -1016,7 +1139,8 @@ chrome.storage.onChanged.addListener(changes => {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   let task = null;
-  if (message?.type === 'ATS_VISUAL_FOCUS_V2') task = applyFocus(message, sender);
+  if (message?.type === 'ATS_NETWORK_CONTEXT_CHANGED') task = applyNetworkContext(message, sender);
+  else if (message?.type === 'ATS_VISUAL_FOCUS_V2') task = applyFocus(message, sender);
   else if (message?.type === 'ATS_MARKET_CLOCK_V2') task = applyClock(message, sender);
   else if (message?.type === 'ATS_EMBEDDED_FEED') task = applyFeed(message.payload || {}, sender);
   else if (message?.type === 'ATS_CHART_FRAME_MARKET') task = applyChartPrice(message, sender);
