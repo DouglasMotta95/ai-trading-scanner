@@ -1096,39 +1096,52 @@ async function setScanner(enabled = false) {
 
 const SCANNER_WINDOW_KEY = 'atsScannerCompactWindowId';
 const SCANNER_SOURCE_TAB_KEY = 'atsScannerSourceCasaTradeTabId';
+let liveScannerPopupId = 0;
 
-async function focusOrCreateCompactScannerWindow() {
+async function focusOrCreateCompactScannerWindow({ sourceTabId = 0 } = {}) {
   if (!windowsApiAvailable()) {
     await sidePanelSetBehavior({ openPanelOnActionClick: true }).catch(() => {});
     return { ok: false, fallback: 'side_panel_unavailable_windows_api' };
   }
 
-  const stored = await storageSessionGet(SCANNER_WINDOW_KEY).catch(() => ({}));
-  const existingId = Number(stored?.[SCANNER_WINDOW_KEY] || 0);
-  if (existingId > 0) {
-    const existing = await windowsGet(existingId).catch(() => null);
-    if (existing?.id) {
-      await windowsUpdate(existingId, { focused: true }).catch(() => {});
-      return { ok: true, windowId: existingId, reused: true };
-    }
-    await storageSessionRemove(SCANNER_WINDOW_KEY).catch(() => {});
-  }
+  const source = Number(sourceTabId || 0);
+  const query = source > 0 ? `&sourceTabId=${encodeURIComponent(source)}` : '';
+  const url = `${chrome.runtime.getURL('src/sidepanel/index.html')}?container=window${query}`;
 
-  const url = chrome.runtime.getURL('src/sidepanel/index.html?container=window');
+  // IMPORTANT: create the popup before any awaited storage/windows lookup.
+  // Some Chromium builds require the action click's user gesture to still be
+  // active when chrome.windows.create() is invoked. The previous flow awaited
+  // storage first, which made the popup fail while CasaTrade was focused/open.
   try {
-    const created = await windowsCreate({
+    if (liveScannerPopupId > 0) {
+      const focused = await windowsUpdate(liveScannerPopupId, { focused: true }).catch(() => null);
+      if (focused?.id || focused === undefined) {
+        await storageSessionSet({
+          [SCANNER_SOURCE_TAB_KEY]: source > 0 ? source : undefined,
+          [SCANNER_WINDOW_KEY]: liveScannerPopupId
+        }).catch(() => {});
+        return { ok: true, windowId: liveScannerPopupId, reused: true };
+      }
+      liveScannerPopupId = 0;
+    }
+
+    // Keep this call as the first asynchronous browser operation of the action.
+    const createdPromise = windowsCreate({
       url,
       type: 'popup',
       width: 390,
       height: 700,
       focused: true
     });
+    const created = await createdPromise;
     if (!created?.id) throw new Error('scanner_window_create_failed');
-    await storageSessionSet({ [SCANNER_WINDOW_KEY]: Number(created.id) }).catch(() => {});
-    return { ok: true, windowId: Number(created.id), reused: false };
+
+    liveScannerPopupId = Number(created.id);
+    const sessionPayload = { [SCANNER_WINDOW_KEY]: liveScannerPopupId };
+    if (source > 0) sessionPayload[SCANNER_SOURCE_TAB_KEY] = source;
+    await storageSessionSet(sessionPayload).catch(() => {});
+    return { ok: true, windowId: liveScannerPopupId, reused: false };
   } catch (error) {
-    // Some Chromium variants expose sidePanel but restrict extension-created
-    // popup windows. Keep a safe fallback instead of breaking the extension.
     await sidePanelSetBehavior({ openPanelOnActionClick: true }).catch(() => {});
     return { ok: false, fallback: 'side_panel', error: String(error?.message || error) };
   }
@@ -1137,16 +1150,15 @@ async function focusOrCreateCompactScannerWindow() {
 sidePanelSetBehavior({ openPanelOnActionClick: !windowsApiAvailable() }).catch(() => {});
 
 if (chrome?.action?.onClicked?.addListener) {
-  chrome.action.onClicked.addListener(async (tab) => {
+  chrome.action.onClicked.addListener((tab) => {
     const sourceTabId = Number(tab?.id || 0);
-    if (sourceTabId > 0) {
-      await storageSessionSet({ [SCANNER_SOURCE_TAB_KEY]: sourceTabId }).catch(() => {});
-    }
-    await focusOrCreateCompactScannerWindow().catch(() => {});
+    // No await is performed before the popup creation path starts.
+    focusOrCreateCompactScannerWindow({ sourceTabId }).catch(() => {});
   });
 }
 
 chrome?.windows?.onRemoved?.addListener?.((windowId) => {
+  if (Number(liveScannerPopupId) === Number(windowId)) liveScannerPopupId = 0;
   storageSessionGet(SCANNER_WINDOW_KEY).then(stored => {
     if (Number(stored?.[SCANNER_WINDOW_KEY] || 0) === Number(windowId)) {
       return storageSessionRemove(SCANNER_WINDOW_KEY);
