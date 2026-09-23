@@ -8,6 +8,9 @@ const num = value => value == null || value === '' ? null : Number.isFinite(Numb
 let mode = 'signal';
 let lastState = {};
 
+const containerMode = new URLSearchParams(location.search).get('container') === 'window' ? 'window' : 'sidepanel';
+document.documentElement.dataset.containerMode = containerMode;
+
 function marketId(value) {
   const raw = clean(value).toUpperCase();
   if (!raw) return '';
