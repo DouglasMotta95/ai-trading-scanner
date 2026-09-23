@@ -3,6 +3,7 @@ const $ = id => document.getElementById(id);
 const PREF_KEY = 'atsScannerUiPreferences';
 const EXACT_CLOCK_SOURCES = new Set(['trader-dom-countdown','network-server-cycle']);
 const CLOCK_FRESH_MS = 4500;
+const LIVE_TRANSPORT_FRESH_MS = 30000;
 const CONTROLS_FRESH_MS = 7000;
 const PANEL_OPENED_AT = Date.now();
 const PERFORMANCE_KEY = 'atsSignalPerformanceLedgerV1';
@@ -93,6 +94,24 @@ function activeLicense(state = {}) {
     || state?.diagnostics?.access?.state === 'owner_dev';
 }
 
+function liveTransportHandshake(state = {}) {
+  const focus = state.diagnostics?.focusedAsset || null;
+  const session = state.diagnostics?.marketSession || {};
+  return activeLicense(state)
+    && state.connection === 'online'
+    && !!state.asset
+    && Number.isFinite(Number(state.price))
+    && focus?.reliable === true
+    && focus?.chartScoped === true
+    && focus?.trustedChartFrame === true
+    && focus?.visualAuthority !== false
+    && sameMarket(focus?.asset, state.asset)
+    && sameMarket(session.confirmedAsset || session.asset, state.asset)
+    && session.transitioning !== true
+    && Number(state.lastSeen || 0) > 0
+    && Date.now() - Number(state.lastSeen) < LIVE_TRANSPORT_FRESH_MS;
+}
+
 function baseHandshake(state = {}) {
   const focus = state.diagnostics?.focusedAsset || null;
   const ambiguousPassive = Number(focus?.ambiguityCount || 0) > 0
@@ -162,7 +181,10 @@ function exactLiveTime(state = {}) {
 }
 
 function connectionFailure(state = {}) {
-  if (baseHandshake(state)) return '';
+  // Transport continuity is distinct from the exact clock/entry gate.
+  // A transient countdown/reader gap must not turn a live CasaTrade session
+  // into "FALHA AO CONECTAR" or force the user to reconnect.
+  if (baseHandshake(state) || liveTransportHandshake(state)) return '';
   const stage = clean(state.diagnostics?.acquisition?.stage);
   const error = state.diagnostics?.connectionError || {};
   if (stage === 'connect_timeout' || clean(error.code) === 'handshake_timeout') {
@@ -319,7 +341,8 @@ function renderShell(state = {}) {
   const pendingAsset = clean(session.pendingAsset || session.asset || '');
   const switching = session.transitioning === true && !!pendingAsset;
   const dataConnected = baseHandshake(state);
-  const connected = dataConnected || switching;
+  const transportConnected = liveTransportHandshake(state);
+  const connected = dataConnected || transportConnected || switching;
   const platformLinked = connected;
   const tradeReady = exactLiveTime(state);
   const failure = connectionFailure(state);
