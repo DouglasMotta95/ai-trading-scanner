@@ -17,7 +17,10 @@ test('visible CasaTrade chart remains the authoritative asset source on owned or
   assert.match(focused, /setInterval\(\(\) => schedulePublish\(0, false\), 450\)/);
   assert.match(focused, /setTimeout\(\(\) => \{ invalidateElements\(\); publish\(true\); \}, 80\)/);
   assert.match(market, /message\?\.type === 'ATS_VISUAL_FOCUS_V2'/);
-  assert.match(market, /if \(!info\.trusted \|\| message\.chartScoped !== true \|\| message\.reliable !== true/);
+  assert.match(market, /const accepted = trustedChartFrame/);
+  assert.match(market, /message\.chartScoped === true/);
+  assert.match(market, /message\.reliable === true/);
+  assert.match(market, /message\.visualAuthority !== false/);
 });
 
 test('panel boot never paints a pre-boot asset snapshot while fresh visual focus is pending', () => {
