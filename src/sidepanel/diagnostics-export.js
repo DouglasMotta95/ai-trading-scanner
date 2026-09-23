@@ -157,8 +157,34 @@
         clockFresh: clockAgeMs != null && clockAgeMs < 3000
       },
       focus: {
-        asset: clean(focus.asset || ''), reliable: focus.reliable === true, chartScoped: focus.chartScoped === true,
-        frameId: num(focus.frameId), source: clean(focus.source || '')
+        asset: clean(focus.asset || ''),
+        reliable: focus.reliable === true,
+        reliableReason: clean(focus.reliableReason || '', 160),
+        ambiguityCount: num(focus.ambiguityCount),
+        explicit: focus.explicit === true,
+        interactionHint: focus.interactionHint === true,
+        chartScoped: focus.chartScoped === true,
+        trustedChartFrame: focus.trustedChartFrame === true,
+        visualAuthority: focus.visualAuthority !== false,
+        embeddedTrader: focus.embeddedTrader === true,
+        casaTradeFrame: focus.casaTradeFrame === true,
+        sameMarket: focus.reliableChecks?.sameMarket ?? null,
+        at: num(focus.at),
+        frameId: num(focus.frameId),
+        frameHost: clean(focus.frameHost || '', 120),
+        source: clean(focus.source || ''),
+        checks: focus.reliableChecks && typeof focus.reliableChecks === 'object' ? {
+          ambiguityCount: num(focus.reliableChecks.ambiguityCount),
+          explicit: focus.reliableChecks.explicit === true,
+          interactionHint: focus.reliableChecks.interactionHint === true,
+          chartScoped: focus.reliableChecks.chartScoped === true,
+          trustedChartFrame: focus.reliableChecks.trustedChartFrame === true,
+          visualAuthority: focus.reliableChecks.visualAuthority !== false,
+          embeddedTrader: focus.reliableChecks.embeddedTrader === true,
+          casaTradeFrame: focus.reliableChecks.casaTradeFrame === true,
+          sameMarket: focus.reliableChecks.sameMarket ?? null,
+          at: num(focus.reliableChecks.at)
+        } : null
       },
       clock: {
         verified: clock.verified === true, available: clock.available !== false, role: clean(clock.role || ''),
