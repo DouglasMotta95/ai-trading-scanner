@@ -62,12 +62,85 @@ function handshakeReady(state = {}) {
     && Date.now() - Number(clock.at) < 5000;
 }
 
-function scheduleConnectionTimeout(tabId, connectedAt) {
+async function updateConnectionHandshake(attemptId, patch = {}) {
+  if (!attemptId) return null;
+  return updateScannerState(state => {
+    const previous = state.diagnostics?.connectionHandshake || {};
+    if (previous.attemptId && previous.attemptId !== attemptId) return state;
+    const startedAt = Number(previous.startedAt || patch.startedAt || Date.now());
+    const now = Date.now();
+    const lastStageAt = Number(patch.lastStageAt || now);
+    const stageDurationsMs = {
+      ...(previous.stageDurationsMs || {}),
+      ...(patch.stageDurationsMs || {})
+    };
+    if (previous.stage && previous.lastStageAt && previous.stage !== (patch.stage || previous.stage)) {
+      stageDurationsMs[previous.stage] = Math.max(0, lastStageAt - Number(previous.lastStageAt));
+    }
+    const next = {
+      ...previous,
+      ...patch,
+      attemptId,
+      startedAt,
+      lastStageAt,
+      elapsedMs: Math.max(0, now - startedAt),
+      stageDurationsMs
+    };
+    return {
+      ...state,
+      diagnostics: {
+        ...(state.diagnostics || {}),
+        connectionHandshake: next
+      }
+    };
+  }).catch(() => null);
+}
+
+function connectionHandshakeRuntimeSummary(telemetry = {}) {
+  return {
+    durationMs: Number(telemetry.durationMs || 0),
+    probe: {
+      ok: telemetry.probe?.ok === true,
+      mode: String(telemetry.probe?.mode || ''),
+      firstError: String(telemetry.probe?.firstError || ''),
+      error: String(telemetry.probe?.error || '')
+    },
+    failures: Array.isArray(telemetry.failures)
+      ? telemetry.failures.slice(0, 20).map(row => ({
+          file: String(row?.file || ''),
+          world: String(row?.world || ''),
+          error: String(row?.error || '')
+        }))
+      : []
+  };
+}
+
+function scheduleConnectionTimeout(tabId, connectedAt, attemptId, targetHost) {
   setTimeout(() => {
     readScannerState().then(current => {
       const sameTarget = Number(current.targetTabId) === Number(tabId)
         && Number(current.diagnostics?.target?.connectedAt || 0) === Number(connectedAt);
-      if (!sameTarget || handshakeReady(current)) return null;
+      if (!sameTarget) return null;
+      const handshake = current.diagnostics?.connectionHandshake || {};
+      if (handshake.attemptId && attemptId && handshake.attemptId !== attemptId) return null;
+      if (handshakeReady(current)) {
+        return updateScannerState(state => ({
+          ...state,
+          diagnostics: {
+            ...(state.diagnostics || {}),
+            connectionHandshake: {
+              ...(state.diagnostics?.connectionHandshake || {}),
+              stage: 'handshake_ready',
+              outcome: 'market_handshake_ready',
+              completedAt: Date.now(),
+              lastStageAt: Date.now(),
+              targetTabId: tabId,
+              targetHost: targetHost || state.diagnostics?.target?.host || '',
+              timeoutMs: CONNECT_TIMEOUT_MS
+            }
+          }
+        }));
+      }
       return updateScannerState(state => {
         const stillSame = Number(state.targetTabId) === Number(tabId)
           && Number(state.diagnostics?.target?.connectedAt || 0) === Number(connectedAt);
@@ -90,6 +163,9 @@ function scheduleConnectionTimeout(tabId, connectedAt) {
             }
           };
         }
+        const timeoutAt = Date.now();
+        const runtimeInjection = state.diagnostics?.runtimeInjection || {};
+        const controlsProbe = state.diagnostics?.connectionHandshake?.controlsProbe || {};
         return {
           ...state,
           scanner: 'idle',
@@ -99,13 +175,28 @@ function scheduleConnectionTimeout(tabId, connectedAt) {
             connectionError: {
               code: 'handshake_timeout',
               message: 'Falha ao conectar — tentar novamente.',
-              at: Date.now()
+              at: timeoutAt
+            },
+            connectionHandshake: {
+              ...(state.diagnostics?.connectionHandshake || {}),
+              attemptId: attemptId || state.diagnostics?.connectionHandshake?.attemptId || '',
+              stage: 'connect_timeout',
+              outcome: 'handshake_timeout',
+              errorCode: 'handshake_timeout',
+              errorMessage: 'Falha ao conectar — tentar novamente.',
+              timeoutMs: CONNECT_TIMEOUT_MS,
+              targetTabId: tabId,
+              targetHost: targetHost || state.diagnostics?.target?.host || '',
+              completedAt: timeoutAt,
+              lastStageAt: timeoutAt,
+              runtimeInjection: connectionHandshakeRuntimeSummary(runtimeInjection),
+              controlsProbe
             },
             acquisition: {
               ...(state.diagnostics?.acquisition || {}),
               stage: 'connect_timeout',
               reason: 'Falha ao conectar — tentar novamente.',
-              at: Date.now()
+              at: timeoutAt
             }
           }
         };
@@ -877,6 +968,9 @@ async function refreshTargetTab() {
 
 async function connectActiveTab({ automatic = false, preferredTabId = null } = {}) {
   let state = await readScannerState();
+  const handshakeAttemptId = `ats-connect-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const handshakeStartedAt = Date.now();
+
   const license = await recoverLicense(state);
   if (!activeLicense(license)) {
     const next = await updateScannerState(current => clearMarket(current, {
@@ -886,12 +980,44 @@ async function connectActiveTab({ automatic = false, preferredTabId = null } = {
     return { ok: false, error: license.error || 'license_required', state: next };
   }
 
+  await updateConnectionHandshake(handshakeAttemptId, {
+    stage: 'target_resolution',
+    outcome: 'running',
+    targetTabId: Number(preferredTabId || 0) || null,
+    targetHost: '',
+    startedAt: handshakeStartedAt,
+    lastStageAt: Date.now(),
+    timeoutMs: CONNECT_TIMEOUT_MS,
+    trigger: automatic ? 'automatic' : 'manual',
+    preferredTabId: Number(preferredTabId || 0) || null
+  });
+
+  const targetResolutionStartedAt = Date.now();
   const { tab, platform } = await activePlatformTab(preferredTabId);
+  const targetResolutionEndedAt = Date.now();
+  await updateConnectionHandshake(handshakeAttemptId, {
+    stage: tab?.id && platform ? 'state_prepare' : 'target_resolution_failed',
+    lastStageAt: targetResolutionEndedAt,
+    targetTabId: tab?.id || Number(preferredTabId || 0) || null,
+    targetHost: (() => { try { return new URL(tab?.url || '').hostname || ''; } catch { return ''; } })(),
+    stageDurationsMs: { target_resolution: Math.max(0, targetResolutionEndedAt - targetResolutionStartedAt) },
+    outcome: tab?.id && platform ? 'running' : 'platform_not_registered',
+    errorCode: tab?.id && platform ? '' : 'platform_not_registered',
+    errorMessage: tab?.id && platform ? '' : 'Nenhuma aba CasaTrade válida foi encontrada.'
+  });
   if (!tab?.id || !platform) {
     const next = await updateScannerState(current => clearMarket(current, {
       license,
       diagnostics: { unsupportedHost: (() => { try { return new URL(tab?.url || '').hostname || null; } catch { return null; } })() }
     }));
+    await updateConnectionHandshake(handshakeAttemptId, {
+      stage: 'target_resolution_failed',
+      outcome: 'platform_not_registered',
+      errorCode: 'platform_not_registered',
+      errorMessage: 'Nenhuma aba CasaTrade válida foi encontrada.',
+      completedAt: Date.now(),
+      lastStageAt: Date.now()
+    });
     return { ok: false, error: 'platform_not_registered', state: next };
   }
 
@@ -957,7 +1083,25 @@ async function connectActiveTab({ automatic = false, preferredTabId = null } = {
     });
   });
 
+  const injectionStartedAt = Date.now();
+  await updateConnectionHandshake(handshakeAttemptId, {
+    stage: 'runtime_injection',
+    lastStageAt: injectionStartedAt,
+    targetTabId: tab.id,
+    targetHost: (() => { try { return new URL(tab.url).hostname; } catch { return ''; } })()
+  });
   const injected = await injectModern(tab.id);
+  const injectionEndedAt = Date.now();
+  const injectionState = await readScannerState().catch(() => state);
+  await updateConnectionHandshake(handshakeAttemptId, {
+    stage: injected ? 'controls_probe' : 'runtime_injection_failed',
+    lastStageAt: injectionEndedAt,
+    stageDurationsMs: { runtime_injection: Math.max(0, injectionEndedAt - injectionStartedAt) },
+    runtimeInjection: connectionHandshakeRuntimeSummary(injectionState?.diagnostics?.runtimeInjection || {}),
+    outcome: injected ? 'running' : 'runtime_injection_failed',
+    errorCode: injected ? '' : 'runtime_injection_failed',
+    errorMessage: injected ? '' : 'A injeção dos leitores ao vivo falhou.'
+  });
   if (!injected) {
     const failed = await updateScannerState(current => ({
       ...current,
@@ -972,12 +1116,37 @@ async function connectActiveTab({ automatic = false, preferredTabId = null } = {
         }
       }
     }));
+    await updateConnectionHandshake(handshakeAttemptId, {
+      stage: 'runtime_injection_failed',
+      outcome: 'runtime_injection_failed',
+      errorCode: 'runtime_injection_failed',
+      errorMessage: 'A injeção dos leitores ao vivo falhou.',
+      completedAt: injectionEndedAt,
+      lastStageAt: injectionEndedAt
+    });
     return { ok: false, error: 'runtime_injection_failed', platform: { id: platform.id, name: platform.name }, tabId: tab.id, state: failed };
   }
-  const probed = await probePlatformControlsDirect(tab.id).catch(() => null);
+  const controlsStartedAt = Date.now();
+  const probed = await probePlatformControlsDirect(tab.id).catch(error => ({
+    ok: false, error: String(error?.message || error), frames: 0
+  }));
+  const controlsEndedAt = Date.now();
+  const finalControlsState = probed?.state || await readScannerState() || next;
+  await updateConnectionHandshake(handshakeAttemptId, {
+    stage: 'awaiting_market_handshake',
+    lastStageAt: controlsEndedAt,
+    stageDurationsMs: { controls_probe: Math.max(0, controlsEndedAt - controlsStartedAt) },
+    controlsProbe: {
+      durationMs: Math.max(0, controlsEndedAt - controlsStartedAt),
+      ok: probed?.ok === true,
+      error: String(probed?.error || ''),
+      frames: Number(probed?.frames || 0)
+    },
+    outcome: 'awaiting_market_handshake'
+  });
   const connectedAt = Number(next.diagnostics?.target?.connectedAt || Date.now());
-  scheduleConnectionTimeout(tab.id, connectedAt);
-  return { ok: true, platform: { id: platform.id, name: platform.name }, tabId: tab.id, controls: probed || null, state: probed?.state || await readScannerState() || next };
+  scheduleConnectionTimeout(tab.id, connectedAt, handshakeAttemptId, (() => { try { return new URL(tab.url).hostname; } catch { return ''; } })());
+  return { ok: true, platform: { id: platform.id, name: platform.name }, tabId: tab.id, controls: probed || null, state: finalControlsState };
 }
 
 async function activate(key = '') {
