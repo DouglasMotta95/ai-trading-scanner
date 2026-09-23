@@ -357,7 +357,6 @@
   let scanning = false;
 
   let lastReliableAsset = '';
-  let lastChartContextSignature = '';
   function sendFocus(common) {
     if (common?.asset && common?.reliable === true) {
       lastReliableAsset = common.asset;
