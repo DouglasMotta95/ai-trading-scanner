@@ -259,6 +259,7 @@ export function clearMarketAuthorityState(state = {}, extra = {}) {
     frameId: null,
     frameHost: null,
     source: clean(extra.marketSessionSource || 'control-clear'),
+    networkSessionId: num(extra.marketSessionNetworkId),
     startedAt: now,
     dataMode: 'idle'
   };
@@ -362,6 +363,7 @@ export function resetForSession(state = {}, { asset, timeframe = null, info, rea
         frameId: info?.frameId ?? null,
         frameHost: info?.frameHost || null,
         source: source || 'visible-chart',
+        networkSessionId: num(previous.networkSessionId),
         startedAt: now,
         dataMode: 'syncing'
       },
@@ -665,13 +667,7 @@ export async function applyFeed(payload = {}, sender = {}) {
         connection: 'connecting'
       }, {
         marketSessionSource: 'network-session-change',
-        diagnostics: {
-          ...(state.diagnostics || {}),
-          marketSession: {
-            ...(state.diagnostics?.marketSession || {}),
-            networkSessionId
-          }
-        }
+        marketSessionNetworkId: Number(networkSessionId)
       });
     }
 
