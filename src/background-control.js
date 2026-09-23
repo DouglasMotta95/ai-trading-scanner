@@ -1,6 +1,6 @@
 import { activateLicense, validateLicense, clearLicense } from './services/license.js';
 import { readScannerState, updateScannerState } from './services/scanner-state-atomic.js';
-import { storageLocalGet, storageSessionGet, tabsQuery, sidePanelSetBehavior, scriptingExecuteScript } from './services/chrome-compat.js';
+import { storageLocalGet, storageSessionGet, storageSessionSet, storageSessionRemove, tabsQuery, sidePanelSetBehavior, scriptingExecuteScript, windowsCreate, windowsGet, windowsUpdate, windowsApiAvailable } from './services/chrome-compat.js';
 import { detectPlatform } from './platforms/registry.js';
 import { clearMarketAuthorityState, clearUserDeclaredExpirationState } from './background-market-session.js';
 import { getOperationMode } from './core/analysis.js';
@@ -1056,7 +1056,61 @@ async function setScanner(enabled = false) {
   return { ok: true, state: next };
 }
 
-sidePanelSetBehavior({ openPanelOnActionClick: true }).catch(() => {});
+const SCANNER_WINDOW_KEY = 'atsScannerCompactWindowId';
+
+async function focusOrCreateCompactScannerWindow() {
+  if (!windowsApiAvailable()) {
+    await sidePanelSetBehavior({ openPanelOnActionClick: true }).catch(() => {});
+    return { ok: false, fallback: 'side_panel_unavailable_windows_api' };
+  }
+
+  const stored = await storageSessionGet(SCANNER_WINDOW_KEY).catch(() => ({}));
+  const existingId = Number(stored?.[SCANNER_WINDOW_KEY] || 0);
+  if (existingId > 0) {
+    const existing = await windowsGet(existingId).catch(() => null);
+    if (existing?.id) {
+      await windowsUpdate(existingId, { focused: true }).catch(() => {});
+      return { ok: true, windowId: existingId, reused: true };
+    }
+    await storageSessionRemove(SCANNER_WINDOW_KEY).catch(() => {});
+  }
+
+  const url = chrome.runtime.getURL('src/sidepanel/index.html?container=window');
+  try {
+    const created = await windowsCreate({
+      url,
+      type: 'popup',
+      width: 390,
+      height: 700,
+      focused: true
+    });
+    if (!created?.id) throw new Error('scanner_window_create_failed');
+    await storageSessionSet({ [SCANNER_WINDOW_KEY]: Number(created.id) }).catch(() => {});
+    return { ok: true, windowId: Number(created.id), reused: false };
+  } catch (error) {
+    // Some Chromium variants expose sidePanel but restrict extension-created
+    // popup windows. Keep a safe fallback instead of breaking the extension.
+    await sidePanelSetBehavior({ openPanelOnActionClick: true }).catch(() => {});
+    return { ok: false, fallback: 'side_panel', error: String(error?.message || error) };
+  }
+}
+
+sidePanelSetBehavior({ openPanelOnActionClick: !windowsApiAvailable() }).catch(() => {});
+
+if (chrome?.action?.onClicked?.addListener) {
+  chrome.action.onClicked.addListener(() => {
+    focusOrCreateCompactScannerWindow().catch(() => {});
+  });
+}
+
+chrome?.windows?.onRemoved?.addListener?.((windowId) => {
+  storageSessionGet(SCANNER_WINDOW_KEY).then(stored => {
+    if (Number(stored?.[SCANNER_WINDOW_KEY] || 0) === Number(windowId)) {
+      return storageSessionRemove(SCANNER_WINDOW_KEY);
+    }
+    return null;
+  }).catch(() => {});
+});
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const type = String(message?.type || '');
