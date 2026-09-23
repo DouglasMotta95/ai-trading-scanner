@@ -51,6 +51,15 @@
       <button id="copyExpirationDiagnostic" class="sync-retry" type="button" hidden>Copiar diagnóstico de expiração</button>
     </section>
 
+    <section id="licenseCard" class="card license-card">
+      <div class="section-head"><div><span class="eyebrow">ACESSO DO SCANNER</span><h2 id="licenseTitle">Verificando acesso…</h2></div><span id="licenseHealth" class="badge">—</span></div>
+      <p id="licenseText" class="muted">Digite sua chave de acesso para ativar este aparelho.</p>
+      <div id="activationBox" class="activation-box"><input id="licenseKey" autocomplete="off" placeholder="Digite sua chave de acesso" aria-label="Chave de acesso"><button id="activateLicense" class="primary">ATIVAR ACESSO</button></div>
+      <button id="copyScannerDiagnostics" class="secondary" type="button">COPIAR DIAGNÓSTICO</button>
+      <button id="copySignalPerformance" class="secondary" type="button">COPIAR RELATÓRIO DE DESEMPENHO</button>
+      <button id="clearSignalPerformance" class="secondary" type="button">LIMPAR REGISTRO</button>
+    </section>
+
     <section class="market-hero professional-hero compact-market">
       <div><span>ATIVO <small id="assetSource" class="source-state stale">STALE</small></span><b id="asset">—</b></div>
       <div><span>TF</span><b id="timeframe">—</b></div>
@@ -119,16 +128,6 @@
       <div class="recent-head"><span>ÚLTIMAS 10 VELAS REAIS</span><b id="recentCandleCount">CARREGANDO</b></div>
       <div id="recentCandles" class="recent-candles compact-recent-candles" aria-label="Últimas 10 velas"></div>
     </section>
-
-    <section id="licenseCard" class="card license-card">
-          <div class="section-head"><div><span class="eyebrow">ACESSO E DIAGNÓSTICO</span><h2 id="licenseTitle">Verificando acesso…</h2></div><span id="licenseHealth" class="badge">—</span></div>
-          <p id="licenseText" class="muted">Aguardando status do acesso.</p>
-          <div id="activationBox" class="activation-box" hidden><input id="licenseKey" autocomplete="off" placeholder="Cole sua chave ATS"><button id="activateLicense" class="primary">ATIVAR</button></div>
-          <button id="copyScannerDiagnostics" class="secondary" type="button">COPIAR DIAGNÓSTICO</button>
-          <button id="copySignalPerformance" class="secondary" type="button">COPIAR RELATÓRIO DE DESEMPENHO</button>
-          <button id="clearSignalPerformance" class="secondary" type="button">LIMPAR REGISTRO</button>
-        </section>
- 
 
     <details id="advancedPanel" class="advanced-panel">
       <summary><span>AVANÇADO ▸</span><small>Gemini • qualidade • ajustes • diagnóstico</small></summary>
