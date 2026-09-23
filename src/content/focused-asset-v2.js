@@ -32,7 +32,32 @@
     return out;
   }
 
-  const canonicalAsset = value => assetsIn(value)[0] || '';
+  function namedInstrumentFromText(value = '') {
+    let raw = clean(value).toUpperCase();
+    if (!raw || raw.length > 64) return '';
+    const otc = /\bOTC\b|\(\s*OTC\s*\)/i.test(raw);
+    raw = raw.replace(/\(\s*OTC\s*\)/gi, ' ').replace(/\bOTC\b/gi, ' ').trim();
+    raw = raw.replace(/(?:^|[\\s|•·_-])(BLITZ|OPTION|OPTIONS|BINARY|BINARIA|BINARIO|DIGITAL|TURBO|CALL|PUT)\s*$/i, '').trim();
+    raw = raw.replace(/^(?:ATIVO|ASSET|INSTRUMENTO|INSTRUMENT)\s*[:|-]\s*/i, '').trim();
+    raw = raw.replace(/\s+/g, ' ').replace(/^[|•·\-_:]+|[|•·\-_:]+$/g, '').trim();
+    if (!raw || raw.length < 2 || INSTRUMENT_WORDS.has(raw)) return '';
+    if (/^(?:S|M|H)\d{1,4}$/.test(raw)) return '';
+    if (!/[A-Z]/.test(raw) || /^[\d\s.,:+_/-]+$/.test(raw)) return '';
+    if (/^(?:\d+\s*(?:SEG|SEC|MIN|MINUTO|MINUTOS|S|M|H)|\d{1,2}:\d{2})$/i.test(raw)) return '';
+    const tokens = raw.split(/\s+/).filter(Boolean);
+    if (tokens.length === 1 && INSTRUMENT_WORDS.has(tokens[0])) return '';
+    return `${raw}${otc ? ' (OTC)' : ''}`;
+  }
+
+  function assetOptions(value = '', allowNamed = false) {
+    const pairs = assetsIn(value);
+    if (pairs.length) return pairs;
+    if (!allowNamed) return [];
+    const named = namedInstrumentFromText(value);
+    return named ? [named] : [];
+  }
+
+  const canonicalAsset = value => assetOptions(value, true)[0] || '';
   const identity = value => canonicalAsset(value);
   const sameAsset = (a, b) => !!identity(a) && identity(a) === identity(b);
   const genericAssetTokens = new Set(['BLITZ','OPTION','BINARY','BINARIA','DIGITAL','TURBO','CALL','PUT','TRADE','TRADING','OPERATION','OPERACAO','OPÇÃO','OPCAO']);
@@ -164,7 +189,8 @@
     const path = typeof event?.composedPath === 'function' ? event.composedPath() : [event?.target];
     for (const node of path.slice(0, 8)) {
       if (!(node instanceof Element) || !visible(node)) continue;
-      const assets = assetsIn(elementAssetText(node));
+      const rawText = elementAssetText(node);
+      const assets = assetOptions(rawText, true);
       if (assets.length === 1) return assets[0];
     }
     return '';
@@ -182,7 +208,7 @@
       if (!visible(el)) continue;
       const text = elementAssetText(el);
       if (!text || text.length > 180) continue;
-      const assets = assetsIn(text);
+      const assets = assetOptions(text, true);
       if (assets.length !== 1) continue;
       const asset = assets[0];
       const rect = el.getBoundingClientRect();
