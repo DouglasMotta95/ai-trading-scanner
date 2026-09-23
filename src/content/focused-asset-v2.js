@@ -228,7 +228,6 @@
       const asset = candidates[0];
       const rect = el.getBoundingClientRect();
       const selection = selectionEvidence(el);
-      if (selection.rejected) continue;
       const context = contextOf(el);
       const geometricHeader = chartHeaderGeometry(rect, text);
       const directChart = !!chart && nearChart(rect, chart);
@@ -253,6 +252,7 @@
         interaction: interaction === true
       });
       rawCandidateAssets.add(asset);
+      if (selection.rejected) continue;
       // A visible dropdown/watchlist can contain dozens of symbols over the chart.
       // The chart-header geometry is allowed through because CasaTrade tablet
       // layouts often place the current asset inside a generic tabs/list shell.
