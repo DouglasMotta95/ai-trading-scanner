@@ -13,7 +13,7 @@
   const frameRole = traderHost(host) ? 'trader-frame' : 'casa-chart-frame';
 
   // OTC and regular quotes are different live markets.
-  const QUOTES = new Set(['USDT','USDC','USD','EUR','GBP','JPY','AUD','CAD','CHF','NZD','BRL','BTC','ETH']);
+  const QUOTES = new Set(['USD','EUR','GBP','JPY','AUD','CAD','CHF','NZD','BRL','HKD','SGD','NOK','SEK','DKK','PLN','CZK','HUF','TRY','MXN','ZAR','INR','CNY','CNH','KRW','THB','MYR','PHP','IDR','VND','TWD','ILS','AED','SAR','QAR','KWD','BHD','OMR','ARS','CLP','COP','PEN','UYU','BOB','PYG','BTC','ETH','USDT','USDC']);
   const pairRe = /\b([A-Z0-9]{2,20})\s*[\/_-]\s*([A-Z0-9]{2,12})(?:\s*\(\s*OTC\s*\)|\s+OTC)?/gi;
   const compactFxRe = /\b([A-Z]{3})([A-Z]{3})(?:\s*\(\s*OTC\s*\)|[_-]?OTC)?\b/gi;
 
@@ -23,7 +23,7 @@
     const out = [];
     const seen = new Set();
     const add = (base, quote, otc) => {
-      if (!QUOTES.has(quote)) return;
+      if (!QUOTES.has(quote) || isGenericPair(base, quote)) return;
       const asset = `${base}/${quote}${otc ? ' (OTC)' : ''}`;
       if (!seen.has(asset)) { seen.add(asset); out.push(asset); }
     };
@@ -35,6 +35,8 @@
   const canonicalAsset = value => assetsIn(value)[0] || '';
   const identity = value => canonicalAsset(value);
   const sameAsset = (a, b) => !!identity(a) && identity(a) === identity(b);
+  const genericAssetTokens = new Set(['BLITZ','OPTION','BINARY','BINARIA','DIGITAL','TURBO','CALL','PUT','TRADE','TRADING','OPERATION','OPERACAO','OPÇÃO','OPCAO']);
+  const isGenericPair = (base = '', quote = '') => genericAssetTokens.has(String(base).toUpperCase()) || genericAssetTokens.has(String(quote).toUpperCase());
   const visible = el => {
     if (!el || !(el instanceof Element)) return false;
     const rect = el.getBoundingClientRect();
@@ -170,6 +172,11 @@
 
   function scanWinner() {
     const chart = chartRect();
+    const contextSignatureNow = chart
+      ? [chart.left, chart.top, chart.width, chart.height].map(value => Math.round(Number(value || 0) / 24)).join(':')
+      : '';
+    const contextChanged = !!lastChartContextSignature && !!contextSignatureNow && contextSignatureNow !== lastChartContextSignature;
+    if (contextSignatureNow) lastChartContextSignature = contextSignatureNow;
     const rows = [];
     for (const el of deepElements()) {
       if (!visible(el)) continue;
@@ -242,7 +249,8 @@
         asset: '', blocked: true, blockedReason: 'no-chart-scoped-candidate',
         chartFound: !!chart, chartHits: 0, directChartHits: 0, geometricHits: 0,
         ambiguityCount: 0, runnerUpAsset: null, runnerUpGap: null,
-        explicit: false, interaction: false, repeatedVisual: false, bandCount: 0
+        explicit: false, interaction: false, repeatedVisual: false, bandCount: 0,
+        contextChanged
       };
     }
     if (first.chartHits < 1) {
@@ -276,7 +284,8 @@
           runnerUpAsset: rival.asset,
           runnerUpGap,
           repeatedWins,
-          chartEvidenceWins
+          chartEvidenceWins,
+          contextChanged
         };
       }
 
@@ -307,7 +316,8 @@
       runnerUpAsset: rival?.asset || null,
       runnerUpGap,
       repeatedWins,
-      chartEvidenceWins
+      chartEvidenceWins,
+      contextChanged
     };
   }
 
@@ -320,8 +330,11 @@
   let queuedForce = false;
   let scanning = false;
 
+  let lastReliableAsset = '';
+  let lastChartContextSignature = '';
   function sendFocus(common) {
     if (common?.asset && common?.reliable === true) {
+      lastReliableAsset = common.asset;
       globalThis.__ATS_FOCUSED_ASSET_VALUE__ = common.asset;
       globalThis.__ATS_FOCUSED_ASSET_META__ = common;
     } else {
@@ -329,6 +342,21 @@
     }
     try { chrome.runtime.sendMessage({ type: 'ATS_VISUAL_FOCUS_V2', ...common }, () => void chrome.runtime?.lastError); } catch {}
   }
+
+  window.addEventListener('message', event => {
+    const data = event.data;
+    if (!data || data.source !== 'ATS_NETWORK_ASSET_FALLBACK_REQUEST' || !data.requestId) return;
+    const meta = globalThis.__ATS_FOCUSED_ASSET_META__ || null;
+    const asset = String(lastReliableAsset || globalThis.__ATS_FOCUSED_ASSET_VALUE__ || '').trim();
+    if (!asset || meta?.reliable !== true || meta?.visualAuthority === false || meta?.chartScoped !== true || meta?.trustedChartFrame !== true) return;
+    try {
+      window.postMessage({
+        source: 'ATS_FOCUSED_ASSET_FALLBACK_RESPONSE',
+        requestId: data.requestId,
+        payload: { asset, source: 'focused-asset-v2', frameHost: host, frameRole, at: Date.now() }
+      }, '*');
+    } catch {}
+  });
 
   function noteInteractionHint(asset, at = Date.now()) {
     if (!asset) return;
@@ -370,7 +398,8 @@
           frameHost: host,
           frameRole,
           at: now,
-          source: 'chart-frame-focus-diagnostic'
+          source: 'chart-frame-focus-diagnostic',
+          contextChanged: winner.contextChanged === true
         });
         schedulePublish(450, false);
         return;
@@ -409,7 +438,8 @@
           frameHost: host,
           frameRole,
           at: now,
-          source: 'chart-frame-focus-diagnostic'
+          source: 'chart-frame-focus-diagnostic',
+          contextChanged: winner.contextChanged === true
         });
         // Do not wait for the next passive interval to prove the boot/switch
         // candidate. Re-scan quickly so the visible CasaTrade asset becomes
