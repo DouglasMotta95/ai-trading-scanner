@@ -177,21 +177,31 @@
   let lastChartContextSignature = '';
   const interactionFresh = asset => sameAsset(recentInteraction.asset, asset) && Date.now() - Number(recentInteraction.at || 0) < INTERACTION_TRANSITION_MS;
 
+  function elementAssetValues(el) {
+    return [
+      el?.getAttribute?.('data-symbol'),
+      el?.getAttribute?.('data-asset'),
+      el?.getAttribute?.('data-instrument'),
+      el?.getAttribute?.('aria-label'),
+      el?.getAttribute?.('title'),
+      el?.innerText,
+      el?.textContent
+    ].map(clean).filter(value => value && value.length <= 120);
+  }
+
   function elementAssetText(el) {
-    return clean([
-      el?.getAttribute?.('aria-label'), el?.getAttribute?.('title'),
-      el?.getAttribute?.('data-symbol'), el?.getAttribute?.('data-asset'), el?.getAttribute?.('data-instrument'),
-      el?.getAttribute?.('data-testid'), el?.innerText, el?.textContent
-    ].filter(Boolean).join(' ')).slice(0, 180);
+    return clean(elementAssetValues(el).join(' ')).slice(0, 180);
   }
 
   function touchedAsset(event) {
     const path = typeof event?.composedPath === 'function' ? event.composedPath() : [event?.target];
     for (const node of path.slice(0, 8)) {
       if (!(node instanceof Element) || !visible(node)) continue;
-      const rawText = elementAssetText(node);
-      const assets = assetOptions(rawText, true);
-      if (assets.length === 1) return assets[0];
+      const candidates = [];
+      for (const rawText of elementAssetValues(node)) {
+        for (const asset of assetOptions(rawText, true)) if (!candidates.includes(asset)) candidates.push(asset);
+      }
+      if (candidates.length === 1) return candidates[0];
     }
     return '';
   }
@@ -208,9 +218,12 @@
       if (!visible(el)) continue;
       const text = elementAssetText(el);
       if (!text || text.length > 180) continue;
-      const assets = assetOptions(text, true);
-      if (assets.length !== 1) continue;
-      const asset = assets[0];
+      const candidates = [];
+      for (const rawText of elementAssetValues(el)) {
+        for (const asset of assetOptions(rawText, true)) if (!candidates.includes(asset)) candidates.push(asset);
+      }
+      if (candidates.length !== 1) continue;
+      const asset = candidates[0];
       const rect = el.getBoundingClientRect();
       const selection = selectionEvidence(el);
       if (selection.rejected) continue;
