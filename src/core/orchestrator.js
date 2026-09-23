@@ -464,6 +464,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
   if (!signal) return result;
   const secondsRemaining = num(signal.secondsRemaining);
   if (secondsRemaining == null) return result;
+  const timingVerified = snapshot?.clockVerified === true;
 
   const windows = decisionWindows(snapshot, signal, thresholds);
   const key = cycleKey(snapshot, signal);
@@ -551,7 +552,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
     return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: nextSignal, decisionCycle: { ...cycle }, candidateBlockerTrace };
   }
 
-  if (technicalFinal && quality.qualifies) {
+  if (timingVerified && technicalFinal && quality.qualifies) {
     cycle.locked = 'ENTER';
     cycle.direction = direction;
     cycle.score = Math.max(score, Number(signal.score || 0));
@@ -590,7 +591,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
     };
   }
 
-  if (secondsRemaining <= windows.skip) {
+  if (timingVerified && secondsRemaining <= windows.skip) {
     const blocker = clean(signal.waitingFor?.text || signal.reason || quality.commonReason || 'qualidade insuficiente para a próxima vela');
     cycle.locked = 'WAIT';
     cycle.direction = null;
