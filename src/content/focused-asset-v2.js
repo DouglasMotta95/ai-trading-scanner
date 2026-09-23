@@ -462,6 +462,42 @@
     } catch {}
   });
 
+  window.addEventListener('message', event => {
+    const data = event.data;
+    if (!data || data.source !== 'ATS_EXPIRATION_DIAGNOSTIC_REQUEST' || !data.requestId) return;
+
+    const diagnostics = lastScanDiagnostics || {};
+    const rawWinnerAsset = String(diagnostics.rawWinnerAsset || '').trim();
+    const winner = {
+      ...(diagnostics.winner || {}),
+      asset: String(diagnostics.winner?.asset || rawWinnerAsset || '').trim(),
+      blocked: diagnostics.winner?.blocked === true,
+      blockedReason: String(diagnostics.winner?.blockedReason || '')
+    };
+    const hasTextCandidate = diagnostics.hasTextCandidate === true;
+    try {
+      window.postMessage({
+        source: 'ATS_FOCUSED_ASSET_DIAGNOSTIC_SNAPSHOT',
+        requestId: data.requestId,
+        payload: {
+          frameHost: host,
+          frameRole,
+          rawWinnerAsset,
+          winner,
+          rawCandidateCount: Number(diagnostics.rawCandidateCount || 0),
+          uniqueTextCandidateCount: Number(diagnostics.uniqueTextCandidateCount || 0),
+          hasTextCandidate,
+          rawCandidateAssets: Array.isArray(diagnostics.rawCandidateAssets) ? diagnostics.rawCandidateAssets.slice(0, 16) : [],
+          textSearchResult: hasTextCandidate
+            ? (winner.blocked ? 'text-found-but-rejected' : 'text-found')
+            : 'no-corresponding-text-found',
+          rejectionReason: winner.blocked ? winner.blockedReason : '',
+          at: Number(diagnostics.at || 0) || Date.now()
+        }
+      }, '*');
+    } catch {}
+  });
+
   function noteInteractionHint(asset, at = Date.now()) {
     if (!asset) return;
     recentInteraction = { asset, at };
