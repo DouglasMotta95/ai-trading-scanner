@@ -297,7 +297,16 @@
     const payloadFallback = original ? { asset: '', raw: '' } : assetFromObjectPayload(o);
     const visualFallback = recentTrustedVisualAsset();
     const asset = original || inherited || payloadFallback.asset || visualFallback;
-    if (!asset) { requestTrustedVisualAssetFallback(); return null; }
+    if (!asset) {
+      lastNetworkAssetIdentity = {
+        raw: rawAsset || payloadFallback.raw || null,
+        asset: '',
+        source: original ? 'network-asset-key-rejected' : 'asset-not-found',
+        at: now()
+      };
+      requestTrustedVisualAssetFallback();
+      return null;
+    }
     const assetSource = original
       ? 'network-asset-key'
       : inherited
