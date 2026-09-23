@@ -315,6 +315,27 @@ function decisionModel(state = {}) {
   if (pending) return { uiState: 'ANALYZING_MARKET', title: 'ATUALIZANDO ATIVO', text: `ATUALIZANDO PARA ${pending}`, sub: 'Limpando dados anteriores e confirmando preço + velas do novo ativo.', tone: 'waiting', reason: 'Troca de ativo em validação.', score: 0, actionable: false };
   if (!marketDataReady(state) || !focusReady(state)) return { uiState: 'ANALYZING_MARKET', title: 'AGUARDAR', text: 'AGUARDAR', sub: 'Confirmando ativo, preço e velas reais.', tone: 'waiting', reason: 'Identificando o gráfico atual da CasaTrade.', score: 0, actionable: false };
 
+  // A POSSÍVEL is a technical pre-signal and must remain visible even when
+  // the final entry timing gate is still waiting for an exact clock/expiration.
+  // This does not create a signal or change thresholds; it only prevents the
+  // UI timing gate from hiding a decision already produced by the engine.
+  const earlyProfessional = state.professionalDecision || {};
+  const earlyTechnical = state.signal || {};
+  const earlyUi = String(earlyProfessional.uiState || earlyTechnical.uiState || '').toUpperCase();
+  const earlyDirection = earlyUi.endsWith('_BUY') ? 'BUY' : earlyUi.endsWith('_SELL') ? 'SELL' : null;
+  const earlyPossible = ['POSSIBLE_BUY','POSSIBLE_SELL'].includes(earlyUi) && earlyDirection;
+  if (earlyPossible) {
+    const earlyScore = Number(earlyProfessional.score ?? earlyTechnical.analysisScore ?? earlyTechnical.score ?? 0) || 0;
+    const earlyReason = clean(earlyProfessional.reason || earlyTechnical.reason || 'Alta confiança técnica detectada.');
+    return {
+      uiState: earlyDirection === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL',
+      title: earlyDirection === 'BUY' ? 'COMPRA — POSSÍVEL' : 'VENDA — POSSÍVEL',
+      text: earlyDirection === 'BUY' ? 'POSSÍVEL COMPRA' : 'POSSÍVEL VENDA',
+      sub: liveTimingReady(state) ? 'Alta confiança detectada; aguardando janela final.' : 'Pré-sinal técnico detectado; aguardando sincronização final da entrada.',
+      tone: 'possible', reason: earlyReason, score: earlyScore, actionable: false, direction: earlyDirection
+    };
+  }
+
   const timingReady = liveTimingReady(state);
   if (!timingReady) {
     const blocked = entryBlockReason(state);
