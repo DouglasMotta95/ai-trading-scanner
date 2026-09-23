@@ -423,44 +423,69 @@ export async function applyFocus(message = {}, sender = {}) {
                 ? 'asset=invalid'
                 : 'focus-rejected';
 
+      const existingFocus = state.diagnostics?.focusedAsset || null;
+      const existingFocusFresh = existingFocus?.reliable === true
+        && Number(existingFocus.at || 0) > 0
+        && Date.now() - Number(existingFocus.at) < 7000;
+
+      const rejectedFocus = {
+        asset: asset || null,
+        at: Number(message.at || Date.now()),
+        reliable: false,
+        reliableReason: reason,
+        reliableChecks: {
+          ambiguityCount: Number(message.ambiguityCount || 0),
+          explicit: message.explicit === true,
+          interactionHint: message.interactionHint === true,
+          chartScoped: message.chartScoped === true,
+          trustedChartFrame,
+          visualAuthority: message.visualAuthority !== false,
+          embeddedTrader: info.embeddedTrader === true,
+          casaTradeFrame: info.casaOwnedChart === true,
+          sameMarket: sameMarketCheck,
+          at: Number(message.at || Date.now())
+        },
+        visual: message.visual !== false,
+        explicit: message.explicit === true,
+        chartScoped: message.chartScoped === true,
+        visualAuthority: message.visualAuthority !== false,
+        directChart: message.directChart === true,
+        ambiguityCount: Number(message.ambiguityCount || 0),
+        runnerUpAsset: normAsset(message.runnerUpAsset || '') || null,
+        runnerUpGap: num(message.runnerUpGap),
+        interactionHint: message.interactionHint === true,
+        interactionAt: num(message.interactionAt),
+        trustedChartFrame,
+        embeddedTrader: info.embeddedTrader === true,
+        casaTradeFrame: info.casaOwnedChart === true,
+        frameRole: role || null,
+        frameId: info.frameId,
+        frameHost: info.frameHost,
+        source: clean(message.source || 'focus-diagnostic')
+      };
+
       return {
         ...state,
         diagnostics: {
           ...(state.diagnostics || {}),
-          focusedAsset: {
+          // Never let a rejected secondary-frame observation destroy a live
+          // trusted focus. The observation remains available for diagnostics.
+          ...(existingFocusFresh
+            ? {
+                focusedAsset: existingFocus,
+                focusDiagnostic: rejectedFocus
+              }
+            : {
+                focusedAsset: rejectedFocus
+              }),
+          focusRejected: {
+            ...(state.diagnostics?.focusRejected || {}),
             asset: asset || null,
-            at: Number(message.at || Date.now()),
-            reliable: false,
-            reliableReason: reason,
-            reliableChecks: {
-              ambiguityCount: Number(message.ambiguityCount || 0),
-              explicit: message.explicit === true,
-              interactionHint: message.interactionHint === true,
-              chartScoped: message.chartScoped === true,
-              trustedChartFrame,
-              visualAuthority: message.visualAuthority !== false,
-              embeddedTrader: info.embeddedTrader === true,
-              casaTradeFrame: info.casaOwnedChart === true,
-              sameMarket: sameMarketCheck,
-              at: Number(message.at || Date.now())
-            },
-            visual: message.visual !== false,
-            explicit: message.explicit === true,
-            chartScoped: message.chartScoped === true,
-            visualAuthority: message.visualAuthority !== false,
-            directChart: message.directChart === true,
-            ambiguityCount: Number(message.ambiguityCount || 0),
-            runnerUpAsset: normAsset(message.runnerUpAsset || '') || null,
-            runnerUpGap: num(message.runnerUpGap),
-            interactionHint: message.interactionHint === true,
-            interactionAt: num(message.interactionAt),
-            trustedChartFrame,
-            embeddedTrader: info.embeddedTrader === true,
-            casaTradeFrame: info.casaOwnedChart === true,
-            frameRole: role || null,
             frameId: info.frameId,
             frameHost: info.frameHost,
-            source: clean(message.source || 'focus-diagnostic')
+            reason,
+            keptExistingReliableFocus: existingFocusFresh,
+            at: Number(message.at || Date.now())
           }
         }
       };
