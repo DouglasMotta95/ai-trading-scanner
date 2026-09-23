@@ -614,7 +614,7 @@ async function inspectExpirationDiagnostic() {
       if (data.source === 'ATS_EMBEDDED_FEED_DIAGNOSTIC_SNAPSHOT') bridge = data.payload || null;
       if (data.source === 'ATS_NETWORK_DIAGNOSTIC_SNAPSHOT') network = data.payload || null;
       if (data.source === 'ATS_FOCUSED_ASSET_DIAGNOSTIC_SNAPSHOT') focusedAsset = data.payload || null;
-      if (canvas && bridge && network) finish();
+      if (canvas && bridge && network && focusedAsset) finish();
     };
 
     try { window.addEventListener('message', onDiagnosticMessage); } catch {}
