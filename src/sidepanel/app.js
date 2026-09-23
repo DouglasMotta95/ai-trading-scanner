@@ -29,7 +29,7 @@ let lastState = {};
 let reconnectBusy = false;
 let reconnectAttempt = 0;
 let nextReconnectAt = 0;
-const RECONNECT_DELAYS_MS = [2000, 4000, 8000, 15000, 30000];
+const RECONNECT_DELAYS_MS = [5000, 10000, 20000, 30000, 60000];
 const UI_PREF_KEY = 'atsScannerUiPreferences';
 const DEFAULT_UI_PREFS = Object.freeze({ overlayEnabled: false, possibleSoundEnabled: false, confirmSoundEnabled: false });
 let uiPrefs = { ...DEFAULT_UI_PREFS };
@@ -40,7 +40,7 @@ let lastAudiblePrincipalKey = null;
 if ($('extensionVersion')) $('extensionVersion').textContent = `v${chrome.runtime.getManifest().version}`;
 
 const num = v => v == null || v === '' ? null : Number.isFinite(Number(v)) ? Number(v) : null;
-const fresh = s => licenseStillValid(s?.license) && s.connection === 'online' && !!s.asset && num(s.price) != null && s.lastSeen && Date.now() - Number(s.lastSeen) < 8000;
+const fresh = s => licenseStillValid(s?.license) && s.connection === 'online' && !!s.asset && num(s.price) != null && s.lastSeen && Date.now() - Number(s.lastSeen) < 15000;
 const priceText = v => num(v) == null ? '—' : String(v);
 
 function expiryMs(value) {
@@ -497,8 +497,10 @@ chrome.storage.onChanged.addListener(changes => {
   if (licenseStillValid(lastState.license)) await autoConnect(true);
   setInterval(() => getState().catch(() => {}), 500);
   setInterval(() => {
-    if (licenseStillValid(lastState.license) && (!fresh(lastState) || lastState.platformId !== 'casatrade')) {
-      autoConnect().catch(() => {});
-    }
-  }, 1000);
+    if (!licenseStillValid(lastState.license)) return;
+    const acquisition = lastState.diagnostics?.acquisition || {};
+    const explicitFailure = ['connect_timeout','runtime_injection_failed','target_tab_missing'].includes(String(acquisition.stage || ''));
+    const hasTarget = lastState.platformId === 'casatrade' && !!lastState.targetTabId;
+    if (explicitFailure || (!hasTarget && !fresh(lastState))) autoConnect().catch(() => {});
+  }, 2000);
 })();
