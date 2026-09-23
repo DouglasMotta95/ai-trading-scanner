@@ -6,6 +6,7 @@ const CLOCK_FRESH_MS = 4500;
 const LIVE_TRANSPORT_FRESH_MS = 30000;
 const CONTROLS_FRESH_MS = 7000;
 const PANEL_OPENED_AT = Date.now();
+const PANEL_CONNECT_DIAGNOSTIC_KEY = 'atsLastPanelConnectDiagnostic';
 const PERFORMANCE_KEY = 'atsSignalPerformanceLedgerV1';
 const TELEMETRY_STATUS_KEY = 'atsTelemetryStatus';
 const PUBLIC_CONFIG_URL = 'https://ats-control-center-v07-production.up.railway.app/v1/public/config';
@@ -457,15 +458,53 @@ function renderShell(state = {}) {
   const expirationDiagnostic = $('copyExpirationDiagnostic');
   if (expirationDiagnostic) expirationDiagnostic.hidden = !expirationPending && expirationSource !== 'user-declared' && !expirationDivergence;
 }
+async function persistPanelConnectDiagnostic(patch = {}) {
+  const previous = await chrome.storage.session.get(PANEL_CONNECT_DIAGNOSTIC_KEY).catch(() => ({}));
+  const current = previous?.[PANEL_CONNECT_DIAGNOSTIC_KEY] || {};
+  const next = {
+    ...current,
+    ...patch,
+    panelOpenedAt: PANEL_OPENED_AT,
+    updatedAt: Date.now()
+  };
+  await chrome.storage.session.set({ [PANEL_CONNECT_DIAGNOSTIC_KEY]: next }).catch(() => {});
+  return next;
+}
+
 async function connectNow() {
   const button = $('connectScanner');
   if (!button || button.classList.contains('loading')) return;
+  const startedAt = Date.now();
+  const attemptId = `ats-panel-connect-${startedAt}-${Math.random().toString(36).slice(2, 8)}`;
+  await persistPanelConnectDiagnostic({
+    attemptId,
+    stage: 'send_runtime_message',
+    startedAt,
+    responseAt: null,
+    responseMs: null,
+    outcome: 'pending',
+    error: '',
+    diagnosticError: ''
+  });
   button.classList.add('loading');
   button.classList.remove('live');
   button.disabled = true;
   $('connectScannerText').textContent = 'CONECTANDO…';
   try {
-    const response = await chrome.runtime.sendMessage({ type: 'ATS_CONNECT_ACTIVE_TAB' }).catch(() => null);
+    const response = await chrome.runtime.sendMessage({ type: 'ATS_CONNECT_ACTIVE_TAB' }).catch(error => ({
+      ok: false,
+      error: 'background_no_response',
+      diagnosticError: String(error?.message || error || 'runtime_send_message_failed')
+    }));
+    const responseAt = Date.now();
+    await persistPanelConnectDiagnostic({
+      stage: response?.ok ? 'response_received' : 'response_failed',
+      responseAt,
+      responseMs: Math.max(0, responseAt - startedAt),
+      outcome: response?.ok ? 'response_received' : 'response_failed',
+      error: response?.error || '',
+      diagnosticError: response?.diagnosticError || ''
+    });
     renderShell(response?.state || {});
     if (!response?.ok) {
       const error = String(response?.error || 'background_no_response');
@@ -483,6 +522,13 @@ async function connectNow() {
   } finally {
     button.classList.remove('loading');
     const state = await chrome.runtime.sendMessage({ type: 'ATS_READ_SCANNER_STATE' }).catch(() => null);
+    await persistPanelConnectDiagnostic({
+      stage: state?.state?.diagnostics?.connectionHandshake?.stage || 'state_read_complete',
+      outcome: state?.state?.diagnostics?.connectionHandshake?.outcome || (state?.state ? 'state_read_complete' : 'state_read_failed'),
+      error: state?.state?.diagnostics?.connectionHandshake?.errorCode || '',
+      backgroundStateRead: state?.state ? 'ok' : 'failed',
+      stateReadAt: Date.now()
+    });
     renderShell(state?.state || {});
   }
 }
