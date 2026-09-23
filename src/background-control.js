@@ -875,7 +875,7 @@ async function refreshTargetTab() {
   return { ok: true, tabId, controls: probed || null, state: probed?.state || await readScannerState() };
 }
 
-async function connectActiveTab({ automatic = false } = {}) {
+async function connectActiveTab({ automatic = false, preferredTabId = null } = {}) {
   let state = await readScannerState();
   const license = await recoverLicense(state);
   if (!activeLicense(license)) {
@@ -886,7 +886,7 @@ async function connectActiveTab({ automatic = false } = {}) {
     return { ok: false, error: license.error || 'license_required', state: next };
   }
 
-  const { tab, platform } = await activePlatformTab();
+  const { tab, platform } = await activePlatformTab(preferredTabId);
   if (!tab?.id || !platform) {
     const next = await updateScannerState(current => clearMarket(current, {
       license,
