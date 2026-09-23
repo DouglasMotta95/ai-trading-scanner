@@ -174,6 +174,7 @@
 
   const INTERACTION_TRANSITION_MS = 5000;
   let recentInteraction = { asset: '', at: 0 };
+  let lastChartContextSignature = '';
   const interactionFresh = asset => sameAsset(recentInteraction.asset, asset) && Date.now() - Number(recentInteraction.at || 0) < INTERACTION_TRANSITION_MS;
 
   function elementAssetText(el) {
