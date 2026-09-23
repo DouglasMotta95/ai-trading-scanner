@@ -71,6 +71,7 @@ export async function storageSessionRemove(keys) {
 
 export const runtimeSendMessage = message => invoke(chrome?.runtime, 'sendMessage', [message]);
 export const tabsQuery = query => invoke(chrome?.tabs, 'query', [query]);
+export const tabsGet = tabId => invoke(chrome?.tabs, 'get', [tabId], { optional: true });
 export const tabsUpdate = (tabId, update) => invoke(chrome?.tabs, 'update', [tabId, update]);
 export const tabsSendMessage = (tabId, message) => invoke(chrome?.tabs, 'sendMessage', [tabId, message]);
 export const tabsCreate = createProperties => invoke(chrome?.tabs, 'create', [createProperties]);
