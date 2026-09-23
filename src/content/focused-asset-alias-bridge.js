@@ -26,7 +26,7 @@
     ['POLKADOT', 'DOT/USD'], ['DOT', 'DOT/USD']
   ]);
   const QUOTES = new Set(['USD','USDT','USDC','EUR','GBP','JPY','AUD','CAD','CHF','NZD','BRL','BTC','ETH']);
-  const STOP = new Set(['BUY','SELL','CALL','PUT','OTC','USD','USDT','USDC','TIME','TIMER','PRICE','ASSET','ATIVO','VALOR','SALDO','PAYOUT','LIVE','SYNC','CONECTAR','ENTRAR','VELA','GRAFICO','GRÁFICO']);
+  const STOP = new Set(['BUY','SELL','CALL','PUT','BLITZ','OPTION','OPTIONS','BINARY','BINARIA','BINARIO','DIGITAL','TURBO','TRADE','TRADING','OPERATION','OPERACAO','OPCAO','OTC','USD','USDT','USDC','TIME','TIMER','PRICE','ASSET','ATIVO','VALOR','SALDO','PAYOUT','LIVE','SYNC','CONECTAR','ENTRAR','VELA','GRAFICO','GRÁFICO','INFO','FAVORITO','FAVORITES','PORTFOLIO','HISTORY']);
   const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
   const fold = value => clean(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
   const visible = el => {
@@ -47,6 +47,20 @@
     return '';
   }
 
+  function namedInstrumentFromText(value = '') {
+    let raw = fold(value);
+    if (!raw || raw.length > 64) return '';
+    const otc = /\bOTC\b|\(\s*OTC\s*\)/i.test(raw);
+    raw = raw.replace(/\(\s*OTC\s*\)/gi, ' ').replace(/\bOTC\b/gi, ' ').trim();
+    raw = raw.replace(/(?:^|[\s|•·_-])(BLITZ|OPTION|OPTIONS|BINARY|BINARIA|BINARIO|DIGITAL|TURBO|CALL|PUT)\s*$/i, '').trim();
+    raw = raw.replace(/^(?:ATIVO|ASSET|INSTRUMENTO|INSTRUMENT)\s*[:|-]\s*/i, '').trim();
+    raw = raw.replace(/\s+/g, ' ').replace(/^[|•·\-_:]+|[|•·\-_:]+$/g, '').trim();
+    if (!raw || raw.length < 2 || STOP.has(raw)) return '';
+    if (/^[\d\s.,:+_/-]+$/.test(raw)) return '';
+    if (/^(?:S|M|H)\d{1,4}$/.test(raw)) return '';
+    return `${raw}${otc ? ' (OTC)' : ''}`;
+  }
+
   function canonicalFromText(value = '', allowGenericTicker = false) {
     const raw = fold(value);
     if (!raw || raw.length > 120) return '';
@@ -59,6 +73,8 @@
       if (re.test(stripped)) return `${pair}${otc ? ' (OTC)' : ''}`;
     }
     if (!allowGenericTicker) return '';
+    const named = namedInstrumentFromText(stripped);
+    if (named) return named;
     const ticker = stripped.match(/^([A-Z]{2,8})$/)?.[1] || '';
     if (!ticker || STOP.has(ticker)) return '';
     return `${ticker}/USD${otc ? ' (OTC)' : ''}`;
