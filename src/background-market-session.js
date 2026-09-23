@@ -760,7 +760,18 @@ export async function applyFeed(payload = {}, sender = {}) {
     if (!licenseActive(state)) return;
     if (state.targetTabId && state.targetTabId !== info.tabId) return;
     const focus = state.diagnostics?.focusedAsset || null;
-    if (!focus?.asset || Number(focus.frameId) !== Number(info.frameId) || clean(focus.frameHost).toLowerCase() !== info.frameHost) return;
+    if (!focus?.asset) return;
+    const sameFocusFrame = Number(focus.frameId) === Number(info.frameId)
+      && clean(focus.frameHost).toLowerCase() === info.frameHost;
+    // On tablet/mobile CasaTrade the visible chart can live in the CasaTrade
+    // shell while the structured quote/candle feed comes from the embedded
+    // trader frame. Both are trusted CasaTrade-owned frames; require the feed
+    // asset to match the authoritative visual focus before accepting it.
+    const crossFrameFeed = info.embeddedTrader === true
+      && focus.casaTradeFrame === true
+      && Array.isArray(payload.candidates)
+      && payload.candidates.some(row => sameMarket(row?.asset, focus.asset));
+    if (!sameFocusFrame && !crossFrameFeed) return;
     const asset = normAsset(focus.asset);
     const candidate = bestForFocus(payload, asset);
     if (!candidate) return;
