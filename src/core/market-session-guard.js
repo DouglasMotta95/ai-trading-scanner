@@ -1,4 +1,6 @@
 const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
+const QUOTES = new Set(['USD','EUR','GBP','JPY','AUD','CAD','CHF','NZD','BRL','HKD','SGD','NOK','SEK','DKK','PLN','CZK','HUF','TRY','MXN','ZAR','INR','CNY','CNH','KRW','THB','MYR','PHP','IDR','VND','TWD','ILS','AED','SAR','QAR','KWD','BHD','OMR','ARS','CLP','COP','PEN','UYU','BOB','PYG','USDT','USDC','BTC','ETH']);
+const GENERIC = new Set(['BLITZ','OPTION','OPTIONS','BINARY','BINARIA','BINARIO','DIGITAL','TURBO','CALL','PUT','BUY','SELL','COMPRA','VENDA','TRADE','TRADING','OPERATION','OPERACAO','OPCAO','INFO','FAVORITO','FAVORITES','ATIVO','ASSET','INSTRUMENT','INSTRUMENTO','MARKET','PRECO','PRICE','EXPIRACAO','EXPIRATION','VALOR','SALDO','PAYOUT','LUCRO','LIVE','CONECTAR','ENTRAR','VELA','GRAFICO','GRÁFICO']);
 
 export function canonicalMarket(value = '') {
   const raw = clean(value).toUpperCase();
@@ -6,12 +8,21 @@ export function canonicalMarket(value = '') {
   const otc = /(?:\(|\b|[_-])OTC(?:\)|\b)?/i.test(raw);
   const stripped = raw.replace(/\(\s*OTC\s*\)|\bOTC\b/g, ' ').trim();
   const direct = stripped.match(/\b([A-Z0-9]{2,20})\s*[\/_-]\s*([A-Z0-9]{2,12})/i);
-  if (direct) return `${direct[1]}/${direct[2]}${otc ? ' (OTC)' : ''}`;
+  if (direct) {
+    const base = direct[1], quote = direct[2];
+    if (!QUOTES.has(quote) || GENERIC.has(base) || GENERIC.has(quote)) return '';
+    return `${base}/${quote}${otc ? ' (OTC)' : ''}`;
+  }
   const compact = stripped.replace(/[^A-Z0-9]/g, '');
-  for (const quote of ['USDT','USDC','USD','EUR','GBP','JPY','CAD','AUD','CHF','NZD','BRL','BTC','ETH']) {
+  for (const quote of QUOTES) {
     if (!compact.endsWith(quote) || compact.length <= quote.length + 1) continue;
     const base = compact.slice(0, -quote.length);
-    if (/^[A-Z0-9]{2,12}$/.test(base)) return `${base}/${quote}${otc ? ' (OTC)' : ''}`;
+    if (/^[A-Z0-9]{2,12}$/.test(base) && !GENERIC.has(base)) return `${base}/${quote}${otc ? ' (OTC)' : ''}`;
+  }
+  let named = stripped.replace(/(?:^|[\s|•·_-])(BLITZ|OPTION|OPTIONS|BINARY|BINARIA|BINARIO|DIGITAL|TURBO|CALL|PUT)\s*$/i, '').trim();
+  named = named.replace(/^\s*(?:ATIVO|ASSET|INSTRUMENTO|INSTRUMENT)\s*[:|-]\s*/i, '').replace(/\s+/g, ' ').trim();
+  if (named.length >= 2 && named.length <= 80 && /[A-Z]/.test(named) && !GENERIC.has(named) && !/^[\d\s.,:+_/-]+$/.test(named)) {
+    return `${named}${otc ? ' (OTC)' : ''}`;
   }
   return '';
 }
