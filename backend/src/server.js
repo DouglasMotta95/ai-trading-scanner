@@ -6,7 +6,7 @@ import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const VERSION = '0.11.66';
+const VERSION = '0.11.68';
 const PORT = Number(process.env.PORT || 8787);
 const API_KEY = process.env.ATS_API_KEY || '';
 const ADMIN_KEY = process.env.ATS_ADMIN_KEY || API_KEY;
@@ -44,7 +44,7 @@ const PUBLIC_BASE_URL = String(process.env.PUBLIC_BASE_URL || '').replace(/\/$/,
 const CASA_TRADE_URL = String(process.env.CASA_TRADE_URL || '').trim();
 const SUPPORT_WHATSAPP = String(process.env.SUPPORT_WHATSAPP || '5535991429262').replace(/\D/g, '');
 const EXTENSION_DOWNLOAD_URL = String(process.env.EXTENSION_DOWNLOAD_URL || '').trim();
-const EXTENSION_LATEST_VERSION = String(process.env.EXTENSION_LATEST_VERSION || '0.11.66').trim();
+const EXTENSION_LATEST_VERSION = String(process.env.EXTENSION_LATEST_VERSION || '0.11.68').trim();
 const EXTENSION_ROOT = path.resolve(__dirname, '../..');
 let extensionZipCache = null;
 const SALES_PRICES = {
