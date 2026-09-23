@@ -420,17 +420,29 @@ function consolidatedSnapshot(state = {}) {
   const clock = state.diagnostics?.marketClock || null;
   if (!asset || price == null || !focus?.asset || !sameMarket(focus.asset, asset)) return null;
   if (focus.reliable !== true || focus.chartScoped !== true || focus.trustedChartFrame !== true) return null;
-  if (!clock || clock.available === false || clock.verified !== true) return null;
-  if (!EXACT_CLOCK_SOURCES.has(clean(clock.source))) return null;
-  if (!sameMarket(clock.asset, asset)) return null;
-  if (!clockBoundToFocus(clock, focus)) return null;
-  if (Number(clock.at || 0) <= 0 || Date.now() - Number(clock.at) > CLOCK_FRESH_MS) return null;
 
-  const secondsRemaining = num(clock.secondsRemaining);
-  if (secondsRemaining == null || secondsRemaining < 0) return null;
-  const timeframe = normTf(clock.timeframe || state.analysisTimeframe || state.timeframe);
+  // Market analysis must continue through short clock-reader gaps. The clock is
+  // an entry-authority gate, not the sole source of market data. When exact clock
+  // data is available and fresh, use it; otherwise let the analyst derive the
+  // candle boundary from the real candle history. The resulting snapshot is
+  // explicitly marked unverified so the orchestrator cannot publish a final entry.
+  const clockMatches = !!clock
+    && clock.available !== false
+    && sameMarket(clock.asset, asset)
+    && clockBoundToFocus(clock, focus);
+  const exactClock = clockMatches
+    && clock.verified === true
+    && EXACT_CLOCK_SOURCES.has(clean(clock.source))
+    && Number(clock.at || 0) > 0
+    && Date.now() - Number(clock.at) <= CLOCK_FRESH_MS;
+  const secondsRemaining = exactClock ? num(clock.secondsRemaining) : null;
+  const timeframe = normTf((exactClock ? clock.timeframe : null) || state.analysisTimeframe || state.timeframe || state.diagnostics?.marketSession?.timeframe);
+  if (exactClock && (secondsRemaining == null || secondsRemaining < 0)) return null;
   if (!timeframe) return null;
-  const candles = historyFor(state, asset);
+  const candles = historyFor(state, asset).filter(row => {
+    const rowTf = normTf(row?.timeframe);
+    return !rowTf || rowTf === timeframe;
+  });
   if (candles.length < 2) return null;
 
   return {
@@ -441,15 +453,18 @@ function consolidatedSnapshot(state = {}) {
     price,
     timeframe,
     analysisTimeframe: timeframe,
-    expiration: state.platformControls?.observed?.expiration || state.targetExpiration || state.expiration || clock.expiration || null,
-    targetExpiration: state.platformControls?.observed?.expiration || state.targetExpiration || state.expiration || clock.expiration || null,
+    expiration: state.platformControls?.observed?.expiration || state.targetExpiration || state.expiration || clock?.expiration || null,
+    targetExpiration: state.platformControls?.observed?.expiration || state.targetExpiration || state.expiration || clock?.expiration || null,
     secondsRemaining,
+    clockVerified: exactClock,
+    clockSource: clean(clock?.source || ''),
     serverTime: Date.now(),
     candles,
     capabilities: {
       ...(state.capabilities || {}),
       structuredQuotes: true,
-      candles: true
+      candles: true,
+      exactClock: exactClock
     },
     diagnostics: {
       capture: 'central-consolidated-state',
