@@ -830,6 +830,11 @@ chrome.storage.onChanged.addListener(changes => {
   // Never trust a focus snapshot that predates this panel boot. Force one
   // passive refresh; the UI keeps the old asset hidden until the fresh visual
   // focus arrives, avoiding the EUR/USD vs NZD/USD frame-1 regression.
-  const refreshed = await chrome.runtime.sendMessage({ type: 'ATS_REFRESH_MARKET' }).catch(() => null);
+  const sourceTabId = Number(new URLSearchParams(location.search).get('sourceTabId') || 0);
+  const refreshed = await chrome.runtime.sendMessage(
+    sourceTabId > 0
+      ? { type: 'ATS_CONNECT_ACTIVE_TAB', sourceTabId }
+      : { type: 'ATS_REFRESH_MARKET' }
+  ).catch(() => null);
   if (refreshed?.state) render(refreshed.state);
 })().catch(() => render({}));
