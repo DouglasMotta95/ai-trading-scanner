@@ -1,6 +1,6 @@
 import { activateLicense, validateLicense, clearLicense } from './services/license.js';
 import { readScannerState, updateScannerState } from './services/scanner-state-atomic.js';
-import { storageLocalGet, storageSessionGet, storageSessionSet, storageSessionRemove, tabsQuery, sidePanelSetBehavior, scriptingExecuteScript, windowsCreate, windowsGet, windowsUpdate, windowsApiAvailable } from './services/chrome-compat.js';
+import { storageLocalGet, storageSessionGet, storageSessionSet, storageSessionRemove, tabsQuery, tabsGet, sidePanelSetBehavior, scriptingExecuteScript, windowsCreate, windowsGet, windowsUpdate, windowsApiAvailable } from './services/chrome-compat.js';
 import { detectPlatform } from './platforms/registry.js';
 import { clearMarketAuthorityState, clearUserDeclaredExpirationState } from './background-market-session.js';
 import { getOperationMode } from './core/analysis.js';
@@ -142,10 +142,25 @@ function licenseBlockedDiagnostics(license = {}) {
   };
 }
 
-async function activePlatformTab() {
-  // The scanner can now run in an extension popup window. When that window
-  // is focused, currentWindow's active tab is no longer CasaTrade. Search
-  // the browser tabs first, then prefer an actually active CasaTrade tab.
+async function activePlatformTab(preferredTabId = null) {
+  // Keep the CasaTrade tab that launched the scanner. This is critical when
+  // the scanner itself is a focused popup: the browser's active tab then
+  // belongs to the popup window, not CasaTrade.
+  const preferred = Number(preferredTabId || 0);
+  if (preferred > 0) {
+    const tab = await tabsGet(preferred).catch(() => null);
+    const platform = tab?.url ? platformFromUrl(tab.url) : null;
+    if (tab?.id && platform) return { tab, platform };
+  }
+
+  const stored = await storageSessionGet(SCANNER_SOURCE_TAB_KEY).catch(() => ({}));
+  const storedId = Number(stored?.[SCANNER_SOURCE_TAB_KEY] || 0);
+  if (storedId > 0 && storedId !== preferred) {
+    const tab = await tabsGet(storedId).catch(() => null);
+    const platform = tab?.url ? platformFromUrl(tab.url) : null;
+    if (tab?.id && platform) return { tab, platform };
+  }
+
   const casaTabs = await tabsQuery({
     url: [
       'https://casatrade.com/*',
@@ -158,6 +173,7 @@ async function activePlatformTab() {
       'https://*.ivcasatraders.online/*'
     ]
   }).catch(() => []);
+
   const platformTabs = casaTabs
     .map(tab => ({ tab, platform: tab?.url ? platformFromUrl(tab.url) : null }))
     .filter(item => item.tab?.id && item.platform);
@@ -165,11 +181,9 @@ async function activePlatformTab() {
   const activePlatform = platformTabs.find(item => item.tab.active);
   if (activePlatform) return activePlatform;
 
-  const casaTrade = platformTabs.find(item => item.platform?.id === 'casatrade')
-    || platformTabs.find(item => String(item.tab?.url || '').includes('trade.casatrade.com'));
-
-  if (casaTrade) return casaTrade;
-  return { tab: null, platform: null };
+  return platformTabs.find(item => item.platform?.id === 'casatrade')
+    || platformTabs.find(item => String(item.tab?.url || '').includes('trade.casatrade.com'))
+    || { tab: null, platform: null };
 }
 
 function inspectCasaTradeControlsDirect() {
@@ -1081,6 +1095,7 @@ async function setScanner(enabled = false) {
 }
 
 const SCANNER_WINDOW_KEY = 'atsScannerCompactWindowId';
+const SCANNER_SOURCE_TAB_KEY = 'atsScannerSourceCasaTradeTabId';
 
 async function focusOrCreateCompactScannerWindow() {
   if (!windowsApiAvailable()) {
@@ -1122,7 +1137,11 @@ async function focusOrCreateCompactScannerWindow() {
 sidePanelSetBehavior({ openPanelOnActionClick: !windowsApiAvailable() }).catch(() => {});
 
 if (chrome?.action?.onClicked?.addListener) {
-  chrome.action.onClicked.addListener(() => {
+  chrome.action.onClicked.addListener((tab) => {
+    const sourceTabId = Number(tab?.id || 0);
+    if (sourceTabId > 0) {
+      storageSessionSet({ [SCANNER_SOURCE_TAB_KEY]: sourceTabId }).catch(() => {});
+    }
     focusOrCreateCompactScannerWindow().catch(() => {});
   });
 }
@@ -1140,7 +1159,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const type = String(message?.type || '');
 
   if (type === 'ATS_CONNECT_ACTIVE_TAB') {
-    connectActiveTab().then(sendResponse).catch(error => sendResponse({ ok: false, error: String(error?.message || error) }));
+    connectActiveTab({ preferredTabId: Number(message?.sourceTabId || 0) || null }).then(sendResponse).catch(error => sendResponse({ ok: false, error: String(error?.message || error) }));
     return true;
   }
 
