@@ -143,9 +143,22 @@ function licenseBlockedDiagnostics(license = {}) {
 }
 
 async function activePlatformTab() {
-  const [tab] = await tabsQuery({ active: true, currentWindow: true }).catch(() => []);
-  const platform = tab?.url ? platformFromUrl(tab.url) : null;
-  return { tab: tab?.id ? tab : null, platform };
+  // The scanner can now run in an extension popup window. When that window
+  // is focused, currentWindow's active tab is no longer CasaTrade. Search
+  // the browser tabs first, then prefer an actually active CasaTrade tab.
+  const allTabs = await tabsQuery({}).catch(() => []);
+  const platformTabs = allTabs
+    .map(tab => ({ tab, platform: tab?.url ? platformFromUrl(tab.url) : null }))
+    .filter(item => item.tab?.id && item.platform);
+
+  const activePlatform = platformTabs.find(item => item.tab.active);
+  if (activePlatform) return activePlatform;
+
+  const casaTrade = platformTabs.find(item => item.platform?.id === 'casatrade')
+    || platformTabs.find(item => String(item.tab?.url || '').includes('trade.casatrade.com'));
+
+  if (casaTrade) return casaTrade;
+  return { tab: null, platform: null };
 }
 
 function inspectCasaTradeControlsDirect() {
