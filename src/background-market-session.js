@@ -19,7 +19,7 @@ const EXACT_CLOCK_SOURCES = new Set(['trader-dom-countdown', 'network-server-cyc
 const FALLBACK_CLOCK_SOURCE = 'platform-cycle-derived';
 const FALLBACK_MIN_CONFIDENCE = 50;
 const COMMON_QUOTES = new Set(['USD','EUR','GBP','JPY','AUD','CAD','CHF','NZD','BRL','HKD','SGD','NOK','SEK','DKK','PLN','CZK','HUF','TRY','MXN','ZAR','INR','CNY','CNH','KRW','THB','MYR','PHP','IDR','VND','TWD','ILS','AED','SAR','QAR','KWD','BHD','OMR','ARS','CLP','COP','PEN','UYU','BOB','PYG','USDT','USDC','BTC','ETH']);
-const GENERIC_ASSET_TOKENS = new Set(['BLITZ','OPTION','BINARY','BINARIA','DIGITAL','TURBO','CALL','PUT','TRADE','TRADING','OPERATION','OPERACAO','OPÇÃO','OPCAO']);
+const GENERIC_ASSET_NAMES = new Set(['BLITZ','OPTION','OPTIONS','BINARY','BINARIA','BINARIO','DIGITAL','TURBO','CALL','PUT','BUY','SELL','COMPRA','VENDA','TRADE','TRADING','OPERATION','OPERACAO','OPCAO','INFO','FAVORITO','FAVORITES','ATIVO','ASSET','INSTRUMENT','INSTRUMENTO','MARKET','PRECO','PRICE','EXPIRACAO','EXPIRATION','VALOR','SALDO','PAYOUT','LUCRO','LIVE','CONECTAR','ENTRAR','VELA','GRAFICO','GRÁFICO']);
 
 function normAsset(value = '') {
   const raw = clean(value).toUpperCase();
@@ -30,14 +30,19 @@ function normAsset(value = '') {
   if (direct) {
     const base = direct[1];
     const quote = direct[2];
-    if (!COMMON_QUOTES.has(quote) || GENERIC_ASSET_TOKENS.has(base) || GENERIC_ASSET_TOKENS.has(quote)) return '';
+    if (!COMMON_QUOTES.has(quote) || GENERIC_ASSET_NAMES.has(base) || GENERIC_ASSET_NAMES.has(quote)) return '';
     return `${base}/${quote}${otc ? ' (OTC)' : ''}`;
   }
   const compact = stripped.replace(/[^A-Z0-9]/g, '');
   for (const quote of COMMON_QUOTES) {
     if (!compact.endsWith(quote) || compact.length <= quote.length + 1) continue;
     const base = compact.slice(0, -quote.length);
-    if (/^[A-Z0-9]{2,12}$/.test(base) && !GENERIC_ASSET_TOKENS.has(base)) return `${base}/${quote}${otc ? ' (OTC)' : ''}`;
+    if (/^[A-Z0-9]{2,12}$/.test(base) && !GENERIC_ASSET_NAMES.has(base)) return `${base}/${quote}${otc ? ' (OTC)' : ''}`;
+  }
+  let named = stripped.replace(/(?:^|[\s|•·_-])(BLITZ|OPTION|OPTIONS|BINARY|BINARIA|BINARIO|DIGITAL|TURBO|CALL|PUT)\s*$/i, '').trim();
+  named = named.replace(/^\s*(?:ATIVO|ASSET|INSTRUMENTO|INSTRUMENT)\s*[:|-]\s*/i, '').replace(/\s+/g, ' ').trim();
+  if (named.length >= 2 && named.length <= 80 && /[A-Z]/.test(named) && !GENERIC_ASSET_NAMES.has(named) && !/^[\d\s.,:+_/-]+$/.test(named)) {
+    return named + (otc ? ' (OTC)' : '');
   }
   return '';
 }
