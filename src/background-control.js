@@ -1,6 +1,6 @@
 import { activateLicense, validateLicense, clearLicense } from './services/license.js';
 import { readScannerState, updateScannerState } from './services/scanner-state-atomic.js';
-import { storageLocalGet, storageSessionGet, storageSessionSet, storageSessionRemove, tabsQuery, tabsGet, sidePanelSetBehavior, scriptingExecuteScript, windowsCreate, windowsGet, windowsUpdate, windowsApiAvailable } from './services/chrome-compat.js';
+import { storageLocalGet, storageSessionGet, storageSessionSet, storageSessionRemove, tabsQuery, tabsGet, sidePanelSetBehavior, scriptingExecuteScript, windowsCreate, windowsGet, windowsUpdate, windowsRemove, windowsApiAvailable } from './services/chrome-compat.js';
 import { detectPlatform } from './platforms/registry.js';
 import { clearMarketAuthorityState, clearUserDeclaredExpirationState } from './background-market-session.js';
 import { getOperationMode } from './core/analysis.js';
@@ -1108,24 +1108,11 @@ async function focusOrCreateCompactScannerWindow({ sourceTabId = 0 } = {}) {
   const query = source > 0 ? `&sourceTabId=${encodeURIComponent(source)}` : '';
   const url = `${chrome.runtime.getURL('src/sidepanel/index.html')}?container=window${query}`;
 
-  // IMPORTANT: create the popup before any awaited storage/windows lookup.
-  // Some Chromium builds require the action click's user gesture to still be
-  // active when chrome.windows.create() is invoked. The previous flow awaited
-  // storage first, which made the popup fail while CasaTrade was focused/open.
+  // The popup must be created before any awaited storage/window lookup.
+  // This preserves the toolbar action's user gesture on Chromium builds that
+  // otherwise refuse chrome.windows.create after an await.
   try {
-    if (liveScannerPopupId > 0) {
-      const focused = await windowsUpdate(liveScannerPopupId, { focused: true }).catch(() => null);
-      if (focused?.id || focused === undefined) {
-        await storageSessionSet({
-          [SCANNER_SOURCE_TAB_KEY]: source > 0 ? source : undefined,
-          [SCANNER_WINDOW_KEY]: liveScannerPopupId
-        }).catch(() => {});
-        return { ok: true, windowId: liveScannerPopupId, reused: true };
-      }
-      liveScannerPopupId = 0;
-    }
-
-    // Keep this call as the first asynchronous browser operation of the action.
+    const previousLiveId = Number(liveScannerPopupId || 0);
     const createdPromise = windowsCreate({
       url,
       type: 'popup',
@@ -1136,17 +1123,28 @@ async function focusOrCreateCompactScannerWindow({ sourceTabId = 0 } = {}) {
     const created = await createdPromise;
     if (!created?.id) throw new Error('scanner_window_create_failed');
 
-    liveScannerPopupId = Number(created.id);
-    const sessionPayload = { [SCANNER_WINDOW_KEY]: liveScannerPopupId };
+    const newId = Number(created.id);
+    liveScannerPopupId = newId;
+
+    // Keep exactly one scanner window. This cleanup happens after the new
+    // window is already created, so it cannot break the action click.
+    const stored = await storageSessionGet(SCANNER_WINDOW_KEY).catch(() => ({}));
+    const previousStoredId = Number(stored?.[SCANNER_WINDOW_KEY] || 0);
+    for (const staleId of [previousLiveId, previousStoredId]) {
+      if (staleId > 0 && staleId !== newId) {
+        await windowsRemove(staleId).catch(() => {});
+      }
+    }
+
+    const sessionPayload = { [SCANNER_WINDOW_KEY]: newId };
     if (source > 0) sessionPayload[SCANNER_SOURCE_TAB_KEY] = source;
     await storageSessionSet(sessionPayload).catch(() => {});
-    return { ok: true, windowId: liveScannerPopupId, reused: false };
+    return { ok: true, windowId: newId, reused: false };
   } catch (error) {
     await sidePanelSetBehavior({ openPanelOnActionClick: true }).catch(() => {});
     return { ok: false, fallback: 'side_panel', error: String(error?.message || error) };
   }
 }
-
 sidePanelSetBehavior({ openPanelOnActionClick: !windowsApiAvailable() }).catch(() => {});
 
 if (chrome?.action?.onClicked?.addListener) {
