@@ -90,21 +90,27 @@ function scheduleConnectionTimeout(tabId, connectedAt) {
             }
           };
         }
+        // CasaTrade is already the recognized target tab. A temporary
+        // reader/focus/clock gap is an acquisition problem, not a transport
+        // disconnect. Keep the session alive and let the health injector recover
+        // the live readers instead of dropping the user into DESCONECTADO.
         return {
           ...state,
-          scanner: 'idle',
-          connection: 'offline',
+          scanner: 'scanning',
+          connection: 'online',
           diagnostics: {
             ...(state.diagnostics || {}),
-            connectionError: {
-              code: 'handshake_timeout',
-              message: 'Falha ao conectar — tentar novamente.',
-              at: Date.now()
-            },
+            connectionError: null,
             acquisition: {
               ...(state.diagnostics?.acquisition || {}),
-              stage: 'connect_timeout',
-              reason: 'Falha ao conectar — tentar novamente.',
+              stage: 'recovering_live_readers',
+              reason: 'CasaTrade conectada. Recuperando ativo, preço, velas e countdown reais.',
+              at: Date.now()
+            },
+            health: {
+              ...(state.diagnostics?.health || {}),
+              state: 'recovering',
+              missing: ['handshake'],
               at: Date.now()
             }
           }
