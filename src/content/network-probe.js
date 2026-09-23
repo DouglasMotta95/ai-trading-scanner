@@ -23,6 +23,7 @@
   let trustedVisualFallback = { asset: '', at: 0, source: '' };
   let fallbackRequestAt = 0;
   let networkContextKey = '';
+  let networkSessionCounter = 0;
   let lastNetworkAssetIdentity = { raw: '', asset: '', source: '', at: 0 };
 
   const stats = {
@@ -69,11 +70,12 @@
     if (!asset) return;
     trustedVisualFallback = { asset, at: Number(payload.at || now()), source: String(payload.source || 'focused-asset-v2') };
   });
-  const announceNetworkContext = (transport, url) => {
-    if (networkContextKey) return;
+  const announceNetworkContext = (transport, url, sessionId = 0) => {
     const endpoint = safeHostPath(url);
     if (!endpoint) return;
-    networkContextKey = `${transport}|${endpoint}`;
+    const nextKey = `${transport}|${endpoint}|session-${Number(sessionId || 0)}`;
+    if (networkContextKey === nextKey) return;
+    networkContextKey = nextKey;
     try {
       window.postMessage({
         source: 'ATS_NETWORK_PROBE',
@@ -490,12 +492,13 @@
   if (window.WebSocket) {
     const Native = window.WebSocket;
     const Wrapped = function(url, protocols) {
+      const wasIdle = stats.connections.ws === 0;
       const ws = protocols === undefined ? new Native(url) : new Native(url, protocols);
       stats.connections.ws++;
       rememberDiagnosticEndpoint('ws', url);
       const endpoint = safeUrl(url); if (endpoint) stats.endpoints.add(`ws:${endpoint}`);
       flushTimer();
-      announceNetworkContext('ws', url);
+      if (wasIdle) announceNetworkContext('ws', url, ++networkSessionCounter);
       ws.addEventListener('message', e => {
         networkDiagnostic.transport.ws.seen += 1;
         if (typeof e.data === 'string') {
@@ -506,7 +509,11 @@
           toText(e.data).then(t => { if (t) record('ws', url, t, false); }).catch(() => {});
         }
       });
-      ws.addEventListener('close', () => { stats.connections.ws = Math.max(0, stats.connections.ws - 1); flushTimer(); }, { once: true });
+      ws.addEventListener('close', () => {
+        stats.connections.ws = Math.max(0, stats.connections.ws - 1);
+        if (stats.connections.ws === 0) networkContextKey = '';
+        flushTimer();
+      }, { once: true });
       return ws;
     };
     Wrapped.prototype = Native.prototype;
