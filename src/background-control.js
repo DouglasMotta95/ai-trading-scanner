@@ -12,7 +12,7 @@ const DEFAULT_LICENSE = Object.freeze({
 const SESSION_HISTORY_KEY = 'atsSessionSignalHistory';
 const SHADOW_KEY = 'atsShadowCalibrationV1';
 const EXACT_CLOCK_SOURCES = new Set(['trader-dom-countdown', 'network-server-cycle']);
-const CONNECT_TIMEOUT_MS = 15000;
+const CONNECT_TIMEOUT_MS = 30000;
 
 const clean = value => String(value ?? '').trim();
 const activeLicense = license => {
@@ -49,7 +49,7 @@ function marketDataConnected(state = {}) {
     && focus.trustedChartFrame === true
     && sameAsset(focus.asset, state.asset)
     && Number(state.lastSeen || 0) > 0
-    && Date.now() - Number(state.lastSeen) < 15000;
+    && Date.now() - Number(state.lastSeen) < 30000;
 }
 
 function handshakeReady(state = {}) {
