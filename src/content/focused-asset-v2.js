@@ -15,6 +15,7 @@
   // OTC and regular quotes are different live markets.
   const QUOTES = new Set(['USD','EUR','GBP','JPY','AUD','CAD','CHF','NZD','BRL','HKD','SGD','NOK','SEK','DKK','PLN','CZK','HUF','TRY','MXN','ZAR','INR','CNY','CNH','KRW','THB','MYR','PHP','IDR','VND','TWD','ILS','AED','SAR','QAR','KWD','BHD','OMR','ARS','CLP','COP','PEN','UYU','BOB','PYG','BTC','ETH','USDT','USDC']);
   const pairRe = /\b([A-Z0-9]{2,20})\s*[\/_-]\s*([A-Z0-9]{2,12})(?:\s*\(\s*OTC\s*\)|\s+OTC)?/gi;
+  const GENERIC_ASSET_TOKENS = new Set(['BLITZ','OPTION','OPTIONS','BINARY','BINARIA','BINARIO','DIGITAL','TURBO','CALL','PUT','BUY','SELL','COMPRA','VENDA','TRADE','TRADING','OPERATION','OPERACAO','OPCAO','INFO','FAVORITO','FAVORITES','ATIVO','ASSET','INSTRUMENT','INSTRUMENTO','MARKET','PRECO','PRICE','EXPIRACAO','EXPIRATION','VALOR','SALDO','PAYOUT','LUCRO','LIVE','CONECTAR','ENTRAR','VELA','GRAFICO','GRÁFICO']);
   const compactFxRe = /\b([A-Z]{3})([A-Z]{3})(?:\s*\(\s*OTC\s*\)|[_-]?OTC)?\b/gi;
 
   function assetsIn(value = '') {
@@ -23,7 +24,7 @@
     const out = [];
     const seen = new Set();
     const add = (base, quote, otc) => {
-      if (!QUOTES.has(quote) || isGenericPair(base, quote)) return;
+      if (!QUOTES.has(quote) || GENERIC_ASSET_TOKENS.has(String(base).toUpperCase()) || GENERIC_ASSET_TOKENS.has(String(quote).toUpperCase())) return;
       const asset = `${base}/${quote}${otc ? ' (OTC)' : ''}`;
       if (!seen.has(asset)) { seen.add(asset); out.push(asset); }
     };
@@ -37,7 +38,7 @@
     if (!raw || raw.length > 64) return '';
     const otc = /\bOTC\b|\(\s*OTC\s*\)/i.test(raw);
     raw = raw.replace(/\(\s*OTC\s*\)/gi, ' ').replace(/\bOTC\b/gi, ' ').trim();
-    raw = raw.replace(/(?:^|[\\s|•·_-])(BLITZ|OPTION|OPTIONS|BINARY|BINARIA|BINARIO|DIGITAL|TURBO|CALL|PUT)\s*$/i, '').trim();
+    raw = raw.replace(/(?:^|[\s|•·_-])(BLITZ|OPTION|OPTIONS|BINARY|BINARIA|BINARIO|DIGITAL|TURBO|CALL|PUT)\s*$/i, '').trim();
     raw = raw.replace(/^(?:ATIVO|ASSET|INSTRUMENTO|INSTRUMENT)\s*[:|-]\s*/i, '').trim();
     raw = raw.replace(/\s+/g, ' ').replace(/^[|•·\-_:]+|[|•·\-_:]+$/g, '').trim();
     if (!raw || raw.length < 2 || INSTRUMENT_WORDS.has(raw)) return '';
@@ -60,8 +61,6 @@
   const canonicalAsset = value => assetOptions(value, true)[0] || '';
   const identity = value => canonicalAsset(value);
   const sameAsset = (a, b) => !!identity(a) && identity(a) === identity(b);
-  const genericAssetTokens = new Set(['BLITZ','OPTION','BINARY','BINARIA','DIGITAL','TURBO','CALL','PUT','TRADE','TRADING','OPERATION','OPERACAO','OPÇÃO','OPCAO']);
-  const isGenericPair = (base = '', quote = '') => genericAssetTokens.has(String(base).toUpperCase()) || genericAssetTokens.has(String(quote).toUpperCase());
   const visible = el => {
     if (!el || !(el instanceof Element)) return false;
     const rect = el.getBoundingClientRect();
