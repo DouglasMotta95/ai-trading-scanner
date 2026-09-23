@@ -468,7 +468,7 @@ function consolidatedSnapshot(state = {}) {
     },
     diagnostics: {
       capture: 'central-consolidated-state',
-      clockQuality: 'exact',
+      clockQuality: exactClock ? 'exact' : 'analysis-only',
       feedQuality: Number(state.diagnostics?.acquisition?.feedQuality || 0)
     }
   };
