@@ -117,10 +117,9 @@ function decisionQuality(signal = {}, direction = null, thresholds = getThreshol
   // engine to qualify when it has a ready candle pattern and enough independent
   // evidence. Manual execution and timing gates remain unchanged.
   const recentReady = signal?.recent?.ready === true;
-  const technicalUi = clean(signal?.uiState).toUpperCase();
   const technicalPatternReady = recentReady
-    && ['WATCH','CONFIRM','POSSIBLE_BUY','POSSIBLE_SELL','ENTER_BUY','ENTER_SELL'].includes(String(signal?.state || '').toUpperCase())
-      || (recentReady && ['POSSIBLE_BUY','POSSIBLE_SELL','ENTER_BUY','ENTER_SELL'].includes(technicalUi));
+    && !!direction
+    && score >= signalPolicy.possibleScore;
   const qualityContextReady = professionalReady || technicalPatternReady;
   const commonReady = !!direction
     && qualityContextReady
