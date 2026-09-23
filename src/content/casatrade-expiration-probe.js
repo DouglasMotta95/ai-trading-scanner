@@ -261,23 +261,24 @@
   }
 
   function bodyExpiration() {
-    const body = fold(clean(document.body?.innerText || document.body?.textContent || '').slice(0, 260000));
-    if (!body) return null;
-    const labels = ['expiracao', 'expiry', 'expiration'];
-    for (const marker of labels) {
-      let from = 0;
-      for (let attempt = 0; attempt < 20; attempt += 1) {
-        const index = body.indexOf(marker, from);
-        if (index < 0) break;
-        const after = body.slice(index, Math.min(body.length, index + 180));
-        const labeled = parseExpiration(after);
-        if (labeled) return { value: labeled, score: 180, reason: 'body-label' };
-        const match = after.match(/(?:^|[^0-9])(\d{1,4}\s*(?:s|seg|segundo|segundos|m|min|minuto|minutos))\b/);
-        const parsed = parseExpiration(match?.[1] || '');
-        if (parsed) return { value: parsed, score: 175, reason: 'body-near-label' };
-        from = index + marker.length;
+    const rawBodies = [document.body?.innerText || '', document.body?.textContent || ''];
+    const found = [];
+    for (const rawBody of rawBodies) {
+      const body = fold(clean(rawBody).slice(0, 1200000));
+      if (!body) continue;
+      const markerRe = /(?:expiracao|expiry|expiration)/g;
+      let marker;
+      let attempts = 0;
+      while ((marker = markerRe.exec(body)) && attempts++ < 80) {
+        const from = Math.max(0, marker.index - 120);
+        const to = Math.min(body.length, marker.index + 220);
+        const around = body.slice(from, to);
+        const parsed = parseExpiration(around);
+        if (parsed) found.push(parsed);
       }
     }
+    const unique = [...new Set(found)];
+    if (unique.length === 1) return { value: unique[0], score: 205, reason: 'body-explicit-unique' };
     return null;
   }
 
