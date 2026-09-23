@@ -215,7 +215,8 @@ export function registerVideo15292Contracts(label='video-15292') {
     const focus = read('src/content/focused-asset-v2.js');
     const market = read('src/background-market-session.js');
     const policy = read('src/background-decision-policy.js');
-    assert.match(focus, /if \(!first\.interaction && !first\.explicit\) return null/);
+    assert.match(focus, /!first\.interaction && !first\.explicit && !repeatedWins && !chartEvidenceWins/);
+    assert.match(focus, /blockedReason: 'ambiguityCount>0-without-chart-authority'/);
     assert.match(focus, /ambiguityCount/);
     assert.match(focus, /visualAuthority/);
     assert.match(market, /message\.visualAuthority === false/);
@@ -286,7 +287,7 @@ export function registerVideo15319Contracts(label='video-15319') {
     const market = read('src/background-market-session.js');
     assert.match(protocol, /explicitTransition && age <= 2200/);
     assert.match(focus, /INTERACTION_TRANSITION_MS = 1800/);
-    assert.match(focus, /Number\(b\.explicit\) - Number\(a\.explicit\)[\s\S]*Number\(b\.interaction\) - Number\(a\.interaction\)/);
+    assert.match(focus, /Number\(b\.interaction\) - Number\(a\.interaction\)[\s\S]*Number\(b\.explicit\) - Number\(a\.explicit\)/);
     assert.match(market, /selectionLock\.at\) < 3500/);
   });
 
