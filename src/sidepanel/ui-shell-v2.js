@@ -436,7 +436,7 @@ function renderShell(state = {}) {
   const retry = $('retryLiveRead');
   // Expiration recovery is automatic now. Keep the manual retry only for a
   // genuine market-acquisition or connection failure.
-  if (retry) retry.hidden = !(marketPending || failure);
+  if (retry) retry.hidden = !failure;
 
   const expirationChoice = $('userExpirationChoice');
   const expirationSelect = $('userDeclaredExpiration');
