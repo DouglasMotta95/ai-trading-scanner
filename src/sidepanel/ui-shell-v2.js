@@ -370,7 +370,7 @@ function renderShell(state = {}) {
     && activeLicense(state)
     && !!state.targetTabId
     && state.scanner === 'scanning'
-    && expirationWaitAge >= 4000;
+    && expirationWaitAge >= 25000;
 
   const strip = $('syncStrip');
   if (strip) strip.className = `sync-strip ${platformLinked ? 'live' : 'syncing'}`;
