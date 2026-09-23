@@ -1137,12 +1137,12 @@ async function focusOrCreateCompactScannerWindow() {
 sidePanelSetBehavior({ openPanelOnActionClick: !windowsApiAvailable() }).catch(() => {});
 
 if (chrome?.action?.onClicked?.addListener) {
-  chrome.action.onClicked.addListener((tab) => {
+  chrome.action.onClicked.addListener(async (tab) => {
     const sourceTabId = Number(tab?.id || 0);
     if (sourceTabId > 0) {
-      storageSessionSet({ [SCANNER_SOURCE_TAB_KEY]: sourceTabId }).catch(() => {});
+      await storageSessionSet({ [SCANNER_SOURCE_TAB_KEY]: sourceTabId }).catch(() => {});
     }
-    focusOrCreateCompactScannerWindow().catch(() => {});
+    await focusOrCreateCompactScannerWindow().catch(() => {});
   });
 }
 
