@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.11.75 — visual fallback sem dependência circular + ativos nomeados
+
+### Diagnóstico que motivou a correção
+- No diagnóstico ao vivo fornecido para o caso USD/HKD, havia 7.000+ mensagens de rede recebidas, mas o network-probe não conseguia obter um ativo utilizável quando o focused-asset-v2 estava bloqueado.
+- A causa observada foi uma dependência circular no fallback: o network-probe pedia um nome visual, mas o focused-asset-v2 só respondia quando já tinha reliable === true. Portanto, exatamente no cenário em que o fallback era necessário, nenhuma resposta era devolvida.
+- O reconhecimento de rede também estava limitado ao formato BASE/QUOTE. Ativos nomeados, como ações e commodities/índices, não passavam por esse parser mesmo quando o nome aparecia claramente no payload.
+- O diagnóstico do focused reader agora registra, mesmo sem reliable=true, o último winner.asset bruto, estado de bloqueio/motivo, contagem de candidatos de texto encontrados no DOM/shadow DOM e se houve algum texto candidato.
+
+### Correções
+- O focused-asset-v2 responde ao pedido de fallback com o melhor candidato bruto da varredura mais recente, marcando explicitamente o payload como baixa confiança quando ele ainda não é autoridade.
+- O network-probe passa a receber essa informação sem depender de reliable=true; a confiança permanece explícita e não altera os gates de segurança da decisão final.
+- O parser de rede passa a reconhecer, de forma conservadora, instrumentos nomeados sem formato BASE/QUOTE, reaproveitando as mesmas regras de limpeza/rejeição de tokens genéricos usadas pelo focused reader.
+- A correção cobre exemplos como Coca-Cola, Melamina e McDonald's, além de pares exóticos como USD/HKD.
+- Corrigida também a referência ausente a INSTRUMENT_WORDS no parser de instrumentos nomeados do focused-asset-v2.
+- Score, perfis, filtros sombra, relógio, licença, Gemini e execução manual não foram alterados.
+
+### Arquivos alterados
+- src/content/focused-asset-v2.js
+- src/content/network-probe.js
+- src/background-control.js
+- src/sidepanel/ui-shell-v2.js
+- manifest.json
+- package.json
+- CHANGELOG.md
+
 ## 0.11.25 — Expiration authority hotfix
 
 ### Problema real corrigido
