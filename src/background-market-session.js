@@ -112,17 +112,26 @@ function bestForFocus(payload = {}, focus = '') {
   return rows[0] || null;
 }
 
-function historyFor(payload = {}, focus = '') {
-  const source = payload.recentCandles || {};
-  const key = Object.keys(source).find(asset => sameMarket(asset, focus));
-  return key ? sanitizeRows(source[key]) : [];
+function filterTimeframe(rows = [], timeframe = null) {
+  const target = normTf(timeframe);
+  if (!target) return sanitizeRows(rows);
+  return sanitizeRows(rows).filter(row => {
+    const rowTf = normTf(row?.timeframe);
+    return !rowTf || rowTf === target;
+  });
 }
 
-function stateHistory(state = {}, asset = '') {
+function historyFor(payload = {}, focus = '', timeframe = null) {
+  const source = payload.recentCandles || {};
+  const key = Object.keys(source).find(asset => sameMarket(asset, focus));
+  return key ? filterTimeframe(source[key], timeframe) : [];
+}
+
+function stateHistory(state = {}, asset = '', timeframe = null) {
   const source = state.marketHistory || {};
   const key = Object.keys(source).find(value => sameMarket(value, asset));
-  const fromHistory = key ? sanitizeRows(source[key]) : [];
-  return fromHistory.length ? fromHistory : sanitizeRows(state.candles || []);
+  const fromHistory = key ? filterTimeframe(source[key], timeframe) : [];
+  return fromHistory.length ? fromHistory : filterTimeframe(state.candles || [], timeframe);
 }
 
 function clockMatchesFocus(state = {}, info = null) {
@@ -765,7 +774,26 @@ export async function applyFeed(payload = {}, sender = {}) {
     const candidate = bestForFocus(payload, asset);
     if (!candidate) return;
 
-    const incomingHistory = historyFor(payload, asset);
+    const candidateTimeframe = normTf(candidate.timeframe);
+    const stateTimeframe = normTf(state.diagnostics?.marketClock?.timeframe || state.analysisTimeframe || state.timeframe);
+    if (candidateTimeframe && stateTimeframe && candidateTimeframe !== stateTimeframe) {
+      return {
+        ...state,
+        diagnostics: {
+          ...(state.diagnostics || {}),
+          rejectedMarketData: {
+            asset,
+            candidateAsset: candidate.asset || null,
+            candidateTimeframe,
+            expectedTimeframe: stateTimeframe,
+            reason: 'timeframe_identity_mismatch',
+            at: Date.now()
+          }
+        }
+      };
+    }
+    const feedTimeframe = stateTimeframe || candidateTimeframe || null;
+    const incomingHistory = historyFor(payload, asset, feedTimeframe);
     // During a market switch the previous state may still contain candles from
     // the old instrument. Never merge them into the newly focused asset. A new
     // session must bootstrap exclusively from history explicitly keyed/tagged
@@ -774,7 +802,7 @@ export async function applyFeed(payload = {}, sender = {}) {
     const sessionOwnsFocus = sameMarket(sessionBeforeFeed.confirmedAsset || sessionBeforeFeed.asset, asset)
       && sessionBeforeFeed.transitioning !== true;
     const stateOwnsFocus = sameMarket(state.asset, asset);
-    const previousHistory = sessionOwnsFocus && stateOwnsFocus ? stateHistory(state, asset) : [];
+    const previousHistory = sessionOwnsFocus && stateOwnsFocus ? stateHistory(state, asset, feedTimeframe) : [];
     const mergedHistory = mergeRows(previousHistory, incomingHistory);
     const bundle = validateMarketBundle({
       focusAsset: asset,
