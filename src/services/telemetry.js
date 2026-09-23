@@ -21,10 +21,15 @@ export async function installationId() {
   installationIdPromise = (async () => {
     const x = await storageLocalGet(INSTALL_KEY);
     const existing = String(x[INSTALL_KEY] || '').trim();
-    const legacyId = legacyRuntimeInstallationId();
-    if (existing && existing !== legacyId) return existing;
 
-    const id = randomInstallationId();
+    // The installation ID is the stable device binding. Never rotate it just
+    // because chrome.runtime.id differs from the generated persisted ID.
+    // The previous comparison caused a new UUID to be generated on every call,
+    // which made the backend see the same device as a new installation.
+    if (existing) return existing;
+
+    const legacyId = legacyRuntimeInstallationId();
+    const id = legacyId || randomInstallationId();
     await storageLocalSet({ [INSTALL_KEY]: id });
     const persisted = await storageLocalGet(INSTALL_KEY);
     return String(persisted[INSTALL_KEY] || id).trim() || id;
