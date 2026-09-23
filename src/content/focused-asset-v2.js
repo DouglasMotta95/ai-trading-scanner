@@ -214,6 +214,8 @@
     const contextChanged = !!lastChartContextSignature && !!contextSignatureNow && contextSignatureNow !== lastChartContextSignature;
     if (contextSignatureNow) lastChartContextSignature = contextSignatureNow;
     const rows = [];
+    const rawCandidateRows = [];
+    const rawCandidateAssets = new Set();
     for (const el of deepElements()) {
       if (!visible(el)) continue;
       const text = elementAssetText(el);
@@ -233,6 +235,24 @@
       const chartScoped = directChart || geometricHeader || /chart|tradingview|instrument|symbol|asset|header/.test(context);
       const listContext = /watchlist|asset-list|instrument-list|listbox|search|history|portfolio|ranking|modal|drawer|dropdown|menu/.test(context);
       const interaction = interactionFresh(asset);
+      const rawScore = selection.score
+        + (chartScoped ? 520 : 0)
+        + (geometricHeader ? 900 : 0)
+        + (directChart ? 480 : 0)
+        + (/chart|tradingview|instrument|symbol|header/.test(context) ? 180 : 0)
+        + (interaction ? 900 : 0)
+        + (text.length <= 40 ? 70 : 0);
+      rawCandidateRows.push({
+        asset,
+        score: rawScore,
+        blockedBySelection: selection.rejected === true,
+        chartScoped,
+        directChart,
+        geometricHeader,
+        explicit: selection.explicit === true,
+        interaction: interaction === true
+      });
+      rawCandidateAssets.add(asset);
       // A visible dropdown/watchlist can contain dozens of symbols over the chart.
       // The chart-header geometry is allowed through because CasaTrade tablet
       // layouts often place the current asset inside a generic tabs/list shell.
@@ -247,6 +267,21 @@
       if (text.length <= 40) score += 70;
       rows.push({ asset, score, explicit: selection.explicit, interaction, chartScoped, directChart, geometricHeader, top: rect.top, left: rect.left });
     }
+
+    rawCandidateRows.sort((a, b) => Number(b.score || 0) - Number(a.score || 0));
+    const rawWinner = rawCandidateRows[0] || null;
+    lastScanDiagnostics = {
+      rawWinnerAsset: rawWinner?.asset || '',
+      rawWinnerScore: Number(rawWinner?.score || 0),
+      rawCandidateCount: rawCandidateRows.length,
+      uniqueTextCandidateCount: rawCandidateAssets.size,
+      hasTextCandidate: rawCandidateRows.length > 0,
+      rawCandidateAssets: [...rawCandidateAssets].slice(0, 16),
+      winner: { asset: '', blocked: true, blockedReason: 'scan-pending' },
+      chartFound: !!chart,
+      contextChanged,
+      at: Date.now()
+    };
 
     const grouped = new Map();
     for (const row of rows) {
@@ -370,6 +405,16 @@
   let scanning = false;
 
   let lastReliableAsset = '';
+  let lastScanDiagnostics = {
+    rawWinnerAsset: '',
+    rawWinnerScore: 0,
+    rawCandidateCount: 0,
+    uniqueTextCandidateCount: 0,
+    hasTextCandidate: false,
+    rawCandidateAssets: [],
+    winner: { asset: '', blocked: true, blockedReason: 'not-scanned' },
+    at: 0
+  };
   function sendFocus(common) {
     if (common?.asset && common?.reliable === true) {
       lastReliableAsset = common.asset;
@@ -385,13 +430,33 @@
     const data = event.data;
     if (!data || data.source !== 'ATS_NETWORK_ASSET_FALLBACK_REQUEST' || !data.requestId) return;
     const meta = globalThis.__ATS_FOCUSED_ASSET_META__ || null;
-    const asset = String(lastReliableAsset || globalThis.__ATS_FOCUSED_ASSET_VALUE__ || '').trim();
-    if (!asset || meta?.reliable !== true || meta?.visualAuthority === false || meta?.chartScoped !== true || meta?.trustedChartFrame !== true) return;
+    const rawWinnerAsset = String(lastScanDiagnostics?.rawWinnerAsset || '').trim();
+    const asset = rawWinnerAsset || String(lastReliableAsset || globalThis.__ATS_FOCUSED_ASSET_VALUE__ || '').trim();
+    const authoritative = meta?.reliable === true
+      && meta?.visualAuthority !== false
+      && meta?.chartScoped === true
+      && meta?.trustedChartFrame === true
+      && asset === String(lastReliableAsset || globalThis.__ATS_FOCUSED_ASSET_VALUE__ || '').trim();
     try {
       window.postMessage({
         source: 'ATS_FOCUSED_ASSET_FALLBACK_RESPONSE',
         requestId: data.requestId,
-        payload: { asset, source: 'focused-asset-v2', frameHost: host, frameRole, at: Date.now() }
+        payload: {
+          asset,
+          confidenceLevel: authoritative ? 'high' : 'low',
+          lowConfidence: authoritative !== true,
+          reliable: authoritative,
+          source: authoritative ? 'focused-asset-v2' : 'focused-asset-v2-raw-fallback',
+          frameHost: host,
+          frameRole,
+          rawWinnerAsset,
+          winner: { ...(lastScanDiagnostics?.winner || {}) },
+          rawCandidateCount: Number(lastScanDiagnostics?.rawCandidateCount || 0),
+          uniqueTextCandidateCount: Number(lastScanDiagnostics?.uniqueTextCandidateCount || 0),
+          hasTextCandidate: lastScanDiagnostics?.hasTextCandidate === true,
+          rawCandidateAssets: Array.isArray(lastScanDiagnostics?.rawCandidateAssets) ? lastScanDiagnostics.rawCandidateAssets.slice(0, 16) : [],
+          at: Date.now()
+        }
       }, '*');
     } catch {}
   });
@@ -411,6 +476,15 @@
       const winner = scanWinner();
       if (!winner) return;
       const now = Date.now();
+      lastScanDiagnostics = {
+        ...lastScanDiagnostics,
+        winner: {
+          asset: winner.asset || '',
+          blocked: winner.blocked === true,
+          blockedReason: winner.blockedReason || ''
+        },
+        at: now
+      };
 
       if (winner.contextChanged === true) {
         lastReliableAsset = '';
