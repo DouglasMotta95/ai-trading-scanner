@@ -650,6 +650,31 @@ export async function applyFeed(payload = {}, sender = {}) {
   return updateScannerState(state => {
     if (!licenseActive(state)) return;
     if (state.targetTabId && state.targetTabId !== info.tabId) return;
+    const networkSessionId = num(payload?.networkSessionId);
+    const sessionBeforeFeed = state.diagnostics?.marketSession || {};
+    const networkSessionChanged = networkSessionId != null
+      && Number(sessionBeforeFeed.networkSessionId || 0) > 0
+      && Number(sessionBeforeFeed.networkSessionId) !== Number(networkSessionId);
+
+    // A new traderoom network session is evidence that the market-data context
+    // changed even when the new instrument has not been identified yet. Clear
+    // the old authority immediately; naming the new asset is a separate step.
+    if (networkSessionChanged) {
+      return clearMarketAuthorityState({
+        ...state,
+        connection: 'connecting'
+      }, {
+        marketSessionSource: 'network-session-change',
+        diagnostics: {
+          ...(state.diagnostics || {}),
+          marketSession: {
+            ...(state.diagnostics?.marketSession || {}),
+            networkSessionId
+          }
+        }
+      });
+    }
+
     const focus = state.diagnostics?.focusedAsset || null;
     if (!focus?.asset || Number(focus.frameId) !== Number(info.frameId) || clean(focus.frameHost).toLowerCase() !== info.frameHost) return;
     const asset = normAsset(focus.asset);
@@ -657,6 +682,13 @@ export async function applyFeed(payload = {}, sender = {}) {
     if (!candidate) return;
 
     const incomingHistory = historyFor(payload, asset);
+    const candidateDiagnostic = {
+      asset: candidate.asset || null,
+      assetRaw: clean(candidate.assetRaw || candidate.asset || '').slice(0, 120),
+      assetSource: clean(candidate.assetSource || 'original').slice(0, 32),
+      networkSessionId: networkSessionId == null ? null : Number(networkSessionId),
+      at: Date.now()
+    };
     // During a market switch the previous state may still contain candles from
     // the old instrument. Never merge them into the newly focused asset. A new
     // session must bootstrap exclusively from history explicitly keyed/tagged
@@ -679,6 +711,7 @@ export async function applyFeed(payload = {}, sender = {}) {
         ...state,
         diagnostics: {
           ...(state.diagnostics || {}),
+          marketCandidate: candidateDiagnostic,
           rejectedMarketData: {
             asset,
             candidateAsset: candidate.asset || null,
@@ -725,9 +758,10 @@ export async function applyFeed(payload = {}, sender = {}) {
       diagnostics: {
         ...diagnostics,
         focusedAsset: focus,
+        marketCandidate: candidateDiagnostic,
         marketClock: state.diagnostics?.marketClock || null,
         marketSession: {
-          ...(state.diagnostics?.marketSession || {}), asset, pendingAsset: null, confirmedAsset: asset,
+          ...(state.diagnostics?.marketSession || {}), networkSessionId: networkSessionId ?? Number(state.diagnostics?.marketSession?.networkSessionId || 0) || null, asset, pendingAsset: null, confirmedAsset: asset,
           dataReady: true, transitioning: false, timeframe,
           frameId: info.frameId, frameHost: info.frameHost,
           dataMode: historicalJump ? 'backfill' : 'live',
