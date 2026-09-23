@@ -64,6 +64,16 @@
     const n = Number(s);
     return Number.isFinite(n) ? n : null;
   };
+  const isVisibleElement = el => {
+    if (!el || !(el instanceof Element)) return false;
+    if (el.id === '__ats_rendered_market__' || el.closest?.('#__ats_rendered_market__')) return false;
+    try {
+      const r = el.getBoundingClientRect();
+      const st = getComputedStyle(el);
+      return r.width > 0 && r.height > 0 && st.display !== 'none' && st.visibility !== 'hidden' && Number(st.opacity || 1) > 0.01;
+    } catch { return false; }
+  };
+
   const pick = (o, keys) => {
     if (!o || typeof o !== 'object') return null;
     for (const k of keys) if (Object.prototype.hasOwnProperty.call(o, k) && o[k] != null) return o[k];
@@ -175,6 +185,7 @@
 
     for (let i = 0; i < nodes.length && i < 4500; i++) {
       const el = nodes[i];
+      if (el.id === '__ats_rendered_market__' || el.closest?.('#__ats_rendered_market__')) continue;
       for (const v of [
         el.innerText,
         el.textContent,
@@ -194,30 +205,37 @@
 
   function bestAsset(text) {
     const counts = new Map();
+    const selected = new Map();
     for (const asset of assetsIn(text)) counts.set(asset, (counts.get(asset) || 0) + 1);
 
     let nodes = [];
     try { nodes = document.querySelectorAll('*'); } catch {}
     for (let i = 0; i < nodes.length && i < 7000; i++) {
       const el = nodes[i];
+      if (!isVisibleElement(el)) continue;
       const t = clean(el.innerText || el.textContent || '');
       if (!t || t.length > 100) continue;
-      const found = assetsIn(t);
-      if (!found.length) continue;
+      const found = [...new Set(assetsIn(t))];
+      if (found.length !== 1) continue;
       let extra = 0;
-      const cls = `${el.className || ''} ${el.getAttribute?.('aria-selected') || ''} ${el.getAttribute?.('data-state') || ''}`;
-      if (/true|active|selected|current|checked/i.test(cls)) extra += 8;
+      const cls = `${el.className || ''} ${el.getAttribute?.('aria-selected') || ''} ${el.getAttribute?.('aria-current') || ''} ${el.getAttribute?.('data-state') || ''}`;
+      const isSelected = /true|active|selected|current|checked/i.test(cls);
+      if (isSelected) extra += 12;
       try {
         const r = el.getBoundingClientRect();
-        if (r.top >= 0 && r.top < innerHeight * .4) extra += 3;
+        if (r.top >= 0 && r.top < innerHeight * .5) extra += 3;
       } catch {}
-      for (const asset of found) counts.set(asset, (counts.get(asset) || 0) + extra + 1);
+      for (const asset of found) {
+        counts.set(asset, (counts.get(asset) || 0) + extra + 1);
+        if (isSelected) selected.set(asset, (selected.get(asset) || 0) + 1);
+      }
     }
 
     const rows = [...counts.entries()].map(([asset, count]) => ({
       asset,
-      score: count * 10 + (/\(OTC\)$/i.test(asset) ? 14 : 0)
-    })).sort((a, b) => b.score - a.score);
+      selected: (selected.get(asset) || 0) > 0,
+      score: count * 10 + (selected.get(asset) || 0) * 120 + (/\(OTC\)$/i.test(asset) ? 14 : 0)
+    })).sort((a, b) => Number(b.selected) - Number(a.selected) || b.score - a.score);
     return rows[0] || null;
   }
 
@@ -363,7 +381,8 @@
       at: Date.now(),
       href: location.href,
       asset,
-      assetScore: Number(app?.selected ? 160 : app?.score || assetRow?.score || 0),
+      assetSelected: app?.selected === true || assetRow?.selected === true,
+      assetScore: Number(app?.selected ? 220 : app?.score || assetRow?.score || 0),
       price: num(quote?.price),
       buy: num(quote?.buy),
       sell: num(quote?.sell),
@@ -512,8 +531,8 @@
           ask: buy,
           timeframe,
           expiration,
-          selected: true,
-          confidence: 96,
+          selected: assetRow?.assetSelected === true,
+          confidence: assetRow?.assetSelected === true ? 96 : 82,
           observedAt: Date.now(),
           transport: 'rendered'
         }],
