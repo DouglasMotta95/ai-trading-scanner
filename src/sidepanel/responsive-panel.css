@@ -616,3 +616,52 @@ body[data-panel-mode="signal"] #decisionCard .progress-track{
     padding-right:5px;
   }
 }
+
+/* v0.11.71: popup connection strip must never compress its message into
+   one-character columns when expiration controls are visible. */
+#syncStrip{
+  flex-wrap:wrap;
+  align-items:center;
+}
+#syncStrip > .scan-pulse{
+  flex:0 0 auto;
+}
+#syncStrip > div:not(#userExpirationChoice){
+  flex:1 1 160px;
+  min-width:0;
+}
+#syncStrip > #userExpirationChoice{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto;
+  align-items:center;
+  gap:5px 7px;
+  flex:1 1 100%;
+  width:100%;
+  min-width:0;
+  padding-top:3px;
+}
+#syncStrip > #userExpirationChoice label{
+  min-width:0;
+  overflow-wrap:anywhere;
+}
+#syncStrip > #userExpirationChoice select{
+  width:auto;
+  min-width:78px;
+}
+#syncStrip > #copyExpirationDiagnostic{
+  flex:1 1 100%;
+  width:100%;
+  min-width:0;
+  white-space:normal;
+}
+@media(max-width:390px){
+  #syncStrip > div:not(#userExpirationChoice){
+    flex-basis:140px;
+  }
+  #syncStrip > #userExpirationChoice{
+    grid-template-columns:1fr;
+  }
+  #syncStrip > #userExpirationChoice select{
+    width:100%;
+  }
+}
