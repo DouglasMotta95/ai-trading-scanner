@@ -370,6 +370,8 @@
     feedDiagnostic.candidatesWithTimestamp += diagnosticCandidates.filter(row => row?.timestamp != null).length;
     feedDiagnostic.lastSummaryCandidates = diagnosticCandidates.slice(0, 5).map(row => ({
       asset: clean(row?.asset || ''),
+      assetRaw: clean(row?.assetRaw || row?.asset || '').slice(0, 120),
+      assetSource: clean(row?.assetSource || 'original').slice(0, 32),
       timeframe: clean(row?.timeframe || ''),
       timestamp: row?.timestamp ?? null,
       confidence: Number(row?.confidence || 0),
