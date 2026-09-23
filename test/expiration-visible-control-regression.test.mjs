@@ -7,8 +7,8 @@ test('expiration probe searches the whole visible CasaTrade text around the Expi
   const source = read('src/content/casatrade-expiration-probe.js');
   assert.match(source, /function bodyExpiration\(\)/);
   assert.match(source, /slice\(0, 1200000\)/);
-  assert.match(source, /body\.indexOf\(marker, from\)/);
-  assert.match(source, /index \+ marker\.length/);
+  assert.match(source, /const markerRe = \/\(\?:expiracao\|expiry\|expiration\)\/g/);
+  assert.match(source, /body-explicit-unique/);
 });
 
 test('expiration probe can pair a visible Expiração label with a nearby 1 min value', () => {
