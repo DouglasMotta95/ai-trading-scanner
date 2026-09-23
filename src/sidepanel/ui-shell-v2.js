@@ -109,7 +109,7 @@ function baseHandshake(state = {}) {
     && !ambiguousPassive
     && sameMarket(focus?.asset, state.asset)
     && Number(state.lastSeen || 0) > 0
-    && Date.now() - Number(state.lastSeen) < 7000;
+    && Date.now() - Number(state.lastSeen) < 15000;
 }
 
 function clockBoundToFocus(clock = {}, focus = {}) {
