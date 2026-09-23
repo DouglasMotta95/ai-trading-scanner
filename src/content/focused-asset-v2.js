@@ -374,6 +374,12 @@
       if (!winner) return;
       const now = Date.now();
 
+      if (winner.contextChanged === true) {
+        lastReliableAsset = '';
+        try { delete globalThis.__ATS_FOCUSED_ASSET_VALUE__; } catch {}
+        try { delete globalThis.__ATS_FOCUSED_ASSET_META__; } catch {}
+      }
+
       if (winner.blocked === true) {
         sendFocus({
           asset: winner.asset || '',
