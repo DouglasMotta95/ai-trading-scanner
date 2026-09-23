@@ -761,7 +761,7 @@ export async function applyFeed(payload = {}, sender = {}) {
         marketCandidate: candidateDiagnostic,
         marketClock: state.diagnostics?.marketClock || null,
         marketSession: {
-          ...(state.diagnostics?.marketSession || {}), networkSessionId: networkSessionId ?? Number(state.diagnostics?.marketSession?.networkSessionId || 0) || null, asset, pendingAsset: null, confirmedAsset: asset,
+          ...(state.diagnostics?.marketSession || {}), networkSessionId: networkSessionId != null ? Number(networkSessionId) : (Number(state.diagnostics?.marketSession?.networkSessionId || 0) || null), asset, pendingAsset: null, confirmedAsset: asset,
           dataReady: true, transitioning: false, timeframe,
           frameId: info.frameId, frameHost: info.frameHost,
           dataMode: historicalJump ? 'backfill' : 'live',
