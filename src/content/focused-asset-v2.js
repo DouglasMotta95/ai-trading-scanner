@@ -16,6 +16,7 @@
   const QUOTES = new Set(['USD','EUR','GBP','JPY','AUD','CAD','CHF','NZD','BRL','HKD','SGD','NOK','SEK','DKK','PLN','CZK','HUF','TRY','MXN','ZAR','INR','CNY','CNH','KRW','THB','MYR','PHP','IDR','VND','TWD','ILS','AED','SAR','QAR','KWD','BHD','OMR','ARS','CLP','COP','PEN','UYU','BOB','PYG','BTC','ETH','USDT','USDC']);
   const pairRe = /\b([A-Z0-9]{2,20})\s*[\/_-]\s*([A-Z0-9]{2,12})(?:\s*\(\s*OTC\s*\)|\s+OTC)?/gi;
   const GENERIC_ASSET_TOKENS = new Set(['BLITZ','OPTION','OPTIONS','BINARY','BINARIA','BINARIO','DIGITAL','TURBO','CALL','PUT','BUY','SELL','COMPRA','VENDA','TRADE','TRADING','OPERATION','OPERACAO','OPCAO','INFO','FAVORITO','FAVORITES','ATIVO','ASSET','INSTRUMENT','INSTRUMENTO','MARKET','PRECO','PRICE','EXPIRACAO','EXPIRATION','VALOR','SALDO','PAYOUT','LUCRO','LIVE','CONECTAR','ENTRAR','VELA','GRAFICO','GRÁFICO']);
+  const INSTRUMENT_WORDS = GENERIC_ASSET_TOKENS;
   const compactFxRe = /\b([A-Z]{3})([A-Z]{3})(?:\s*\(\s*OTC\s*\)|[_-]?OTC)?\b/gi;
 
   function assetsIn(value = '') {
