@@ -321,7 +321,13 @@ function decisionModel(state = {}) {
   // UI timing gate from hiding a decision already produced by the engine.
   const earlyProfessional = state.professionalDecision || {};
   const earlyTechnical = state.signal || {};
-  const earlyUi = String(earlyProfessional.uiState || earlyTechnical.uiState || '').toUpperCase();
+  const earlyTechnicalUi = String(earlyTechnical.uiState || '').toUpperCase();
+  const earlyProfessionalAsset = marketId(earlyProfessional.asset || earlyProfessional.market || earlyProfessional.symbol || '');
+  const earlyProfessionalMatches = !earlyProfessionalAsset || sameMarket(earlyProfessionalAsset, state.asset);
+  const earlyProfessionalUi = earlyProfessionalMatches ? String(earlyProfessional.uiState || '').toUpperCase() : '';
+  const earlyUi = ['POSSIBLE_BUY','POSSIBLE_SELL'].includes(earlyTechnicalUi)
+    ? earlyTechnicalUi
+    : (earlyProfessionalUi || earlyTechnicalUi);
   const earlyDirection = earlyUi.endsWith('_BUY') ? 'BUY' : earlyUi.endsWith('_SELL') ? 'SELL' : null;
   const earlyPossible = ['POSSIBLE_BUY','POSSIBLE_SELL'].includes(earlyUi) && earlyDirection;
   if (earlyPossible) {
@@ -353,9 +359,15 @@ function decisionModel(state = {}) {
 
   const p = state.professionalDecision || {};
   const technical = state.signal || {};
-  const ui = String(p.uiState || technical.uiState || '').toUpperCase();
   const technicalUi = String(technical.uiState || '').toUpperCase();
-  const direction = String(p.direction || technical.direction || technical.analysisDirection || '').toUpperCase();
+  const professionalAsset = marketId(p.asset || p.market || p.symbol || '');
+  const professionalMatchesCurrent = !professionalAsset || sameMarket(professionalAsset, state.asset);
+  const professionalUi = professionalMatchesCurrent ? String(p.uiState || '').toUpperCase() : '';
+  const technicalPossible = ['POSSIBLE_BUY','POSSIBLE_SELL'].includes(technicalUi);
+  const ui = technicalPossible
+    ? technicalUi
+    : String(professionalUi || technicalUi || '').toUpperCase();
+  const direction = String((technicalPossible ? technical.direction : (p.direction || technical.direction || technical.analysisDirection)) || '').toUpperCase();
   const score = Number(p.score ?? technical.analysisScore ?? technical.score ?? 0) || 0;
   const reason = clean(p.reason || technical.reason || 'Aguardando confluência técnica.');
   const timeReady = entryTimeReady(state);
