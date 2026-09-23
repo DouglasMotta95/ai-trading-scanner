@@ -110,15 +110,27 @@ function decisionQuality(signal = {}, direction = null, thresholds = getThreshol
   const signalPolicy = getSignalPolicy(thresholds.profile);
   const evidence = highConfidenceEvidence(signal, direction, thresholds);
   const finalScore = signalPolicy.finalScore;
+  // The professional layer is an enhancement, not the sole path to a signal.
+  // v0.11.66 could produce a valid technical direction/score while this layer
+  // remained incomplete, which made BOTH POSSÍVEL and final entries disappear.
+  // Keep the existing score/power/confluence gates, but allow the technical
+  // engine to qualify when it has a ready candle pattern and enough independent
+  // evidence. Manual execution and timing gates remain unchanged.
+  const recentReady = signal?.recent?.ready === true;
+  const technicalUi = clean(signal?.uiState).toUpperCase();
+  const technicalPatternReady = recentReady
+    && ['WATCH','CONFIRM','POSSIBLE_BUY','POSSIBLE_SELL','ENTER_BUY','ENTER_SELL'].includes(String(signal?.state || '').toUpperCase())
+      || (recentReady && ['POSSIBLE_BUY','POSSIBLE_SELL','ENTER_BUY','ENTER_SELL'].includes(technicalUi));
+  const qualityContextReady = professionalReady || technicalPatternReady;
   const commonReady = !!direction
-    && professionalReady
+    && qualityContextReady
     && score >= finalScore
     && power >= signalPolicy.finalPower
     && evidence.length >= signalPolicy.minimumConfluence;
   const commonReason = !direction
     ? 'sem direção'
-    : !professionalReady
-      ? 'contexto/região/gatilho profissional incompleto'
+    : !qualityContextReady
+      ? 'padrão técnico ainda incompleto'
       : score < finalScore
         ? `score ${Math.round(score)} < ${finalScore}`
         : power < signalPolicy.finalPower
@@ -214,7 +226,11 @@ function possibleQuality(signal = {}, direction = null, score = 0, thresholds = 
   const signalPolicy = getSignalPolicy(thresholds.profile);
   const analytics = signal.analytics || {};
   const professional = analytics.professional || {};
-  if (professional.contextReady !== true || professional.triggerReady !== true) return false;
+  const recentReady = signal?.recent?.ready === true;
+  // POSSÍVEL must not be gated exclusively by the optional professional
+  // context layer. The technical engine already supplies direction, score,
+  // power and confluence; those remain the safety gates for the pre-signal.
+  if (!recentReady && professional.contextReady !== true) return false;
   if (!direction || Number(score) < signalPolicy.possibleScore) return false;
   const power = Number(direction === 'BUY' ? analytics.buyPower : analytics.sellPower) || 0;
   if (power < signalPolicy.possiblePower) return false;
