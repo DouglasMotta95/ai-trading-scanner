@@ -78,3 +78,7 @@ export const scriptingExecuteScript = details => invoke(chrome?.scripting, 'exec
 export const permissionsContains = permissions => invoke(chrome?.permissions, 'contains', [permissions], { optional: true });
 export const permissionsRequest = permissions => invoke(chrome?.permissions, 'request', [permissions], { optional: true });
 export const sidePanelSetBehavior = options => invoke(chrome?.sidePanel, 'setPanelBehavior', [options], { optional: true });
+export const windowsCreate = createProperties => invoke(chrome?.windows, 'create', [createProperties]);
+export const windowsGet = windowId => invoke(chrome?.windows, 'get', [windowId], { optional: true });
+export const windowsUpdate = (windowId, updateInfo) => invoke(chrome?.windows, 'update', [windowId, updateInfo], { optional: true });
+export const windowsApiAvailable = () => !!chrome?.windows?.create;
