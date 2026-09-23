@@ -236,27 +236,76 @@
       || b.chartHits - a.chartHits || b.score - a.score || b.maxTop - a.maxTop || a.left - b.left);
     const first = winners[0] || null;
     const second = winners[1] || null;
-    if (!first || first.chartHits < 1) return null;
+    if (!first) {
+      return {
+        asset: '', blocked: true, blockedReason: 'no-chart-scoped-candidate',
+        chartFound: !!chart, chartHits: 0, directChartHits: 0, geometricHits: 0,
+        ambiguityCount: 0, runnerUpAsset: null, runnerUpGap: null,
+        explicit: false, interaction: false, repeatedVisual: false, bandCount: 0
+      };
+    }
+    if (first.chartHits < 1) {
+      return {
+        ...first, blocked: true, blockedReason: 'chartScoped=false',
+        chartFound: !!chart, ambiguityCount: 0, runnerUpAsset: null, runnerUpGap: null
+      };
+    }
+
     let runnerUpGap = null;
     const ambiguousAssets = winners.filter(row => !sameAsset(row.asset, first.asset));
-    if (second && !sameAsset(first.asset, second.asset)) {
-      runnerUpGap = Number(first.score || 0) - Number(second.score || 0);
-      const repeatedWins = first.repeatedVisual === true
-        && Number(first.bandCount || 0) > Number(second.bandCount || 0);
-      const minimumGap = first.interaction ? 70 : first.explicit ? 120 : repeatedWins ? 70 : 280;
-      if (runnerUpGap < minimumGap && !repeatedWins) return null;
+    const rival = second && !sameAsset(first.asset, second.asset) ? second : null;
+    const repeatedWins = first.repeatedVisual === true
+      && (!rival || Number(first.bandCount || 0) > Number(rival.bandCount || 0));
+    const directChartWins = Number(first.directChartHits || 0) > 0
+      && Number(first.directChartHits || 0) > Number(rival?.directChartHits || 0);
+    const geometricChartWins = Number(first.geometricHits || 0) > 0
+      && Number(first.geometricHits || 0) > Number(rival?.geometricHits || 0);
+    const chartEvidenceWins = directChartWins || geometricChartWins;
 
-      // With several CasaTrade tabs visible, the active market is also repeated
-      // in the chart header. That two-band evidence is stronger than a stale
-      // one-off tab label and fixes tablet layouts where aria-selected is absent.
-      if (!first.interaction && !first.explicit && !repeatedWins) return null;
+    if (rival) {
+      runnerUpGap = Number(first.score || 0) - Number(rival.score || 0);
+      const minimumGap = first.interaction ? 70 : first.explicit ? 120 : (repeatedWins || chartEvidenceWins) ? 70 : 280;
+      if (runnerUpGap < minimumGap && !repeatedWins && !chartEvidenceWins) {
+        return {
+          ...first,
+          blocked: true,
+          blockedReason: 'ambiguityCount>0-and-runnerUpGap-insufficient',
+          chartFound: !!chart,
+          ambiguityCount: ambiguousAssets.length,
+          runnerUpAsset: rival.asset,
+          runnerUpGap,
+          repeatedWins,
+          chartEvidenceWins
+        };
+      }
+
+      // Internal CasaTrade tabs/watchlists may expose several symbols even with
+      // only one browser tab open. Do not treat those labels as equal market
+      // authorities when one symbol is uniquely bound to the real chart/header.
+      if (!first.interaction && !first.explicit && !repeatedWins && !chartEvidenceWins) {
+        return {
+          ...first,
+          blocked: true,
+          blockedReason: 'ambiguityCount>0-without-chart-authority',
+          chartFound: !!chart,
+          ambiguityCount: ambiguousAssets.length,
+          runnerUpAsset: rival.asset,
+          runnerUpGap,
+          repeatedWins,
+          chartEvidenceWins
+        };
+      }
     }
+
     return {
       ...first,
+      blocked: false,
       chartFound: !!chart,
       ambiguityCount: ambiguousAssets.length,
-      runnerUpAsset: second && !sameAsset(first.asset, second.asset) ? second.asset : null,
-      runnerUpGap
+      runnerUpAsset: rival?.asset || null,
+      runnerUpGap,
+      repeatedWins,
+      chartEvidenceWins
     };
   }
 
@@ -270,8 +319,12 @@
   let scanning = false;
 
   function sendFocus(common) {
-    globalThis.__ATS_FOCUSED_ASSET_VALUE__ = common.asset;
-    globalThis.__ATS_FOCUSED_ASSET_META__ = common;
+    if (common?.asset && common?.reliable === true) {
+      globalThis.__ATS_FOCUSED_ASSET_VALUE__ = common.asset;
+      globalThis.__ATS_FOCUSED_ASSET_META__ = common;
+    } else {
+      globalThis.__ATS_FOCUSED_ASSET_DIAGNOSTIC__ = common;
+    }
     try { chrome.runtime.sendMessage({ type: 'ATS_VISUAL_FOCUS_V2', ...common }, () => void chrome.runtime?.lastError); } catch {}
   }
 
@@ -288,13 +341,74 @@
     scanning = true;
     try {
       const winner = scanWinner();
-      if (!winner?.asset) return;
+      if (!winner) return;
       const now = Date.now();
+
+      if (winner.blocked === true) {
+        sendFocus({
+          asset: winner.asset || '',
+          score: Number(winner.score || 0),
+          samples: candidateSamples,
+          stableFor: 0,
+          reliable: false,
+          reliableReason: winner.blockedReason || 'focus-candidate-blocked',
+          visual: true,
+          explicit: winner.explicit === true,
+          interactionHint: winner.interaction === true,
+          chartScoped: Number(winner.chartHits || 0) > 0,
+          chartFound: winner.chartFound === true,
+          directChart: Number(winner.directChartHits || 0) > 0,
+          ambiguityCount: Number(winner.ambiguityCount || 0),
+          runnerUpAsset: winner.runnerUpAsset || null,
+          runnerUpGap: winner.runnerUpGap == null ? null : Number(winner.runnerUpGap),
+          repeatedVisual: winner.repeatedVisual === true,
+          bandCount: Number(winner.bandCount || 0),
+          chartEvidenceWins: winner.chartEvidenceWins === true,
+          visualAuthority: false,
+          frameHost: host,
+          frameRole,
+          at: now,
+          source: 'chart-frame-focus-diagnostic'
+        });
+        schedulePublish(450, false);
+        return;
+      }
+
+      if (!winner.asset) return;
       if (sameAsset(candidate, winner.asset)) candidateSamples += 1;
       else { candidate = winner.asset; candidateSince = now; candidateSamples = 1; }
       const stableFor = Math.max(0, now - candidateSince);
       const reliable = winner.interaction || winner.explicit || (candidateSamples >= 2 && stableFor >= 220) || (candidateSamples >= 3);
       if (!reliable) {
+        sendFocus({
+          asset: winner.asset,
+          score: Number(winner.score || 0),
+          samples: candidateSamples,
+          stableFor,
+          reliable: false,
+          reliableReason: 'stability-pending',
+          visual: true,
+          explicit: winner.explicit === true,
+          interactionHint: winner.interaction === true,
+          chartScoped: true,
+          chartFound: winner.chartFound === true,
+          directChart: Number(winner.directChartHits || 0) > 0,
+          ambiguityCount: Number(winner.ambiguityCount || 0),
+          runnerUpAsset: winner.runnerUpAsset || null,
+          runnerUpGap: winner.runnerUpGap == null ? null : Number(winner.runnerUpGap),
+          repeatedVisual: winner.repeatedVisual === true,
+          bandCount: Number(winner.bandCount || 0),
+          chartEvidenceWins: winner.chartEvidenceWins === true,
+          visualAuthority: Number(winner.ambiguityCount || 0) === 0
+            || winner.interaction === true
+            || winner.explicit === true
+            || winner.repeatedVisual === true
+            || winner.chartEvidenceWins === true,
+          frameHost: host,
+          frameRole,
+          at: now,
+          source: 'chart-frame-focus-diagnostic'
+        });
         // Do not wait for the next passive interval to prove the boot/switch
         // candidate. Re-scan quickly so the visible CasaTrade asset becomes
         // authoritative well inside the 1.5s synchronization budget.
@@ -323,11 +437,24 @@
         runnerUpGap: winner.runnerUpGap == null ? null : Number(winner.runnerUpGap),
         repeatedVisual: winner.repeatedVisual === true,
         bandCount: Number(winner.bandCount || 0),
-        visualAuthority: Number(winner.ambiguityCount || 0) === 0 || winner.interaction === true || winner.explicit === true || winner.repeatedVisual === true,
+        chartEvidenceWins: winner.chartEvidenceWins === true,
+        visualAuthority: Number(winner.ambiguityCount || 0) === 0
+          || winner.interaction === true
+          || winner.explicit === true
+          || winner.repeatedVisual === true
+          || winner.chartEvidenceWins === true,
         frameHost: host,
         frameRole,
         at: now,
-        source: winner.interaction ? 'chart-frame-user-confirmed' : winner.explicit ? 'chart-frame-explicit' : winner.repeatedVisual ? 'chart-frame-repeated-active' : 'chart-frame-scoped'
+        source: winner.interaction
+          ? 'chart-frame-user-confirmed'
+          : winner.explicit
+            ? 'chart-frame-explicit'
+            : winner.repeatedVisual
+              ? 'chart-frame-repeated-active'
+              : winner.chartEvidenceWins
+                ? 'chart-frame-direct-active'
+                : 'chart-frame-scoped'
       };
       sendFocus(common);
     } finally {

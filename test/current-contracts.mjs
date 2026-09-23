@@ -6,11 +6,11 @@ export const read = path => fs.readFileSync(new URL('../' + path, import.meta.ur
 const manifest = () => JSON.parse(read('manifest.json'));
 
 export function registerBuildContracts(label='build') {
-  test(label + ': current extension package is the v0.11.60 general-checkup build', () => {
+  test(label + ': current extension package is the v0.11.62 focused-asset connection build', () => {
     const m = manifest();
     assert.equal(m.manifest_version, 3);
-    assert.equal(m.version, '0.11.60');
-    assert.equal(m.version_name, '0.11.60-general-checkup');
+    assert.equal(m.version, '0.11.62');
+    assert.equal(m.version_name, '0.11.62-focused-asset-connection-fix');
     assert.equal(m.background?.service_worker, 'src/background-entry.js');
     assert.equal(m.side_panel?.default_path, 'src/sidepanel/index.html');
   });
@@ -215,7 +215,8 @@ export function registerVideo15292Contracts(label='video-15292') {
     const focus = read('src/content/focused-asset-v2.js');
     const market = read('src/background-market-session.js');
     const policy = read('src/background-decision-policy.js');
-    assert.match(focus, /if \(!first\.interaction && !first\.explicit\) return null/);
+    assert.match(focus, /!first\.interaction && !first\.explicit && !repeatedWins && !chartEvidenceWins/);
+    assert.match(focus, /blockedReason: 'ambiguityCount>0-without-chart-authority'/);
     assert.match(focus, /ambiguityCount/);
     assert.match(focus, /visualAuthority/);
     assert.match(market, /message\.visualAuthority === false/);
@@ -286,7 +287,7 @@ export function registerVideo15319Contracts(label='video-15319') {
     const market = read('src/background-market-session.js');
     assert.match(protocol, /explicitTransition && age <= 2200/);
     assert.match(focus, /INTERACTION_TRANSITION_MS = 1800/);
-    assert.match(focus, /Number\(b\.explicit\) - Number\(a\.explicit\)[\s\S]*Number\(b\.interaction\) - Number\(a\.interaction\)/);
+    assert.match(focus, /Number\(b\.interaction\) - Number\(a\.interaction\)[\s\S]*Number\(b\.explicit\) - Number\(a\.explicit\)/);
     assert.match(market, /selectionLock\.at\) < 3500/);
   });
 

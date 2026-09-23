@@ -65,6 +65,7 @@ function senderMeta(sender = {}) {
   const casaOwnedChart = tabOwned && casaHost(frameHost);
   return {
     trusted: embeddedTrader || casaOwnedChart,
+    tabOwned,
     embeddedTrader,
     casaOwnedChart,
     frameHost, topHost, frameId: sender.frameId, tabId: sender.tab?.id || null
@@ -393,9 +394,79 @@ function clockRecord(message = {}, info = {}, asset = '', timeframe = null, seco
 export async function applyFocus(message = {}, sender = {}) {
   const info = senderMeta(sender);
   const role = clean(message.frameRole || '');
-  if (!info.trusted || message.chartScoped !== true || message.reliable !== true || message.visualAuthority === false || !['trader-frame', 'casa-chart-frame'].includes(role)) return null;
   const asset = normAsset(message.asset);
-  if (!asset) return null;
+  const roleTrusted = ['trader-frame', 'casa-chart-frame'].includes(role);
+  const trustedChartFrame = info.trusted && roleTrusted;
+  const accepted = trustedChartFrame
+    && message.chartScoped === true
+    && message.reliable === true
+    && message.visualAuthority !== false
+    && !!asset;
+
+  if (!accepted) {
+    if (!info.tabOwned) return null;
+    return updateScannerState(state => {
+      if (!licenseActive(state)) return state;
+      if (state.targetTabId && state.targetTabId !== info.tabId) return state;
+      const session = state.diagnostics?.marketSession || {};
+      const expectedAsset = normAsset(state.asset || session.pendingAsset || session.confirmedAsset || session.asset || '');
+      const sameMarketCheck = asset && expectedAsset ? sameMarket(asset, expectedAsset) : null;
+      const reason = !trustedChartFrame
+        ? 'trustedChartFrame=false'
+        : message.chartScoped !== true
+          ? 'chartScoped=false'
+          : message.reliable !== true
+            ? clean(message.reliableReason || 'reliable=false')
+            : message.visualAuthority === false
+              ? 'visualAuthority=false'
+              : !asset
+                ? 'asset=invalid'
+                : 'focus-rejected';
+
+      return {
+        ...state,
+        diagnostics: {
+          ...(state.diagnostics || {}),
+          focusedAsset: {
+            asset: asset || null,
+            at: Number(message.at || Date.now()),
+            reliable: false,
+            reliableReason: reason,
+            reliableChecks: {
+              ambiguityCount: Number(message.ambiguityCount || 0),
+              explicit: message.explicit === true,
+              interactionHint: message.interactionHint === true,
+              chartScoped: message.chartScoped === true,
+              trustedChartFrame,
+              visualAuthority: message.visualAuthority !== false,
+              embeddedTrader: info.embeddedTrader === true,
+              casaTradeFrame: info.casaOwnedChart === true,
+              sameMarket: sameMarketCheck,
+              at: Number(message.at || Date.now())
+            },
+            visual: message.visual !== false,
+            explicit: message.explicit === true,
+            chartScoped: message.chartScoped === true,
+            visualAuthority: message.visualAuthority !== false,
+            directChart: message.directChart === true,
+            ambiguityCount: Number(message.ambiguityCount || 0),
+            runnerUpAsset: normAsset(message.runnerUpAsset || '') || null,
+            runnerUpGap: num(message.runnerUpGap),
+            interactionHint: message.interactionHint === true,
+            interactionAt: num(message.interactionAt),
+            trustedChartFrame,
+            embeddedTrader: info.embeddedTrader === true,
+            casaTradeFrame: info.casaOwnedChart === true,
+            frameRole: role || null,
+            frameId: info.frameId,
+            frameHost: info.frameHost,
+            source: clean(message.source || 'focus-diagnostic')
+          }
+        }
+      };
+    });
+  }
+
   return updateScannerState(state => {
     if (!licenseActive(state)) return;
     if (state.targetTabId && state.targetTabId !== info.tabId) return;
@@ -528,6 +599,19 @@ export async function applyFocus(message = {}, sender = {}) {
           interactionAt: userSelected ? interactionAt : null,
           trustedChartFrame: true, embeddedTrader: incomingEmbeddedTrader, casaTradeFrame: incomingCasaFrame,
           frameRole: incomingEmbeddedTrader ? 'trader-frame' : 'casa-chart-frame', frameId: info.frameId, frameHost: info.frameHost,
+          reliableReason: 'ok',
+          reliableChecks: {
+            ambiguityCount: Number(message.ambiguityCount || 0),
+            explicit: message.explicit === true,
+            interactionHint: userSelected,
+            chartScoped: true,
+            trustedChartFrame: true,
+            visualAuthority: message.visualAuthority !== false,
+            embeddedTrader: incomingEmbeddedTrader,
+            casaTradeFrame: incomingCasaFrame,
+            sameMarket: true,
+            at: now
+          },
           source: clean(message.source || 'visible-chart')
         }
       }
