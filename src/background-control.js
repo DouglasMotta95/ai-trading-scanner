@@ -604,7 +604,7 @@ async function inspectExpirationDiagnostic() {
       if (settled) return;
       settled = true;
       try { window.removeEventListener('message', onDiagnosticMessage); } catch {}
-      resolve({ canvas, bridge, network });
+      resolve({ canvas, bridge, network, focusedAsset });
     };
 
     const onDiagnosticMessage = event => {
