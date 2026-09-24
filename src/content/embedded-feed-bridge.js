@@ -145,7 +145,27 @@
     }
 
     const durationMs = duration * 1000;
-    if (openAt % durationMs !== 0) {
+    const previousOpenAt = rows.length > 1
+      ? normalizeTime(rows.at(-2)?.time ?? rows.at(-2)?.timestamp)
+      : null;
+    const sourceStepMs = previousOpenAt ? openAt - previousOpenAt : null;
+    const isSubTimeframeFeed = timeframe && durationMs > 60_000
+      && Number.isFinite(sourceStepMs)
+      && sourceStepMs >= 45_000
+      && sourceStepMs <= 90_000;
+    const currentBucket = Math.floor(now / durationMs) * durationMs;
+
+    // M1 candles are the live feed available in this path. For M5, the latest
+    // M1 candle opens inside the 5-minute window (for example, 12:03).
+    // Align only to that real containing window; never invent a future candle.
+    if (isSubTimeframeFeed) {
+      if (openAt < currentBucket || openAt >= currentBucket + durationMs) {
+        candleClockProbe = null;
+        lastBoundaryDiagnosticReason = 'boundary nulo';
+        return null;
+      }
+      openAt = currentBucket;
+    } else if (openAt % durationMs !== 0) {
       candleClockProbe = null;
       lastBoundaryDiagnosticReason = 'openAt fora da grade do timeframe';
       return null;
