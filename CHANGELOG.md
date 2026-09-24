@@ -1,3 +1,29 @@
+## 0.11.76 — diagnóstico do focused asset + relógio M5
+
+### ITEM 1 — Diagnóstico
+- focused-asset-v2.js agora responde a ATS_EXPIRATION_DIAGNOSTIC_REQUEST com ATS_FOCUSED_ASSET_DIAGNOSTIC_SNAPSHOT.
+- O snapshot informa o último winner.asset bruto, winner.blocked/blockedReason, contagem de candidatos de texto e se houve texto candidato encontrado/rejeitado ou nenhum texto correspondente.
+- background-control.js só encerra o retrato antecipadamente quando os quatro leitores responderam, incluindo focusedAsset.
+
+### ITEM 2 — Causa raiz do relógio M5
+- A causa raiz estava em embedded-feed-bridge.js: structuredCandleBoundary() exigia que o timestamp bruto da última vela fosse exatamente divisível pela duração do timeframe.
+- Isso funciona em M1 porque uma vela M1 abre em múltiplos de 60 segundos. Em M5, o feed de estado pode fornecer velas M1 dentro da janela de 5 minutos (por exemplo, 12:03). 12:03 não é divisível por 300s, então a função descartava a vela antes de publicar ATS_MARKET_CLOCK_V2.
+- A correção mantém os mesmos candles reais: quando o feed subjacente é identificado como cadência M1 e o timeframe solicitado é M5, o timestamp da última vela M1 é alinhado apenas ao início da janela M5 em que ela realmente está.
+- O M1 mantém a mesma regra anterior e não passa pelo novo alinhamento M5.
+
+### Verificação dos dois timeframes
+- M1: verificado por análise de código que o caminho anterior permanece inalterado e continua usando a mesma grade de 60s e o mesmo mecanismo network-server-cycle.
+- M5: verificado por análise de código que uma sequência de candles M1 dentro da janela de 5 minutos agora produz um openAt válido da janela M5 e permite a mesma publicação ATS_MARKET_CLOCK_V2/network-server-cycle.
+- Não foi possível executar teste ao vivo contra a sessão CasaTrade nesta alteração; o aceite acima é verificação estática do fluxo real de código.
+
+### Arquivos alterados por item
+Item 1: src/content/focused-asset-v2.js; src/background-control.js
+Item 2: src/content/embedded-feed-bridge.js
+Versão: manifest.json
+Documentação: CHANGELOG.md
+
+Não foram alterados score, perfis, filtros sombra, licença, Gemini, execução ou a lógica de reconhecimento de ativo.
+
 # Changelog
 
 ## 0.11.75 — visual fallback sem dependência circular + ativos nomeados
