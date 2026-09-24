@@ -242,10 +242,17 @@
         + (/chart|tradingview|instrument|symbol|header/.test(context) ? 180 : 0)
         + (interaction ? 900 : 0)
         + (text.length <= 40 ? 70 : 0);
+      const rejectionReasons = [];
+      if (selection.rejected === true) rejectionReasons.push('selection-rejected');
+      if (listContext && !selection.explicit && !interaction && !geometricHeader) {
+        rejectionReasons.push('list-context-without-selection');
+      }
+      if (!chartScoped) rejectionReasons.push('not-chart-scoped');
       rawCandidateRows.push({
         asset,
         score: rawScore,
         blockedBySelection: selection.rejected === true,
+        rejectionReasons,
         chartScoped,
         directChart,
         geometricHeader,
@@ -271,6 +278,10 @@
 
     rawCandidateRows.sort((a, b) => Number(b.score || 0) - Number(a.score || 0));
     const rawWinner = rawCandidateRows[0] || null;
+    const rejectedTextCandidates = rawCandidateRows
+      .filter(row => Array.isArray(row.rejectionReasons) && row.rejectionReasons.length)
+      .slice(0, 16)
+      .map(row => ({ asset: row.asset || '', reasons: [...row.rejectionReasons] }));
     lastScanDiagnostics = {
       rawWinnerAsset: rawWinner?.asset || '',
       rawWinnerScore: Number(rawWinner?.score || 0),
@@ -278,6 +289,7 @@
       uniqueTextCandidateCount: rawCandidateAssets.size,
       hasTextCandidate: rawCandidateRows.length > 0,
       rawCandidateAssets: [...rawCandidateAssets].slice(0, 16),
+      rejectedTextCandidates,
       winner: { asset: '', blocked: true, blockedReason: 'scan-pending' },
       chartFound: !!chart,
       contextChanged,
@@ -484,6 +496,8 @@
           uniqueTextCandidateCount: Number(diagnostics.uniqueTextCandidateCount || 0),
           hasTextCandidate,
           rawCandidateAssets: Array.isArray(diagnostics.rawCandidateAssets) ? diagnostics.rawCandidateAssets.slice(0, 16) : [],
+          rejectedTextCandidates: Array.isArray(diagnostics.rejectedTextCandidates) ? diagnostics.rejectedTextCandidates.slice(0, 16) : [],
+          textFoundButRejected: Array.isArray(diagnostics.rejectedTextCandidates) && diagnostics.rejectedTextCandidates.length > 0,
           textSearchResult: hasTextCandidate ? (winner.blocked ? 'text-found-but-rejected' : 'text-found') : 'no-corresponding-text-found',
           rejectionReason: winner.blocked ? winner.blockedReason : '',
           at: Number(diagnostics.at || 0) || Date.now()
