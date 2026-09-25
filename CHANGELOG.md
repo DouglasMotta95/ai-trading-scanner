@@ -1,3 +1,30 @@
+# v0.11.77 — estabilidade do pré-sinal + desempenho do leitor visual
+
+## Problema observado
+A leitura podia mostrar COMPRA/VENDA POSSÍVEL por poucos segundos e voltar para AGUARDAR. Em momentos de carga, a extensão também podia ficar lenta e depois normalizar.
+
+## Causa encontrada
+- O núcleo legado só expunha direção candidata quando professionalReady estava verdadeiro. Como contexto/gatilho recalculam a cada atualização da vela atual, uma oscilação transitória zerava a direção e reiniciava a estabilidade do pré-sinal.
+- O wrapper tinha apenas 2 amostras fracas para derrubar o POSSÍVEL. Com cadência de análise de 650 ms, um intervalo curto de leituras fracas era suficiente para apagar o candidato antes que a confirmação final completasse duas leituras válidas.
+- O leitor focused-asset-v2 observava todas as mutações de atributos do documento e podia provocar scans completos de até 7.000 elementos com frequência excessiva em um gráfico animado.
+
+## Correções
+- A direção técnica continua disponível como fonte da candidatura; o profissional continua controlando seus próprios gates e a confirmação final mantém score/poder/confluência existentes.
+- POSSÍVEL agora tolera até 4 leituras fracas curtas e não troca COMPRA↔VENDA por uma única recalculação; a direção oposta precisa de 2 observações consecutivas válidas.
+- A confirmação final preserva uma candidatura válida por mais leituras fracas, sem reduzir CONFIRM_HITS=2, score ou confluência.
+- O scan visual passivo foi limitado por janela de 700 ms, o polling subiu para 800 ms e mutações puramente geométricas/animações deixaram de disparar scan imediato. Interações do usuário continuam usando caminho forçado imediato.
+- M1 e M5 permanecem com suas regras de relógio/tempo separadas; nenhuma regra de score, perfil, shadow filter, licença, Gemini ou execução manual foi alterada.
+
+## Arquivos alterados
+- src/core/orchestrator-legacy.js — direção técnica não some quando contexto profissional oscila.
+- src/core/orchestrator.js — histerese do POSSÍVEL e da confirmação.
+- src/content/focused-asset-v2.js — redução de scans caros sem remover reconhecimento visual.
+- manifest.json — versão 0.11.77.
+- CHANGELOG.md — diagnóstico e escopo.
+
+## Verificação
+Verificação será feita por análise estática de sintaxe e do diff. Não foi executado um teste ao vivo dentro da sessão real da CasaTrade.
+
 ## 0.11.76 — diagnóstico do focused asset + relógio M5
 
 ### ITEM 1 — Diagnóstico
