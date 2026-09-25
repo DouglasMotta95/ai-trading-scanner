@@ -10,7 +10,7 @@ const num = v => v == null || v === '' ? null : Number.isFinite(Number(v)) ? Num
 const clean = v => String(v ?? '').trim();
 const POSSIBLE_HITS = 2;
 const CONFIRM_HITS = 2;
-const POSSIBLE_HOLD_MS = 2500;
+const POSSIBLE_HOLD_MS = 4000;
 const CANDIDATE_MAX_GAP_MS = 8000;
 
 function parseTimeframeMs(value = '') {
@@ -370,7 +370,12 @@ export function processSnapshot(snapshot = {}, state = {}) {
   const analysisDirection = ['BUY', 'SELL'].includes(liveResult.direction) ? liveResult.direction : null;
   const professional = liveResult.analytics?.professional || {};
   const professionalReady = professional.contextReady === true && professional.triggerReady === true;
-  const direction = professionalReady ? analysisDirection : null;
+  // The technical direction is the candidate source. The professional layer
+  // still controls its own candidateReady/state and the wrapper keeps the
+  // existing score/power/confluence gates for POSSÍVEL and final confirmation.
+  // Requiring professionalReady here made the direction disappear on any
+  // transient trigger/context recalculation, which reset the stability tracker.
+  const direction = analysisDirection;
   const score = Number(liveResult.score || 0);
   const expiration = snapshot.targetExpiration || state.targetExpiration || snapshot.expiration || state.expiration || null;
   const tracker = trackerFor(key, currentBucket, sampleAt);
