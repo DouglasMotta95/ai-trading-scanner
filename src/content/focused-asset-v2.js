@@ -416,6 +416,9 @@
   let scanTimer = null;
   let queuedForce = false;
   let scanning = false;
+  let lastScanAt = 0;
+  const PASSIVE_SCAN_MIN_MS = 700;
+  const MUTATION_SCAN_DELAY_MS = 260;
 
   let lastReliableAsset = '';
   let lastScanDiagnostics = {
@@ -516,6 +519,7 @@
       return;
     }
     scanning = true;
+    lastScanAt = Date.now();
     try {
       const winner = scanWinner();
       if (!winner) return;
@@ -663,15 +667,28 @@
   function schedulePublish(delay = 110, force = false) {
     queuedForce ||= force;
     if (scanTimer) return;
+    const sinceLastScan = Date.now() - Number(lastScanAt || 0);
+    const throttle = force ? 0 : Math.max(0, PASSIVE_SCAN_MIN_MS - sinceLastScan);
     scanTimer = setTimeout(() => {
       scanTimer = null;
       const shouldForce = queuedForce;
       queuedForce = false;
       publish(shouldForce);
-    }, delay);
+    }, Math.max(delay, throttle));
   }
 
-  const observer = new MutationObserver(() => schedulePublish(120, false));
+  const observer = new MutationObserver(records => {
+    // CasaTrade charts animate style/SVG geometry continuously. Those
+    // presentation-only mutations were causing near-continuous full DOM scans.
+    // Semantic text/selection changes still wake the scanner; noisy geometry
+    // attributes are left to the periodic passive scan.
+    const semanticMutation = (Array.isArray(records) ? records : []).some(record => {
+      if (record?.type !== 'attributes') return true;
+      const name = String(record?.attributeName || '').toLowerCase();
+      return !['style', 'transform', 'd', 'points', 'viewbox', 'width', 'height', 'x', 'y', 'cx', 'cy'].includes(name);
+    });
+    if (semanticMutation) schedulePublish(MUTATION_SCAN_DELAY_MS, false);
+  });
   try { observer.observe(document.documentElement, { subtree: true, childList: true, attributes: true, characterData: true }); } catch {}
   const noteInteraction = event => {
     const asset = touchedAsset(event);
@@ -685,7 +702,7 @@
   document.addEventListener('pointerup', noteInteraction, true);
   document.addEventListener('touchend', noteInteraction, true);
   document.addEventListener('click', noteInteraction, true);
-  const intervalId = setInterval(() => schedulePublish(0, false), 450);
+  const intervalId = setInterval(() => schedulePublish(0, false), 800);
   const bootTimer = setTimeout(() => { invalidateElements(); publish(true); }, 80);
 
   globalThis.__ATS_FORCE_FOCUS_SCAN__ = () => {
