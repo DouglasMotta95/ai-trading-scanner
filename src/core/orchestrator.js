@@ -10,8 +10,8 @@ import { getThresholds, getSignalPolicy } from './analysis.js';
 // one bounded decision for each target candle: ENTER BUY, ENTER SELL or WAIT.
 const CONFIRM_HITS = 2;
 const DECISION_HIT_GAP_MS = 7000;
-const POSSIBLE_DROP_HITS = 2;
-const FINAL_WEAK_HITS = 2;
+const POSSIBLE_DROP_HITS = 4;
+const FINAL_WEAK_HITS = 4;
 const cycles = new Map();
 const wrapperCompletedDecisions = new Map();
 const WRAPPER_ROW_PREFIX = 'wrapper-cycle:';
@@ -241,19 +241,58 @@ function possibleQuality(signal = {}, direction = null, score = 0, thresholds = 
 
 function possibleWithHysteresis(cycle, allowed, direction, at) {
   if (allowed && direction) {
+    if (!cycle.possibleDirection) {
+      cycle.possibleDirection = direction;
+      cycle.possibleWeakHits = 0;
+      cycle.possibleLastStrongAt = at;
+      cycle.possibleOppositeDirection = null;
+      cycle.possibleOppositeHits = 0;
+      return direction;
+    }
+
+    if (cycle.possibleDirection === direction) {
+      cycle.possibleWeakHits = 0;
+      cycle.possibleLastStrongAt = at;
+      cycle.possibleOppositeDirection = null;
+      cycle.possibleOppositeHits = 0;
+      return direction;
+    }
+
+    // Do not flip BUY↔SELL on one noisy recalculation. The opposite side must
+    // qualify twice before replacing the already-published candidate.
+    if (cycle.possibleOppositeDirection === direction) {
+      cycle.possibleOppositeHits = Number(cycle.possibleOppositeHits || 0) + 1;
+    } else {
+      cycle.possibleOppositeDirection = direction;
+      cycle.possibleOppositeHits = 1;
+    }
+    if (cycle.possibleOppositeHits < 2) return cycle.possibleDirection;
+
     cycle.possibleDirection = direction;
     cycle.possibleWeakHits = 0;
     cycle.possibleLastStrongAt = at;
+    cycle.possibleOppositeDirection = null;
+    cycle.possibleOppositeHits = 0;
     return direction;
   }
-  // One weak/throttled observation must not make POSSÍVEL disappear. Preserve
-  // the last confirmed candidate direction for one weak sample, then drop it
-  // only after a second consecutive weak observation.
+
   if (!cycle.possibleDirection) return null;
+
+  cycle.possibleOppositeDirection = null;
+  cycle.possibleOppositeHits = 0;
   cycle.possibleWeakHits = Number(cycle.possibleWeakHits || 0) + 1;
-  if (cycle.possibleWeakHits < POSSIBLE_DROP_HITS) return cycle.possibleDirection;
+
+  // Keep the candidate alive through short weak/throttled reads. This stabilizes
+  // the visible pre-signal without lowering any score/power/confluence gate.
+  const strongAt = Number(cycle.possibleLastStrongAt || at);
+  const staleFor = Math.max(0, at - strongAt);
+  if (cycle.possibleWeakHits < POSSIBLE_DROP_HITS && staleFor <= 4000) {
+    return cycle.possibleDirection;
+  }
+
   cycle.possibleDirection = null;
   cycle.possibleWeakHits = 0;
+  cycle.possibleLastStrongAt = null;
   return null;
 }
 
@@ -265,7 +304,9 @@ function seedCycle(key, snapshot, signal, state = {}) {
     cycle = {
       key, targetStart: targetStartOf(snapshot, signal), candidateDirection: null,
       confirmHits: 0, lastHitAt: null, locked: null, direction: null, score: 0,
-      setup: null, reason: null, decidedAt: null, resolved: false
+      setup: null, reason: null, decidedAt: null, resolved: false,
+      possibleDirection: null, possibleWeakHits: 0, possibleLastStrongAt: null,
+      possibleOppositeDirection: null, possibleOppositeHits: 0
     };
   }
   cycles.set(key, cycle);
