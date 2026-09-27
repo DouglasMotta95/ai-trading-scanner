@@ -401,6 +401,75 @@
   let candidateSamples = 0;
   let lastPublished = '';
   let lastPublishedAt = 0;
+
+  // CasaTrade can render the currently selected instrument through canvas/app
+  // state while an older symbol remains present in a hidden/secondary DOM frame.
+  // The rendered-market probe already aggregates the visible chart observation;
+  // when it explicitly marks an asset as selected, promote that observation
+  // immediately. This is asset identity only: no score, threshold, timing, or
+  // execution rule is changed.
+  const renderedMarketSyncHandler = event => {
+    if (!isTop) return;
+    const data = event.data;
+    if (!data || data.source !== 'ATS_NETWORK_PROBE' || data.type !== 'summary') return;
+    if (data.payload?.primaryTransport !== 'rendered') return;
+    const rows = Array.isArray(data.payload?.candidates) ? data.payload.candidates : [];
+    const selected = rows
+      .filter(row => row?.selected === true && String(row?.asset || '').trim())
+      .sort((a, b) => Number(b?.confidence || 0) - Number(a?.confidence || 0)
+        || Number(b?.observedAt || 0) - Number(a?.observedAt || 0))[0];
+    if (!selected) return;
+    const renderedAsset = canonicalAsset(selected.asset);
+    if (!renderedAsset) return;
+    const observedAt = Number(selected.observedAt || Date.now());
+    if (Date.now() - observedAt > 2500) return;
+    const current = String(lastReliableAsset || globalThis.__ATS_FOCUSED_ASSET_VALUE__ || '').trim();
+    if (sameAsset(current, renderedAsset)) return;
+
+    const now = Date.now();
+    const common = {
+      asset: renderedAsset,
+      score: Math.max(220, Number(selected.confidence || 0) + 120),
+      samples: 3,
+      stableFor: 1000,
+      reliable: true,
+      reliableReason: 'rendered-market-selected',
+      visual: true,
+      explicit: true,
+      interactionHint: false,
+      interactionAt: null,
+      chartScoped: true,
+      chartFound: true,
+      directChart: true,
+      ambiguityCount: 0,
+      runnerUpAsset: null,
+      runnerUpGap: null,
+      repeatedVisual: true,
+      bandCount: 2,
+      chartEvidenceWins: true,
+      visualAuthority: true,
+      frameHost: host,
+      frameRole,
+      at: now,
+      source: 'rendered-market-selected',
+      contextChanged: true
+    };
+    lastScanDiagnostics = {
+      ...lastScanDiagnostics,
+      rawWinnerAsset: renderedAsset,
+      rawWinnerScore: Number(common.score || 0),
+      winner: { asset: renderedAsset, blocked: false, blockedReason: '' },
+      contextChanged: true,
+      at: now
+    };
+    sendFocus(common);
+  };
+  try {
+    const previousHandler = globalThis.__ATS_FOCUSED_ASSET_RENDERED_SYNC_LISTENER__;
+    if (previousHandler) window.removeEventListener('message', previousHandler);
+  } catch {}
+  globalThis.__ATS_FOCUSED_ASSET_RENDERED_SYNC_LISTENER__ = renderedMarketSyncHandler;
+  window.addEventListener('message', renderedMarketSyncHandler);
   let scanTimer = null;
   let queuedForce = false;
   let scanning = false;
@@ -694,6 +763,8 @@
       try { document.removeEventListener('click', noteInteraction, true); } catch {}
       try { clearInterval(intervalId); } catch {}
       try { clearTimeout(bootTimer); } catch {}
+      try { window.removeEventListener('message', renderedMarketSyncHandler); } catch {}
+      try { if (globalThis.__ATS_FOCUSED_ASSET_RENDERED_SYNC_LISTENER__ === renderedMarketSyncHandler) delete globalThis.__ATS_FOCUSED_ASSET_RENDERED_SYNC_LISTENER__; } catch {}
       if (scanTimer) { try { clearTimeout(scanTimer); } catch {} }
     }
   };
