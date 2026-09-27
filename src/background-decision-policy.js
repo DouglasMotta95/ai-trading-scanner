@@ -171,7 +171,7 @@ export function exactCasaTradeTime(state = {}) {
       const projectedRemaining = Math.max(0, Number(rawRemaining) - elapsedSeconds);
       return {
         ready: projectedRemaining > 0,
-        authoritative: projectedRemaining > 0,
+        authoritative: true,
         timeframe: liveTf,
         secondsRemaining: projectedRemaining,
         source: clock.source,
