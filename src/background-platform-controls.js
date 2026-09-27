@@ -14,11 +14,11 @@ function trusted(sender = {}) {
   try { topHost = new URL(sender.tab?.url || '').hostname.toLowerCase(); } catch {}
   const tabOwned = !!sender.tab?.id && (casaHost(topHost) || traderHost(topHost));
   const knownFrame = casaHost(frameHost) || traderHost(frameHost);
-  const opaqueChild = tabOwned && Number(sender.frameId) > 0 && (!frameHost || frameHost === 'null');
-  // match_origin_as_fallback can inject our own content script into an opaque
-  // CasaTrade child frame. That trusted extension sender is allowed to report
-  // only platform controls; ordinary web pages still cannot call this handler.
-  return tabOwned && (knownFrame || opaqueChild);
+  const opaqueSender = tabOwned && (!frameHost || frameHost === 'null');
+  // Android/Quetta may omit sender.url for a top-frame content script. The
+  // sender.tab.url is still the verified CasaTrade target, so do not reject
+  // the live expiration reader solely because the frame URL is opaque.
+  return tabOwned && (knownFrame || opaqueSender);
 }
 
 function normExp(value = '') {
