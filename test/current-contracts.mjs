@@ -6,11 +6,11 @@ export const read = path => fs.readFileSync(new URL('../' + path, import.meta.ur
 const manifest = () => JSON.parse(read('manifest.json'));
 
 export function registerBuildContracts(label='build') {
-  test(label + ': current extension package is the v0.11.81 manual-expiration persistence build', () => {
+  test(label + ': current extension package is the v0.11.83 manual-expiration timing-gate build', () => {
     const m = manifest();
     assert.equal(m.manifest_version, 3);
-    assert.equal(m.version, '0.11.81');
-    assert.equal(m.version_name, '0.11.81-manual-expiration-persistence-stable-clock');
+    assert.equal(m.version, '0.11.83');
+    assert.equal(m.version_name, '0.11.83-manual-expiration-entry-gate-stable-clock');
     assert.equal(m.background?.service_worker, 'src/background-entry.js');
     assert.equal(m.side_panel?.default_path, 'src/sidepanel/index.html');
   });
@@ -112,6 +112,18 @@ export function registerExpirationContracts(label='expiration') {
     assert.match(panel, /verified: realFresh/);
     assert.match(panel, /const source = realFresh \? [^:]+ : manualValue \? 'user-declared'/);
   });
+  test(label + ': exact clock plus matched user-declared expiration can unlock timing without requiring a real expiration read', () => {
+    const panel = read('src/sidepanel/app-v2.js');
+    const policy = read('src/background-decision-policy.js');
+    assert.match(panel, /expirationTimingCompatible/);
+    assert.match(panel, /expiration\.verified === true \|\| expiration\.source === 'user-declared'/);
+    assert.doesNotMatch(panel, /if \(!actualExpiration \|\| expiration\.verified !== true\) return false/);
+    assert.match(policy, /const manualExpiration = normExp\(controls\.userDeclaredExpiration \|\| ''\)/);
+    assert.match(policy, /const manualMatches = !!manual && manual === operationMode\.expiration/);
+    assert.match(policy, /ready: manualMatches/);
+    assert.match(policy, /verified: false/);
+  });
+
   test(label + ': expiration is an execution gate for the active M1\/M5 mode', () => {
     const policy = read('src/background-decision-policy.js');
     const panel = read('src/sidepanel/app-v2.js');
