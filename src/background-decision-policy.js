@@ -86,7 +86,26 @@ function focusReady(state = {}) {
     && Date.now() - Number(focus.at) < FOCUS_FRESH_MS;
 }
 
-export function exactCasaTradeTime(state = {}) {
+export function analysisSecondsRemaining(state = {}, time = {}) {
+  const candidates = [
+    time.secondsRemaining,
+    state.professionalDecision?.secondsRemaining,
+    state.signal?.secondsRemaining,
+    state.secondsRemaining
+  ];
+  const clock = state.diagnostics?.marketClock || {};
+  const clockAt = Number(clock.at || 0);
+  if (clockAt > 0 && Date.now() - clockAt < CLOCK_FRESH_MS && clock.available !== false) {
+    candidates.push(clock.secondsRemaining);
+  }
+  for (const value of candidates) {
+    const n = num(value);
+    if (n != null && n >= -2 && n <= 3600) return Math.max(0, n);
+  }
+  return null;
+}
+
+function exactCasaTradeTime(state = {}) {
   const focus = state.diagnostics?.focusedAsset || null;
   const clock = state.diagnostics?.marketClock || null;
   if (!focusReady(state) || !clock) return { ready: false, reason: 'Ativo/gráfico ainda não confirmado.' };
@@ -277,7 +296,8 @@ function baseDecision(state = {}) {
   const directionalPower = Number(direction === 'BUY' ? signal.analytics?.buyPower : signal.analytics?.sellPower) || 0;
   const mandatoryPowerReady = directionalPower >= signalPolicy.possiblePower;
   const finalPowerReady = directionalPower >= signalPolicy.finalPower;
-  const technicalCandidate = ['POSSIBLE_BUY', 'POSSIBLE_SELL', 'ENTER_BUY', 'ENTER_SELL'].includes(ui);
+  const technicalCandidate = ['POSSIBLE_BUY', 'POSSIBLE_SELL', 'ENTER_BUY', 'ENTER_SELL'].includes(ui)
+    || (!!direction && score >= possibleScore && mandatoryPowerReady && additionalConfluenceReady);
   const technicalFinal = ['ENTER_BUY', 'ENTER_SELL'].includes(ui);
   const professional = signal.analytics?.professional || {};
   const professionalContextReady = professional.contextReady === true;
@@ -303,7 +323,7 @@ function baseDecision(state = {}) {
     actualExpiration: expiration.actual || null,
     timeSource: time.source || null,
     timeframe: time.timeframe || normTf(state.analysisTimeframe || state.timeframe),
-    secondsRemaining: time.secondsRemaining ?? num(state.diagnostics?.marketClock?.secondsRemaining),
+    secondsRemaining: analysisSecondsRemaining(state, time),
     marketIdentityReady: identity.ready,
     marketIdentityReason: identity.reason || null,
     updatedAt: now
@@ -318,12 +338,11 @@ function baseDecision(state = {}) {
   if (rows.length < 2) {
     return { ...common, uiState: 'BUILDING_PATTERN', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: 'Montando o padrão com as velas reais da CasaTrade.' };
   }
-  if (!time.ready) {
-    return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: `AGUARDAR — ${time.reason}` };
+  const seconds = analysisSecondsRemaining(state, time);
+  if (!Number.isFinite(seconds)) {
+    return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: `AGUARDAR — ${time.reason || 'tempo da vela indisponível'}` };
   }
-
-  const seconds = Number(time.secondsRemaining);
-  if (!Number.isFinite(seconds) || seconds > preSignalWindowSeconds) {
+  if (seconds > preSignalWindowSeconds) {
     return { ...common, uiState: 'BUILDING_PATTERN', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: `Analisando a vela ${pref.operation.timeframe} atual. O pré-sinal abre por volta de ${preSignalWindowSeconds}s restantes.` };
   }
   if (seconds <= 0) {
@@ -354,9 +373,22 @@ function baseDecision(state = {}) {
   const reason = shortReason(direction, factors.factors, signal.reason);
   const side = direction === 'BUY' ? 'COMPRA' : 'VENDA';
 
-  // Expiration is an execution gate, not a technical-analysis gate. Keep the
-  // directional POSSIBLE state visible when the pattern exists, but never make
-  // it actionable until the CasaTrade timing/expiration matches the active operation mode.
+  // Timing and expiration are execution gates, not technical-analysis gates.
+  // Keep the technical candidate visible while either authority is unavailable;
+  // only the final actionable branch requires both to be real and exact.
+  if (!time.ready) {
+    return {
+      ...common,
+      uiState: direction === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL',
+      direction,
+      actionable: false,
+      alert: 'silent',
+      possibleSince,
+      holdRemainingMs: Math.max(0, holdMs - heldFor),
+      reason: `${side} — ALTA CONFIANÇA • PRÉ-SINAL • BLOQUEADO — ${time.reason}.`
+    };
+  }
+
   if (!expiration.ready) {
     return {
       ...common,
