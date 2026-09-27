@@ -214,6 +214,12 @@ function ensureOperationalPulseUi() {
       .operational-pulse{margin-top:10px;padding:14px;border:1px solid #17324a;border-radius:16px;background:linear-gradient(180deg,#081625,#07111d)}
       .operational-pulse-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
       .operational-pulse-head b{font-size:12px;letter-spacing:.08em}.operational-pulse-head span{font-size:10px;color:#7f9bb0}
+      .operational-health{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin:0 0 9px}
+      .health-chip{display:grid;gap:3px;min-width:0;padding:7px 6px;border-radius:10px;background:#0b1c2b;border:1px solid #17344a;text-align:center}
+      .health-chip small{font-size:7px;letter-spacing:.08em;color:#6f8ea5}.health-chip b{font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .health-chip.ok{border-color:#27654f;background:#0b241e}.health-chip.ok b{color:#72d7b2}
+      .health-chip.warn{border-color:#5f4f28;background:#1c180b}.health-chip.warn b{color:#e0c56e}
+      .health-chip.bad{border-color:#6b3343;background:#241019}.health-chip.bad b{color:#ee829b}
       .operational-pulse-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
       .operational-pulse-grid div{padding:10px;border-radius:12px;background:#0b1c2b;border:1px solid #17344a;text-align:center}
       .operational-pulse-grid small{display:block;color:#6f8ea5;font-size:9px;letter-spacing:.06em}.operational-pulse-grid b{display:block;margin-top:3px;font-size:18px}
@@ -227,7 +233,13 @@ function ensureOperationalPulseUi() {
   root.id = 'operationalPulse';
   root.className = 'operational-pulse';
   root.innerHTML = `
-    <div class="operational-pulse-head"><b>FREQUÊNCIA OPERACIONAL</b><span id="funnelMode">SIMPLES</span></div>
+    <div class="operational-pulse-head"><b>SAÚDE DO SCANNER</b><span id="funnelMode">SIMPLES</span></div>
+    <div class="operational-health" aria-label="Saúde dos componentes em tempo real">
+      <div id="healthAsset" class="health-chip warn"><small>ATIVO</small><b>PENDENTE</b></div>
+      <div id="healthFeed" class="health-chip warn"><small>FEED</small><b>PENDENTE</b></div>
+      <div id="healthClock" class="health-chip warn"><small>CLOCK</small><b>PENDENTE</b></div>
+      <div id="healthExpiration" class="health-chip warn"><small>EXP</small><b>PENDENTE</b></div>
+    </div>
     <div class="operational-pulse-grid">
       <div><small>CANDIDATOS RECENTES</small><b id="funnelCandidates">0</b></div>
       <div><small>ENTRADAS CONFIRMADAS</small><b id="funnelPossible">0</b></div>
@@ -248,6 +260,43 @@ function todayKey(value) {
 
 function renderOperationalPulse(state = {}) {
   if (!ensureOperationalPulseUi()) return;
+  const focus = state.diagnostics?.focusedAsset || {};
+  const session = state.diagnostics?.marketSession || {};
+  const candles = Array.isArray(state.candles) ? state.candles : [];
+  const operation = operationRequirement(state);
+  const assetReady = activeLicense(state)
+    && !!state.asset
+    && focus.reliable === true
+    && focus.chartScoped === true
+    && focus.trustedChartFrame === true
+    && focus.visualAuthority !== false
+    && sameMarket(focus.asset, state.asset)
+    && session.transitioning !== true;
+  const feedReady = assetReady
+    && session.dataReady === true
+    && Number.isFinite(Number(state.price))
+    && candles.filter(row => [row?.open,row?.high,row?.low,row?.close].every(value => Number.isFinite(Number(value)))).length >= 2;
+  const clockReady = exactClockReady(state);
+  const expiration = state.platformControls || {};
+  const expirationAt = Number(expiration.realExpirationAt || 0);
+  const expirationSource = clean(expiration.realExpirationSource || expiration.expirationSource || '');
+  const expirationValue = clean(expiration.realExpiration || '');
+  const expirationReady = expirationAt > 0
+    && Date.now() - expirationAt < 15000
+    && expirationSource !== 'user-declared'
+    && expirationValue === operation.expiration
+    && state.diagnostics?.expirationGuard?.verified === true;
+  const setHealth = (id, ok, label, tone='warn') => {
+    const el = $(id);
+    if (!el) return;
+    el.className = `health-chip ${tone}`;
+    const value = el.querySelector('b');
+    if (value) value.textContent = label;
+  };
+  setHealth('healthAsset', assetReady, assetReady ? 'OK' : 'PENDENTE', assetReady ? 'ok' : 'warn');
+  setHealth('healthFeed', feedReady, feedReady ? 'OK' : assetReady ? 'PENDENTE' : 'AGUARDAR ATIVO', feedReady ? 'ok' : 'warn');
+  setHealth('healthClock', clockReady, clockReady ? `OK • ${operation.timeframe}` : `PENDENTE • ${operation.timeframe}`, clockReady ? 'ok' : 'warn');
+  setHealth('healthExpiration', expirationReady, expirationReady ? 'OK' : 'PENDENTE', expirationReady ? 'ok' : 'warn');
   const traces = Array.isArray(state.candidateBlockerTrace) ? state.candidateBlockerTrace.slice(-20) : [];
   const uniqueCandidates = new Set(traces.map(row => clean(row?.key || [row?.targetStart,row?.candidateDirection].join('|'))).filter(Boolean)).size;
   const confirmedRows = (Array.isArray(state.signalHistory) ? state.signalHistory : [])
@@ -289,6 +338,12 @@ function renderOperationalPulse(state = {}) {
   }
   const professional = state.professionalDecision || {}, technical = state.signal || {}, lastTrace = traces.at(-1) || {};
   let status = clean(professional.reason || lastTrace.finalBlockMessage || technical.reason || 'Aguardando leitura técnica.');
+  if (!activeLicense(state)) status = 'LICENÇA: ative o acesso para iniciar o scanner.';
+  else if (session.transitioning === true) status = `ATIVO: confirmando ${clean(session.pendingAsset || session.asset || 'novo ativo')}.`;
+  else if (!assetReady) status = 'ATIVO: aguardando confirmação do gráfico e da sessão.';
+  else if (!feedReady) status = 'FEED: aguardando preço e pelo menos duas velas reais.';
+  else if (!clockReady) status = `CLOCK: aguardando countdown real da ${operation.timeframe} da CasaTrade.`;
+  else if (!expirationReady) status = `EXPIRAÇÃO: aguardando confirmação real de ${operation.expiration === '300s' ? '5 minutos' : '1 minuto'}.`;
   if (professional.actionable === true || ['ENTER_BUY','ENTER_SELL'].includes(clean(professional.uiState).toUpperCase())) {
     status = `ENTRADA LIBERADA • ${clean(professional.direction || technical.direction || '—')} • score ${Math.round(Number(professional.score ?? technical.score ?? 0))}`;
   } else if (['POSSIBLE_BUY','POSSIBLE_SELL'].includes(clean(professional.uiState).toUpperCase())) {
