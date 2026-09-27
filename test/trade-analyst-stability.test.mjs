@@ -25,6 +25,7 @@ function run(bucket, offset, price = 1.110, candles = bullish(bucket)) {
     timeframe: 'M1',
     analysisTimeframe: 'M1',
     connection: 'online',
+    clockVerified: true,
     serverTime: bucket + offset,
     candles
   }, { connection: 'online' });
