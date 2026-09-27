@@ -81,7 +81,9 @@ function timingReady(state = {}) {
 }
 
 function analysisReady(state = {}) {
-  return marketReady(state) && timingReady(state);
+  // Technical score/readiness is independent from the final execution gate.
+  // Exact CasaTrade timing remains mandatory for actionable entry.
+  return marketReady(state);
 }
 
 function technicalDirection(state = {}) {
@@ -99,16 +101,6 @@ function guidance(state = {}) {
       tone: 'waiting',
       value: 'AGUARDANDO DADOS',
       hint: 'Confirmando ativo, preço e velas reais da CasaTrade antes de calcular o score.'
-    };
-  }
-  if (!timingReady(state)) {
-    return {
-      tone: 'waiting',
-      value: 'AGUARDANDO TEMPO CASATRADE',
-      hint: (() => {
-        const operationMode = getOperationMode(state.analystPreferences?.operationMode || 'M1');
-        return `O score só aparece depois de ${operationMode.timeframe}, countdown real e expiração de ${operationMode.expiration === '300s' ? '5 minutos' : '1 minuto'} estarem confirmados.`;
-      })()
     };
   }
   const technical = state.signal || {};
@@ -170,7 +162,7 @@ function guidance(state = {}) {
   return {
     tone: 'skip',
     value: 'SEM PADRÃO',
-    hint: clean(technical.reason || block || 'Nenhum padrão técnico válido neste momento.')
+    hint: clean(technical.reason || block || (!timingReady(state) ? 'Motor técnico ativo; aguardando uma confirmação de padrão.' : 'Nenhum padrão técnico válido neste momento.'))
   };
 }
 
