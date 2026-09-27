@@ -1,5 +1,47 @@
 # Changelog
 
+## 0.11.76 — diagnóstico completo do focused asset + relógio M5
+
+### ITEM 1 — Diagnóstico incompleto
+**Causa raiz:** background-control.js já solicitava os quatro retratos, mas focused-asset-v2.js não tinha listener para ATS_EXPIRATION_DIAGNOSTIC_REQUEST. Assim, três leitores respondiam e o quarto permanecia ausente até o timeout de 260 ms.
+
+**Correção:**
+- focused-asset-v2.js agora responde com ATS_FOCUSED_ASSET_DIAGNOSTIC_SNAPSHOT, preservando o mesmo requestId.
+- O payload inclui o último winner.asset bruto, winner.blocked/blockedReason, contagem de candidatos de texto, indicação entre text-found, text-found-but-rejected e no-corresponding-text-found, além do motivo da rejeição quando aplicável.
+- background-control.js só encerra a coleta antecipadamente depois das quatro respostas: canvas + embedded feed + network + focused asset.
+
+**Arquivos alterados:** src/content/focused-asset-v2.js, src/background-control.js
+
+### ITEM 2 — CRÍTICO — relógio M5
+**Causa raiz:** structuredCandleBoundary() em embedded-feed-bridge.js exigia que o timestamp bruto da última vela fosse divisível diretamente por toda a duração do timeframe. Isso é correto para M1, mas rejeita uma vela M1 legítima dentro de uma janela M5: por exemplo, uma vela abrindo em 12:03 não é divisível por 300 s, embora pertença à janela M5 iniciada em 12:00.
+
+**Correção:**
+- Quando o timeframe alvo é M5 e o feed subjacente é identificado como M1 pelo timeframe da vela ou pela cadência real de aproximadamente 1 minuto entre as duas últimas velas, o código calcula o bucket M5 que contém o timestamp real recebido.
+- Só aceita o alinhamento quando esse bucket é exatamente a janela M5 atualmente aberta; não desloca uma vela histórica para uma janela futura.
+- O fechamento continua sendo início da janela M5 + 300 s, usando os mesmos timestamps/velas já disponíveis.
+- O caminho M1 mantém a regra anterior de grade de 60 s, sem passar pelo novo alinhamento.
+
+**Verificação dos dois timeframes:** validação estática do fluxo e teste sintético separado confirmaram que M1 continua na regra de 60 s e que uma sequência de timestamps M1 dentro da janela corrente passa a produzir network-server-cycle válido para M5. Não foi possível executar uma sessão CasaTrade ao vivo neste ambiente, portanto a validação final em navegador continua sendo necessária.
+
+**Arquivo alterado:** src/content/embedded-feed-bridge.js
+
+### ITEM 3 — investigação de rejectionStrength
+**O que a lógica realmente mede:** para BUY, rejectionStrength é o percentual da faixa da vela ocupado pelo pavio inferior; para SELL, é o percentual ocupado pelo pavio superior. A direção de rejeição só é atribuída quando esse pavio atinge o limiar do perfil e a vela fecha na direção correspondente.
+
+**Compatibilidade lógica:** rejeição não é obrigatoriamente incompatível com continuação/momentum — uma vela pode rejeitar preços inferiores e ainda fechar forte para cima. Porém, quando também se exige força da vela alta, há uma restrição geométrica importante porque corpo + pavio superior + pavio inferior = 100% da faixa. No perfil MEDIO, por exemplo, rejeição >=45% junto de força >=55% deixa no máximo 0% para o pavio oposto; no RIGIDO (50% + 62%) essa combinação é matematicamente impossível; no SOLTO (40% + 50%) sobra no máximo 10%. Portanto, exigir os quatro requisitos simultaneamente seria estruturalmente raro/restritivo.
+
+**O ponto decisivo no HEAD v0.11.75:** o orquestrador atual não exige rejeição E continuação E momentum E força. Em highConfidenceEvidence(), essas evidências são adicionadas separadamente; decisionQuality() usa commonReady com score, poder direcional e um número mínimo de evidências. O caminho legado também usa candleStrong OR rejected OR broke OR continuation OR trendAligned. Assim, rejectionStrength=0 por si só não explica decisionQuality=false no código atual quando continuação/momentum/força já estão válidos. O bloqueio precisa estar em outro requisito de commonReady (por exemplo, poder/confluência/contexto) ou indicar diferença entre o código executado ao vivo e este HEAD.
+
+**Recomendação:** não alterar limiar, fórmula nem transformar a regra nesta versão. A semântica OR já está implementada nas camadas relevantes; trocar de AND para OR seria redundante e poderia mascarar o bloqueio real. O item fica documentado para próxima coleta diagnóstica com os campos de candidateBlockerTrace.
+
+**Arquivos alterados:** nenhum em src/core para este item.
+
+### Versão e escopo
+- manifest.json: 0.11.76
+- package.json: 0.11.76
+- Sem alterações em licença, Gemini, execução manual, perfis/filtros sombra ou arquitetura de sessão de mercado.
+
+
 ## 0.11.75 — visual fallback sem dependência circular + ativos nomeados
 
 ### Diagnóstico que motivou a correção
