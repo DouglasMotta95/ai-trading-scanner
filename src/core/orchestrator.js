@@ -254,12 +254,17 @@ function possibleQuality(signal = {}, direction = null, score = 0, thresholds = 
   const signalPolicy = getSignalPolicy(thresholds.profile);
   const analytics = signal.analytics || {};
   const professional = analytics.professional || {};
-  const recentReady = signal?.recent?.ready === true;
-  // POSSÍVEL must not be gated exclusively by the optional professional
-  // context layer. The technical engine already supplies direction, score,
-  // power and confluence; those remain the safety gates for the pre-signal.
+  const recent = signal?.recent || {};
+  const recentReady = recent.ready === true;
+  // POSSÍVEL is reserved for a concrete next-candle setup. The recent chart
+  // reader must identify a local trigger (breakout, rejection, or confirmed
+  // continuation); trend/momentum/strength alone remain context.
   if (!recentReady && professional.contextReady !== true) return false;
   if (!direction || Number(score) < signalPolicy.possibleScore) return false;
+  const localTriggerReady = recent.breakout === direction
+    || recent.rejection === direction
+    || (recent.continuationDirection === direction && Number(recent.continuationScore || 0) >= 60);
+  if (!localTriggerReady && professional.triggerReady !== true) return false;
   const power = Number(direction === 'BUY' ? analytics.buyPower : analytics.sellPower) || 0;
   if (power < signalPolicy.possiblePower) return false;
   if (highConfidenceEvidence(signal, direction, thresholds).length < signalPolicy.minimumConfluence) return false;
