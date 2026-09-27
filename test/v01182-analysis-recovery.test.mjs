@@ -35,7 +35,7 @@ test('v0.11.82: direct DOM expiration probe can pair separated visible label and
 test('v0.11.82: fresh non-manual observed expiration is promoted to real authority', () => {
   const controls = read('src/background-platform-controls.js');
   const app = read('src/sidepanel/app-v2.js');
-  assert.match(controls, /const observedRealFresh/);
+  assert.match(controls, /const observedIsReal/);
   assert.match(controls, /observedSource !== 'user-declared'/);
   assert.match(app, /const observedRealFresh/);
   assert.match(app, /observedSource !== 'user-declared'/);
