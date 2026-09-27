@@ -207,12 +207,28 @@ export function CasaTradeExpiration(state = {}, timeframe = null) {
   const guardSource = guardFresh ? text(guard.source || '') : '';
   const guardDivergence = guardFresh && guard.divergence === true;
 
-  const realExpirationAt = Number(controls.realExpirationAt || 0);
-  const realExpiration = normExp(controls.realExpiration || '');
-  const realFresh = !!realExpiration && realExpirationAt > 0 && Date.now() - realExpirationAt < 15000;
+  const observedExpiration = normExp(controls.observed?.expiration || '');
+  const observedExpirationAt = Number(controls.observed?.observedAt?.expiration || 0);
   const observedSource = text(controls.realExpirationSource || controls.expirationSource || controls.observed?.source || '');
+  const observedRealFresh = !!observedExpiration
+    && observedExpirationAt > 0
+    && Date.now() - observedExpirationAt < 15000
+    && observedSource !== 'user-declared';
+
+  const storedRealExpiration = normExp(controls.realExpiration || '');
+  const storedRealExpirationAt = Number(controls.realExpirationAt || 0);
+  const storedRealFresh = !!storedRealExpiration
+    && storedRealExpirationAt > 0
+    && Date.now() - storedRealExpirationAt < 15000
+    && text(controls.realExpirationSource || '') !== 'user-declared';
+
+  const realExpiration = storedRealFresh ? storedRealExpiration : observedRealFresh ? observedExpiration : '';
+  const realExpirationAt = storedRealFresh ? storedRealExpirationAt : observedRealFresh ? observedExpirationAt : 0;
+  const realFresh = !!realExpiration && realExpirationAt > 0;
   const actual = realFresh ? realExpiration : guardActual || null;
-  const source = realFresh ? (text(controls.realExpirationSource) || 'casatrade-observed') : guardSource || '';
+  const source = realFresh
+    ? (text(storedRealFresh ? controls.realExpirationSource : observedSource) || 'casatrade-observed')
+    : guardSource || '';
   const liveTf = normTf(timeframe || state.analysisTimeframe || state.timeframe);
 
   if (guardDivergence) {
