@@ -110,7 +110,7 @@ export function registerExpirationContracts(label='expiration') {
     assert.match(panel, /const manualFresh = observedAt > 0;/);
     assert.doesNotMatch(panel, /const manualFresh = observedAt > 0 && Date\\.now\\(\\) - observedAt < 7000/);
     assert.match(panel, /verified: realFresh/);
-    assert.match(panel, /source = realFresh \\? .*user-declared/);
+    assert.match(panel, /const source = realFresh \? [^:]+ : manualValue \? 'user-declared'/);
   });
   test(label + ': expiration is an execution gate for the active M1\/M5 mode', () => {
     const policy = read('src/background-decision-policy.js');
