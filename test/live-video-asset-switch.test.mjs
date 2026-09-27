@@ -55,8 +55,9 @@ test('runtime trusts only CasaTrade-owned charts or legacy trader frames under a
   const market = read('src/background-market-session.js');
   assert.match(market, /const tabOwned = !!sender\.tab\?\.id && \(casaHost\(topHost\) \|\| traderHost\(topHost\)\)/);
   assert.match(market, /const embeddedTrader = tabOwned && traderHost\(frameHost\)/);
-  assert.match(market, /const casaOwnedChart = tabOwned && casaHost\(frameHost\)/);
-  assert.match(market, /trusted: embeddedTrader \|\| casaOwnedChart/);
+  assert.match(market, /const effectiveEmbeddedTrader = tabOwned && traderHost\(effectiveTopFrameHost\)/);
+  assert.match(market, /const casaOwnedChart = tabOwned && casaHost\(effectiveTopFrameHost\)/);
+  assert.match(market, /trusted: effectiveEmbeddedTrader \|\| embeddedTrader \|\| casaOwnedChart/);
   assert.match(market, /\['trader-frame', 'casa-chart-frame'\]\.includes\(role\)/);
 });
 
