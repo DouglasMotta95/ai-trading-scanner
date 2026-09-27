@@ -144,8 +144,11 @@ export function CasaTradeExpiration(state = {}, timeframe = null) {
   const guard = state.diagnostics?.expirationGuard || {};
   const expirationLabel = operationMode.expiration === '300s' ? '5 minutos' : '1 minuto';
 
-  // Only a fresh, real CasaTrade observation may unlock execution. A manual
-  // value is display/fallback context only and can never make a signal actionable.
+  // CasaTrade's expiration control can be canvas-rendered, so a direct real
+  // observation may be unavailable. The exact candle clock remains the timing
+  // authority. The user's declaration is allowed to satisfy the expiration
+  // side of the gate only when it exactly matches the configured operation.
+  // A real CasaTrade observation, when available, still takes precedence.
   const guardAt = Number(guard.at || 0);
   const guardFresh = guardAt > 0 && Date.now() - guardAt < 10000;
   const guardActual = guardFresh ? normExp(guard.actual || controls.userDeclaredExpiration || '') : null;
@@ -156,8 +159,9 @@ export function CasaTradeExpiration(state = {}, timeframe = null) {
   const realExpiration = normExp(controls.realExpiration || '');
   const realFresh = !!realExpiration && realExpirationAt > 0 && Date.now() - realExpirationAt < 15000;
   const observedSource = text(controls.realExpirationSource || controls.expirationSource || controls.observed?.source || '');
-  const actual = realFresh ? realExpiration : guardActual || null;
-  const source = realFresh ? (text(controls.realExpirationSource) || 'casatrade-observed') : guardSource || '';
+  const manual = normExp(controls.userDeclaredExpiration || '');
+  const actual = realFresh ? realExpiration : manual || guardActual || null;
+  const source = realFresh ? (text(controls.realExpirationSource) || 'casatrade-observed') : manual || guardActual ? 'user-declared' : '';
   const liveTf = normTf(timeframe || state.analysisTimeframe || state.timeframe);
 
   if (guardDivergence) {
@@ -170,19 +174,18 @@ export function CasaTradeExpiration(state = {}, timeframe = null) {
       reason: text(guard.reason || 'A expiração real da CasaTrade diverge do valor informado.')
     };
   }
-  if (!realFresh) {
-    const manual = normExp(controls.userDeclaredExpiration || guardActual || '');
+
+  if (!actual) {
     return {
       ready: false,
-      actual: manual || null,
+      actual: null,
       required: operationMode.expiration,
-      source: manual ? 'user-declared' : null,
+      source: null,
       verified: false,
-      reason: manual
-        ? `Expiração de ${expirationLabel} informada, aguardando verificação real da CasaTrade`
-        : 'Expiração real da CasaTrade ainda não confirmada'
+      reason: 'Informe a expiração da operação antes da entrada.'
     };
   }
+
   if (liveTf === operationMode.timeframe && actual !== operationMode.expiration) {
     return {
       ready: false,
@@ -193,16 +196,23 @@ export function CasaTradeExpiration(state = {}, timeframe = null) {
       reason: `Ajuste a expiração da CasaTrade para ${expirationLabel}`
     };
   }
+
   const verified = realFresh && guard.verified === true && source !== 'user-declared';
+  const matched = actual === operationMode.expiration;
   return {
-    ready: verified && actual === operationMode.expiration,
+    // A manual declaration is sufficient for this side of the gate only when
+    // it exactly matches the configured operation. The other side still
+    // requires the exact, verified candle clock.
+    ready: matched,
     actual,
     required: operationMode.expiration,
     source,
     verified,
     reason: verified
       ? `Expiração de ${expirationLabel} confirmada pela CasaTrade para o modo ${operationMode.timeframe}.`
-      : `Expiração de ${expirationLabel} ainda não verificada diretamente na CasaTrade.`
+      : matched
+        ? `Expiração de ${expirationLabel} declarada pelo usuário; compatibilidade com o modo ${operationMode.timeframe} confirmada pelo valor configurado. A leitura direta da CasaTrade permanece não verificada.`
+        : `Ajuste a expiração declarada para ${expirationLabel}.`
   };
 }
 
