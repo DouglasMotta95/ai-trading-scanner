@@ -22,14 +22,15 @@ export async function installationId() {
     const x = await storageLocalGet(INSTALL_KEY);
     const existing = String(x[INSTALL_KEY] || '').trim();
 
-    // The installation ID is the stable device binding. Never rotate it just
-    // because chrome.runtime.id differs from the generated persisted ID.
-    // The previous comparison caused a new UUID to be generated on every call,
-    // which made the backend see the same device as a new installation.
-    if (existing) return existing;
-
+    // Keep a persisted UUID stable for the life of this browser installation.
+    // Older builds used chrome.runtime.id as the installation ID, but that value
+    // identifies the extension package, not a browser installation. Migrate that
+    // legacy value once so device limits and per-installation telemetry remain
+    // isolated across users while existing UUIDs remain stable.
     const legacyId = legacyRuntimeInstallationId();
-    const id = legacyId || randomInstallationId();
+    if (existing && existing !== legacyId) return existing;
+
+    const id = randomInstallationId();
     await storageLocalSet({ [INSTALL_KEY]: id });
     const persisted = await storageLocalGet(INSTALL_KEY);
     return String(persisted[INSTALL_KEY] || id).trim() || id;
