@@ -152,7 +152,7 @@
     const sourceTimeframe = normalizeTf(latest?.timeframe);
     const sourceDurationMs = sourceTimeframe ? durationSeconds(sourceTimeframe) * 1000 : null;
     const sourceLooksM1 = sourceDurationMs === 60_000
-      || (!sourceDurationMs && Number.isFinite(sourceStepMs) && sourceStepMs >= 45_000 && sourceStepMs <= 90_000);
+      || (Number.isFinite(sourceStepMs) && sourceStepMs >= 45_000 && sourceStepMs <= 90_000);
     const currentBucket = Math.floor(now / durationMs) * durationMs;
 
     // O feed estruturado pode entregar velas M1 enquanto o scanner está em M5.
