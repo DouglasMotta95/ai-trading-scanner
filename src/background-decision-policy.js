@@ -394,8 +394,18 @@ function baseDecision(state = {}) {
     : technicalSinceValid ? technicalPossibleSince : now;
   const holdMs = pref.holdSeconds * 1000;
   const heldFor = Math.max(0, now - possibleSince);
-  const finalQuality = technicalFinal && score >= finalScore && finalPowerReady && additionalConfluenceReady
-    && professionalContextReady && professionalTriggerReady;
+  // The technical orchestrator is the authoritative owner of technical confirmation.
+  // If it already promoted the same cycle to ENTER with the unchanged score/power/
+  // confluence gates, the policy layer must not downgrade it merely because the
+  // optional professional context/trigger layer is still incomplete.
+  const technicalFinalReady = technicalFinal
+    && technicalPatternReady
+    && score >= finalScore
+    && finalPowerReady
+    && additionalConfluenceReady;
+  const finalQuality = technicalFinalReady
+    || (technicalFinal && score >= finalScore && finalPowerReady && additionalConfluenceReady
+      && professionalContextReady && professionalTriggerReady);
   const reason = shortReason(direction, factors.factors, signal.reason);
   const side = direction === 'BUY' ? 'COMPRA' : 'VENDA';
 
