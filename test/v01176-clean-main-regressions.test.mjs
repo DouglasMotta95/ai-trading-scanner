@@ -36,6 +36,7 @@ test('M5 clock normalizes seconds and anchors the next target to the 5-minute bo
     analysisTimeframe: 'M5',
     connection: 'online',
     serverTime: serverTimeSeconds,
+    secondsRemaining: 200,
     candles
   }, { connection: 'online' });
 

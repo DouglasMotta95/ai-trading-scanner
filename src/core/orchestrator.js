@@ -352,13 +352,17 @@ export function processSnapshot(snapshot = {}, state = {}) {
   const platformRemainingMs = clockRemaining != null
     ? Math.max(0, Math.min(tfMs, Math.round(clockRemaining * 1000)))
     : null;
-  const clockToleranceMs = clean(analysisTimeframe).toUpperCase() === 'M5' ? 2500 : 5000;
-  const platformClockAligned = platformRemainingMs != null
-    && Math.abs(platformRemainingMs - fallbackRemainingMs) <= clockToleranceMs;
+  const isM5 = clean(analysisTimeframe).toUpperCase() === 'M5';
+  const clockToleranceMs = 2500;
+  const platformClockAligned = platformRemainingMs != null && (
+    !isM5 || Math.abs(platformRemainingMs - fallbackRemainingMs) <= clockToleranceMs
+  );
   const remainingMs = platformClockAligned ? platformRemainingMs : fallbackRemainingMs;
   const secondsRemaining = Math.max(0, Math.ceil(remainingMs / 1000));
   const progress = Math.max(0, Math.min(100, Math.round(((tfMs - remainingMs) / tfMs) * 100)));
-  const targetStart = currentBucket + tfMs;
+  const targetStart = isM5
+    ? currentBucket + tfMs
+    : (clockRemaining != null ? sampleAt + remainingMs : currentBucket + tfMs);
   const direction = ['BUY', 'SELL'].includes(liveResult.direction) ? liveResult.direction : null;
   const score = Number(liveResult.score || 0);
   const expiration = snapshot.targetExpiration || state.targetExpiration || snapshot.expiration || state.expiration || null;
