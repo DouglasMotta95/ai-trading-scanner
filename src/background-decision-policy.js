@@ -472,6 +472,8 @@ function baseDecision(state = {}) {
   };
 }
 
+export const __test__ = Object.freeze({ baseDecision, exactCasaTradeTime, CasaTradeExpiration });
+
 function signature(value = {}) {
   return JSON.stringify({
     uiState: value.uiState || null,
