@@ -77,15 +77,29 @@ function marketIdentityReady(state = {}) {
 function expirationObservation(state = {}) {
   const controls = state.platformControls || {};
   const observedAt = Number(controls.expirationCheckedAt || controls.observed?.observedAt?.expiration || 0);
-  const realAt = Number(controls.realExpirationAt || 0);
-  const realValue = normExp(controls.realExpiration || '');
-  const realSource = clean(controls.realExpirationSource || controls.expirationSource || '');
-  // A verified CasaTrade expiration survives short control re-renders. Manual
-  // fallback is visible to the user but never counts as verified timing.
-  const realFresh = !!realValue && realAt > 0 && Date.now() - realAt < 15000 && realSource !== 'user-declared';
+  const observedValue = normExp(controls.observed?.expiration || '');
+  const realAtStored = Number(controls.realExpirationAt || 0);
+  const realValueStored = normExp(controls.realExpiration || '');
+  const realSourceStored = clean(controls.realExpirationSource || controls.expirationSource || '');
+  const observedSource = clean(controls.observed?.source || controls.expirationSource || '');
+  // A verified CasaTrade expiration survives short control re-renders. A fresh
+  // non-manual observed value is also real platform evidence even if the
+  // dedicated cached realExpiration fields have not been populated yet.
+  const storedFresh = !!realValueStored
+    && realAtStored > 0
+    && Date.now() - realAtStored < 15000
+    && realSourceStored !== 'user-declared';
+  const observedRealFresh = !!observedValue
+    && Number(controls.observed?.observedAt?.expiration || 0) > 0
+    && Date.now() - Number(controls.observed?.observedAt?.expiration || 0) < 15000
+    && observedSource !== 'user-declared';
+  const realFresh = storedFresh || observedRealFresh;
+  const realValue = storedFresh ? realValueStored : observedRealFresh ? observedValue : '';
+  const realAt = storedFresh ? realAtStored : observedRealFresh ? Number(controls.observed?.observedAt?.expiration || 0) : 0;
+  const realSource = storedFresh ? realSourceStored : observedRealFresh ? observedSource : '';
   const at = realFresh ? realAt : observedAt;
   const manualFresh = observedAt > 0 && Date.now() - observedAt < 7000;
-  const manualValue = manualFresh ? normExp(controls.observed?.expiration || controls.userDeclaredExpiration || '') : null;
+  const manualValue = manualFresh && !observedRealFresh ? normExp(controls.observed?.expiration || controls.userDeclaredExpiration || '') : null;
   const value = realFresh ? realValue : manualValue;
   const source = realFresh ? (realSource || 'casatrade-observed') : manualValue ? 'user-declared' : '';
   return { value, fresh: realFresh || manualFresh, verified: realFresh, source, at, ageMs: at > 0 ? Date.now() - at : Infinity };
