@@ -523,5 +523,6 @@ chrome.storage?.onChanged?.addListener?.((changes, area) => {
   evaluate(changes.scannerState.newValue).catch(() => {});
 });
 
-setInterval(() => readScannerState().then(evaluate).catch(() => {}), 500);
+const policyEvaluationTimer = setInterval(() => readScannerState().then(evaluate).catch(() => {}), 500);
+policyEvaluationTimer?.unref?.();
 readScannerState().then(evaluate).catch(() => {});
