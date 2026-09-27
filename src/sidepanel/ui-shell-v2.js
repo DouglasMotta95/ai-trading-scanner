@@ -501,6 +501,15 @@ function renderShell(state = {}) {
   if (expirationSelect) {
     const storedValue = declaredExpiration || '';
     if (expirationSelect.value !== storedValue) expirationSelect.value = storedValue;
+
+    // Programmatic restoration does not fire <select>'s change event. Treat
+    // one saved declaration as a fresh session declaration once per session,
+    // so reconnection does not force the user to re-select the same value.
+    const restoreSessionKey = String(sessionStartedAt || 0) + ':' + storedValue;
+    if (storedValue && expirationSelect.dataset.atsRestoredExpiration !== restoreSessionKey) {
+      expirationSelect.dataset.atsRestoredExpiration = restoreSessionKey;
+      expirationSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    }
   }
   if (expirationStatus) {
     expirationStatus.textContent = expirationDivergence
