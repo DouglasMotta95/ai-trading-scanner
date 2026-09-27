@@ -119,3 +119,34 @@ test('strict confirmation rejects opposite-direction setup evidence', () => {
   assert.equal(second.uiState, 'WAIT');
   assert.notEqual(second.state, 'CONFIRM');
 });
+
+
+test('keeps POSSIBLE through two transient weak samples and confirms on the next strong hit', () => {
+  resetFastLiveDecision();
+  const strong = base({ score: 74, analysisScore: 74, secondsRemaining: 4 });
+  const first = fastLiveDecision(strong, { asset: 'AUD/CAD (OTC)', timeframe: 'M1', serverTime: 400000 });
+  assert.equal(first.uiState, 'POSSIBLE_SELL');
+
+  const weak = base({
+    score: 74,
+    analysisScore: 74,
+    secondsRemaining: 3,
+    analytics: {
+      sellPower: 42,
+      buyPower: 38,
+      momentumDirection: 'SELL',
+      momentumScore: 20,
+      continuationDirection: 'SELL',
+      continuationScore: 20,
+      professional: { contextReady: true, triggerReady: true }
+    }
+  });
+  const weakOne = fastLiveDecision(weak, { asset: 'AUD/CAD (OTC)', timeframe: 'M1', serverTime: 401000 });
+  const weakTwo = fastLiveDecision(weak, { asset: 'AUD/CAD (OTC)', timeframe: 'M1', serverTime: 402000 });
+  assert.equal(weakOne.uiState, 'POSSIBLE_SELL');
+  assert.equal(weakTwo.uiState, 'POSSIBLE_SELL');
+
+  const final = fastLiveDecision(strong, { asset: 'AUD/CAD (OTC)', timeframe: 'M1', serverTime: 403000 });
+  assert.equal(final.uiState, 'ENTER_SELL');
+  assert.equal(final.state, 'CONFIRM');
+});
