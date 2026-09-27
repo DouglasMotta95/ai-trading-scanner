@@ -22,7 +22,7 @@ function rangeWithStrongCurrent(bucket) {
   return candles;
 }
 function snapshot(bucket, offset, candles) {
-  return { platformId: 'casatrade', asset: 'EUR/USD', price: 1.1122, timeframe: 'M1', analysisTimeframe: 'M1', connection: 'online', serverTime: bucket + offset, candles };
+  return { platformId: 'casatrade', asset: 'EUR/USD', price: 1.1122, timeframe: 'M1', analysisTimeframe: 'M1', connection: 'online', clockVerified: true, serverTime: bucket + offset, candles };
 }
 
 test('market regime classifies the fixture as range', () => {
