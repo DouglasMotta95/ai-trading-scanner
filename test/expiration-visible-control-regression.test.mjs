@@ -37,3 +37,12 @@ test('expiration probe also accepts a real duration immediately before the Expir
   assert.match(source, /parseExpiration/);
   assert.doesNotMatch(source, /expiration:\s*['"]60s['"]/);
 });
+
+
+test('Android visual fallback pairs a visible Expiração text node with a rendered duration', () => {
+  const source = read('src/content/casatrade-expiration-probe.js');
+  assert.match(source, /function visibleTextRows\(\)/);
+  assert.match(source, /document\.createTreeWalker/);
+  assert.match(source, /function expirationFromRenderedText\(all = \[\]\)/);
+  assert.match(source, /rendered-text-label-pair/);
+});
