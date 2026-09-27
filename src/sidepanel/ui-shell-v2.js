@@ -100,6 +100,16 @@ function activeLicense(state = {}) {
 function liveTransportHandshake(state = {}) {
   const focus = state.diagnostics?.focusedAsset || null;
   const session = state.diagnostics?.marketSession || {};
+  const clock = state.diagnostics?.marketClock || {};
+  const dataFresh = Number(state.lastSeen || 0) > 0
+    && Date.now() - Number(state.lastSeen) < LIVE_TRANSPORT_FRESH_MS;
+  const exactClockAlive = clock?.verified === true
+    && clock?.available !== false
+    && EXACT_CLOCK_SOURCES.has(clean(clock?.source))
+    && sameMarket(clock?.asset, state.asset)
+    && clockBoundToFocus(clock, focus)
+    && Number(clock?.at || 0) > 0
+    && Date.now() - Number(clock.at) < CLOCK_FRESH_MS;
   return activeLicense(state)
     && state.connection === 'online'
     && !!state.asset
@@ -111,8 +121,7 @@ function liveTransportHandshake(state = {}) {
     && sameMarket(focus?.asset, state.asset)
     && sameMarket(session.confirmedAsset || session.asset, state.asset)
     && session.transitioning !== true
-    && Number(state.lastSeen || 0) > 0
-    && Date.now() - Number(state.lastSeen) < LIVE_TRANSPORT_FRESH_MS;
+    && (dataFresh || exactClockAlive);
 }
 
 function baseHandshake(state = {}) {
