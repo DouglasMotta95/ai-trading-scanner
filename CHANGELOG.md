@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.11.82 — restauração da expiração manual após reconexão
+
+**Causa raiz:** o menu de expiração era repopulado por atribuição programática (`expirationSelect.value = storedValue`), que não dispara o evento `change`. Como esse evento era o único caminho que atualizava `expirationCheckedAt`, uma expiração salva podia reaparecer visualmente sem ser registrada como declaração válida na sessão atual.
+
+**Correção:** quando uma expiração salva é restaurada e não existe uma leitura real fresca da CasaTrade, o painel reaplica a declaração pelo mesmo comando de autoridade usado pelo listener manual. Isso atualiza `expirationCheckedAt` imediatamente, sem exigir nova seleção do usuário. A restauração é protegida por uma chave de painel/sessão para não gerar chamadas repetidas.
+
+**Preservado:** troca manual continua funcionando pelo listener existente; expiração real continua tendo precedência e permanece a única capaz de liberar a execução. Não foram alterados score, perfis, filtros sombra, relógio, licença, Gemini ou execução.
+
+**Validação:** análise estática confirma que, após reconexão com um valor salvo, a restauração chama `ATS_SET_USER_DECLARED_EXPIRATION` e grava um novo `expirationCheckedAt`; o valor não fica preso em `EXPIRAÇÃO REAL PENDENTE` por ausência do evento `change`.
+
+
 ## 0.11.76 — diagnóstico completo do focused asset + relógio M5
 
 ### ITEM 1 — Diagnóstico incompleto
