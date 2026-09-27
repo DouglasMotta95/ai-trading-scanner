@@ -321,6 +321,36 @@ function inspectCasaTradeControlsDirect() {
     return null;
   };
 
+  const renderedExpirationRows = () => {
+    const rows = [];
+    let walker = null;
+    try { walker = document.createTreeWalker(document.documentElement, NodeFilter.SHOW_TEXT); } catch { return rows; }
+    let node = null;
+    let count = 0;
+    while ((node = walker.nextNode()) && count++ < 4000) {
+      const raw = clean0(node.nodeValue || '');
+      if (!raw || raw.length > 80) continue;
+      const parent = node.parentElement;
+      if (!parent || !visible0(parent)) continue;
+      let rect = null;
+      try {
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        rect = range.getBoundingClientRect();
+      } catch {}
+      if (!rect || rect.width <= 0 || rect.height <= 0) continue;
+      const folded = fold0(raw);
+      const expirationLabel = /^(?:expiracao|expiry|expiration|tempo de expiracao|expiration time)$/i.test(folded);
+      let duration = null;
+      let m = folded.match(/^(\d{1,4})\s*(s|seg|segundo|segundos|m|min|minuto|minutos)$/);
+      if (m) duration = normExp0(`${m[1]}${m[2]}`);
+      m = m || folded.match(/^(\d{1,3}):(\d{2})$/);
+      if (m && !duration) duration = normExp0(m[0]);
+      rows.push({ node, parent, raw, expirationLabel, duration, rect });
+    }
+    return rows;
+  };
+
   for (const el of elements) {
     if (!visible0(el)) continue;
     let own = '';
@@ -390,6 +420,30 @@ function inspectCasaTradeControlsDirect() {
   if (pageExp) {
     const expiration = normExp0(`${pageExp[1]}${pageExp[2]}`);
     if (expiration) candidates.push({ expiration, score: 100, text: 'page-expiration-label' });
+  }
+
+  const renderedRows = renderedExpirationRows();
+  const labels = renderedRows.filter(row => row.expirationLabel);
+  const durations = renderedRows.filter(row => row.duration);
+  for (const label of labels) {
+    for (const duration of durations) {
+      if (label.node === duration.node) continue;
+      const lr = label.rect, dr = duration.rect;
+      const dx = dr.right < lr.left ? lr.left - dr.right : dr.left > lr.right ? dr.left - lr.right : 0;
+      const dy = dr.top < lr.top ? lr.top - dr.bottom : dr.top > lr.bottom ? dr.top - lr.bottom : 0;
+      if (dx > 500 || dy > 160) continue;
+      const sameParent = label.parent === duration.parent
+        || label.parent?.parentElement === duration.parent
+        || duration.parent?.parentElement === label.parent;
+      let score = sameParent ? 245 : 175;
+      score += Math.max(0, 85 - dx / 5 - dy / 3);
+      if (dr.left >= lr.left - 20 && dr.top >= lr.top - 20) score += 25;
+      candidates.push({
+        expiration: duration.duration,
+        score,
+        text: `rendered-label-pair: ${label.raw} → ${duration.raw}`
+      });
+    }
   }
 
   candidates.sort((a,b) => b.score - a.score);
