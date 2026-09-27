@@ -42,6 +42,12 @@
   };
 
   const pairRe = /\b([A-Z0-9]{2,16})\s*[\/_-]\s*(USDT|USDC|USD|EUR|GBP|JPY|AUD|CAD|CHF|NZD|BRL|BTC|ETH)(?:\s*\(\s*OTC\s*\)|\s+OTC)?/i;
+  let lastScanDiagnostic = {
+    nodesInspected: 0,
+    candidateCount: 0,
+    topCandidates: [],
+    at: 0
+  };
 
   function visible(el) {
     if (!el || !(el instanceof Element)) return false;
@@ -139,6 +145,19 @@
     }
 
     rows.sort((a, b) => Number(b.explicit) - Number(a.explicit) || b.score - a.score || a.top - b.top || a.left - b.left);
+    lastScanDiagnostic = {
+      nodesInspected: nodes.length,
+      candidateCount: rows.length,
+      topCandidates: rows.slice(0, 5).map(row => ({
+        asset: row.asset,
+        score: Number(row.score || 0),
+        explicit: row.explicit === true,
+        source: row.source || null,
+        top: Number(row.top || 0),
+        left: Number(row.left || 0)
+      })),
+      at: Date.now()
+    };
     return rows[0] || null;
   }
 
@@ -211,6 +230,29 @@
     }).catch(() => {});
   }
 
+  function diagnosticSnapshot() {
+    const meta = globalThis.__ATS_FOCUSED_ASSET_META__ || null;
+    const now = Date.now();
+    const stableFor = candidateAsset && candidateSince
+      ? Math.max(0, now - candidateSince)
+      : 0;
+    return {
+      source: 'focused-asset',
+      at: now,
+      winner: candidateAsset || null,
+      published: globalThis.__ATS_FOCUSED_ASSET_VALUE__ || null,
+      meta: meta ? { ...meta } : null,
+      candidate: {
+        asset: candidateAsset || null,
+        samples: Number(candidateSamples || 0),
+        stableFor,
+        lastSentAsset: lastSentAsset || null,
+        lastSentAt: Number(lastSentAt || 0)
+      },
+      scan: { ...lastScanDiagnostic }
+    };
+  }
+
   function rememberUserSelection(event) {
     const target = event?.target instanceof Element ? event.target : null;
     if (!target) return;
@@ -224,6 +266,15 @@
     candidateSamples = Math.max(candidateSamples, 2);
     publish(true);
   }
+
+  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (message?.type !== 'ATS_FOCUSED_ASSET_DIAGNOSTIC_REQUEST') return;
+    sendResponse({
+      ok: true,
+      type: 'ATS_FOCUSED_ASSET_DIAGNOSTIC_SNAPSHOT',
+      snapshot: diagnosticSnapshot()
+    });
+  });
 
   document.addEventListener('pointerup', rememberUserSelection, true);
   document.addEventListener('click', rememberUserSelection, true);

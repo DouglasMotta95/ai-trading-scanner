@@ -1,4 +1,5 @@
 import { CandleBuilder, TIMEFRAMES } from './candles.js';
+import { normalizeEpochMs } from './clock-sync.js';
 import { analyzeCandles, ANALYST_THRESHOLDS } from './analysis.js';
 import { marketRegime } from './market-regime.js';
 
@@ -42,6 +43,47 @@ function validCandle(raw = {}) {
 function sameTimeframe(raw = {}, wanted = 'M1') {
   const tf = clean(raw?.timeframe).toUpperCase();
   return !tf || tf === clean(wanted).toUpperCase();
+}
+
+function aggregateM1IntoM5(rows = []) {
+  const groups = new Map();
+  for (const raw of Array.isArray(rows) ? rows : []) {
+    const t = candleTime(raw);
+    const c = validCandle(raw);
+    if (t == null || !c) continue;
+    const bucket = Math.floor(t / TIMEFRAMES.M5) * TIMEFRAMES.M5;
+    const previous = groups.get(bucket);
+    if (!previous) {
+      groups.set(bucket, {
+        time: bucket,
+        open: c.open,
+        high: c.high,
+        low: c.low,
+        close: c.close,
+        ticks: Number(c.ticks || 1),
+        timeframe: 'M5'
+      });
+      continue;
+    }
+    previous.high = Math.max(previous.high, c.high);
+    previous.low = Math.min(previous.low, c.low);
+    previous.close = c.close;
+    previous.ticks += Number(c.ticks || 1);
+  }
+  return [...groups.values()].sort((a, b) => a.time - b.time);
+}
+
+function analysisHistory(candles = [], timeframeLabel = 'M1', timeframeMsValue = TIMEFRAMES.M1, currentBucket = 0) {
+  const rows = (Array.isArray(candles) ? candles : []).filter(raw => {
+    const t = candleTime(raw);
+    return t != null && Math.floor(t / timeframeMsValue) * timeframeMsValue < currentBucket;
+  });
+  if (timeframeLabel !== 'M5') return rows.filter(raw => sameTimeframe(raw, timeframeLabel));
+
+  const direct = rows.filter(raw => clean(raw?.timeframe).toUpperCase() === 'M5');
+  if (direct.length) return direct;
+  const m1 = rows.filter(raw => clean(raw?.timeframe).toUpperCase() === 'M1');
+  return aggregateM1IntoM5(m1);
 }
 
 function currentFromSnapshot(candles = [], bucket, timeframeMsValue, timeframeLabel, price) {
@@ -278,16 +320,18 @@ export function processSnapshot(snapshot = {}, state = {}) {
 
   const analysisTimeframe = snapshot.analysisTimeframe || snapshot.timeframe || state.analysisTimeframe || state.timeframe || 'M1';
   const tfMs = timeframeMs(analysisTimeframe);
-  const sampleAt = Number.isFinite(Number(snapshot.serverTime)) && Number(snapshot.serverTime) > 0 ? Number(snapshot.serverTime) : Date.now();
+  const normalizedServerTime = normalizeEpochMs(snapshot.serverTime);
+  const sampleAt = normalizedServerTime || Date.now();
   const currentBucket = Math.floor(sampleAt / tfMs) * tfMs;
   const key = builderKey({ ...snapshot, analysisTimeframe });
   const builder = getBuilder({ ...snapshot, analysisTimeframe });
 
-  const history = (Array.isArray(snapshot.candles) ? snapshot.candles : []).filter(raw => {
-    if (!sameTimeframe(raw, analysisTimeframe)) return false;
-    const t = candleTime(raw);
-    return t != null && Math.floor(t / tfMs) * tfMs < currentBucket;
-  });
+  const history = analysisHistory(
+    snapshot.candles,
+    clean(analysisTimeframe).toUpperCase(),
+    tfMs,
+    currentBucket
+  );
   if (history.length) builder.seed(history);
   builder.push(price, sampleAt);
 
@@ -302,12 +346,16 @@ export function processSnapshot(snapshot = {}, state = {}) {
 
   const clockRemaining = num(snapshot.secondsRemaining);
   const fallbackRemainingMs = Math.max(0, currentBucket + tfMs - sampleAt);
-  const remainingMs = clockRemaining != null
+  const platformRemainingMs = clockRemaining != null
     ? Math.max(0, Math.min(tfMs, Math.round(clockRemaining * 1000)))
-    : fallbackRemainingMs;
+    : null;
+  const clockToleranceMs = clean(analysisTimeframe).toUpperCase() === 'M5' ? 2500 : 5000;
+  const platformClockAligned = platformRemainingMs != null
+    && Math.abs(platformRemainingMs - fallbackRemainingMs) <= clockToleranceMs;
+  const remainingMs = platformClockAligned ? platformRemainingMs : fallbackRemainingMs;
   const secondsRemaining = Math.max(0, Math.ceil(remainingMs / 1000));
   const progress = Math.max(0, Math.min(100, Math.round(((tfMs - remainingMs) / tfMs) * 100)));
-  const targetStart = clockRemaining != null ? sampleAt + remainingMs : currentBucket + tfMs;
+  const targetStart = currentBucket + tfMs;
   const direction = ['BUY', 'SELL'].includes(liveResult.direction) ? liveResult.direction : null;
   const score = Number(liveResult.score || 0);
   const expiration = snapshot.targetExpiration || state.targetExpiration || snapshot.expiration || state.expiration || null;
@@ -326,7 +374,17 @@ export function processSnapshot(snapshot = {}, state = {}) {
     analytics: liveResult.analytics || {},
     regime,
     stability: stabilitySnapshot(tracker),
-    targetStart
+    targetStart,
+    clock: {
+      source: normalizedServerTime ? 'serverTime' : 'wallClock',
+      sampleAt,
+      currentBucket,
+      timeframeMs: tfMs,
+      fallbackRemainingMs,
+      platformRemainingMs,
+      platformClockAligned,
+      targetStart
+    }
   };
 
   let lastConfirmed = completedDecisions.get(key) || null;

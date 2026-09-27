@@ -109,6 +109,15 @@ function analystMetrics(rows = []) {
       ? 'SELL'
       : null;
   const rejectionStrength = rejectionDirection === 'BUY' ? rejectionBuy : rejectionDirection === 'SELL' ? rejectionSell : Math.max(rejectionBuy, rejectionSell);
+  const rejectionGeometry = {
+    threshold: ANALYST_THRESHOLDS.rejectionStrength,
+    buyStrength: rejectionBuy,
+    sellStrength: rejectionSell,
+    bodyStrength: currentStrength,
+    strongBodyThreshold: ANALYST_THRESHOLDS.candleStrength,
+    simultaneousThresholdsFeasible:
+      ANALYST_THRESHOLDS.rejectionStrength + ANALYST_THRESHOLDS.candleStrength <= 100
+  };
   const previousBody = avg(previous.map(row => row.bodyRatio));
   const bodyLoss = previousBody > 0 ? clamp(((previousBody - (last?.bodyRatio || 0)) / previousBody) * 100) : 0;
   const oppositeWick = last?.direction === 'BUY' ? rejectionSell : last?.direction === 'SELL' ? rejectionBuy : Math.max(rejectionBuy, rejectionSell);
@@ -122,6 +131,7 @@ function analystMetrics(rows = []) {
     rejectionStrength,
     rejectionBuy,
     rejectionSell,
+    rejectionGeometry,
     momentumDirection: momentumValue.direction,
     momentumScore: momentumValue.score,
     lossOfStrength

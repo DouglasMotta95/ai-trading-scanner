@@ -1106,6 +1106,80 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+
+  if (message?.type === 'ATS_FOCUSED_ASSET') {
+    const payload = message;
+    (async () => {
+      let host = '';
+      try { host = new URL(sender?.url || '').hostname; } catch {}
+      const platform = detectPlatform(host);
+      let response = { ok: true, ignored: true };
+      await updateScannerState(current => {
+        if (!licenseActive(current.license)) {
+          response = { ok: true, ignored: true, reason: 'license_required' };
+          return;
+        }
+        if (!platform || !sameTarget(current, sender)) return;
+        const asset = normAsset(payload.asset);
+        if (!asset) {
+          response = { ok: false, error: 'focused_asset_invalid' };
+          return;
+        }
+        const previous = focusedAssetMeta(current) || {};
+        const same = sameAsset(previous.asset, asset);
+        const receivedAt = Number(payload.at) > 0 ? Number(payload.at) : Date.now();
+        const stableSince = same && Number(previous.stableSince) > 0 ? Number(previous.stableSince) : receivedAt;
+        const stableFor = Math.max(0, Number(payload.stableFor || 0), Date.now() - stableSince);
+        response = { ok: true, ignored: false };
+        return merge(current, {
+          platformId: platform.id,
+          platformName: platform.name,
+          diagnostics: {
+            ...(current.diagnostics || {}),
+            focusedAsset: {
+              asset,
+              score: Number(payload.score || 0),
+              samples: Number(payload.samples || 0),
+              stableFor,
+              stableSince,
+              reliable: payload.reliable === true,
+              visual: payload.visual !== false,
+              source: payload.source || 'chart-header',
+              at: receivedAt,
+              lastSeen: Date.now()
+            }
+          }
+        });
+      });
+      sendResponse(response);
+    })().catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
+    return true;
+  }
+
+  if (message?.type === 'ATS_FOCUSED_ASSET_DIAGNOSTIC_REQUEST') {
+    (async () => {
+      const state = await readScannerState();
+      if (!licenseActive(state.license)) {
+        sendResponse({ ok: false, error: 'license_required' });
+        return;
+      }
+      const tabId = Number(state.targetTabId || sender?.tab?.id);
+      if (!Number.isInteger(tabId) || tabId <= 0) {
+        sendResponse({ ok: false, error: 'focused_asset_tab_unavailable' });
+        return;
+      }
+      const result = await chrome.tabs.sendMessage(tabId, {
+        type: 'ATS_FOCUSED_ASSET_DIAGNOSTIC_REQUEST'
+      }).catch(() => null);
+      if (!result?.ok) {
+        sendResponse(result || { ok: false, error: 'focused_asset_no_response' });
+        return;
+      }
+      sendResponse(result);
+    })().catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
+    return true;
+  }
+
   if (message?.type === 'ATS_GET_STATE') {
   readScannerState().then(async scannerState => {
     if (!licenseActive(scannerState.license)) {
