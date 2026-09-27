@@ -6,11 +6,11 @@ export const read = path => fs.readFileSync(new URL('../' + path, import.meta.ur
 const manifest = () => JSON.parse(read('manifest.json'));
 
 export function registerBuildContracts(label='build') {
-  test(label + ': current extension package is the v0.11.80 stable expiration-only build', () => {
+  test(label + ': current extension package is the v0.11.81 manual-expiration persistence build', () => {
     const m = manifest();
     assert.equal(m.manifest_version, 3);
-    assert.equal(m.version, '0.11.80');
-    assert.equal(m.version_name, '0.11.80-synced-main-expiration-only-stable-clock');
+    assert.equal(m.version, '0.11.81');
+    assert.equal(m.version_name, '0.11.81-manual-expiration-persistence-stable-clock');
     assert.equal(m.background?.service_worker, 'src/background-entry.js');
     assert.equal(m.side_panel?.default_path, 'src/sidepanel/index.html');
   });
@@ -104,6 +104,13 @@ export function registerExpirationContracts(label='expiration') {
     assert.match(controls, /const effectiveDeclared = invalidatedDeclared \? null : declared/);
     assert.match(controls, /userDeclaredExpiration: resolved\.authority\.invalidatedDeclared \? null/);
     assert.match(controls, /manualInvalidated: authority\.invalidatedDeclared \|\| null/);
+  });
+  test(label + ': manual expiration remains valid after 7 seconds without becoming real or disappearing', () => {
+    const panel = read('src/sidepanel/app-v2.js');
+    assert.match(panel, /const manualFresh = observedAt > 0;/);
+    assert.doesNotMatch(panel, /const manualFresh = observedAt > 0 && Date\\.now\\(\\) - observedAt < 7000/);
+    assert.match(panel, /verified: realFresh/);
+    assert.match(panel, /source = realFresh \\? .*user-declared/);
   });
   test(label + ': expiration is an execution gate for the active M1\/M5 mode', () => {
     const policy = read('src/background-decision-policy.js');
