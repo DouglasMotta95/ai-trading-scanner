@@ -65,6 +65,25 @@ test('M5 clock normalizes seconds and anchors the next target to the 5-minute bo
   assert.equal(untaggedOut.signal.clock.currentBucket, bucket);
 });
 
+test('M1 keeps the platform countdown authoritative when supplied', () => {
+  resetOrchestrator();
+  const bucket = Math.floor(1_800_000_123_000 / MINUTE) * MINUTE;
+  const out = processSnapshot({
+    platformId: 'casatrade',
+    asset: 'EUR/USD (OTC)',
+    price: 1.011,
+    timeframe: 'M1',
+    analysisTimeframe: 'M1',
+    connection: 'online',
+    serverTime: Math.floor((bucket + 20_000) / 1000),
+    secondsRemaining: 9,
+    candles: m1Rows(bucket, 5)
+  }, { connection: 'online' });
+
+  assert.equal(out.signal.secondsRemaining, 9);
+  assert.equal(out.signal.targetStart, bucket + 20_000 + 9_000);
+});
+
 test('rejection strength remains direction-aware and does not change the decision threshold', () => {
   const candles = [
     { open: 1.00, high: 1.02, low: 0.99, close: 1.015 },
