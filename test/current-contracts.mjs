@@ -305,7 +305,7 @@ export function registerVideo15319Contracts(label='video-15319') {
     const focus = read('src/content/focused-asset-v2.js');
     const market = read('src/background-market-session.js');
     assert.match(protocol, /explicitTransition && age <= 2200/);
-    assert.match(focus, /INTERACTION_TRANSITION_MS = 1800/);
+    assert.match(focus, /INTERACTION_TRANSITION_MS = 5000/);
     assert.match(focus, /Number\(b\.interaction\) - Number\(a\.interaction\)[\s\S]*Number\(b\.explicit\) - Number\(a\.explicit\)/);
     assert.match(market, /selectionLock\.at\) < 3500/);
   });
