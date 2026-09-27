@@ -1,3 +1,4 @@
+import { storageLocalGet, storageLocalSet, storageLocalRemove } from './chrome-compat.js';
 import { installationId, saveClientToken, clearClientToken } from './telemetry.js';
 
 const LICENSE_KEY = 'atsLicenseKey';
@@ -9,23 +10,29 @@ const AUTHORITATIVE_LICENSE_ERRORS = new Set([
   'license_not_found',
   'license_inactive',
   'license_expired',
-  'device_limit_reached'
+  'device_limit_reached',
+  'device_locked'
 ]);
 
 export const PUBLIC_LICENSE_API = 'https://ats-control-center-v07-production.up.railway.app';
 const base = () => PUBLIC_LICENSE_API;
+const normalizedError = error => String(error || '');
 
 export const isDevBuild = () => !chrome.runtime.getManifest().update_url;
+// An unpacked ZIP is customer-modifiable, so no local setting may grant owner access.
+// Owner/testing access must use a normal server-issued license (use the Unlimited plan).
+export const ownerDevMode = () => false;
+export const devOwnerLicense = () => null;
 export const licenseRequired = () => true;
 
 export async function savedLicenseKey() {
-  const x = await chrome.storage.local.get(LICENSE_KEY);
+  const x = await storageLocalGet(LICENSE_KEY);
   return String(x[LICENSE_KEY] || '').trim();
 }
 
 export async function saveLicenseKey(key = '') {
   key = String(key || '').trim();
-  await chrome.storage.local.set({ [LICENSE_KEY]: key });
+  await storageLocalSet({ [LICENSE_KEY]: key });
   return key;
 }
 
@@ -43,10 +50,7 @@ function expiryMs(value) {
 
 function normalizeActiveLicense(license = {}) {
   const status = String(license?.status || '').toLowerCase();
-  return {
-    ...license,
-    status: status === 'active' || status === 'valid' ? 'active' : license?.status
-  };
+  return { ...license, status: status === 'active' || status === 'valid' ? 'active' : license?.status };
 }
 
 function licenseStillValid(license = {}) {
@@ -59,33 +63,28 @@ function licenseStillValid(license = {}) {
 
 function cacheInsideReopenGrace(cached = null) {
   const validatedAt = Number(cached?.validatedAt);
+  const tokenExpiresAt = Number(cached?.clientTokenExpiresAt);
   if (!Number.isFinite(validatedAt) || validatedAt <= 0) return false;
+  if (!Number.isFinite(tokenExpiresAt) || tokenExpiresAt <= Date.now() + 5000) return false;
   const age = Date.now() - validatedAt;
   return age >= 0 && age <= REOPEN_CACHE_GRACE_MS;
 }
 
 function cachedResponse(cached, { syncPending = false, error = null } = {}) {
   if (!cached?.license || !licenseStillValid(cached.license)) return null;
+  const normalized = normalizedError(error);
   return {
-    ok: true,
-    cacheHit: true,
-    offlineFallback: !!syncPending,
-    error,
-    license: {
-      ...normalizeActiveLicense(cached.license),
-      status: 'active',
-      error,
-      syncPending: !!syncPending
-    },
+    ok: true, cacheHit: true, offlineFallback: !!syncPending, error: normalized || null,
+    license: { ...normalizeActiveLicense(cached.license), status: 'active', error: normalized || null, syncPending: !!syncPending },
     clientTokenExpiresAt: Number(cached.clientTokenExpiresAt) || 0
   };
 }
 
 export async function cachedLicenseSession() {
-  const x = await chrome.storage.local.get(LAST_VALID_LICENSE_KEY);
+  const x = await storageLocalGet(LAST_VALID_LICENSE_KEY);
   const cached = x[LAST_VALID_LICENSE_KEY];
   if (!cached?.license || !licenseStillValid(cached.license)) {
-    if (cached) await chrome.storage.local.remove(LAST_VALID_LICENSE_KEY);
+    if (cached) await storageLocalRemove(LAST_VALID_LICENSE_KEY);
     return null;
   }
   const licenseKey = String(cached.licenseKey || cached.license?.key || '').trim();
@@ -96,15 +95,8 @@ export async function restoreCachedLicense() {
   const cached = await cachedLicenseSession();
   if (!cached) return null;
   const currentKey = await savedLicenseKey();
-  if (!currentKey && cached.licenseKey) {
-    await chrome.storage.local.set({ [LICENSE_KEY]: cached.licenseKey });
-  }
-  return {
-    ...cached.license,
-    status: 'active',
-    error: null,
-    syncPending: false
-  };
+  if (!currentKey && cached.licenseKey) await storageLocalSet({ [LICENSE_KEY]: cached.licenseKey });
+  return { ...cached.license, status: 'active', error: null, syncPending: false };
 }
 
 async function saveValidLicenseSession(r, licenseKey = '') {
@@ -120,17 +112,18 @@ async function saveValidLicenseSession(r, licenseKey = '') {
   };
   const values = { [LAST_VALID_LICENSE_KEY]: snapshot };
   if (resolvedKey) values[LICENSE_KEY] = resolvedKey;
-  await chrome.storage.local.set(values);
+  await storageLocalSet(values);
   return snapshot;
 }
 
 async function invalidateCachedLicense(r, licenseKey = '') {
-  if (!AUTHORITATIVE_LICENSE_ERRORS.has(String(r?.error || ''))) return false;
+  const error = normalizedError(r?.error);
+  if (!AUTHORITATIVE_LICENSE_ERRORS.has(error)) return false;
   const cached = await cachedLicenseSession();
   const attempted = String(licenseKey || '').trim().toUpperCase();
   const cachedKey = String(cached?.licenseKey || '').trim().toUpperCase();
   if (attempted && cachedKey && attempted !== cachedKey) return false;
-  await chrome.storage.local.remove(LAST_VALID_LICENSE_KEY);
+  await storageLocalRemove(LAST_VALID_LICENSE_KEY);
   await clearClientToken();
   return true;
 }
@@ -140,13 +133,11 @@ async function call(_settings, path, payload) {
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
     const r = await fetch(`${base()}${path}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(payload),
-      signal: controller.signal
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload), signal: controller.signal
     });
     const data = await r.json().catch(() => ({}));
-    return { ok: r.ok, status: r.status, ...data };
+    const error = normalizedError(data?.error);
+    return { ok: r.ok, status: r.status, ...data, ...(error ? { error } : {}) };
   } catch {
     return { ok: false, error: 'backend_unreachable' };
   } finally {
@@ -166,10 +157,11 @@ async function acceptSession(r, licenseKey = '') {
 
 async function withCachedFallback(r, cached = null) {
   if (r?.ok) return r;
-  if (AUTHORITATIVE_LICENSE_ERRORS.has(String(r?.error || ''))) return r;
+  const error = normalizedError(r?.error);
+  if (AUTHORITATIVE_LICENSE_ERRORS.has(error)) return { ...r, error };
   if (!cached) cached = await cachedLicenseSession();
   if (!cached) return r;
-  return cachedResponse(cached, { syncPending: true, error: r?.error || 'backend_unreachable' }) || r;
+  return cachedResponse(cached, { syncPending: true, error: error || 'backend_unreachable' }) || r;
 }
 
 export async function activateLicense(settings = {}, key = '') {
@@ -177,42 +169,35 @@ export async function activateLicense(settings = {}, key = '') {
   const licenseKey = String(key || '').trim();
   if (!licenseKey) return { ok: false, error: 'license_required' };
   const r = await call(settings, '/v1/license/activate', {
-    licenseKey,
-    installationId: installationIdValue,
-    version: chrome.runtime.getManifest().version
+    licenseKey, installationId: installationIdValue, version: chrome.runtime.getManifest().version
   });
   if (r.ok) return acceptSession(r, licenseKey);
   await invalidateCachedLicense(r, licenseKey);
   return r;
 }
 
-export async function validateLicense(settings = {}) {
+export async function validateLicense(settings = {}, options = {}) {
+  const forceServer = options?.forceServer === true;
   const cached = await cachedLicenseSession();
   let licenseKey = await savedLicenseKey();
-
-  if (!licenseKey && cached?.licenseKey) {
-    licenseKey = await saveLicenseKey(cached.licenseKey);
-  }
-
-  if (cached && cacheInsideReopenGrace(cached)) return cachedResponse(cached);
+  if (!licenseKey && cached?.licenseKey) licenseKey = await saveLicenseKey(cached.licenseKey);
+  if (!forceServer && cached && cacheInsideReopenGrace(cached)) return cachedResponse(cached);
   if (!licenseKey) return { ok: false, error: 'license_required' };
 
   const r = await call(settings, '/v1/license/validate', {
-    licenseKey,
-    installationId: await installationId(),
-    version: chrome.runtime.getManifest().version
+    licenseKey, installationId: await installationId(), version: chrome.runtime.getManifest().version
   });
   if (r.ok) return acceptSession(r, licenseKey);
 
-  if (AUTHORITATIVE_LICENSE_ERRORS.has(String(r?.error || ''))) {
-    await invalidateCachedLicense(r, licenseKey);
-    return r;
+  const error = normalizedError(r?.error);
+  if (AUTHORITATIVE_LICENSE_ERRORS.has(error)) {
+    await invalidateCachedLicense({ ...r, error }, licenseKey);
+    return { ...r, error };
   }
-
   return withCachedFallback(r, cached);
 }
 
-export async function consumeSignal(settings = {}) {
+export async function consumeSignal(settings = {}, signalId = '') {
   const cached = await cachedLicenseSession();
   let licenseKey = await savedLicenseKey();
   if (!licenseKey && cached?.licenseKey) licenseKey = await saveLicenseKey(cached.licenseKey);
@@ -221,15 +206,14 @@ export async function consumeSignal(settings = {}) {
     licenseKey,
     installationId: await installationId(),
     type: 'signal',
+    signalId: String(signalId || '').trim().slice(0, 96) || null,
     version: chrome.runtime.getManifest().version
   });
-  if (r.ok && r.license) {
-    await saveValidLicenseSession({ ...r, ok: true, license: normalizeActiveLicense(r.license) }, licenseKey);
-  }
+  if (r.ok && r.license) await saveValidLicenseSession({ ...r, ok: true, license: normalizeActiveLicense(r.license) }, licenseKey);
   return r;
 }
 
 export async function clearLicense() {
-  await chrome.storage.local.remove([LICENSE_KEY, LAST_VALID_LICENSE_KEY]);
+  await storageLocalRemove([LICENSE_KEY, LAST_VALID_LICENSE_KEY]);
   await clearClientToken();
 }
