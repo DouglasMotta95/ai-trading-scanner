@@ -86,111 +86,36 @@ function focusReady(state = {}) {
     && Date.now() - Number(focus.at) < FOCUS_FRESH_MS;
 }
 
-function derivedAnalysisTime(state = {}, operationMode = getOperationMode(state.analystPreferences?.operationMode || 'M1')) {
-  const durationSeconds = Number(operationMode.durationSeconds || 60);
-  const durationMs = Math.max(1, durationSeconds * 1000);
-  const now = Date.now();
-  const lastSeen = Number(state.lastSeen || 0);
-  const liveFeed = lastSeen > 0 && now - lastSeen < 8000;
-  const current = state.signal?.currentCandle || state.currentCandle || null;
-  const currentTimeRaw = num(current?.time ?? current?.timestamp);
-  let currentTime = currentTimeRaw;
-  if (currentTime != null && currentTime > 0 && currentTime < 1e12) currentTime *= 1000;
-
-  if (currentTime != null && Number.isFinite(currentTime)) {
-    const currentBucket = Math.floor(now / durationMs) * durationMs;
-    const openAt = Math.floor(currentTime / durationMs) * durationMs;
-    if (openAt === currentBucket) {
-      const remaining = Math.max(0, Math.min(durationSeconds, (openAt + durationMs - now) / 1000));
-      if (remaining > 0 && liveFeed) {
-        return {
-          ready: true,
-          authoritative: false,
-          timeframe: operationMode.timeframe,
-          secondsRemaining: remaining,
-          source: 'derived-candle-boundary',
-          operationMode: operationMode.timeframe
-        };
-      }
-    }
-  }
-
-  // consolidatedSnapshot() already derives secondsRemaining from the live candle
-  // when the exact CasaTrade reader is momentarily absent. Reuse only that bounded
-  // value here; it is analysis timing, never execution authority.
-  const snapshotRemaining = num(state.signal?.secondsRemaining);
-  if (snapshotRemaining != null && snapshotRemaining > 0 && snapshotRemaining <= durationSeconds && liveFeed) {
-    return {
-      ready: true,
-      authoritative: false,
-      timeframe: operationMode.timeframe,
-      secondsRemaining: snapshotRemaining,
-      source: 'derived-snapshot-clock',
-      operationMode: operationMode.timeframe
-    };
-  }
-
-  return { ready: false, authoritative: false, reason: 'Tempo de análise ainda não pôde ser derivado da vela atual.' };
-}
-
 export function exactCasaTradeTime(state = {}) {
   const focus = state.diagnostics?.focusedAsset || null;
   const clock = state.diagnostics?.marketClock || null;
+  if (!focusReady(state) || !clock) return { ready: false, reason: 'Ativo/gráfico ainda não confirmado.' };
+  if (clock.available === false || clock.verified !== true || clock.role !== 'candle-close') {
+    return { ready: false, reason: 'Relógio exato da vela ainda não foi confirmado.' };
+  }
+  if (!EXACT_CLOCK_SOURCES.has(text(clock.source))) return { ready: false, reason: 'Fonte de tempo não autoritativa.' };
+  if (!sameMarket(clock.asset, state.asset)) return { ready: false, reason: 'Relógio pertence a outro ativo.' };
+  if (!clockBoundToFocus(clock, focus)) return { ready: false, reason: 'Relógio ainda não foi vinculado ao gráfico ativo.' };
+  const clockAt = Number(clock.at || 0);
+  const clockAgeMs = Date.now() - clockAt;
+  if (clockAgeMs >= CLOCK_FRESH_MS) return { ready: false, reason: 'Relógio da CasaTrade ficou desatualizado.' };
+  const rawRemaining = num(clock.secondsRemaining);
+  if (rawRemaining == null) return { ready: false, reason: 'Countdown da CasaTrade indisponível.' };
+
   const operationMode = getOperationMode(state.analystPreferences?.operationMode || 'M1');
-
-  if (!focusReady(state)) return { ready: false, authoritative: false, reason: 'Ativo/gráfico ainda não confirmado.' };
-
-  if (clock && clock.available !== false && sameMarket(clock.asset, state.asset)) {
-    if (clock.verified !== true || clock.role !== 'candle-close') {
-      const derived = derivedAnalysisTime(state, operationMode);
-      if (derived.ready) return derived;
-      return { ready: false, authoritative: false, reason: 'Relógio exato da vela ainda não foi confirmado.' };
-    }
-    if (!EXACT_CLOCK_SOURCES.has(text(clock.source))) {
-      const derived = derivedAnalysisTime(state, operationMode);
-      if (derived.ready) return derived;
-      return { ready: false, authoritative: false, reason: 'Fonte de tempo não autoritativa.' };
-    }
-    if (!clockBoundToFocus(clock, focus)) {
-      const derived = derivedAnalysisTime(state, operationMode);
-      if (derived.ready) return derived;
-      return { ready: false, authoritative: false, reason: 'Relógio ainda não foi vinculado ao gráfico ativo.' };
-    }
-    const clockAt = Number(clock.at || 0);
-    const clockAgeMs = Date.now() - clockAt;
-    const rawRemaining = num(clock.secondsRemaining);
-    if (clockAgeMs < CLOCK_FRESH_MS && rawRemaining != null) {
-      const liveTf = normTf(clock.timeframe);
-      const stateTf = normTf(state.analysisTimeframe || state.timeframe);
-      const controlTf = normTf(state.platformControls?.observed?.timeframe);
-      if (!liveTf) return { ready: false, authoritative: false, reason: 'Timeframe real ainda não foi confirmado.' };
-      if (liveTf !== operationMode.timeframe) return { ready: false, authoritative: false, reason: `Ajuste o timeframe da CasaTrade para ${operationMode.timeframe}.` };
-      if (stateTf && liveTf !== stateTf) return { ready: false, authoritative: false, reason: 'Timeframe interno divergiu do gráfico.' };
-      if (controlTf && liveTf !== controlTf) return { ready: false, authoritative: false, reason: 'Timeframe visível divergiu do clock da vela.' };
-      const elapsedSeconds = Math.max(0, clockAgeMs / 1000);
-      const projectedRemaining = Math.max(0, Number(rawRemaining) - elapsedSeconds);
-      return {
-        ready: projectedRemaining > 0,
-        authoritative: true,
-        timeframe: liveTf,
-        secondsRemaining: projectedRemaining,
-        source: clock.source,
-        operationMode: operationMode.timeframe,
-        projectedFromExact: clockAgeMs > 250
-      };
-    }
-    const derived = derivedAnalysisTime(state, operationMode);
-    if (derived.ready) return derived;
-    return { ready: false, authoritative: false, reason: 'Relógio da CasaTrade ficou desatualizado.' };
-  }
-
-  if (clock && clock.asset && !sameMarket(clock.asset, state.asset)) {
-    return { ready: false, authoritative: false, reason: 'Relógio pertence a outro ativo.' };
-  }
-
-  const derived = derivedAnalysisTime(state, operationMode);
-  if (derived.ready) return derived;
-  return { ready: false, authoritative: false, reason: 'Countdown da CasaTrade indisponível.' };
+  const liveTf = normTf(clock.timeframe);
+  const stateTf = normTf(state.analysisTimeframe || state.timeframe);
+  const controlTf = normTf(state.platformControls?.observed?.timeframe);
+  if (!liveTf) return { ready: false, reason: 'Timeframe real ainda não foi confirmado.' };
+  if (liveTf !== operationMode.timeframe) return { ready: false, reason: `Ajuste o timeframe da CasaTrade para ${operationMode.timeframe}.` };
+  if (stateTf && liveTf !== stateTf) return { ready: false, reason: 'Timeframe interno divergiu do gráfico.' };
+  if (controlTf && liveTf !== controlTf) return { ready: false, reason: 'Timeframe visível divergiu do clock da vela.' };
+  // Bridge one missed DOM/feed observation with a bounded projection from the
+  // latest exact CasaTrade sample. We never roll a decision into the next candle:
+  // once projected time reaches zero the entry gate closes until a new exact sample.
+  const elapsedSeconds = Math.max(0, clockAgeMs / 1000);
+  const projectedRemaining = Math.max(0, Number(rawRemaining) - elapsedSeconds);
+  return { ready: true, timeframe: liveTf, secondsRemaining: projectedRemaining, source: clock.source, operationMode: operationMode.timeframe, projectedFromExact: clockAgeMs > 250 };
 }
 
 export function CasaTradeExpiration(state = {}, timeframe = null) {
@@ -199,36 +124,26 @@ export function CasaTradeExpiration(state = {}, timeframe = null) {
   const guard = state.diagnostics?.expirationGuard || {};
   const expirationLabel = operationMode.expiration === '300s' ? '5 minutos' : '1 minuto';
 
-  // Only a fresh, real CasaTrade observation may unlock execution. A manual
-  // value is display/fallback context only and can never make a signal actionable.
+  // Real CasaTrade observations retain their existing authority and freshness.
+  // When CasaTrade exposes no structured expiration, the explicit user-declared
+  // value may unlock the timing gate only when it exactly matches the active
+  // operation mode. It remains unverified for diagnostics/UI purposes.
   const guardAt = Number(guard.at || 0);
   const guardFresh = guardAt > 0 && Date.now() - guardAt < 10000;
-  const guardActual = guardFresh ? normExp(guard.actual || controls.userDeclaredExpiration || '') : null;
+  const guardActual = guardFresh ? normExp(guard.actual || '') : null;
   const guardSource = guardFresh ? text(guard.source || '') : '';
   const guardDivergence = guardFresh && guard.divergence === true;
 
-  const observedExpiration = normExp(controls.observed?.expiration || '');
-  const observedExpirationAt = Number(controls.observed?.observedAt?.expiration || 0);
+  const realExpirationAt = Number(controls.realExpirationAt || 0);
+  const realExpiration = normExp(controls.realExpiration || '');
+  const realFresh = !!realExpiration && realExpirationAt > 0 && Date.now() - realExpirationAt < 15000;
   const observedSource = text(controls.realExpirationSource || controls.expirationSource || controls.observed?.source || '');
-  const observedRealFresh = !!observedExpiration
-    && observedExpirationAt > 0
-    && Date.now() - observedExpirationAt < 15000
-    && observedSource !== 'user-declared';
-
-  const storedRealExpiration = normExp(controls.realExpiration || '');
-  const storedRealExpirationAt = Number(controls.realExpirationAt || 0);
-  const storedRealFresh = !!storedRealExpiration
-    && storedRealExpirationAt > 0
-    && Date.now() - storedRealExpirationAt < 15000
-    && text(controls.realExpirationSource || '') !== 'user-declared';
-
-  const realExpiration = storedRealFresh ? storedRealExpiration : observedRealFresh ? observedExpiration : '';
-  const realExpirationAt = storedRealFresh ? storedRealExpirationAt : observedRealFresh ? observedExpirationAt : 0;
-  const realFresh = !!realExpiration && realExpirationAt > 0;
-  const actual = realFresh ? realExpiration : guardActual || null;
+  const manualExpiration = normExp(controls.userDeclaredExpiration || '')
+    || (guardSource === 'user-declared' ? guardActual : null);
+  const actual = realFresh ? realExpiration : manualExpiration || guardActual || null;
   const source = realFresh
-    ? (text(storedRealFresh ? controls.realExpirationSource : observedSource) || 'casatrade-observed')
-    : guardSource || '';
+    ? (text(controls.realExpirationSource) || 'casatrade-observed')
+    : manualExpiration ? 'user-declared' : guardSource || '';
   const liveTf = normTf(timeframe || state.analysisTimeframe || state.timeframe);
 
   if (guardDivergence) {
@@ -242,16 +157,19 @@ export function CasaTradeExpiration(state = {}, timeframe = null) {
     };
   }
   if (!realFresh) {
-    const manual = normExp(controls.userDeclaredExpiration || guardActual || '');
+    const manual = manualExpiration;
+    const manualMatches = !!manual && manual === operationMode.expiration;
     return {
-      ready: false,
+      ready: manualMatches,
       actual: manual || null,
       required: operationMode.expiration,
       source: manual ? 'user-declared' : null,
       verified: false,
-      reason: manual
-        ? `Expiração de ${expirationLabel} informada, aguardando verificação real da CasaTrade`
-        : 'Expiração real da CasaTrade ainda não confirmada'
+      reason: manualMatches
+        ? `Expiração de ${expirationLabel} informada pelo usuário e compatível com ${operationMode.timeframe}; confirmação real da CasaTrade indisponível.`
+        : manual
+          ? `Ajuste a expiração declarada para ${expirationLabel} para corresponder ao modo ${operationMode.timeframe}.`
+          : 'Expiração real da CasaTrade ainda não confirmada'
     };
   }
   if (liveTf === operationMode.timeframe && actual !== operationMode.expiration) {
@@ -393,7 +311,6 @@ function baseDecision(state = {}) {
     expirationReady: expiration.ready,
     actualExpiration: expiration.actual || null,
     timeSource: time.source || null,
-    timeAuthoritative: time.authoritative === true,
     timeframe: time.timeframe || normTf(state.analysisTimeframe || state.timeframe),
     secondsRemaining: time.secondsRemaining ?? num(state.diagnostics?.marketClock?.secondsRemaining),
     marketIdentityReady: identity.ready,
@@ -507,19 +424,6 @@ function baseDecision(state = {}) {
     };
   }
 
-  if (time.authoritative !== true) {
-    return {
-      ...common,
-      uiState: direction === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL',
-      direction,
-      actionable: false,
-      alert: 'discrete',
-      possibleSince,
-      holdRemainingMs: Math.max(0, holdMs - heldFor),
-      reason: `${side} — ALTA CONFIANÇA • PRÉ-SINAL • aguardando o countdown exato da CasaTrade para liberar a entrada.`
-    };
-  }
-
   if (heldFor < holdMs) {
     return {
       ...common,
@@ -561,7 +465,6 @@ function signature(value = {}) {
     confluence: value.confluence || 0,
     factors: value.factors || [],
     timeReady: !!value.timeReady,
-    timeAuthoritative: !!value.timeAuthoritative,
     expirationReady: !!value.expirationReady,
     actualExpiration: value.actualExpiration || null,
     timeSource: value.timeSource || null,
