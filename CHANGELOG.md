@@ -1,5 +1,76 @@
 # Changelog
 
+## 0.11.85 — sincronização do ENTER + conexão viva
+
+### Diagnóstico confirmado após a observação ao vivo
+
+Foram identificados dois sintomas distintos no v0.11.84:
+
+1. vários `POSSÍVEL` sem chegar a `ENTRAR`;
+2. a interface mudava para `DESCONECTADO` mesmo depois de a sessão estar conectada.
+
+### ITEM 1 — POSSÍVEL sem ENTER
+
+Havia uma inconsistência entre o owner técnico e a camada de política:
+
+- `src/core/orchestrator.js` é o owner técnico e pode promover o ciclo para `ENTER_BUY/ENTER_SELL` com os gates técnicos já existentes;
+- `src/background-decision-policy.js` reconstruía `professionalDecision` e, até esta versão, só aceitava `ENTER` se também `professional.contextReady === true` e `professional.triggerReady === true`;
+- quando o orquestrador técnico já confirmava o ciclo, essa segunda camada podia rebaixá-lo para `POSSIBLE`;
+- `src/sidepanel/app-v2.js` prioriza esse `POSSIBLE` na apresentação, ocultando o ENTER técnico.
+
+### Correção
+
+A camada de política agora aceita a confirmação técnica **já emitida pelo orquestrador** quando continuam verdadeiros os mesmos gates técnicos finais:
+
+- `technicalFinal`;
+- padrão técnico pronto;
+- score >= `finalScore`;
+- poder >= `finalPower`;
+- confluência >= `minimumConfluence`.
+
+Não houve redução de thresholds nem criação de uma nova condição de entrada. A correção apenas impede que uma segunda camada contradiga a decisão do owner técnico.
+
+O caminho profissional continua válido quando `contextReady + triggerReady` estão completos.
+
+O gate de `entryTimeReady/expirationTimingCompatible` do v0.11.83 permanece intacto.
+
+### ITEM 2 — falso DESCONECTADO
+
+A UI dependia de `lastSeen` para considerar o transporte vivo. Assim, um intervalo temporário sem atualização de cotação podia fazer o indicador cair para `DESCONECTADO`, mesmo com o countdown exato da CasaTrade continuando fresco e vinculado ao mesmo ativo/frame.
+
+### Correção
+
+`liveTransportHandshake()` agora considera a sessão viva quando existe pelo menos uma destas evidências:
+
+1. dados de mercado recentes, como antes; ou
+2. clock exato da CasaTrade ainda fresco, autoritativo, pertencente ao mesmo ativo e vinculado ao mesmo frame.
+
+O clock é usado **somente para o status de conexão da UI**. Ele não libera entrada por si só e não altera nenhum gate técnico/temporal.
+
+### O que NÃO foi alterado
+
+- score e fórmula de score;
+- perfis RIGIDO/MEDIO/SOLTO;
+- thresholds;
+- filtros sombra;
+- licença;
+- Gemini;
+- execução;
+- `rejectionStrength`;
+- continuação/momentum;
+- `entryTimeReady`;
+- `expirationTimingCompatible`;
+- fonte autoritativa do relógio;
+- exigências de M1/expiração para entrada.
+
+### Arquivos alterados
+
+1. `src/background-decision-policy.js`
+2. `src/sidepanel/ui-shell-v2.js`
+3. `manifest.json`
+4. `CHANGELOG.md`
+
+
 ## 0.11.84 — auditoria de rejectionStrength e decisão final (sem mudança de estratégia)
 
 ### Objetivo da investigação
