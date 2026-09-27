@@ -387,7 +387,10 @@ function baseDecision(state = {}) {
     };
   }
 
-  if (!professionalContextReady || !professionalTriggerReady) {
+  // A technically confirmed local setup may continue even while the optional
+  // professional context layer is momentarily incomplete. This keeps the policy
+  // layer from downgrading a real chart trigger back to WAIT/POSSÍVEL.
+  if ((!professionalContextReady || !professionalTriggerReady) && !technicalPatternReady) {
     return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: 'AGUARDAR — tendência/contexto, região e gatilho ainda não estão confirmados juntos.' };
   }
 
