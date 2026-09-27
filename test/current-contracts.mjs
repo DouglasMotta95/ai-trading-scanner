@@ -22,8 +22,8 @@ export function registerBuildContracts(label='build') {
     const pkg = JSON.parse(read('backend/package.json'));
     const server = read('backend/src/server.js');
     assert.equal(pkg.version, '0.11.82');
-    assert.match(server, /const VERSION = '0\.11\.80'/);
-    assert.match(server, /EXTENSION_LATEST_VERSION = String(process.env.EXTENSION_LATEST_VERSION || '0\.11\.80')/);
+    assert.match(server, /const VERSION = '0.11.82'/);
+    assert.match(server, /EXTENSION_LATEST_VERSION = String(process.env.EXTENSION_LATEST_VERSION || '0.11.82')/);
   });
 }
 
