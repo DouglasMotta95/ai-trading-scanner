@@ -108,7 +108,8 @@ export function analysisSecondsRemaining(state = {}, time = {}) {
 function exactCasaTradeTime(state = {}) {
   const focus = state.diagnostics?.focusedAsset || null;
   const clock = state.diagnostics?.marketClock || null;
-  if (!focusReady(state) || !clock) return { ready: false, reason: 'Ativo/gráfico ainda não confirmado.' };
+  if (!focusReady(state)) return { ready: false, reason: 'Ativo/gráfico ainda não confirmado.' };
+  if (!clock) return { ready: false, reason: 'Relógio exato da vela ainda não foi confirmado.' };
   if (clock.available === false || clock.verified !== true || clock.role !== 'candle-close') {
     return { ready: false, reason: 'Relógio exato da vela ainda não foi confirmado.' };
   }
