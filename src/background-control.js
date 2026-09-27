@@ -385,8 +385,8 @@ function inspectCasaTradeControlsDirect() {
   }
 
   const page = clean0(parts.join(' ')).slice(0, 300000);
-  const pageExp = page.match(/(?:expira(?:ção|cao)?|expiry|expiration|duracao|duração|duration)[^0-9]{0,100}(\d{1,4})\s*(s|seg|segundo|segundos|m|min|minuto|minutos)\b/i)
-    || page.match(/\b(\d{1,4})\s*(s|seg|segundo|segundos|m|min|minuto|minutos)\b[^0-9]{0,100}(?:expira(?:ção|cao)?|expiry|expiration|duracao|duração|duration)/i);
+  const pageExp = page.match(/(?:expira(?:ção|cao)?|expiry|expiration|duracao|duração|duration)[^0-9]{0,300}(\d{1,4})\s*(s|seg|segundo|segundos|m|min|minuto|minutos)\b/i)
+    || page.match(/\b(\d{1,4})\s*(s|seg|segundo|segundos|m|min|minuto|minutos)\b[^0-9]{0,300}(?:expira(?:ção|cao)?|expiry|expiration|duracao|duração|duration)/i);
   if (pageExp) {
     const expiration = normExp0(`${pageExp[1]}${pageExp[2]}`);
     if (expiration) candidates.push({ expiration, score: 100, text: 'page-expiration-label' });
@@ -802,7 +802,7 @@ async function collectExpirationDiagnostic(tabId) {
   };
 }
 
-async function probePlatformControlsDirect(tabId) {
+export async function probePlatformControlsDirect(tabId) {
   if (!tabId) return { ok: false, error: 'target_tab_missing' };
   let rows = [];
   try {
