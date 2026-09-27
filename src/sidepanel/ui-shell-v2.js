@@ -505,7 +505,9 @@ function renderShell(state = {}) {
     // Programmatic restoration does not fire <select>'s change event. Treat
     // one saved declaration as a fresh session declaration once per session,
     // so reconnection does not force the user to re-select the same value.
-    const restoreSessionKey = String(sessionStartedAt || 0) + ':' + storedValue;
+    const reconnectKey = clean(state.diagnostics?.connectionHandshake?.attemptId || '')
+      || String(sessionStartedAt || state.diagnostics?.target?.connectedAt || 0);
+    const restoreSessionKey = reconnectKey + ':' + storedValue;
     if (storedValue && expirationSelect.dataset.atsRestoredExpiration !== restoreSessionKey) {
       expirationSelect.dataset.atsRestoredExpiration = restoreSessionKey;
       expirationSelect.dispatchEvent(new Event('change', { bubbles: true }));
