@@ -77,30 +77,18 @@ function marketIdentityReady(state = {}) {
 function expirationObservation(state = {}) {
   const controls = state.platformControls || {};
   const observedAt = Number(controls.expirationCheckedAt || controls.observed?.observedAt?.expiration || 0);
-  const observedValue = normExp(controls.observed?.expiration || '');
-  const realAtStored = Number(controls.realExpirationAt || 0);
-  const realValueStored = normExp(controls.realExpiration || '');
-  const realSourceStored = clean(controls.realExpirationSource || controls.expirationSource || '');
-  const observedSource = clean(controls.observed?.source || controls.expirationSource || '');
-  // A verified CasaTrade expiration survives short control re-renders. A fresh
-  // non-manual observed value is also real platform evidence even if the
-  // dedicated cached realExpiration fields have not been populated yet.
-  const realAt = realAtStored;
-  const storedFresh = !!realValueStored
-    && realAtStored > 0
-    && Date.now() - realAt < 15000
-    && realSourceStored !== 'user-declared';
-  const observedRealFresh = !!observedValue
-    && Number(controls.observed?.observedAt?.expiration || 0) > 0
-    && Date.now() - Number(controls.observed?.observedAt?.expiration || 0) < 15000
-    && observedSource !== 'user-declared';
-  const realFresh = storedFresh || observedRealFresh;
-  const realValue = storedFresh ? realValueStored : observedRealFresh ? observedValue : '';
-  const effectiveRealAt = storedFresh ? realAtStored : observedRealFresh ? Number(controls.observed?.observedAt?.expiration || 0) : 0;
-  const realSource = storedFresh ? realSourceStored : observedRealFresh ? observedSource : '';
-  const at = realFresh ? effectiveRealAt : observedAt;
-  const manualFresh = observedAt > 0 && Date.now() - observedAt < 7000;
-  const manualValue = manualFresh && !observedRealFresh ? normExp(controls.observed?.expiration || controls.userDeclaredExpiration || '') : null;
+  const realAt = Number(controls.realExpirationAt || 0);
+  const realValue = normExp(controls.realExpiration || '');
+  const realSource = clean(controls.realExpirationSource || controls.expirationSource || '');
+  // A verified CasaTrade expiration remains time-fresh for 15s as before.
+  // A user-declared expiration is intentionally NOT time-expiring: it remains
+  // a valid unverified fallback until the existing session/asset reset clears it
+  // or the user changes the selector. It must never turn into "real pending"
+  // merely because 7 seconds elapsed since the selector change.
+  const realFresh = !!realValue && realAt > 0 && Date.now() - realAt < 15000 && realSource !== 'user-declared';
+  const at = realFresh ? realAt : observedAt;
+  const manualFresh = observedAt > 0;
+  const manualValue = manualFresh ? normExp(controls.observed?.expiration || controls.userDeclaredExpiration || '') : null;
   const value = realFresh ? realValue : manualValue;
   const source = realFresh ? (realSource || 'casatrade-observed') : manualValue ? 'user-declared' : '';
   return { value, fresh: realFresh || manualFresh, verified: realFresh, source, at, ageMs: at > 0 ? Date.now() - at : Infinity };
@@ -219,13 +207,22 @@ function sessionReady(state = {}) {
     && operationalClockReady(state);
 }
 
+function expirationTimingCompatible(expiration = {}, operation = {}) {
+  // A real CasaTrade observation remains accepted exactly as before.
+  // When CasaTrade does not expose a structured expiration, the explicit
+  // user declaration is the supported timing authority, provided it matches
+  // the active operation expiration exactly.
+  return !!expiration.value
+    && expiration.value === operation.expiration
+    && (expiration.verified === true || expiration.source === 'user-declared');
+}
+
 function liveTimingReady(state = {}) {
   if (!exactClockReady(state)) return false;
   const clock = state.diagnostics?.marketClock || {};
   const expiration = expirationObservation(state);
   const operation = operationRequirement(state);
-  return expiration.verified === true
-    && expiration.value === operation.expiration
+  return expirationTimingCompatible(expiration, operation)
     && normTf(clock.timeframe) === operation.timeframe;
 }
 
@@ -233,14 +230,13 @@ function entryTimeReady(state = {}) {
   if (!exactClockReady(state)) return false;
   const clock = state.diagnostics?.marketClock || {};
   const expiration = expirationObservation(state);
-  const actualExpiration = expiration.value;
-  if (!actualExpiration || expiration.verified !== true) return false;
   const operation = operationRequirement(state);
+  if (!expirationTimingCompatible(expiration, operation)) return false;
   const clockTf = normTf(clock.timeframe);
   const stateTf = normTf(state.analysisTimeframe || state.timeframe);
   const controlTf = normTf(state.platformControls?.observed?.timeframe);
   if (!clockTf || clockTf !== operation.timeframe) return false;
-  if (actualExpiration !== operation.expiration) return false;
+  if (expiration.value !== operation.expiration) return false;
   if (stateTf && stateTf !== clockTf) return false;
   if (controlTf && controlTf !== clockTf) return false;
   return state.professionalDecision?.timeReady === true && state.professionalDecision?.expirationReady === true;
