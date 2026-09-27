@@ -1,5 +1,4 @@
-const originalGet = chrome.storage.local.get.bind(chrome.storage.local);
-const originalSet = chrome.storage.local.set.bind(chrome.storage.local);
+import { storageLocalGet, storageLocalSet } from './chrome-compat.js';
 
 let scannerStateWriteQueue = Promise.resolve();
 
@@ -13,7 +12,7 @@ const clone = value => {
 };
 
 async function storedScannerState() {
-  const stored = await originalGet('scannerState');
+  const stored = await storageLocalGet('scannerState');
   return clone(stored?.scannerState || {});
 }
 
@@ -31,7 +30,7 @@ export function updateScannerState(mutator) {
     if (proposed === undefined) return current;
 
     const next = clone(proposed || {});
-    await originalSet({ scannerState: next });
+    await storageLocalSet({ scannerState: next });
     return clone(next);
   });
 
