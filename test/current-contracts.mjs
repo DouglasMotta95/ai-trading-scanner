@@ -18,9 +18,6 @@ export function registerBuildContracts(label='build') {
     const files = manifest().content_scripts.flatMap(row => row.js || []);
     for (const required of ['src/content/focused-asset-v2.js','src/content/embedded-feed-bridge.js','src/content/market-cycle-clock-v4.js','src/content/casatrade-expiration-probe.js','src/content/account-metrics-observer.js','src/content/trade-handoff-v2.js']) assert.ok(files.includes(required), 'missing ' + required);
   });
-}
-
-export function registerBackendContracts(label='backend') {
   test(label + ': backend package and public version defaults track the extension build', () => {
     const pkg = JSON.parse(read('backend/package.json'));
     const server = read('backend/src/server.js');
