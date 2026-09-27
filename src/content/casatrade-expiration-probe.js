@@ -154,6 +154,66 @@
     return !!el?.matches?.('button,input,select,[role="button"],[role="combobox"],[aria-haspopup],[data-state]');
   }
 
+  function visibleTextRows() {
+    const rows = [];
+    const walkRoot = root => {
+      let walker = null;
+      try { walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT); } catch { return; }
+      let node = null;
+      let count = 0;
+      while ((node = walker.nextNode()) && count++ < 3000) {
+        const raw = clean(node.nodeValue || '');
+        if (!raw || raw.length > 100) continue;
+        const parent = node.parentElement;
+        if (!parent || !visible(parent)) continue;
+        let rect = null;
+        try {
+          const range = document.createRange();
+          range.selectNodeContents(node);
+          rect = range.getBoundingClientRect();
+        } catch {}
+        if (!rect || rect.width <= 0 || rect.height <= 0) continue;
+        rows.push({ node, parent, raw, folded: fold(raw), rect });
+      }
+    };
+    for (const root of roots()) walkRoot(root);
+    return rows;
+  }
+
+  function expirationFromRenderedText(all = []) {
+    const textRows = visibleTextRows();
+    const labels = textRows.filter(row => /^(?:expiracao|expiry|expiration|tempo de expiracao|expiration time)$/i.test(row.folded));
+    const durations = textRows
+      .map(row => ({ ...row, value: parseExpiration(row.raw) }))
+      .filter(row => row.value);
+
+    const candidates = [];
+    for (const label of labels) {
+      const lr = label.rect;
+      for (const duration of durations) {
+        if (duration.node === label.node) continue;
+        const dr = duration.rect;
+        const dx = dr.right < lr.left ? lr.left - dr.right : dr.left > lr.right ? dr.left - lr.right : 0;
+        const dy = dr.top < lr.top ? lr.top - dr.bottom : dr.top > lr.bottom ? dr.top - lr.bottom : 0;
+        if (dx > 700 || dy > 220) continue;
+
+        let sameContainer = false;
+        try {
+          sameContainer = label.parent === duration.parent
+            || label.parent?.parentElement === duration.parent
+            || duration.parent?.parentElement === label.parent;
+        } catch {}
+
+        let score = sameContainer ? 250 : 180;
+        score += Math.max(0, 90 - Math.min(90, dx / 5 + dy / 2));
+        if (dr.left >= lr.left - 20 && dr.top >= lr.top - 20) score += 35;
+        candidates.push({ value: duration.value, score, reason: 'rendered-text-label-pair' });
+      }
+    }
+    candidates.sort((a, b) => b.score - a.score);
+    return candidates[0] || null;
+  }
+
   function expirationControlByLabel(all = []) {
     const labels = all.filter(isExpirationLabel);
     if (!labels.length) return null;
@@ -311,9 +371,10 @@
   function scan() {
     const all = elements();
     const strong = expirationControlByLabel(all);
-    const semantic = strong || semanticControlExpiration(all);
+    const rendered = strong || expirationFromRenderedText(all);
+    const semantic = rendered || semanticControlExpiration(all);
     const body = semantic || bodyExpiration();
-    const exp = strong || semantic || body;
+    const exp = strong || rendered || semantic || body;
     const tf = selectedTimeframe(all);
 
     if (!exp && !tf) return null;
