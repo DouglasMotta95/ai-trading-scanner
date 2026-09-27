@@ -145,7 +145,29 @@
     }
 
     const durationMs = duration * 1000;
-    if (openAt % durationMs !== 0) {
+    const previousOpenAt = rows.length > 1
+      ? normalizeTime(rows.at(-2)?.time ?? rows.at(-2)?.timestamp)
+      : null;
+    const sourceStepMs = previousOpenAt ? openAt - previousOpenAt : null;
+    const sourceTimeframe = normalizeTf(latest?.timeframe);
+    const sourceDurationMs = sourceTimeframe ? durationSeconds(sourceTimeframe) * 1000 : null;
+    const sourceLooksM1 = sourceDurationMs === 60_000
+      || (!sourceDurationMs && Number.isFinite(sourceStepMs) && sourceStepMs >= 45_000 && sourceStepMs <= 90_000);
+    const currentBucket = Math.floor(now / durationMs) * durationMs;
+
+    // O feed estruturado pode entregar velas M1 enquanto o scanner está em M5.
+    // O timestamp da última M1 (ex.: 12:03) não precisa ser múltiplo de 300s:
+    // basta provar que essa vela pertence à janela M5 que está aberta agora.
+    // O ponto de fechamento continua sendo o início real dessa janela + 300s.
+    if (timeframe === 'M5' && sourceLooksM1) {
+      const sourceBucket = Math.floor(openAt / durationMs) * durationMs;
+      if (sourceBucket !== currentBucket) {
+        candleClockProbe = null;
+        lastBoundaryDiagnosticReason = 'boundary nulo';
+        return null;
+      }
+      openAt = currentBucket;
+    } else if (openAt % durationMs !== 0) {
       candleClockProbe = null;
       lastBoundaryDiagnosticReason = 'openAt fora da grade do timeframe';
       return null;
