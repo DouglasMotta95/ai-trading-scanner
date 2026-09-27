@@ -5,6 +5,7 @@ import { getThresholds, getOperationMode } from './core/analysis.js';
 import { storageLocalGet, storageLocalSet } from './services/chrome-compat.js';
 import { track as telemetryEvent, heartbeat as telemetryHeartbeat } from './services/telemetry.js';
 import { consumeSignal, validateLicense } from './services/license.js';
+import { probePlatformControlsDirect } from './background-control.js';
 
 // Single owner of technical analysis.
 // All acquisition modules only update scannerState. This loop coalesces those
@@ -1009,6 +1010,8 @@ const HEALTH_CHECK_MS = 1000;
 const RECOVERY_AFTER_MS = 4500;
 const RECOVERY_COOLDOWN_MS = 10000;
 let lastRecoveryAt = 0;
+let lastExpirationProbeAt = 0;
+const EXPIRATION_PROBE_INTERVAL_MS = 2500;
 
 function acquisitionGaps(state = {}) {
   const gaps = [];
@@ -1045,6 +1048,19 @@ async function recoverAcquisition() {
 
   const gaps = acquisitionGaps(state);
   if (!gaps.length) return;
+
+  // CasaTrade can keep the expiration control stable while its live readers
+  // are re-mounted. Probe the actual tab DOM before reinjecting the whole
+  // pipeline so a visible "Expiração 5 min/1 min" is promoted to real
+  // platform authority without waiting for a reconnect.
+  if (gaps.includes('expiração') && Date.now() - lastExpirationProbeAt >= EXPIRATION_PROBE_INTERVAL_MS) {
+    lastExpirationProbeAt = Date.now();
+    const probed = await probePlatformControlsDirect(Number(state.targetTabId)).catch(() => null);
+    if (probed?.ok === true) {
+      const refreshed = probed.state || await readScannerState().catch(() => null);
+      if (refreshed && !acquisitionGaps(refreshed).includes('expiração')) return;
+    }
+  }
 
   await updateScannerState(current => ({
     ...current,
