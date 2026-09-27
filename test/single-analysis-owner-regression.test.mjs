@@ -28,6 +28,7 @@ function snapshotFrom(state, serverTime) {
     expiration: '60s',
     targetExpiration: '60s',
     secondsRemaining: state.diagnostics.marketClock.secondsRemaining,
+    clockVerified: true,
     serverTime,
     candles: state.candles,
     capabilities: { structuredQuotes: true, candles: true }
