@@ -213,7 +213,12 @@ function liveTimingReady(state = {}) {
   const clock = state.diagnostics?.marketClock || {};
   const expiration = expirationObservation(state);
   const operation = operationRequirement(state);
-  return expiration.verified === true
+  // CasaTrade's expiration control is canvas-rendered and may never expose a
+  // verifiable DOM value. The exact network/server candle clock is the timing
+  // authority; the user's declared expiration must simply match the active
+  // operation duration. A real CasaTrade observation, when available, still
+  // remains accepted through expirationObservation().
+  return !!expiration.value
     && expiration.value === operation.expiration
     && normTf(clock.timeframe) === operation.timeframe;
 }
@@ -223,7 +228,7 @@ function entryTimeReady(state = {}) {
   const clock = state.diagnostics?.marketClock || {};
   const expiration = expirationObservation(state);
   const actualExpiration = expiration.value;
-  if (!actualExpiration || expiration.verified !== true) return false;
+  if (!actualExpiration) return false;
   const operation = operationRequirement(state);
   const clockTf = normTf(clock.timeframe);
   const stateTf = normTf(state.analysisTimeframe || state.timeframe);
@@ -288,8 +293,7 @@ function entryBlockReason(state = {}) {
   const operation = operationRequirement(state);
   const expirationLabel = operation.expiration === '300s' ? '5 MINUTOS' : '1 MINUTO';
   const expiration = expirationObservation(state);
-  if (!expiration.value) return 'EXPIRAÇÃO REAL PENDENTE — AGUARDANDO LEITURA DA CASATRADE';
-  if (expiration.verified !== true) return 'EXPIRAÇÃO INFORMADA, MAS NÃO VERIFICADA — AGUARDANDO A CASATRADE';
+  if (!expiration.value) return 'EXPIRAÇÃO PENDENTE — INFORME A DURAÇÃO DA OPERAÇÃO';
   if (expiration.value !== operation.expiration) return `AJUSTE A EXPIRAÇÃO DA CASATRADE PARA ${expirationLabel}`;
 
   const clock = state.diagnostics?.marketClock || {};
@@ -304,7 +308,6 @@ function gateKind(state = {}) {
   const operation = operationRequirement(state);
   const expiration = expirationObservation(state);
   if (!expiration.value) return 'waiting';
-  if (expiration.verified !== true) return 'waiting';
   if (expiration.value !== operation.expiration) return 'rule';
   if (!exactClockReady(state)) return 'waiting';
   const clockTf = normTf(state.diagnostics?.marketClock?.timeframe);
