@@ -20,6 +20,16 @@ export function registerBuildContracts(label='build') {
   });
 }
 
+export function registerBackendContracts(label='backend') {
+  test(label + ': backend package and public version defaults track the extension build', () => {
+    const pkg = JSON.parse(read('backend/package.json'));
+    const server = read('backend/src/server.js');
+    assert.equal(pkg.version, '0.11.76');
+    assert.match(server, /const VERSION = '0\.11\.76'/);
+    assert.match(server, /EXTENSION_LATEST_VERSION = String\(process\.env\.EXTENSION_LATEST_VERSION \|\| '0\.11\.76'\)/);
+  });
+}
+
 export function registerMarketContracts(label='market') {
   test(label + ': visible CasaTrade focus is the market authority', () => {
     const focus = read('src/content/focused-asset-v2.js');
