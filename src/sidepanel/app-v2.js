@@ -85,10 +85,10 @@ function expirationObservation(state = {}) {
   // A verified CasaTrade expiration survives short control re-renders. A fresh
   // non-manual observed value is also real platform evidence even if the
   // dedicated cached realExpiration fields have not been populated yet.
-  const realAtCheck = realAtStored;
+  const realAt = realAtStored;
   const storedFresh = !!realValueStored
     && realAtStored > 0
-    && Date.now() - realAtCheck < 15000
+    && Date.now() - realAt < 15000
     && realSourceStored !== 'user-declared';
   const observedRealFresh = !!observedValue
     && Number(controls.observed?.observedAt?.expiration || 0) > 0
@@ -96,9 +96,9 @@ function expirationObservation(state = {}) {
     && observedSource !== 'user-declared';
   const realFresh = storedFresh || observedRealFresh;
   const realValue = storedFresh ? realValueStored : observedRealFresh ? observedValue : '';
-  const realAt = storedFresh ? realAtStored : observedRealFresh ? Number(controls.observed?.observedAt?.expiration || 0) : 0;
+  const effectiveRealAt = storedFresh ? realAtStored : observedRealFresh ? Number(controls.observed?.observedAt?.expiration || 0) : 0;
   const realSource = storedFresh ? realSourceStored : observedRealFresh ? observedSource : '';
-  const at = realFresh ? realAt : observedAt;
+  const at = realFresh ? effectiveRealAt : observedAt;
   const manualFresh = observedAt > 0 && Date.now() - observedAt < 7000;
   const manualValue = manualFresh && !observedRealFresh ? normExp(controls.observed?.expiration || controls.userDeclaredExpiration || '') : null;
   const value = realFresh ? realValue : manualValue;
