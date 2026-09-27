@@ -1,5 +1,110 @@
 # Changelog
 
+## 0.11.84 — auditoria de rejectionStrength e decisão final (sem mudança de estratégia)
+
+### Objetivo da investigação
+A evidência ao vivo em EUR/USD M1 sugeriu que `decisionQuality` poderia estar exigindo simultaneamente rejeição forte, continuação forte, momentum forte e força da vela forte. O objetivo desta versão foi verificar essa hipótese diretamente no código do HEAD v0.11.83 e não alterar a estratégia sem evidência estrutural.
+
+### (a) O que `rejectionStrength` realmente mede
+No arquivo `src/core/analysis.js`, a função `shape()` calcula:
+- `range = high - low`;
+- `bodyRatio = |close - open| / range`;
+- `upperRatio = (high - max(open, close)) / range`;
+- `lowerRatio = (min(open, close) - low) / range`.
+
+Em `analystMetrics()`:
+- `rejectionBuy = lowerRatio * 100`;
+- `rejectionSell = upperRatio * 100`;
+- `rejectionStrength` usa a rejeição direcional quando existe; sem direção de rejeição, usa o maior dos dois pavios.
+
+A rejeição direcional só é criada quando o pavio correspondente supera o limiar do perfil **e** a vela atual fecha na direção correspondente:
+- BUY: pavio inferior + `close > open`;
+- SELL: pavio superior + `close < open`.
+
+Portanto, `rejectionStrength` mede a **geometria da vela atual**. Não existe, nessa fórmula, uma comparação direta com uma tendência anterior, uma média de velas anteriores ou um “grau de reversão da tendência recente”. A informação histórica entra separadamente em momentum/continuação/agreement.
+
+### (b) Relação matemática com força, continuação e momentum
+Para uma vela válida, a geometria satisfaz:
+
+`bodyRatio + upperRatio + lowerRatio = 1`
+
+Como `currentStrength = bodyRatio * 100`, uma rejeição direcional forte e uma força de vela muito alta ocupam a mesma faixa da vela e ficam geometricamente limitadas.
+
+No perfil MEDIO:
+- rejeição >= 45% + força >= 55% consome 100% da faixa;
+- para manter ambos simultaneamente, o pavio oposto teria de ser 0%.
+
+No RIGIDO:
+- rejeição >= 50% + força >= 62% soma 112%;
+- portanto essa combinação é matematicamente impossível.
+
+No SOLTO:
+- rejeição >= 40% + força >= 50% soma 90%;
+- sobra no máximo 10% para o pavio oposto.
+
+Isso explica diretamente o padrão observado no diagnóstico: quando `rejectionStrength` chega a 74–78%, a força do corpo precisa ser baixa; quando a força do corpo está em 71–74% ou próxima disso, a rejeição de um único pavio tende a ficar pequena.
+
+A continuação também não é um indicador de reversão. No código, `continuationScore` é:
+
+`agreement * 45 + momentumScore * 0.30 + currentStrength * 0.25`
+
+quando direção da vela atual e direção do momentum coincidem; caso contrário, é 0. Assim, continuação recebe contribuição **positiva** de momentum e força da vela.
+
+O `momentumScore` é calculado sobre a sequência recente de fechamentos: combina consistência direcional (`abs(net) / activity`, peso 65%) e deslocamento do preço em relação à faixa média (`displacement`, peso 35%). Portanto, momentum representa movimento direcional recente; também não é uma medida de “reversão confirmada”.
+
+### (c) A regra de quatro AND existe no HEAD v0.11.83?
+**Não.**
+
+Em `src/core/orchestrator.js`, `highConfidenceEvidence()` adiciona separadamente:
+- rejeição;
+- continuação;
+- momentum;
+- força da vela.
+
+Na função `decisionQuality()`, o modo **SIMPLES** usa:
+- score final >= `signalPolicy.finalScore`;
+- poder direcional >= `signalPolicy.finalPower`;
+- número de evidências fortes >= `signalPolicy.minimumConfluence`.
+
+No perfil MEDIO, isso corresponde a:
+- score final >= 66;
+- poder direcional >= 59;
+- mínimo de 2 evidências fortes.
+
+Ou seja, a semântica é de **confluência mínima**, não “rejeição E continuação E momentum E força”.
+
+O próprio caminho **EXIGENTE** também não usa os quatro ao mesmo tempo. Ele possui caminhos alternativos de setup: rejeição, continuação, momentum ou confluência forte, cada um com seus próprios requisitos.
+
+Além disso, `src/core/orchestrator-legacy.js` usa uma condição explícita de alternativas para qualidade final:
+
+`candleStrong || rejected || broke || continuation || trendAligned`
+
+### Conclusão de engenharia
+A hipótese “há um defeito porque quatro sinais opostos estão sendo exigidos simultaneamente” **não descreve o código atual**. A geometria de `rejectionStrength` explica por que rejeição e corpo muito forte raramente aparecem juntos, mas isso não bloqueia a decisão atual quando continuação + momentum + força já fornecem a confluência mínima exigida.
+
+Por isso, **não foi alterado nenhum limiar, fórmula, operador AND/OR, perfil, filtro sombra, licença, Gemini, execução ou gate temporal do v0.11.83**.
+
+### Implicação para o diagnóstico ao vivo
+Se o diagnóstico ao vivo mostrar score 71–74, continuação >= 55, momentum >= 40 e força >= 55 e ainda assim `decisionQuality.qualifies=false` no modo SIMPLES, o próximo bloqueador a verificar é o restante de `commonReady`, principalmente:
+- poder direcional abaixo de 59;
+- menos de 2 evidências reconhecidas pelo próprio `highConfidenceEvidence()`;
+- direção/score reais diferentes dos valores exibidos;
+- build executada diferente do HEAD auditado.
+
+Isso é diferente de “rejectionStrength precisa estar >=45 junto com os outros três”.
+
+### Compatibilidade com v0.11.83
+O fix de `entryTimeReady/expirationTimingCompatible` e todos os gates temporais do v0.11.83 foram preservados integralmente. Esta versão é somente uma auditoria/documentação + alinhamento de versão.
+
+### Arquivos alterados
+- `manifest.json` — versão 0.11.84 e `version_name` descritivo.
+- `package.json` — versão alinhada para 0.11.84.
+- `CHANGELOG.md` — registro completo da investigação.
+
+**Arquivos de estratégia alterados: nenhum.**
+**Mudança de regra de entrada: nenhuma.**
+
+
 ## 0.11.76 — diagnóstico completo do focused asset + relógio M5
 
 ### ITEM 1 — Diagnóstico incompleto
