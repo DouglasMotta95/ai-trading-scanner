@@ -291,6 +291,18 @@ function baseDecision(state = {}) {
   const professional = signal.analytics?.professional || {};
   const professionalContextReady = professional.contextReady === true;
   const professionalTriggerReady = professional.triggerReady === true;
+  const recent = signal?.recent || {};
+  const localTriggerReady = recent.breakout === direction
+    || recent.rejection === direction
+    || (recent.continuationDirection === direction && Number(recent.continuationScore || 0) >= 60);
+  // A next-candle candidate must have a concrete local chart trigger. Momentum
+  // or candle strength alone can describe context but cannot create an entry.
+  const technicalPatternReady = recent.ready === true
+    && !!direction
+    && score >= possibleScore
+    && mandatoryPowerReady
+    && additionalConfluenceReady
+    && localTriggerReady;
 
   const common = {
     profile: pref.mode,
@@ -305,6 +317,8 @@ function baseDecision(state = {}) {
     factors: factors.factors,
     professionalContextReady,
     professionalTriggerReady,
+    localTriggerReady,
+    technicalPatternReady,
     professionalScoreBlocks: professional.blocks || null,
     signalPolicy,
     timeReady: time.ready,
@@ -355,10 +369,7 @@ function baseDecision(state = {}) {
     && ['POSSIBLE_BUY','POSSIBLE_SELL'].includes(previousUi)
     && Number(previous.possibleSince || 0) > 0
     && now - Number(previous.possibleSince) < 8000;
-  const technicalCoreStillReady = !!direction
-    && score >= possibleScore
-    && mandatoryPowerReady
-    && additionalConfluenceReady;
+  const technicalCoreStillReady = technicalPatternReady;
   if ((!professionalContextReady || !professionalTriggerReady) && previousPossible && technicalCoreStillReady) {
     const recoveredSince = Number(previous.possibleSince);
     const heldFor = Math.max(0, now - recoveredSince);
@@ -380,7 +391,7 @@ function baseDecision(state = {}) {
     return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: 'AGUARDAR — tendência/contexto, região e gatilho ainda não estão confirmados juntos.' };
   }
 
-  if (!technicalCandidate || !direction || score < possibleScore || !mandatoryPowerReady || !additionalConfluenceReady) {
+  if (!technicalPatternReady) {
     return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: 'AGUARDAR — motor técnico ainda não liberou um candidato.' };
   }
 
