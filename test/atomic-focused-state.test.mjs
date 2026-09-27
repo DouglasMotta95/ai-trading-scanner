@@ -72,7 +72,7 @@ test('runtime scannerState writers use the central atomic queue', () => {
 test('live market identity keeps OTC distinct from the regular pair', () => {
   const market = read('src/background-market-session.js');
   const focus = read('src/content/focused-asset-v2.js');
-  assert.match(market, /\$\{direct\[1\]\}\/\$\{direct\[2\]\}\$\{otc \? ' \(OTC\)' : ''\}/);
+  assert.match(market, /return `\$\{base\}\/\$\{quote\}\$\{otc \? ' \(OTC\)' : ''\}`/);
   assert.match(market, /const sameMarket = \(a, b\) => !!marketId\(a\) && marketId\(a\) === marketId\(b\)/);
   assert.match(focus, /const asset = `\$\{base\}\/\$\{quote\}\$\{otc \? ' \(OTC\)' : ''\}`/);
   assert.match(focus, /const identity = value => canonicalAsset\(value\)/);
