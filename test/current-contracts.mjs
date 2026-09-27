@@ -6,11 +6,11 @@ export const read = path => fs.readFileSync(new URL('../' + path, import.meta.ur
 const manifest = () => JSON.parse(read('manifest.json'));
 
 export function registerBuildContracts(label='build') {
-  test(label + ': current extension package is the v0.11.78 expiration live-sync M5 build', () => {
+  test(label + ': current extension package is the v0.11.79 expiration live-sync M5 build', () => {
     const m = manifest();
     assert.equal(m.manifest_version, 3);
-    assert.equal(m.version, '0.11.78');
-    assert.equal(m.version_name, '0.11.78-synced-main-expiration-live-sync');
+    assert.equal(m.version, '0.11.79');
+    assert.equal(m.version_name, '0.11.79-synced-main-android-visual-controls');
     assert.equal(m.background?.service_worker, 'src/background-entry.js');
     assert.equal(m.side_panel?.default_path, 'src/sidepanel/index.html');
   });
@@ -21,7 +21,7 @@ export function registerBuildContracts(label='build') {
   test(label + ': backend package and public version defaults track the extension build', () => {
     const pkg = JSON.parse(read('backend/package.json'));
     const server = read('backend/src/server.js');
-    assert.equal(pkg.version, '0.11.78');
+    assert.equal(pkg.version, '0.11.79');
     assert.match(server, /const VERSION = '0\.11\.78'/);
     assert.match(server, /EXTENSION_LATEST_VERSION = String(process.env.EXTENSION_LATEST_VERSION || '0\.11\.78')/);
   });
