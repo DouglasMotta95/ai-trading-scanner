@@ -124,11 +124,13 @@ export function CasaTradeExpiration(state = {}, timeframe = null) {
   const guard = state.diagnostics?.expirationGuard || {};
   const expirationLabel = operationMode.expiration === '300s' ? '5 minutos' : '1 minuto';
 
-  // Only a fresh, real CasaTrade observation may unlock execution. A manual
-  // value is display/fallback context only and can never make a signal actionable.
+  // Real CasaTrade observations retain their existing authority and freshness.
+  // When CasaTrade exposes no structured expiration, the explicit user-declared
+  // value may unlock the timing gate only when it exactly matches the active
+  // operation mode. It remains unverified for diagnostics/UI purposes.
   const guardAt = Number(guard.at || 0);
   const guardFresh = guardAt > 0 && Date.now() - guardAt < 10000;
-  const guardActual = guardFresh ? normExp(guard.actual || controls.userDeclaredExpiration || '') : null;
+  const guardActual = guardFresh ? normExp(guard.actual || '') : null;
   const guardSource = guardFresh ? text(guard.source || '') : '';
   const guardDivergence = guardFresh && guard.divergence === true;
 
@@ -136,8 +138,12 @@ export function CasaTradeExpiration(state = {}, timeframe = null) {
   const realExpiration = normExp(controls.realExpiration || '');
   const realFresh = !!realExpiration && realExpirationAt > 0 && Date.now() - realExpirationAt < 15000;
   const observedSource = text(controls.realExpirationSource || controls.expirationSource || controls.observed?.source || '');
-  const actual = realFresh ? realExpiration : guardActual || null;
-  const source = realFresh ? (text(controls.realExpirationSource) || 'casatrade-observed') : guardSource || '';
+  const manualExpiration = normExp(controls.userDeclaredExpiration || '')
+    || (guardSource === 'user-declared' ? guardActual : null);
+  const actual = realFresh ? realExpiration : manualExpiration || guardActual || null;
+  const source = realFresh
+    ? (text(controls.realExpirationSource) || 'casatrade-observed')
+    : manualExpiration ? 'user-declared' : guardSource || '';
   const liveTf = normTf(timeframe || state.analysisTimeframe || state.timeframe);
 
   if (guardDivergence) {
@@ -151,16 +157,19 @@ export function CasaTradeExpiration(state = {}, timeframe = null) {
     };
   }
   if (!realFresh) {
-    const manual = normExp(controls.userDeclaredExpiration || guardActual || '');
+    const manual = manualExpiration;
+    const manualMatches = !!manual && manual === operationMode.expiration;
     return {
-      ready: false,
+      ready: manualMatches,
       actual: manual || null,
       required: operationMode.expiration,
       source: manual ? 'user-declared' : null,
       verified: false,
-      reason: manual
-        ? `Expiração de ${expirationLabel} informada, aguardando verificação real da CasaTrade`
-        : 'Expiração real da CasaTrade ainda não confirmada'
+      reason: manualMatches
+        ? `Expiração de ${expirationLabel} informada pelo usuário e compatível com ${operationMode.timeframe}; confirmação real da CasaTrade indisponível.`
+        : manual
+          ? `Ajuste a expiração declarada para ${expirationLabel} para corresponder ao modo ${operationMode.timeframe}.`
+          : 'Expiração real da CasaTrade ainda não confirmada'
     };
   }
   if (liveTf === operationMode.timeframe && actual !== operationMode.expiration) {
