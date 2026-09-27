@@ -263,18 +263,20 @@ export function registerVideo15292Contracts(label='video-15292') {
     assert.match(policy, /marketIdentity\(state, signal\)/);
   });
 
-  test(label + ': manual expiration can never unlock an actionable signal', () => {
+  test(label + ': manual expiration may unlock only with exact configured duration; real observation still has priority', () => {
     const controls = read('src/background-platform-controls.js');
     const policy = read('src/background-decision-policy.js');
     const panel = read('src/sidepanel/app-v2.js');
     const shell = read('src/sidepanel/ui-shell-v2.js');
     assert.match(controls, /ready = authority\.realFresh === true/);
-    assert.match(policy, /Only a fresh, real CasaTrade observation may unlock execution/);
-    assert.match(policy, /source !== 'user-declared'/);
-    assert.match(panel, /expiration\.verified !== true/);
+    assert.match(policy, /const manual = normExp\(controls\.userDeclaredExpiration \|\| ''\)/);
+    assert.match(policy, /const matched = actual === operationMode\.expiration/);
+    assert.match(policy, /ready: matched/);
+    assert.match(policy, /A leitura direta da CasaTrade permanece não verificada/);
+    assert.match(panel, /expiration\.value === operation\.expiration/);
+    assert.doesNotMatch(panel, /expiration\.verified !== true\) return false/);
     assert.match(shell, /realExpirationAt/);
     assert.match(shell, /realExpirationSource/);
-    assert.match(shell, /O campo manual não libera entrada/);
   });
 
   test(label + ': direct DOM probe publishes real expiration authority instead of promoting fallback', () => {
