@@ -32,7 +32,7 @@ export function registerMarketContracts(label='market') {
     const market = read('src/background-market-session.js');
     const controls = read('src/background-platform-controls.js');
     assert.match(market, /const opaqueSender = tabOwned && \(!frameHost \|\| frameHost === 'null'\)/);
-    assert.match(market, /trusted: embeddedTrader \|\| casaOwnedChart \|\| opaqueSender/);
+    assert.match(market, /trusted: effectiveEmbeddedTrader \\|\\| embeddedTrader \\|\\| casaOwnedChart \\|\\| opaqueSender/);
     assert.match(market, /effectiveTopFrameHost/);
     assert.match(controls, /const opaqueSender = tabOwned && \(!frameHost \|\| frameHost === 'null'\)/);
     assert.match(controls, /return tabOwned && \(knownFrame \|\| opaqueSender\)/);
@@ -48,7 +48,7 @@ export function registerMarketContracts(label='market') {
     assert.match(focus, /ATS_FOCUSED_ASSET_DIAGNOSTIC_SNAPSHOT/);
     assert.match(focus, /ATS_EXPIRATION_DIAGNOSTIC_REQUEST/);
     assert.match(market, /message\?\.type === 'ATS_VISUAL_FOCUS_V2'/);
-    assert.match(market, /trusted: embeddedTrader \|\| casaOwnedChart/);
+    assert.match(market, /trusted: effectiveEmbeddedTrader \\|\\| embeddedTrader \\|\\| casaOwnedChart/);
     assert.match(market, /pendingAsset: toAsset/);
     assert.match(market, /confirmedAsset: asset/);
   });
