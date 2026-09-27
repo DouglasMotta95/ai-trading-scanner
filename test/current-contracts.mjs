@@ -205,7 +205,7 @@ export function registerVideo15290Contracts(label='video-15290') {
     const fast = read('src/core/live-fast-decision.js');
     assert.match(central, /FINAL_WEAK_HITS = 2/);
     assert.match(central, /cycle\.finalWeakHits/);
-    assert.match(fast, /weakHits < 2/);
+    assert.match(fast, /weakHits <= FAST_DECISION\.maxWeakSamples/);
     assert.match(fast, /heldHits > 0/);
   });
   test(label + ': verified expiration survives a short CasaTrade control rerender', () => {
