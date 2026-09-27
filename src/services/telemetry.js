@@ -1,3 +1,5 @@
+import { storageLocalGet, storageLocalSet, storageLocalRemove } from './chrome-compat.js';
+
 const INSTALL_KEY = 'atsInstallationId';
 const CLIENT_TOKEN_KEY = 'atsClientToken';
 const CLIENT_TOKEN_EXP_KEY = 'atsClientTokenExpiresAt';
@@ -17,14 +19,19 @@ let installationIdPromise = null;
 export async function installationId() {
   if (installationIdPromise) return installationIdPromise;
   installationIdPromise = (async () => {
-    const x = await chrome.storage.local.get(INSTALL_KEY);
+    const x = await storageLocalGet(INSTALL_KEY);
     const existing = String(x[INSTALL_KEY] || '').trim();
-    const legacyId = legacyRuntimeInstallationId();
-    if (existing && existing !== legacyId) return existing;
 
-    const id = randomInstallationId();
-    await chrome.storage.local.set({ [INSTALL_KEY]: id });
-    const persisted = await chrome.storage.local.get(INSTALL_KEY);
+    // The installation ID is the stable device binding. Never rotate it just
+    // because chrome.runtime.id differs from the generated persisted ID.
+    // The previous comparison caused a new UUID to be generated on every call,
+    // which made the backend see the same device as a new installation.
+    if (existing) return existing;
+
+    const legacyId = legacyRuntimeInstallationId();
+    const id = legacyId || randomInstallationId();
+    await storageLocalSet({ [INSTALL_KEY]: id });
+    const persisted = await storageLocalGet(INSTALL_KEY);
     return String(persisted[INSTALL_KEY] || id).trim() || id;
   })();
   try {
@@ -35,19 +42,22 @@ export async function installationId() {
 }
 
 export async function clientToken() {
-  const x = await chrome.storage.local.get([CLIENT_TOKEN_KEY, CLIENT_TOKEN_EXP_KEY]);
+  const x = await storageLocalGet([CLIENT_TOKEN_KEY, CLIENT_TOKEN_EXP_KEY]);
   if (!x[CLIENT_TOKEN_KEY]) return '';
-  if (x[CLIENT_TOKEN_EXP_KEY] && Number(x[CLIENT_TOKEN_EXP_KEY]) <= Date.now()) return '';
+  if (x[CLIENT_TOKEN_EXP_KEY] && Number(x[CLIENT_TOKEN_EXP_KEY]) <= Date.now()) {
+    await storageLocalRemove([CLIENT_TOKEN_KEY, CLIENT_TOKEN_EXP_KEY]);
+    return '';
+  }
   return String(x[CLIENT_TOKEN_KEY]);
 }
 
 export async function saveClientToken(token = '', expiresAt = null) {
   const value = String(token || '').trim();
   if (!value) {
-    await chrome.storage.local.remove([CLIENT_TOKEN_KEY, CLIENT_TOKEN_EXP_KEY]);
+    await storageLocalRemove([CLIENT_TOKEN_KEY, CLIENT_TOKEN_EXP_KEY]);
     return '';
   }
-  await chrome.storage.local.set({
+  await storageLocalSet({
     [CLIENT_TOKEN_KEY]: value,
     [CLIENT_TOKEN_EXP_KEY]: Number(expiresAt) || 0
   });
@@ -55,14 +65,14 @@ export async function saveClientToken(token = '', expiresAt = null) {
 }
 
 export async function clearClientToken() {
-  await chrome.storage.local.remove([CLIENT_TOKEN_KEY, CLIENT_TOKEN_EXP_KEY]);
+  await storageLocalRemove([CLIENT_TOKEN_KEY, CLIENT_TOKEN_EXP_KEY]);
 }
 
 async function updateTelemetryStatus(patch = {}) {
   try {
-    const x = await chrome.storage.local.get(TELEMETRY_STATUS_KEY);
+    const x = await storageLocalGet(TELEMETRY_STATUS_KEY);
     const previous = x[TELEMETRY_STATUS_KEY] || {};
-    await chrome.storage.local.set({
+    await storageLocalSet({
       [TELEMETRY_STATUS_KEY]: { ...previous, ...patch }
     });
   } catch {}
@@ -108,6 +118,14 @@ async function post(path, payload, _settings = {}) {
 }
 
 export async function heartbeat(state = {}, settings = {}) {
+  const professional = state.professionalDecision || {};
+  const professionalUi = String(professional.uiState || '').toUpperCase();
+  const hasProfessional = !!professionalUi || Number(professional.updatedAt || 0) > 0;
+  const professionalSignalState = ['ENTER_BUY','ENTER_SELL'].includes(professionalUi)
+    ? 'CONFIRM'
+    : ['POSSIBLE_BUY','POSSIBLE_SELL'].includes(professionalUi)
+      ? 'WATCH'
+      : professionalUi === 'WAIT' ? 'WAIT' : null;
   const payload = {
     platformId: state.platformId || null,
     platformName: state.platformName || null,
@@ -119,13 +137,13 @@ export async function heartbeat(state = {}, settings = {}) {
     expiration: state.targetExpiration || state.signal?.targetExpiration || state.expiration || null,
     price: state.price ?? null,
     serverTime: state.serverTime ?? null,
-    signalState: state.signal?.state || null,
-    direction: state.signal?.direction || null,
-    score: state.signal?.score ?? null,
+    signalState: hasProfessional ? professionalSignalState : (state.signal?.state || null),
+    direction: hasProfessional ? (professional.direction || null) : (state.signal?.direction || null),
+    score: hasProfessional ? (professional.score ?? null) : (state.signal?.score ?? null),
     grade: state.signal?.grade || null,
     confirmations: state.signal?.confirmations || null,
     regime: state.signal?.regime || null,
-    provisional: !!state.signal?.provisional,
+    provisional: hasProfessional ? professional.actionable !== true : !!state.signal?.provisional,
     feedQuality: state.telemetry?.feedQuality ?? null,
     structured: !!state.capabilities?.structuredQuotes,
     latency: state.telemetry?.latency ?? null,

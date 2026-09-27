@@ -62,14 +62,14 @@ test('confirmed next-candle entry is latched until candle rollover', () => {
   run(bucket, 35_000);
   const possible = run(bucket, 36_000);
   assert.equal(possible.signal.uiState, 'POSSIBLE_BUY');
-  run(bucket, 51_000);
-  const confirmed = run(bucket, 52_000);
+  run(bucket, 55_000);
+  const confirmed = run(bucket, 56_000);
   assert.equal(confirmed.signal.state, 'CONFIRM');
   assert.equal(confirmed.signal.uiState, 'ENTER_BUY');
 
   const weak = bullish(bucket);
   weak[weak.length - 1] = { time: bucket, open: 1.078, high: 1.085, low: 1.070, close: 1.079, timeframe: 'M1' };
-  const afterWeakTick = run(bucket, 55_000, 1.079, weak);
+  const afterWeakTick = run(bucket, 57_000, 1.079, weak);
   assert.equal(afterWeakTick.signal.state, 'CONFIRM');
   assert.equal(afterWeakTick.signal.direction, 'BUY');
   assert.equal(afterWeakTick.signal.uiState, 'ENTER_BUY');

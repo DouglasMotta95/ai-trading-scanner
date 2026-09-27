@@ -37,9 +37,9 @@ function publishPossible(bucket) {
 
 function confirmStable(bucket) {
   publishPossible(bucket);
-  const firstFinal = snap(bucket, 51_000);
+  const firstFinal = snap(bucket, 55_000);
   assert.notEqual(firstFinal.signal.state, 'CONFIRM');
-  const confirmed = snap(bucket, 52_000);
+  const confirmed = snap(bucket, 56_000);
   assert.equal(confirmed.signal.state, 'CONFIRM');
   assert.equal(confirmed.signal.direction, 'BUY');
   assert.equal(confirmed.signal.uiState, 'ENTER_BUY');
@@ -121,16 +121,16 @@ test('final decision requires stable confirmation for the next candle', () => {
   const bucket = Math.floor(1_700_100_000_000 / minute) * minute;
   publishPossible(bucket);
 
-  const firstFinal = snap(bucket, 51_000);
+  const firstFinal = snap(bucket, 55_000);
   assert.notEqual(firstFinal.signal.state, 'CONFIRM');
 
-  const out = snap(bucket, 52_000);
+  const out = snap(bucket, 56_000);
   assert.equal(out.signal.phase, 'FINAL');
   assert.equal(out.signal.state, 'CONFIRM');
   assert.equal(out.signal.direction, 'BUY');
   assert.equal(out.signal.uiState, 'ENTER_BUY');
   assert.equal(out.signal.provisional, false);
-  assert.equal(out.signal.secondsRemaining, 8);
+  assert.equal(out.signal.secondsRemaining, 4);
   assert.equal(out.signal.targetStart, bucket + minute);
 });
 
@@ -141,7 +141,7 @@ test('confirmed decision is latched and cannot flicker back to wait inside the s
   assert.equal(confirmed.signal.state, 'CONFIRM');
 
   const closed = bullishRows(bucket).slice(0, -1);
-  const weak = snap(bucket, 55_000, 1.079, [
+  const weak = snap(bucket, 57_000, 1.079, [
     ...closed,
     { time: bucket, open: 1.078, high: 1.09, low: 1.07, close: 1.079, timeframe: 'M1' }
   ]);
@@ -201,4 +201,22 @@ test('platform detection rejects unrelated hosts', () => {
   assert.equal(detectPlatform('example.com'), null);
   assert.equal(detectPlatform('notcasatrade.io'), null);
   assert.equal(detectPlatform('casatrade.com')?.id, 'casatrade');
+});
+
+test('M5 accepts CasaTrade serverTime in seconds and keeps blank timeframe tags permissive', () => {
+  resetOrchestrator();
+  const fiveMinutes = 5 * minute;
+  const bucket = Math.floor(1_800_000_000_000 / fiveMinutes) * fiveMinutes;
+  const base = bullishRows(bucket).map(({ timeframe, ...row }) => row);
+  const out = processSnapshot({
+    platformId: 'casatrade', asset: 'EUR/USD (OTC)', price: 1.11,
+    timeframe: 'M5', analysisTimeframe: 'M5', connection: 'online',
+    serverTime: Math.floor((bucket + 255_000) / 1000),
+    candles: base,
+    secondsRemaining: 9
+  }, { connection: 'online' });
+
+  assert.equal(out.signal.timeframe, 'M5');
+  assert.equal(out.signal.secondsRemaining, 9);
+  assert.equal(out.signal.targetStart, bucket + 264_000);
 });
