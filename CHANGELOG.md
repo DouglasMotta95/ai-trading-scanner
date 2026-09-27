@@ -36,9 +36,17 @@
 
 **Arquivos alterados:** nenhum em src/core para este item.
 
+### Estabilização geral após o checkup
+- **Clock M5:** corrigido também o caminho `market-cycle-clock-v4.js` que usa candles estruturados para derivar o fechamento. Quando a fonte real expõe uma cadência M1, o timestamp é alinhado ao bucket M5 que contém a vela atual; timestamps fora da janela corrente continuam bloqueados.
+- **Teste de contrato:** o contrato da build foi atualizado de 0.11.63 para 0.11.76 e ganhou regressão estrutural específica para o alinhamento M1 → M5.
+- **Saúde do scanner:** o painel passa a exibir ATIVO, FEED, CLOCK e EXP em quatro estados compactos, além de priorizar o bloqueio operacional concreto atual (ativo, feed, clock, expiração ou motor técnico).
+- **Backend:** package `backend` e constantes de versão/default da API foram alinhados para 0.11.76 para evitar divergência dentro do repositório.
+- **Sem mudança de estratégia:** não foram alterados thresholds, fórmula de score, perfis, filtros sombra, Gemini ou execução manual.
+
 ### Versão e escopo
 - manifest.json: 0.11.76
 - package.json: 0.11.76
+- backend/package.json: 0.11.76
 - Sem alterações em licença, Gemini, execução manual, perfis/filtros sombra ou arquitetura de sessão de mercado.
 
 
