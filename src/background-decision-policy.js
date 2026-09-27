@@ -100,7 +100,7 @@ function derivedAnalysisTime(state = {}, operationMode = getOperationMode(state.
   if (currentTime != null && Number.isFinite(currentTime)) {
     const currentBucket = Math.floor(now / durationMs) * durationMs;
     const openAt = Math.floor(currentTime / durationMs) * durationMs;
-    if (openAt === currentBucket && Math.abs(currentTime - currentBucket) <= 2500) {
+    if (openAt === currentBucket) {
       const remaining = Math.max(0, Math.min(durationSeconds, (openAt + durationMs - now) / 1000));
       if (remaining > 0 && liveFeed) {
         return {
