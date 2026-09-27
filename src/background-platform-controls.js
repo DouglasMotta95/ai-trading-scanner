@@ -14,6 +14,7 @@ function trusted(sender = {}) {
   try { topHost = new URL(sender.tab?.url || '').hostname.toLowerCase(); } catch {}
   const tabOwned = !!sender.tab?.id && (casaHost(topHost) || traderHost(topHost));
   const knownFrame = casaHost(frameHost) || traderHost(frameHost);
+  const opaqueChild = tabOwned && Number(sender.frameId) > 0 && (!frameHost || frameHost === 'null');
   const opaqueSender = tabOwned && (!frameHost || frameHost === 'null');
   // Android/Quetta may omit sender.url for a top-frame content script. The
   // sender.tab.url is still the verified CasaTrade target, so do not reject
