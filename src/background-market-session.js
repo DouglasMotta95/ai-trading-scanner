@@ -74,15 +74,16 @@ function senderMeta(sender = {}) {
   try { topHost = new URL(sender.tab?.url || '').hostname.toLowerCase(); } catch {}
   const tabOwned = !!sender.tab?.id && (casaHost(topHost) || traderHost(topHost));
   const opaqueSender = tabOwned && (!frameHost || frameHost === 'null');
+  const embeddedTrader = tabOwned && traderHost(frameHost);
   const effectiveTopFrameHost = Number(sender.frameId || 0) === 0 && opaqueSender ? topHost : frameHost;
-  const embeddedTrader = tabOwned && traderHost(effectiveTopFrameHost);
+  const effectiveEmbeddedTrader = tabOwned && traderHost(effectiveTopFrameHost);
   const casaOwnedChart = tabOwned && casaHost(effectiveTopFrameHost);
   return {
     // Android/Quetta can omit sender.url for a top-frame content script even
     // though sender.tab.url is the verified CasaTrade tab. Treat that sender as
     // trusted and bind its recorded frame host to the tab host so the exact
     // clock is not discarded by the later focus/frame guard.
-    trusted: embeddedTrader || casaOwnedChart || opaqueSender,
+    trusted: effectiveEmbeddedTrader || embeddedTrader || casaOwnedChart || opaqueSender,
     tabOwned,
     embeddedTrader,
     casaOwnedChart,
