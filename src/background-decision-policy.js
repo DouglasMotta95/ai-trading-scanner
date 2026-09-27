@@ -339,6 +339,43 @@ function baseDecision(state = {}) {
     return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: 'AGUARDAR — fechamento da vela em andamento.' };
   }
 
+  // Preserve a valid candidate across one short-lived professional-context/trigger
+  // regression. The technical engine can flicker one field for a single sample
+  // while the same candle, score, power and confluence remain valid. In that
+  // case, replacing POSSÍVEL with AGUARDAR makes the UI oscillate and can reset
+  // the final-window confirmation. This is continuity only; thresholds remain
+  // unchanged and no new candidate is created.
+  const previous = state.professionalDecision || {};
+  const previousUi = text(previous.uiState).toUpperCase();
+  const previousDirection = text(previous.direction).toUpperCase();
+  const previousSameCycle = previous.cycleKey === cycle
+    && previousDirection === direction
+    && ['POSSIBLE_BUY','POSSIBLE_SELL','ENTER_BUY','ENTER_SELL'].includes(previousUi);
+  const previousPossible = previousSameCycle
+    && ['POSSIBLE_BUY','POSSIBLE_SELL'].includes(previousUi)
+    && Number(previous.possibleSince || 0) > 0
+    && now - Number(previous.possibleSince) < 8000;
+  const technicalCoreStillReady = !!direction
+    && score >= possibleScore
+    && mandatoryPowerReady
+    && additionalConfluenceReady;
+  if ((!professionalContextReady || !professionalTriggerReady) && previousPossible && technicalCoreStillReady) {
+    const recoveredSince = Number(previous.possibleSince);
+    const heldFor = Math.max(0, now - recoveredSince);
+    const holdMs = pref.holdSeconds * 1000;
+    const side = direction === 'BUY' ? 'COMPRA' : 'VENDA';
+    return {
+      ...common,
+      uiState: direction === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL',
+      direction,
+      actionable: false,
+      alert: 'discrete',
+      possibleSince: recoveredSince,
+      holdRemainingMs: Math.max(0, holdMs - heldFor),
+      reason: `${side} — ALTA CONFIANÇA • pré-sinal preservado durante atualização momentânea do contexto/gatilho.`
+    };
+  }
+
   if (!professionalContextReady || !professionalTriggerReady) {
     return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: 'AGUARDAR — tendência/contexto, região e gatilho ainda não estão confirmados juntos.' };
   }
