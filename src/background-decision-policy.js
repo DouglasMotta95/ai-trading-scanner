@@ -384,7 +384,6 @@ function baseDecision(state = {}) {
     return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: 'AGUARDAR — motor técnico ainda não liberou um candidato.' };
   }
 
-  const previous = state.professionalDecision || {};
   const sameCandidate = previous.cycleKey === cycle && previous.direction === direction && ['POSSIBLE_BUY','POSSIBLE_SELL','ENTER_BUY','ENTER_SELL'].includes(text(previous.uiState).toUpperCase());
   const technicalPossibleSince = Number(signal.stability?.possibleSince || 0);
   const technicalSinceValid = technicalPossibleSince > 0 && technicalPossibleSince <= now && now - technicalPossibleSince < 45000;
