@@ -4,7 +4,9 @@ const num = value => value == null || value === '' ? null : Number.isFinite(Numb
 
 export const FAST_DECISION = Object.freeze({
   confirmHits: 2,
-  maxHitGapMs: 5000
+  maxHitGapMs: 5000,
+  maxWeakSamples: 2,
+  candidateGraceMs: 2500
 });
 
 
@@ -112,15 +114,23 @@ function stabilizeDirection(key, rawDirection, at, score) {
   return { direction: old.stable, transitioning: true, from: old.stable, to: rawDirection, hits: pendingHits };
 }
 
-function observe(key, direction, strong, at) {
+function observe(key, direction, strong, at, qualitySnapshot = null, score = 0) {
   const old = trackers.get(key);
   if (!strong || !direction) {
-    // Match the central decision hysteresis: one weak sample must not erase a
-    // valid first final hit. This prevents POSSÍVEL/AGUARDAR flicker at 5..1s.
+    // A transient feed/analysis miss must not erase a candidate that was just
+    // published. Keep the candidate for two weak samples and let a later strong
+    // sample complete the confirmation. This is deliberately bounded by the
+    // same final-window hit gap so stale candidates cannot cross candle cycles.
     if (old?.direction && Number(old.hits || 0) > 0 && at - Number(old.at || 0) <= FAST_DECISION.maxHitGapMs) {
       const weakHits = Number(old.weakHits || 0) + 1;
-      if (weakHits < 2) {
-        trackers.set(key, { ...old, weakHits, lastWeakAt: at });
+      if (weakHits <= FAST_DECISION.maxWeakSamples) {
+        trackers.set(key, {
+          ...old,
+          weakHits,
+          lastWeakAt: at,
+          lastScore: Number(score || old.lastScore || 0),
+          quality: qualitySnapshot || old.quality || null
+        });
         return Number(old.hits || 0);
       }
     }
@@ -129,7 +139,14 @@ function observe(key, direction, strong, at) {
   }
   const same = old?.direction === direction && at - Number(old?.at || 0) <= FAST_DECISION.maxHitGapMs;
   const hits = same ? Number(old.hits || 0) + 1 : 1;
-  trackers.set(key, { direction, hits, at, weakHits: 0 });
+  trackers.set(key, {
+    direction,
+    hits,
+    at,
+    weakHits: 0,
+    lastScore: Number(score || 0),
+    quality: qualitySnapshot || null
+  });
   return hits;
 }
 
@@ -202,6 +219,16 @@ export function fastLiveDecision(signal = {}, context = {}) {
 
   const possibleScore = signalPolicy.possibleScore;
   if (!rawDirection || score < possibleScore) {
+    const remembered = trackers.get(key);
+    const rememberedFresh = remembered?.direction
+      && Number(remembered.hits || 0) > 0
+      && at - Number(remembered.at || 0) <= FAST_DECISION.candidateGraceMs
+      && seconds <= finalWindowSeconds;
+    if (rememberedFresh) {
+      const rememberedScore = Math.max(score, Number(remembered.lastScore || 0));
+      const rememberedQuality = remembered.quality || { reasons: [], setup: null };
+      return possible(signal, remembered.direction, rememberedScore, seconds, rememberedQuality);
+    }
     trackers.delete(key);
     const text = `AGUARDAR • ${seconds}s — confiança insuficiente (score ${Math.round(score)}/${possibleScore}).`;
     return { ...signal, state: 'WAIT', direction: null, diagnosis: 'WAIT', uiState: 'WAIT', provisional: true, phase: seconds <= finalWindowSeconds ? 'FINAL' : 'LIVE', reason: text, hint: text, fastDecision: true };
@@ -232,7 +259,7 @@ export function fastLiveDecision(signal = {}, context = {}) {
   const q = quality(signal, direction, thresholds, confirmationMode, signalPolicy);
 
   if (!q.strong) {
-    const heldHits = observe(key, direction, false, at);
+    const heldHits = observe(key, direction, false, at, q, score);
     if (seconds <= finalWindowSeconds && heldHits > 0) {
       return possible(signal, direction, score, seconds, q);
     }
@@ -240,23 +267,26 @@ export function fastLiveDecision(signal = {}, context = {}) {
   }
 
   if (seconds > finalWindowSeconds) {
-    observe(key, direction, false, at);
+    observe(key, direction, false, at, q, score);
     return possible(signal, direction, score, seconds, q);
   }
 
   const strong = score >= signalPolicy.finalScore
     && q.power >= signalPolicy.finalPower
     && q.reasons.length >= signalPolicy.minimumConfluence;
-  const hits = observe(key, direction, strong, at);
+  const hits = observe(key, direction, strong, at, q, score);
   if (strong && hits >= FAST_DECISION.confirmHits) return enter(signal, direction, score, seconds, q);
 
   // The first valid final-window hit stays visible as POSSÍVEL. Only the second
   // hit inside the confirmation gap upgrades it to ENTRAR.
   if (strong && hits > 0) return possible(signal, direction, score, seconds, q);
 
-  // Fast path is an accelerator, never a veto against a stronger central signal.
-  // It only promotes its own candidate when the hard high-confidence gate is met.
-  // Inside the final window, anything below that gate is WAIT.
+  // Fast path is an accelerator, never a veto against a candidate that was just
+  // visible. If the final gate misses for a transient sample, keep POSSÍVEL while
+  // the bounded confirmation tracker is still alive; only a genuinely expired
+  // tracker becomes WAIT.
+  const heldHits = observe(key, direction, false, at, q, score);
+  if (heldHits > 0) return possible(signal, direction, score, seconds, q);
   return waitFinal(signal, score, 'confiança final abaixo do nível exigido');
 }
 
