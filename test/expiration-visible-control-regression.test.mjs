@@ -58,7 +58,7 @@ test('v0.11.82 keeps an explicit user expiration declaration valid beyond seven 
 
 test('v0.11.82 restores a saved expiration declaration after reconnect without manual reselection', () => {
   const shell = read('src/sidepanel/ui-shell-v2.js');
-  assert.match(shell, /data\.atsRestoredExpiration/);
+  assert.match(shell, /dataset\.atsRestoredExpiration/);
   assert.match(shell, /restoreSessionKey/);
   assert.match(shell, /expirationSelect\.dispatchEvent\(new Event\('change', \{ bubbles: true \}\)\)/);
   assert.match(shell, /Programmatic restoration does not fire <select>'s change event/);
