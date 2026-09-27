@@ -10,12 +10,22 @@
   const TIME_KEYS = ['timestamp', 'time', 'ts', 'createdAt', 'created_at', 'serverTime', 'server_time'];
   const TF_KEYS = ['timeframe', 'interval', 'period', 'resolution', 'tf'];
   const EXP_KEYS = ['expiration', 'expiry', 'expiresAt', 'expires_at', 'duration'];
+  const CONTROL_EXP_KEY = /^(?:expiration|expiry|expirationTime|expiration_time|expiryTime|expiry_time|optionDuration|option_duration|tradeDuration|trade_duration|operationDuration|operation_duration|dealDuration|deal_duration)$/i;
+  const GENERIC_DURATION_KEY = /^duration$/i;
   const PAYOUT_KEYS = ['payout', 'profit', 'return', 'yield', 'percent'];
   const SELECTED_KEYS = ['selected', 'active', 'isActive', 'is_active', 'current', 'isCurrent', 'is_current'];
   const TYPE_KEYS = ['type', 'instrumentType', 'instrument_type', 'mode', 'optionType', 'option_type'];
   const CANDLE_CONTAINER = /candle|candles|kline|klines|ohlc|bars|history|chart/i;
   const QUOTE_CONTAINER = /quote|quotes|tick|ticks|price|prices|market|symbols|assets|instruments/i;
-  const COMMON_QUOTES = ['USDT', 'USDC', 'USD', 'EUR', 'GBP', 'JPY', 'AUD', 'CAD', 'CHF', 'NZD', 'BRL', 'BTC', 'ETH'];
+  const COMMON_QUOTES = ['USD','EUR','GBP','JPY','AUD','CAD','CHF','NZD','BRL','HKD','SGD','NOK','SEK','DKK','PLN','CZK','HUF','TRY','MXN','ZAR','INR','CNY','CNH','KRW','THB','MYR','PHP','IDR','VND','TWD','ILS','AED','SAR','QAR','KWD','BHD','OMR','ARS','CLP','COP','PEN','UYU','BOB','PYG','USDT','USDC','BTC','ETH'];
+  const GENERIC_ASSET_TOKENS = new Set(['BLITZ','OPTION','OPTIONS','BINARY','BINARIA','BINARIO','DIGITAL','TURBO','CALL','PUT','BUY','SELL','COMPRA','VENDA','TRADE','TRADING','OPERATION','OPERACAO','OPÇÃO','OPCAO','INFO','FAVORITO','FAVORITES','ATIVO','ASSET','INSTRUMENT','INSTRUMENTO','MARKET','PRECO','PRICE','EXPIRACAO','EXPIRATION','VALOR','SALDO','PAYOUT','LUCRO','LIVE','CONECTAR','ENTRAR','VELA','GRAFICO','GRÁFICO']);
+  const INSTRUMENT_WORDS = GENERIC_ASSET_TOKENS;
+
+  let trustedVisualFallback = { asset: '', at: 0, source: '' };
+  let fallbackRequestAt = 0;
+  let networkContextKey = '';
+  let networkSessionCounter = 0;
+  let lastNetworkAssetIdentity = { raw: '', asset: '', source: '', at: 0 };
 
   const stats = {
     messages: { ws: 0, fetch: 0, xhr: 0 },
@@ -24,14 +34,78 @@
     keys: new Set(),
     assets: new Map(),
     candles: new Map(),
+    controlExpiration: null,
     parse: { frames: 0, decoded: 0, candidates: 0, candles: 0, binary: 0 }
   };
 
+  // Diagnostic-only counters. These do not participate in parsing, ranking,
+  // publishing, throttling, or any market decision.
+  const networkDiagnostic = {
+    startedAt: Date.now(),
+    transport: {
+      ws: { seen: 0, candle: 0, price: 0 },
+      fetch: { seen: 0, candle: 0, price: 0 },
+      xhr: { seen: 0, candle: 0, price: 0 }
+    },
+    endpoints: new Set(),
+    wsFrames: { text: 0, binary: 0 }
+  };
+
   const now = () => Date.now();
+  const recentTrustedVisualAsset = () => {
+    if (!trustedVisualFallback.asset || now() - Number(trustedVisualFallback.at || 0) > 3500) return '';
+    return trustedVisualFallback.asset;
+  };
+  const requestTrustedVisualAssetFallback = () => {
+    if (now() - fallbackRequestAt < 450) return;
+    fallbackRequestAt = now();
+    try {
+      window.postMessage({ source: 'ATS_NETWORK_ASSET_FALLBACK_REQUEST', requestId: `ats-asset-fallback-${Date.now()}-${Math.random().toString(36).slice(2)}` }, '*');
+    } catch {}
+  };
+  window.addEventListener('message', event => {
+    const data = event.data;
+    if (!data || data.source !== 'ATS_FOCUSED_ASSET_FALLBACK_RESPONSE') return;
+    const payload = data.payload || {};
+    const asset = canonicalAsset(payload.asset);
+    if (!asset) return;
+    trustedVisualFallback = {
+      asset,
+      at: Number(payload.at || now()),
+      source: String(payload.source || 'focused-asset-v2'),
+      lowConfidence: payload.lowConfidence === true
+    };
+  });
+  const announceNetworkContext = (transport, url, sessionId = 0) => {
+    const endpoint = safeHostPath(url);
+    if (!endpoint) return;
+    const nextKey = `${transport}|${endpoint}|session-${Number(sessionId || 0)}`;
+    if (networkContextKey === nextKey) return;
+    networkContextKey = nextKey;
+    try {
+      window.postMessage({
+        source: 'ATS_NETWORK_PROBE',
+        type: 'context',
+        payload: { contextKey: networkContextKey, transport, endpoint, observedAt: now() }
+      }, '*');
+    } catch {}
+  };
   const trimSet = (set, max) => { while (set.size > max) set.delete(set.values().next().value); };
   const safeUrl = u => {
     try { const x = new URL(String(u || ''), location.href); return x.origin + x.pathname; }
     catch { return ''; }
+  };
+  const safeHostPath = u => {
+    try {
+      const x = new URL(String(u || ''), location.href);
+      return `${x.host}${x.pathname}`.slice(0, 240);
+    } catch { return ''; }
+  };
+  const rememberDiagnosticEndpoint = (transport, url) => {
+    const endpoint = safeHostPath(url);
+    if (!endpoint) return;
+    networkDiagnostic.endpoints.add(`${transport}:${endpoint}`);
+    trimSet(networkDiagnostic.endpoints, 24);
   };
   const num = v => {
     if (typeof v === 'number' && Number.isFinite(v)) return v;
@@ -50,6 +124,16 @@
     for (const k of names) if (Object.prototype.hasOwnProperty.call(o, k) && o[k] != null) return o[k];
     const lower = new Map(Object.keys(o).map(k => [k.toLowerCase(), k]));
     for (const k of names) { const real = lower.get(k.toLowerCase()); if (real && o[real] != null) return o[real]; }
+    return null;
+  };
+  const pickEntry = (o, names) => {
+    if (!o || typeof o !== 'object') return null;
+    for (const k of names) if (Object.prototype.hasOwnProperty.call(o, k) && o[k] != null) return { key: k, value: o[k] };
+    const lower = new Map(Object.keys(o).map(k => [k.toLowerCase(), k]));
+    for (const k of names) {
+      const real = lower.get(k.toLowerCase());
+      if (real && o[real] != null) return { key: real, value: o[real] };
+    }
     return null;
   };
   const normalizeTime = v => {
@@ -76,8 +160,53 @@
     if (n != null && n > 0 && n <= 3600) return n < 60 ? `${n}s` : n === 60 ? '60s' : n % 60 === 0 ? `${n / 60}m` : `${n}s`;
     return null;
   };
+  const recordControlExpiration = (key, value, meta = {}) => {
+    const expiration = normalizeExp(value);
+    if (!expiration) return;
+    const semanticKey = String(key || '');
+    const parentKey = String(meta.parentKey || '');
+    const objectKeys = Array.isArray(meta.objectKeys) ? meta.objectKeys.join(' ') : '';
+    const genericAllowed = GENERIC_DURATION_KEY.test(semanticKey)
+      && /trade|option|operation|deal|expiry|expiration/i.test(`${parentKey} ${objectKeys}`);
+    if (!CONTROL_EXP_KEY.test(semanticKey) && !genericAllowed) return;
+    const confidence = CONTROL_EXP_KEY.test(semanticKey) && !GENERIC_DURATION_KEY.test(semanticKey) ? 97 : 84;
+    const current = stats.controlExpiration;
+    const observedAt = now();
+    if (!current || confidence > Number(current.confidence || 0) || observedAt - Number(current.observedAt || 0) > 2500) {
+      stats.controlExpiration = {
+        expiration,
+        confidence,
+        sourceKey: semanticKey,
+        transport: meta.transport || null,
+        endpoint: meta.endpoint || null,
+        observedAt
+      };
+    }
+  };
+  const namedInstrumentFromText = value => {
+    let raw = String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim().toUpperCase();
+    if (!raw || raw.length > 64 || SENSITIVE.test(raw)) return '';
+    const otc = /\bOTC\b|\(\s*OTC\s*\)/i.test(raw);
+    raw = raw.replace(/\(\s*OTC\s*\)/gi, ' ').replace(/\bOTC\b/gi, ' ').trim();
+    raw = raw.replace(/(?:^|[\s|•·_-])(BLITZ|OPTION|OPTIONS|BINARY|BINARIA|BINARIO|DIGITAL|TURBO|CALL|PUT)\s*$/i, '').trim();
+    raw = raw.replace(/^(?:ATIVO|ASSET|INSTRUMENTO|INSTRUMENT)\s*[:|-]\s*/i, '').trim();
+    raw = raw.replace(/\s+/g, ' ').replace(/^[|•·\-_:]+|[|•·\-_:]+$/g, '').trim();
+    if (!raw || raw.length < 2 || INSTRUMENT_WORDS.has(raw)) return '';
+    if (/^(?:S|M|H)\d{1,4}$/.test(raw)) return '';
+    if (!/[A-Z]/.test(raw) || /^[\d\s.,:+_/-]+$/.test(raw)) return '';
+    if (/^(?:\d+\s*(?:SEG|SEC|MIN|MINUTO|MINUTOS|S|M|H)|\d{1,2}:\d{2})$/i.test(raw)) return '';
+    const tokens = raw.split(/\s+/).filter(Boolean);
+    if (tokens.length === 1 && INSTRUMENT_WORDS.has(tokens[0])) return '';
+    // Network payload values are often longer labels/messages. A short,
+    // instrument-shaped label is the conservative path that we can safely
+    // reuse for names such as COCA-COLA, MELAMINA or MCDONALD'S.
+    if (tokens.length > 5) return '';
+    return `${raw}${otc ? ' (OTC)' : ''}`;
+  };
+
   const canonicalAsset = v => {
-    let raw = String(v ?? '').trim().toUpperCase();
+    const originalRaw = String(v ?? '').trim().toUpperCase();
+    let raw = originalRaw;
     if (!raw || raw.length > 64 || SENSITIVE.test(raw)) return '';
     raw = raw.replace(/^FRX[:_-]?/, '').replace(/^OTC[:_-]?/, '');
     const otc = /(?:\(|\b|[_-])OTC(?:\)|\b)?/.test(raw);
@@ -88,15 +217,26 @@
       if (quote) s = `${s.slice(0, -quote.length)}/${quote}`;
       else if (/^[A-Z]{6}$/.test(s)) s = `${s.slice(0, 3)}/${s.slice(3)}`;
     }
-    if (!/^[A-Z0-9]{2,16}\/[A-Z0-9]{2,12}$/.test(s)) return '';
-    return `${s}${otc ? ' (OTC)' : ''}`;
+    const [base, quote] = s.split('/');
+    if (COMMON_QUOTES.includes(quote)
+      && !GENERIC_ASSET_TOKENS.has(base)
+      && !GENERIC_ASSET_TOKENS.has(quote)
+      && /^[A-Z0-9]{2,16}\/[A-Z0-9]{2,12}$/.test(s)) {
+      return `${s}${otc ? ' (OTC)' : ''}`;
+    }
+    return namedInstrumentFromText(originalRaw);
   };
-  const assetFromText = v => {
+  const assetFromText = (v, allowNamed = true) => {
     const text = String(v ?? '').toUpperCase();
-    const direct = text.match(/\b[A-Z0-9]{2,16}\s*[\/_-]\s*[A-Z0-9]{2,12}(?:\s*\(?OTC\)?)?/);
-    if (direct) return canonicalAsset(direct[0]);
-    const compact = text.match(/\b[A-Z]{6}(?:[_-]?OTC)?\b/);
-    return compact ? canonicalAsset(compact[0]) : '';
+    for (const direct of text.matchAll(/\b[A-Z0-9]{2,16}\s*[\/_-]\s*[A-Z0-9]{2,12}(?:\s*\(?OTC\)?)?/g)) {
+      const asset = canonicalAsset(direct[0]);
+      if (asset) return asset;
+    }
+    for (const compact of text.matchAll(/\b[A-Z]{6}(?:[_-]?OTC)?\b/g)) {
+      const asset = canonicalAsset(compact[0]);
+      if (asset) return asset;
+    }
+    return allowNamed ? namedInstrumentFromText(text) : '';
   };
   const instrumentType = v => {
     const s = String(v ?? '').toLowerCase();
@@ -165,11 +305,55 @@
     while (stats.candles.size > 60) stats.candles.delete(stats.candles.keys().next().value);
   };
 
+  const NAMED_ASSET_KEY_RE = /^(?:name|displayName|display_name|label|title|asset|assetName|asset_name|instrument|instrumentName|instrument_name|symbol|symbolName|symbol_name|ticker|tickerName|ticker_name|underlying|underlyingAsset|underlying_asset|market|company|companyName|company_name)$/i;
+
+  const assetFromObjectPayload = o => {
+    if (!o || typeof o !== 'object') return { asset: '', raw: '' };
+    const ordered = [];
+    for (const key of ASSET_KEYS) {
+      if (Object.prototype.hasOwnProperty.call(o, key) && o[key] != null) {
+        ordered.push({ key, value: o[key], allowNamed: true });
+      }
+    }
+    for (const [key, value] of Object.entries(o)) {
+      if (SENSITIVE.test(key) || ordered.some(entry => entry.value === value)) continue;
+      if (typeof value === 'string' && value.length <= 240) {
+        ordered.push({ key, value, allowNamed: NAMED_ASSET_KEY_RE.test(key) });
+      }
+    }
+    for (const entry of ordered) {
+      const asset = assetFromText(entry.value, entry.allowNamed === true);
+      if (asset) return { asset, raw: String(entry.value).slice(0, 120) };
+    }
+    return { asset: '', raw: '' };
+  };
+
   const candidateFromObject = (o, inheritedAsset = '') => {
     if (!o || typeof o !== 'object' || Array.isArray(o)) return null;
-    const rawAsset = pick(o, ASSET_KEYS);
-    const asset = canonicalAsset(rawAsset) || canonicalAsset(inheritedAsset) || assetFromText(rawAsset);
-    if (!asset) return null;
+    const rawAssetValue = pick(o, ASSET_KEYS);
+    const rawAsset = String(rawAssetValue ?? '').trim();
+    const inherited = canonicalAsset(inheritedAsset);
+    const original = canonicalAsset(rawAssetValue);
+    const payloadFallback = original ? { asset: '', raw: '' } : assetFromObjectPayload(o);
+    const visualFallback = recentTrustedVisualAsset();
+    const asset = original || inherited || payloadFallback.asset || visualFallback;
+    if (!asset) {
+      lastNetworkAssetIdentity = {
+        raw: rawAsset || payloadFallback.raw || null,
+        asset: '',
+        source: original ? 'network-asset-key-rejected' : 'asset-not-found',
+        at: now()
+      };
+      requestTrustedVisualAssetFallback();
+      return null;
+    }
+    const assetSource = original
+      ? 'network-asset-key'
+      : inherited
+        ? 'network-inherited'
+        : payloadFallback.asset
+          ? 'network-payload-fallback'
+          : 'trusted-visual-fallback';
     const bid = num(pick(o, BID_KEYS));
     const ask = num(pick(o, ASK_KEYS));
     let price = num(pick(o, PRICE_KEYS));
@@ -182,7 +366,14 @@
     if (price == null && bid == null && ask == null && close == null) return null;
     const timestamp = pick(o, TIME_KEYS);
     const timeframe = normalizeTf(pick(o, TF_KEYS));
-    const expiration = normalizeExp(pick(o, EXP_KEYS));
+    const expirationEntry = pickEntry(o, EXP_KEYS);
+    const expiration = normalizeExp(expirationEntry?.value);
+    if (expirationEntry) {
+      recordControlExpiration(expirationEntry.key, expirationEntry.value, {
+        parentKey: inheritedAsset,
+        objectKeys: Object.keys(o).slice(0, 40)
+      });
+    }
     const payout = num(pick(o, PAYOUT_KEYS));
     const selected = SELECTED_KEYS.some(k => Object.prototype.hasOwnProperty.call(o, k) && bool(o[k]));
     const typeRaw = pick(o, TYPE_KEYS);
@@ -196,7 +387,8 @@
     if (timestamp != null) confidence += 7;
     if (selected) confidence += 10;
     if (iType) confidence += 5;
-    const c = { asset, observedAt: now(), confidence: Math.min(100, confidence), selected };
+    const c = { asset, assetRaw: rawAsset || null, assetSource, observedAt: now(), confidence: Math.min(100, confidence), selected };
+    lastNetworkAssetIdentity = { raw: rawAsset || payloadFallback.raw || null, asset, source: assetSource, at: now() };
     if (price != null) c.price = price;
     if (bid != null) c.bid = bid;
     if (ask != null) c.ask = ask;
@@ -206,7 +398,10 @@
     if (close != null) c.close = close;
     if (timestamp != null) c.timestamp = timestamp;
     if (timeframe) c.timeframe = timeframe;
-    if (expiration) c.expiration = expiration;
+    if (expiration) {
+      c.expiration = expiration;
+      c.expirationSourceKey = expirationEntry?.key || null;
+    }
     if (payout != null) c.payout = payout;
     if (iType) c.instrumentType = iType;
     if (marketType) c.marketType = marketType;
@@ -232,7 +427,9 @@
       if (v == null || d > 9) continue;
       if (Array.isArray(v)) {
         if (CANDLE_CONTAINER.test(key)) {
-          const candle = arrayCandle(v, node.asset, node.tf); if (candle) recordCandle(candle);
+          const candleAsset = canonicalAsset(node.asset) || recentTrustedVisualAsset();
+          if (!candleAsset) requestTrustedVisualAssetFallback();
+          const candle = arrayCandle(v, candleAsset, node.tf); if (candle) recordCandle(candle);
         }
         for (let i = Math.min(v.length, 350) - 1; i >= 0; i--) stack.push({ v: v[i], d: d + 1, asset: node.asset, key, tf: node.tf });
         continue;
@@ -258,9 +455,15 @@
       for (const [k, val] of Object.entries(v)) {
         if (SENSITIVE.test(k)) continue;
         if (k.length <= 64) stats.keys.add(k);
+        recordControlExpiration(k, val, {
+          parentKey: key,
+          objectKeys: Object.keys(v).slice(0, 40),
+          transport: meta.transport,
+          endpoint: meta.endpoint
+        });
         let childAsset = ownAsset;
-        if (!childAsset && QUOTE_CONTAINER.test(key || k)) childAsset = canonicalAsset(k) || assetFromText(k);
-        if (!childAsset) childAsset = canonicalAsset(k) || '';
+        if (!childAsset && QUOTE_CONTAINER.test(key || k)) childAsset = assetFromText(k, true);
+        if (!childAsset) childAsset = assetFromText(k, false);
         if (val && typeof val === 'object') stack.push({ v: val, d: d + 1, asset: childAsset, key: k, tf: ownTf });
       }
     }
@@ -309,6 +512,9 @@
         payload: {
           messages: { ...stats.messages }, connections: { ...stats.connections }, endpoints: [...stats.endpoints].slice(-24),
           keys: [...stats.keys].slice(0, 160), candidates, candidateCount: candidates.length, recentCandles,
+          controls: stats.controlExpiration && t - Number(stats.controlExpiration.observedAt || 0) < 7000
+            ? { expiration: stats.controlExpiration.expiration, confidence: stats.controlExpiration.confidence, sourceKey: stats.controlExpiration.sourceKey, observedAt: stats.controlExpiration.observedAt }
+            : null,
           feedQuality: feedQuality(), parser: { ...stats.parse }, primaryTransport: stats.connections.ws > 0 ? 'ws' : 'http',
           privacy: 'Somente respostas de mercado recebidas pela página são observadas. Cookies, headers, corpos de requisição, tokens e campos de autenticação não são coletados.'
         }
@@ -316,26 +522,47 @@
     }, 220);
   };
 
-  const record = (transport, url, data) => {
+  const record = (transport, url, data, countSeen = true) => {
     if (stats.messages[transport] != null) stats.messages[transport]++;
+    if (countSeen && networkDiagnostic.transport[transport]) networkDiagnostic.transport[transport].seen += 1;
+    rememberDiagnosticEndpoint(transport, url);
     const endpoint = safeUrl(url); if (endpoint) stats.endpoints.add(`${transport}:${endpoint}`);
     trimSet(stats.endpoints, 120);
+    const beforeCandidates = Number(stats.parse.candidates || 0);
+    const beforeCandles = Number(stats.parse.candles || 0);
     scan(data, { transport, endpoint });
+    if (networkDiagnostic.transport[transport]) {
+      if (Number(stats.parse.candidates || 0) > beforeCandidates) networkDiagnostic.transport[transport].price += 1;
+      if (Number(stats.parse.candles || 0) > beforeCandles) networkDiagnostic.transport[transport].candle += 1;
+    }
     flushTimer();
   };
 
   if (window.WebSocket) {
     const Native = window.WebSocket;
     const Wrapped = function(url, protocols) {
+      const wasIdle = stats.connections.ws === 0;
       const ws = protocols === undefined ? new Native(url) : new Native(url, protocols);
       stats.connections.ws++;
+      rememberDiagnosticEndpoint('ws', url);
       const endpoint = safeUrl(url); if (endpoint) stats.endpoints.add(`ws:${endpoint}`);
       flushTimer();
+      if (wasIdle) announceNetworkContext('ws', url, ++networkSessionCounter);
       ws.addEventListener('message', e => {
-        if (typeof e.data === 'string') record('ws', url, e.data);
-        else toText(e.data).then(t => { if (t) record('ws', url, t); }).catch(() => {});
+        networkDiagnostic.transport.ws.seen += 1;
+        if (typeof e.data === 'string') {
+          networkDiagnostic.wsFrames.text += 1;
+          record('ws', url, e.data, false);
+        } else {
+          networkDiagnostic.wsFrames.binary += 1;
+          toText(e.data).then(t => { if (t) record('ws', url, t, false); }).catch(() => {});
+        }
       });
-      ws.addEventListener('close', () => { stats.connections.ws = Math.max(0, stats.connections.ws - 1); flushTimer(); }, { once: true });
+      ws.addEventListener('close', () => {
+        stats.connections.ws = Math.max(0, stats.connections.ws - 1);
+        if (stats.connections.ws === 0) networkContextKey = '';
+        flushTimer();
+      }, { once: true });
       return ws;
     };
     Wrapped.prototype = Native.prototype;
@@ -376,6 +603,36 @@
       return send.apply(this, args);
     };
   }
+
+  const diagnosticMessageHandler = event => {
+    const data = event.data;
+    if (!data || data.source !== 'ATS_EXPIRATION_DIAGNOSTIC_REQUEST' || !data.requestId) return;
+    try {
+      window.postMessage({
+        source: 'ATS_NETWORK_DIAGNOSTIC_SNAPSHOT',
+        requestId: data.requestId,
+        payload: {
+          frame: {
+            href: String(location.href || ''),
+            isTop: window === window.top,
+            host: String(location.hostname || '').toLowerCase()
+          },
+          transport: {
+            ws: { ...networkDiagnostic.transport.ws },
+            fetch: { ...networkDiagnostic.transport.fetch },
+            xhr: { ...networkDiagnostic.transport.xhr }
+          },
+          endpoints: [...networkDiagnostic.endpoints].slice(0, 5),
+          wsFrames: { ...networkDiagnostic.wsFrames },
+          assetIdentity: { ...lastNetworkAssetIdentity },
+          networkContext: { contextKey: networkContextKey || '', transport: networkContextKey.split('|')[0] || '', endpoint: networkContextKey.split('|').slice(1).join('|') || '' },
+          startedAt: networkDiagnostic.startedAt,
+          observedAt: Date.now()
+        }
+      }, '*');
+    } catch {}
+  };
+  window.addEventListener('message', diagnosticMessageHandler);
 
   window.postMessage({ source: 'ATS_NETWORK_PROBE', type: 'ready', payload: { ready: true } }, '*');
 })();
