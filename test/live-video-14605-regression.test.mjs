@@ -5,8 +5,8 @@ const read = path => fs.readFileSync(new URL('../' + path, import.meta.url), 'ut
 
 test('opaque CasaTrade child frames may report real controls without widening ordinary sender trust', () => {
   const source = read('src/background-platform-controls.js');
-  assert.match(source, /const opaqueChild = tabOwned && Number\(sender\.frameId\) > 0/);
-  assert.match(source, /return tabOwned && \(knownFrame \|\| opaqueChild\)/);
+  assert.match(source, /const opaqueSender = tabOwned && \(!frameHost \|\| frameHost === 'null'\)/);
+  assert.match(source, /return tabOwned && \(knownFrame \|\| opaqueSender\)/);
 });
 
 test('owner dev access does not flicker as inactive in the live panel', () => {
