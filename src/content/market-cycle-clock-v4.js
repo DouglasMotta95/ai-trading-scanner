@@ -259,7 +259,33 @@
       .at(-1);
     if (!latest) { stateBoundaryProbe = null; return null; }
     const now = Date.now();
-    const openAt = latest.time;
+    const latestIndex = rows
+      .map(row => normalizeTime(row?.time ?? row?.timestamp))
+      .filter(time => Number.isFinite(time))
+      .sort((a, b) => a - b);
+    const previousTime = latestIndex.length > 1 ? latestIndex[latestIndex.length - 2] : null;
+    const sourceStepMs = previousTime != null ? latest.time - previousTime : null;
+    const targetTf = tf(cycleTf);
+    const sourceLooksM1 = targetTf === 'M5' && Number.isFinite(sourceStepMs)
+      && sourceStepMs >= 45_000 && sourceStepMs <= 90_000;
+    // When CasaTrade exposes the underlying one-minute candles while the
+    // scanner is operating in M5, the latest M1 open must be aligned to its
+    // containing five-minute bucket. Using the raw M1 timestamp here creates
+    // a fake M5 close such as 12:03 -> 12:08 and leaves the authoritative
+    // clock null or drifting around the rollover.
+    let openAt = latest.time;
+    if (sourceLooksM1) {
+      const bucketAt = Math.floor(latest.time / durationMs) * durationMs;
+      const latestAgeMs = now - latest.time;
+      if (latestAgeMs < -1500 || latestAgeMs > 120000) {
+        stateBoundaryProbe = null;
+        return null;
+      }
+      openAt = bucketAt;
+    } else if (openAt % durationMs !== 0) {
+      stateBoundaryProbe = null;
+      return null;
+    }
     if (openAt > now + 1500 || now < openAt - 1500 || now >= openAt + durationMs + 1200) {
       stateBoundaryProbe = null;
       return null;
