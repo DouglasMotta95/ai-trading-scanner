@@ -26,7 +26,7 @@ function lateralRows(bucket) {
 function snap(bucket, elapsed, secondsRemaining, rows = bullishRows(bucket), price = rows.at(-1).close) {
   return processSnapshot({
     platformId: 'casatrade', asset: 'EUR/USD (OTC)', price,
-    timeframe: 'M1', analysisTimeframe: 'M1', connection: 'online',
+    timeframe: 'M1', analysisTimeframe: 'M1', connection: 'online', clockVerified: true,
     serverTime: bucket + elapsed, secondsRemaining, candles: rows
   }, { connection: 'online' });
 }
