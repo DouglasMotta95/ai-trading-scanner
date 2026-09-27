@@ -377,6 +377,7 @@ function baseDecision(state = {}) {
     expirationReady: expiration.ready,
     actualExpiration: expiration.actual || null,
     timeSource: time.source || null,
+    timeAuthoritative: time.authoritative === true,
     timeframe: time.timeframe || normTf(state.analysisTimeframe || state.timeframe),
     secondsRemaining: time.secondsRemaining ?? num(state.diagnostics?.marketClock?.secondsRemaining),
     marketIdentityReady: identity.ready,
@@ -490,6 +491,19 @@ function baseDecision(state = {}) {
     };
   }
 
+  if (time.authoritative !== true) {
+    return {
+      ...common,
+      uiState: direction === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL',
+      direction,
+      actionable: false,
+      alert: 'discrete',
+      possibleSince,
+      holdRemainingMs: Math.max(0, holdMs - heldFor),
+      reason: `${side} — ALTA CONFIANÇA • PRÉ-SINAL • aguardando o countdown exato da CasaTrade para liberar a entrada.`
+    };
+  }
+
   if (heldFor < holdMs) {
     return {
       ...common,
@@ -531,6 +545,7 @@ function signature(value = {}) {
     confluence: value.confluence || 0,
     factors: value.factors || [],
     timeReady: !!value.timeReady,
+    timeAuthoritative: !!value.timeAuthoritative,
     expirationReady: !!value.expirationReady,
     actualExpiration: value.actualExpiration || null,
     timeSource: value.timeSource || null,
