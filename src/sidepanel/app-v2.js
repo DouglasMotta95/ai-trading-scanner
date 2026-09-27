@@ -207,13 +207,22 @@ function sessionReady(state = {}) {
     && operationalClockReady(state);
 }
 
+function expirationTimingCompatible(expiration = {}, operation = {}) {
+  // A real CasaTrade observation remains accepted exactly as before.
+  // When CasaTrade does not expose a structured expiration, the explicit
+  // user declaration is the supported timing authority, provided it matches
+  // the active operation expiration exactly.
+  return !!expiration.value
+    && expiration.value === operation.expiration
+    && (expiration.verified === true || expiration.source === 'user-declared');
+}
+
 function liveTimingReady(state = {}) {
   if (!exactClockReady(state)) return false;
   const clock = state.diagnostics?.marketClock || {};
   const expiration = expirationObservation(state);
   const operation = operationRequirement(state);
-  return expiration.verified === true
-    && expiration.value === operation.expiration
+  return expirationTimingCompatible(expiration, operation)
     && normTf(clock.timeframe) === operation.timeframe;
 }
 
@@ -221,14 +230,13 @@ function entryTimeReady(state = {}) {
   if (!exactClockReady(state)) return false;
   const clock = state.diagnostics?.marketClock || {};
   const expiration = expirationObservation(state);
-  const actualExpiration = expiration.value;
-  if (!actualExpiration || expiration.verified !== true) return false;
   const operation = operationRequirement(state);
+  if (!expirationTimingCompatible(expiration, operation)) return false;
   const clockTf = normTf(clock.timeframe);
   const stateTf = normTf(state.analysisTimeframe || state.timeframe);
   const controlTf = normTf(state.platformControls?.observed?.timeframe);
   if (!clockTf || clockTf !== operation.timeframe) return false;
-  if (actualExpiration !== operation.expiration) return false;
+  if (expiration.value !== operation.expiration) return false;
   if (stateTf && stateTf !== clockTf) return false;
   if (controlTf && controlTf !== clockTf) return false;
   return state.professionalDecision?.timeReady === true && state.professionalDecision?.expirationReady === true;
