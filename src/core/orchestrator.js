@@ -553,12 +553,9 @@ export function processSnapshot(snapshot = {}, state = {}) {
   }
 
   if (secondsRemaining > windows.pre) {
-    // A POSSÍVEL is a pre-signal, so the preparation window must not hide a
-    // candidate that already passed the existing possible-quality policy.
-    // No score, power, confluence or hysteresis threshold is changed here.
-    const nextSignal = canShowPossible
-      ? possibleSignal(signal, windows, possibleDirection, score)
-      : (signal.state === 'WATCH' || signal.provisional ? buildingSignal(signal, windows) : signal);
+    // POSSÍVEL is only a preparation signal. Before the 30s pre-signal window,
+    // keep the UI in pattern-building even when the technical evidence is already strong.
+    const nextSignal = buildingSignal(signal, windows);
     if (clean(nextSignal?.uiState).toUpperCase() === 'WAIT' || nextSignal?.state === 'NO_TRADE') {
       candidateBlockerTrace = markCandidateWait(candidateBlockerTrace, key, secondsRemaining, nextSignal.reason);
     }
