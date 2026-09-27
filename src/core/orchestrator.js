@@ -82,7 +82,10 @@ function analysisHistory(candles = [], timeframeLabel = 'M1', timeframeMsValue =
 
   const direct = rows.filter(raw => clean(raw?.timeframe).toUpperCase() === 'M5');
   if (direct.length) return direct;
-  const m1 = rows.filter(raw => clean(raw?.timeframe).toUpperCase() === 'M1');
+  const m1 = rows.filter(raw => {
+    const rawTf = clean(raw?.timeframe).toUpperCase();
+    return rawTf === 'M1' || !rawTf;
+  });
   return aggregateM1IntoM5(m1);
 }
 

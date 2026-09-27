@@ -47,6 +47,21 @@ test('M5 clock normalizes seconds and anchors the next target to the 5-minute bo
   assert.equal(out.signal.targetStart, bucket + FIVE_MINUTES);
   assert.equal(out.signal.targetStart % FIVE_MINUTES, 0);
   assert.equal(out.signal.clock.platformClockAligned, false);
+
+  resetOrchestrator();
+  const untagged = candles.map(({ timeframe, ...row }) => row);
+  const untaggedOut = processSnapshot({
+    platformId: 'casatrade',
+    asset: 'EUR/USD (OTC)',
+    price: 1.011,
+    timeframe: 'M5',
+    analysisTimeframe: 'M5',
+    connection: 'online',
+    serverTime: serverTimeSeconds,
+    candles: untagged
+  }, { connection: 'online' });
+  assert.equal(untaggedOut.signal.candleCount, 2);
+  assert.equal(untaggedOut.signal.clock.currentBucket, bucket);
 });
 
 test('rejection strength remains direction-aware and does not change the decision threshold', () => {
