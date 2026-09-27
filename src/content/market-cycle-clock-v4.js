@@ -121,6 +121,59 @@
     return cx >= chart.left - padX && cx <= chart.right + padX && cy >= chart.top - padY && cy <= chart.bottom + padY;
   }
 
+  function renderedTextCountdown(cycleTf) {
+    const limit = secondsFor(cycleTf);
+    if (!limit) return null;
+    const chart = chartRect();
+    const rows = [];
+    const scanRoot = root => {
+      let walker = null;
+      try { walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT); } catch { return; }
+      let node = null;
+      let count = 0;
+      while ((node = walker.nextNode()) && count++ < 3500) {
+        const text = clean(node.nodeValue || '');
+        if (!text || text.length > 40) continue;
+        const matches = [...text.matchAll(/\b(\d{1,3}):([0-5]\d)\b/g)];
+        if (!matches.length) continue;
+        const parent = node.parentElement;
+        if (!parent || !visible(parent)) continue;
+        let rect = null;
+        try {
+          const range = document.createRange();
+          range.selectNodeContents(node);
+          rect = range.getBoundingClientRect();
+        } catch {}
+        if (!rect || rect.width <= 0 || rect.height <= 0) continue;
+        const parentContext = fold(clean(parent.innerText || parent.textContent || '').slice(0, 360));
+        const localContext = fold(clean([
+          text, parent.getAttribute?.('aria-label'), parent.getAttribute?.('title'),
+          parent.id, parent.className
+        ].filter(Boolean).join(' ')).slice(0, 220));
+        const candleSemantic = /vela|candle|remaining|restante|countdown|timer|fechamento|close/.test(localContext + ' ' + parentContext);
+        const expirySemantic = /expira|expiry|expiration|duration|duracao/.test(localContext + ' ' + parentContext);
+        if (expirySemantic && !candleSemantic) continue;
+        const chartScoped = inOrNearChart(rect, chart);
+        let score = chartScoped ? 260 : 0;
+        if (candleSemantic) score += 170;
+        if (colonOnlyText(text)) score += chartScoped ? 45 : 80;
+        if (expirySemantic) score -= 80;
+        for (const match of matches) {
+          const seconds = Number(match[1]) * 60 + Number(match[2]);
+          if (seconds < 0 || seconds > limit + 2) continue;
+          rows.push({ seconds, token: match[0], text, score, chartScoped });
+        }
+      }
+    };
+    try { scanRoot(document); } catch {}
+    rows.sort((a, b) => b.score - a.score || a.seconds - b.seconds);
+    return rows[0] || null;
+  }
+
+  function colonOnlyText(value) {
+    return /^\d{1,3}:[0-5]\d$/.test(String(value || '').trim());
+  }
+
   function exactDomCountdown(cycleTf) {
     const limit = secondsFor(cycleTf);
     if (!limit) return null;
@@ -181,7 +234,7 @@
       if (rolled) return rolled;
     }
     rows.sort((a, b) => b.score - a.score || a.seconds - b.seconds);
-    return rows[0] || null;
+    return rows[0] || renderedTextCountdown(cycleTf);
   }
 
   let domProbe = null;
