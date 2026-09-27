@@ -11,6 +11,7 @@
   const casaHost = value => value === 'casatrade.com' || value.endsWith('.casatrade.com') || value === 'casatrade.io' || value.endsWith('.casatrade.io');
   if (!traderHost(host) && !casaHost(host)) return;
   const frameRole = traderHost(host) ? 'trader-frame' : 'casa-chart-frame';
+  const isTop = window === window.top;
 
   // OTC and regular quotes are different live markets.
   const QUOTES = new Set(['USD','EUR','GBP','JPY','AUD','CAD','CHF','NZD','BRL','HKD','SGD','NOK','SEK','DKK','PLN','CZK','HUF','TRY','MXN','ZAR','INR','CNY','CNH','KRW','THB','MYR','PHP','IDR','VND','TWD','ILS','AED','SAR','QAR','KWD','BHD','OMR','ARS','CLP','COP','PEN','UYU','BOB','PYG','BTC','ETH','USDT','USDC']);
