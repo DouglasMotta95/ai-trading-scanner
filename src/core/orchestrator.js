@@ -238,7 +238,7 @@ function baseSignal({
   state = 'WAIT', direction = null, provisional = true, reason, timeframe = 'M1', expiration = null,
   candleCount = 0, secondsRemaining = null, progress = null, currentCandle = null, score = 0,
   analysisDirection = null, analysisScore = null, phase = 'ANALYZING', targetStart = null,
-  uiState = 'ANALYZING_MARKET', analytics = {}, stability = null, regime = null
+  uiState = 'ANALYZING_MARKET', analytics = {}, stability = null, regime = null, clock = null
 } = {}) {
   const diagnosis = ['WATCH', 'CONFIRM'].includes(state) && ['BUY', 'SELL'].includes(direction)
     ? direction
@@ -265,6 +265,7 @@ function baseSignal({
     analytics,
     regime,
     stability,
+    clock,
     targetStart,
     targetLabel: targetStart ? new Date(targetStart).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : null
   };
