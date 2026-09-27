@@ -28,6 +28,16 @@ export function registerBuildContracts(label='build') {
 }
 
 export function registerMarketContracts(label='market') {
+  test(label + ': Android opaque top-frame senders remain trusted for live clock and controls', () => {
+    const market = read('src/background-market-session.js');
+    const controls = read('src/background-platform-controls.js');
+    assert.match(market, /const opaqueSender = tabOwned && \(!frameHost \|\| frameHost === 'null'\)/);
+    assert.match(market, /trusted: embeddedTrader \|\| casaOwnedChart \|\| opaqueSender/);
+    assert.match(market, /effectiveTopFrameHost/);
+    assert.match(controls, /const opaqueSender = tabOwned && \(!frameHost \|\| frameHost === 'null'\)/);
+    assert.match(controls, /return tabOwned && \(knownFrame \|\| opaqueSender\)/);
+  });
+
   test(label + ': visible CasaTrade focus is the market authority', () => {
     const focus = read('src/content/focused-asset-v2.js');
     const market = read('src/background-market-session.js');
