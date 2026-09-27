@@ -383,6 +383,26 @@ function baseDecision(state = {}) {
     };
   }
   if (!finalQuality) {
+    // The live fast path may need one or two transient samples before it
+    // upgrades POSSÍVEL to ENTER. Do not let the 500ms policy evaluator erase
+    // that candidate in the meantime. The grace is bounded to the same cycle,
+    // direction and final-window confirmation period.
+    const previousPossible = sameCandidate
+      && ['POSSIBLE_BUY', 'POSSIBLE_SELL'].includes(text(previous.uiState).toUpperCase())
+      && previous.direction === direction
+      && heldFor <= holdMs + 1500;
+    if (previousPossible && seconds <= entryWindowSeconds) {
+      return {
+        ...common,
+        uiState: direction === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL',
+        direction,
+        actionable: false,
+        alert: 'discrete',
+        possibleSince,
+        holdRemainingMs: Math.max(0, holdMs - heldFor),
+        reason: 'POSSÍVEL — aguardando confirmação final do motor.'
+      };
+    }
     return {
       ...common,
       uiState: 'WAIT',
