@@ -54,7 +54,7 @@ test('asset or timeframe switch clears every operational field that could leak t
 test('runtime trusts only CasaTrade-owned charts or legacy trader frames under a CasaTrade top tab', () => {
   const market = read('src/background-market-session.js');
   assert.match(market, /const tabOwned = !!sender\.tab\?\.id && \(casaHost\(topHost\) \|\| traderHost\(topHost\)\)/);
-  assert.match(market, /const embeddedTrader = tabOwned && traderHost\(frameHost\)/);
+  assert.match(market, /const embeddedTrader = tabOwned && traderHost\(effectiveTopFrameHost\)/);
   assert.match(market, /const casaOwnedChart = tabOwned && casaHost\(frameHost\)/);
   assert.match(market, /trusted: embeddedTrader \|\| casaOwnedChart/);
   assert.match(market, /\['trader-frame', 'casa-chart-frame'\]\.includes\(role\)/);
