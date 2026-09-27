@@ -80,11 +80,14 @@ function expirationObservation(state = {}) {
   const realAt = Number(controls.realExpirationAt || 0);
   const realValue = normExp(controls.realExpiration || '');
   const realSource = clean(controls.realExpirationSource || controls.expirationSource || '');
-  // A verified CasaTrade expiration survives short control re-renders. Manual
-  // fallback is visible to the user but never counts as verified timing.
+  // A verified CasaTrade expiration remains time-fresh for 15s as before.
+  // A user-declared expiration is intentionally NOT time-expiring: it remains
+  // a valid unverified fallback until the existing session/asset reset clears it
+  // or the user changes the selector. It must never turn into "real pending"
+  // merely because 7 seconds elapsed since the selector change.
   const realFresh = !!realValue && realAt > 0 && Date.now() - realAt < 15000 && realSource !== 'user-declared';
   const at = realFresh ? realAt : observedAt;
-  const manualFresh = observedAt > 0 && Date.now() - observedAt < 7000;
+  const manualFresh = observedAt > 0;
   const manualValue = manualFresh ? normExp(controls.observed?.expiration || controls.userDeclaredExpiration || '') : null;
   const value = realFresh ? realValue : manualValue;
   const source = realFresh ? (realSource || 'casatrade-observed') : manualValue ? 'user-declared' : '';
