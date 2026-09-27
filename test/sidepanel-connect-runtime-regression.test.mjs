@@ -79,6 +79,6 @@ test('top-frame bootstrap and market session also support direct trader hosts', 
   assert.ok(top.matches.includes('https://*.ivcasatraders.online/*'));
 
   const market = read('src/background-market-session.js');
-  assert.match(market, /const embeddedTrader = tabOwned && traderHost\(frameHost\)/);
+  assert.match(market, /const embeddedTrader = tabOwned && traderHost\(effectiveTopFrameHost\)/);
   assert.doesNotMatch(market, /embeddedTrader = tabOwned && Number\(sender\.frameId\) !== 0 && traderHost/);
 });
