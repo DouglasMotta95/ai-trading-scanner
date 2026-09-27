@@ -13,6 +13,8 @@ const PUBLIC_CONFIG_URL = 'https://ats-control-center-v07-production.up.railway.
 let performanceRows = [];
 let telemetryStatus = {};
 let latestPublishedVersion = '';
+let restoringSavedExpiration = false;
+let restoredSavedExpirationKey = '';
 
 const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
 const marketId = value => {
@@ -501,6 +503,40 @@ function renderShell(state = {}) {
   if (expirationSelect) {
     const storedValue = declaredExpiration || '';
     if (expirationSelect.value !== storedValue) expirationSelect.value = storedValue;
+
+    // Programmatic restoration does not fire the select change event. Re-apply
+    // the saved declaration through the same background authority path once per
+    // panel/session, so reconnects do not leave the UI without expirationCheckedAt.
+    const realFreshForRestore = realExpirationFresh && realExpirationSource !== 'user-declared';
+    const checkedAtForRestore = Number(state.platformControls?.expirationCheckedAt || 0);
+    const sessionKeyForRestore = [
+      Number(state.targetTabId || 0),
+      Number(session.startedAt || state.diagnostics?.target?.connectedAt || 0),
+      clean(state.asset || ''),
+      storedValue
+    ].join('|');
+    const needsSavedExpirationRestore = !!storedValue
+      && !realFreshForRestore
+      && (!checkedAtForRestore || Date.now() - checkedAtForRestore >= CONTROLS_FRESH_MS);
+    if (needsSavedExpirationRestore
+      && sessionKeyForRestore !== restoredSavedExpirationKey
+      && !restoringSavedExpiration) {
+      restoredSavedExpirationKey = sessionKeyForRestore;
+      restoringSavedExpiration = true;
+      chrome.runtime.sendMessage({
+        type: 'ATS_SET_USER_DECLARED_EXPIRATION',
+        expiration: storedValue
+      }).then(response => {
+        if (response?.state) {
+          lastState = response.state;
+          renderShell(lastState);
+        }
+      }).catch(() => {
+        restoredSavedExpirationKey = '';
+      }).finally(() => {
+        restoringSavedExpiration = false;
+      });
+    }
   }
   if (expirationStatus) {
     expirationStatus.textContent = expirationDivergence
