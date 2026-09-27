@@ -73,14 +73,21 @@ function senderMeta(sender = {}) {
   try { frameHost = new URL(sender.url || '').hostname.toLowerCase(); } catch {}
   try { topHost = new URL(sender.tab?.url || '').hostname.toLowerCase(); } catch {}
   const tabOwned = !!sender.tab?.id && (casaHost(topHost) || traderHost(topHost));
-  const embeddedTrader = tabOwned && traderHost(frameHost);
-  const casaOwnedChart = tabOwned && casaHost(frameHost);
+  const opaqueSender = tabOwned && (!frameHost || frameHost === 'null');
+  const effectiveTopFrameHost = Number(sender.frameId || 0) === 0 && opaqueSender ? topHost : frameHost;
+  const embeddedTrader = tabOwned && traderHost(effectiveTopFrameHost);
+  const casaOwnedChart = tabOwned && casaHost(effectiveTopFrameHost);
   return {
-    trusted: embeddedTrader || casaOwnedChart,
+    // Android/Quetta can omit sender.url for a top-frame content script even
+    // though sender.tab.url is the verified CasaTrade tab. Treat that sender as
+    // trusted and bind its recorded frame host to the tab host so the exact
+    // clock is not discarded by the later focus/frame guard.
+    trusted: embeddedTrader || casaOwnedChart || opaqueSender,
     tabOwned,
     embeddedTrader,
     casaOwnedChart,
-    frameHost, topHost, frameId: sender.frameId, tabId: sender.tab?.id || null
+    frameHost: effectiveTopFrameHost || frameHost,
+    topHost, frameId: sender.frameId, tabId: sender.tab?.id || null
   };
 }
 
