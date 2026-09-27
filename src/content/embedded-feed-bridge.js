@@ -136,7 +136,7 @@
 
     const timeframe = normalizeTf(candidate?.timeframe || latest?.timeframe || state.analysisTimeframe || state.timeframe);
     const duration = durationSeconds(timeframe);
-    const openAt = normalizeTime(latest?.time ?? latest?.timestamp);
+    let openAt = normalizeTime(latest?.time ?? latest?.timestamp);
     const now = Date.now();
     if (!timeframe || !duration || !openAt) {
       candleClockProbe = null;
