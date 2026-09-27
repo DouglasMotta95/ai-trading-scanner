@@ -84,8 +84,12 @@ function expirationObservation(state = {}) {
   // fallback is visible to the user but never counts as verified timing.
   const realFresh = !!realValue && realAt > 0 && Date.now() - realAt < 15000 && realSource !== 'user-declared';
   const at = realFresh ? realAt : observedAt;
-  const manualFresh = observedAt > 0 && Date.now() - observedAt < 7000;
-  const manualValue = manualFresh ? normExp(controls.observed?.expiration || controls.userDeclaredExpiration || '') : null;
+  // A user declaration is session state, not a short-lived observation. It
+  // remains available until the existing asset/session reset clears it.
+  // The timestamp is retained for diagnostics only and must never invalidate
+  // the declaration by age. A declaration still never counts as verified.
+  const manualValue = normExp(controls.userDeclaredExpiration || '');
+  const manualFresh = !!manualValue;
   const value = realFresh ? realValue : manualValue;
   const source = realFresh ? (realSource || 'casatrade-observed') : manualValue ? 'user-declared' : '';
   return { value, fresh: realFresh || manualFresh, verified: realFresh, source, at, ageMs: at > 0 ? Date.now() - at : Infinity };
