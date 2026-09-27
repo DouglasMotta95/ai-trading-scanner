@@ -17,7 +17,7 @@ test('wrapper cannot bypass professional context or reuse a stale opposite final
   const orchestrator = read('src/core/orchestrator.js');
   assert.match(orchestrator, /professional\.contextReady === true && professional\.triggerReady === true/);
   assert.match(orchestrator, /technicalDirection === direction/);
-  assert.match(orchestrator, /if \(technicalFinal && quality\.qualifies\)/);
+  assert.match(orchestrator, /if \(timingVerified && technicalFinal && quality\.qualifies\)/);
 });
 
 test('Mais Sinais keeps its one-second hold after restoring and changing preferences', () => {
