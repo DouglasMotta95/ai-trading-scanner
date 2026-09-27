@@ -46,3 +46,20 @@ test('Android visual fallback pairs a visible Expiração text node with a rende
   assert.match(source, /function expirationFromRenderedText\(all = \[\]\)/);
   assert.match(source, /rendered-text-label-pair/);
 });
+
+
+test('v0.11.82 keeps an explicit user expiration declaration valid beyond seven seconds', () => {
+  const panel = read('src/sidepanel/app-v2.js');
+  assert.match(panel, /const manualValue = normExp\(controls\.userDeclaredExpiration \|\| ''\);/);
+  assert.match(panel, /const manualFresh = !!manualValue;/);
+  assert.doesNotMatch(panel, /manualFresh = observedAt > 0 && Date\.now\(\) - observedAt < 7000/);
+  assert.match(panel, /A user declaration is session state, not a short-lived observation/);
+});
+
+test('v0.11.82 restores a saved expiration declaration after reconnect without manual reselection', () => {
+  const shell = read('src/sidepanel/ui-shell-v2.js');
+  assert.match(shell, /data\.atsRestoredExpiration/);
+  assert.match(shell, /restoreSessionKey/);
+  assert.match(shell, /expirationSelect\.dispatchEvent\(new Event\('change', \{ bubbles: true \}\)\)/);
+  assert.match(shell, /Programmatic restoration does not fire <select>'s change event/);
+});
