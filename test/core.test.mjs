@@ -19,7 +19,7 @@ function bullishRows(bucket) {
 function snap(bucket, atMs, price = 1.11, candles = bullishRows(bucket), extra = {}) {
   return processSnapshot({
     platformId: 'casatrade', asset: 'EUR/USD (OTC)', price,
-    timeframe: 'M1', analysisTimeframe: 'M1', connection: 'online',
+    timeframe: 'M1', analysisTimeframe: 'M1', connection: 'online', clockVerified: true,
     serverTime: bucket + atMs, candles, ...extra
   }, { connection: 'online' });
 }
