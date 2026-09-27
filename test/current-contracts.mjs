@@ -118,7 +118,7 @@ export function registerExpirationContracts(label='expiration') {
   test(label + ': expiration is an execution gate for the active M1\/M5 mode', () => {
     const policy = read('src/background-decision-policy.js');
     const panel = read('src/sidepanel/app-v2.js');
-    assert.match(policy, /Expiration is an execution gate/);
+    assert.match(policy, /Timing and expiration are execution gates/);
     assert.match(policy, /operationMode\.expiration/);
     assert.match(panel, /expiration\.value !== operation\.expiration/);
     assert.match(panel, /AJUSTE A EXPIRAÇÃO DA CASATRADE/);
