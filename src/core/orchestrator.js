@@ -127,6 +127,13 @@ function decisionQuality(signal = {}, direction = null, thresholds = getThreshol
   const signalPolicy = getSignalPolicy(thresholds.profile);
   const evidence = highConfidenceEvidence(signal, direction, thresholds);
   const finalScore = signalPolicy.finalScore;
+  const localTriggerReady = signal?.recent?.breakout === direction
+    || signal?.recent?.rejection === direction
+    || (signal?.recent?.continuationDirection === direction && continuationScore >= 60);
+  // The entry engine is intentionally centered on the chart's local trigger:
+  // breakout, rejection, or a confirmed continuation aligned with recent price
+  // action. Momentum/strength alone can build context, but cannot create a
+  // next-candle entry candidate by themselves.
   // The professional layer is an enhancement, not the sole path to a signal.
   // v0.11.66 could produce a valid technical direction/score while this layer
   // remained incomplete, which made BOTH POSSÍVEL and final entries disappear.
@@ -136,10 +143,13 @@ function decisionQuality(signal = {}, direction = null, thresholds = getThreshol
   const recentReady = signal?.recent?.ready === true;
   const technicalPatternReady = recentReady
     && !!direction
-    && score >= signalPolicy.possibleScore;
+    && score >= signalPolicy.possibleScore
+    && localTriggerReady;
+  const entryTriggerReady = professional.triggerReady === true || localTriggerReady;
   const qualityContextReady = professionalReady || technicalPatternReady;
   const commonReady = !!direction
     && qualityContextReady
+    && entryTriggerReady
     && score >= finalScore
     && power >= signalPolicy.finalPower
     && evidence.length >= signalPolicy.minimumConfluence;
@@ -153,7 +163,9 @@ function decisionQuality(signal = {}, direction = null, thresholds = getThreshol
           ? `poder ${Math.round(power)} < ${signalPolicy.finalPower}`
           : evidence.length < signalPolicy.minimumConfluence
             ? `confluências fortes ${evidence.length}/${signalPolicy.minimumConfluence}`
-            : 'alta confiança confirmada';
+            : !entryTriggerReady
+              ? 'gatilho local ainda não confirmado'
+              : 'alta confiança confirmada';
 
   if (mode === 'SIMPLES') {
     const setups = [
