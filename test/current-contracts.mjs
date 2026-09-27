@@ -6,11 +6,11 @@ export const read = path => fs.readFileSync(new URL('../' + path, import.meta.ur
 const manifest = () => JSON.parse(read('manifest.json'));
 
 export function registerBuildContracts(label='build') {
-  test(label + ': current extension package is the v0.11.63 preserve reliable focus build', () => {
+  test(label + ': current extension package is the v0.11.76 focused diagnostic M5 clock build', () => {
     const m = manifest();
     assert.equal(m.manifest_version, 3);
-    assert.equal(m.version, '0.11.63');
-    assert.equal(m.version_name, '0.11.63-preserve-reliable-focus');
+    assert.equal(m.version, '0.11.76');
+    assert.equal(m.version_name, '0.11.76-focused-diagnostic-m5-clock');
     assert.equal(m.background?.service_worker, 'src/background-entry.js');
     assert.equal(m.side_panel?.default_path, 'src/sidepanel/index.html');
   });
@@ -61,6 +61,13 @@ export function registerTimeContracts(label='time') {
     }
     assert.match(clock, /clockRole: 'candle-close'/);
     assert.doesNotMatch(clock, /\|\|\s*'M1'/);
+  });
+  test(label + ': M5 structured boundary aggregates an underlying M1 cadence into five-minute buckets', () => {
+    const clock = read('src/content/market-cycle-clock-v4.js');
+    assert.match(clock, /sourceLooksM1/);
+    assert.match(clock, /Math\.floor\(latest\.time \/ durationMs\) \* durationMs/);
+    assert.match(clock, /sourceStepMs >= 45_000 && sourceStepMs <= 90_000/);
+    assert.match(clock, /openAt % durationMs !== 0/);
   });
   test(label + ': panel never fabricates a countdown', () => {
     const panel = read('src/sidepanel/app-v2.js');
