@@ -20,9 +20,9 @@ const THRESHOLD_PROFILES = Object.freeze({
     minimumClosedCandles: 2,
     preferredClosedCandles: 3,
     minimumPatternRows: 3,
-    possibleScore: 44,
-    confirmScore: 58,
-    finalScore: 58,
+    possibleScore: 58,
+    confirmScore: 62,
+    finalScore: 62,
     candleStrength: 62,
     rejectionStrength: 50,
     entryWindowSeconds: 10,
@@ -34,9 +34,9 @@ const THRESHOLD_PROFILES = Object.freeze({
     minimumClosedCandles: 2,
     preferredClosedCandles: 3,
     minimumPatternRows: 3,
-    possibleScore: 40,
-    confirmScore: 52,
-    finalScore: 52,
+    possibleScore: 52,
+    confirmScore: 55,
+    finalScore: 55,
     candleStrength: 55,
     rejectionStrength: 45,
     entryWindowSeconds: 12,
@@ -48,9 +48,9 @@ const THRESHOLD_PROFILES = Object.freeze({
     minimumClosedCandles: 2,
     preferredClosedCandles: 3,
     minimumPatternRows: 3,
-    possibleScore: 36,
-    confirmScore: 48,
-    finalScore: 48,
+    possibleScore: 45,
+    confirmScore: 50,
+    finalScore: 50,
     candleStrength: 50,
     rejectionStrength: 40,
     entryWindowSeconds: 15,
@@ -60,30 +60,30 @@ const THRESHOLD_PROFILES = Object.freeze({
 
 const SIGNAL_POLICIES = Object.freeze({
   RIGIDO: Object.freeze({
-    possibleScore: 64,
-    finalScore: 74,
-    possiblePower: 60,
-    finalPower: 63,
+    possibleScore: 58,
+    finalScore: 62,
+    possiblePower: 45,
+    finalPower: 45,
     minimumConfluence: 3,
     minimumStructure: 13,
     minimumLocation: 10,
     minimumTrigger: 10
   }),
   MEDIO: Object.freeze({
-    possibleScore: 56,
-    finalScore: 66,
-    possiblePower: 56,
-    finalPower: 59,
+    possibleScore: 52,
+    finalScore: 55,
+    possiblePower: 45,
+    finalPower: 45,
     minimumConfluence: 2,
     minimumStructure: 10,
     minimumLocation: 7,
     minimumTrigger: 8
   }),
   SOLTO: Object.freeze({
-    possibleScore: 50,
-    finalScore: 60,
-    possiblePower: 52,
-    finalPower: 55,
+    possibleScore: 45,
+    finalScore: 50,
+    possiblePower: 45,
+    finalPower: 45,
     minimumConfluence: 2,
     minimumStructure: 8,
     minimumLocation: 7,
@@ -184,11 +184,11 @@ export function waitingFor(recent = {}, direction = null, score = 0, profile = '
     });
 
     const power = Number(buy ? metrics.buyPower : metrics.sellPower) || 0;
-    if (power < 50) add({
+    if (power < 45) add({
       type: 'power', direction: chosenDirection,
       label: `Poder ${buy ? 'comprador' : 'vendedor'}`, level: null,
-      current: power, required: 50, gap: (50 - power) / 50,
-      text: `Aguardando poder ${buy ? 'comprador' : 'vendedor'} atingir 50% (agora ${Math.round(power)}%).`
+      current: power, required: 45, gap: (45 - power) / 45,
+      text: `Aguardando poder ${buy ? 'comprador' : 'vendedor'} atingir 45% (agora ${Math.round(power)}%).`
     });
 
     const strength = Number(metrics.currentStrength || 0);
@@ -425,15 +425,29 @@ export function recentPriceAction(candles = [], profile = 'MEDIO') {
   if (metrics.momentumDirection === 'BUY' && metrics.momentumScore >= 45) reasons.push('Momentum recente favorece alta');
   if (metrics.momentumDirection === 'SELL' && metrics.momentumScore >= 45) reasons.push('Momentum recente favorece baixa');
 
+  const localContinuationCandidate = last.direction && metrics.momentumDirection === last.direction
+    ? last.direction
+    : null;
+  const localContinuationScore = localContinuationCandidate
+    ? clamp(agreement * 45 + metrics.momentumScore * .3 + metrics.currentStrength * .25)
+    : 0;
+
   let direction = buy === sell ? majority : buy > sell ? 'BUY' : 'SELL';
+  // Lateralidade/doji/compressão fracos não anulam um gatilho local real.
+  if (!direction && breakout) direction = breakout;
+  if (!direction && rejection) direction = rejection;
+  if (!direction && localContinuationCandidate && localContinuationScore >= 60) {
+    direction = localContinuationCandidate;
+  }
+
   let score = Math.max(buy, sell);
   if (agreement >= .6) score += 10;
   if (avgBody >= .48) score += 8;
 
-  const continuationDirection = direction && last.direction === direction && metrics.momentumDirection === direction ? direction : null;
-  const continuationScore = continuationDirection
-    ? clamp(agreement * 45 + metrics.momentumScore * .3 + metrics.currentStrength * .25)
-    : 0;
+  const continuationDirection = direction && localContinuationCandidate === direction
+    ? direction
+    : null;
+  const continuationScore = continuationDirection ? localContinuationScore : 0;
   if (continuationDirection && continuationScore >= 60) {
     reasons.push(`Continuação ${direction === 'BUY' ? 'compradora' : 'vendedora'} consistente`);
   }
@@ -441,7 +455,7 @@ export function recentPriceAction(candles = [], profile = 'MEDIO') {
   if (metrics.lossOfStrength >= 72 && !breakout && !rejection) {
     reasons.push('A vela atual perdeu força; confirmação exige continuidade');
   }
-  const decisiveLocalSetup = !!breakout || !!rejection || (continuationDirection && continuationScore >= 65);
+  const decisiveLocalSetup = !!breakout || !!rejection || (continuationDirection && continuationScore >= 60);
   if (lateral && !decisiveLocalSetup) { score = Math.min(score, 54); direction = null; reasons.push('Mercado lateral nas últimas velas'); }
   if (doji && !rejection) { score = Math.min(score, 48); direction = null; reasons.push('Doji sem confirmação'); }
   if (tiny >= Math.ceil(rows.length * .6) && agreement < .75 && !decisiveLocalSetup) { score = Math.min(score, 56); direction = null; reasons.push('Compressão: aguardando rompimento'); }

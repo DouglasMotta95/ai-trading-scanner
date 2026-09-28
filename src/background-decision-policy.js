@@ -231,7 +231,7 @@ function confluence(signal = {}, direction = null, thresholds = getThresholds())
   const a = signal.analytics || {};
   const factors = [];
   const power = Number(direction === 'BUY' ? a.buyPower : a.sellPower) || 0;
-  if (power >= 50) factors.push(direction === 'BUY' ? 'poder comprador' : 'poder vendedor');
+  if (power >= 45) factors.push(direction === 'BUY' ? 'poder comprador' : 'poder vendedor');
   if (Number(a.currentStrength || 0) >= thresholds.candleStrength) factors.push('força da vela');
   if (text(a.rejectionDirection).toUpperCase() === direction && Number(a.rejectionStrength || 0) >= thresholds.rejectionStrength) factors.push('rejeição');
   if (text(a.continuationDirection).toUpperCase() === direction && Number(a.continuationScore || 0) >= 60) factors.push('continuação');
@@ -275,7 +275,7 @@ function baseDecision(state = {}) {
   const signalPolicy = getSignalPolicy(pref.sensitivityProfile);
   // The selected rhythm changes selectivity, but never bypasses context + trigger.
   const additionalConfluenceReady = factors.count >= signalPolicy.minimumConfluence;
-  const possibleScore = 55;
+  const possibleScore = signalPolicy.possibleScore;
   const finalScore = signalPolicy.finalScore;
   const entryWindowSeconds = pref.operationMode === 'M1'
     ? 10
@@ -284,8 +284,8 @@ function baseDecision(state = {}) {
       : pref.thresholds.entryWindowSeconds;
   const preSignalWindowSeconds = 30;
   const directionalPower = Number(direction === 'BUY' ? signal.analytics?.buyPower : signal.analytics?.sellPower) || 0;
-  const mandatoryPowerReady = directionalPower >= signalPolicy.possiblePower;
-  const finalPowerReady = directionalPower >= signalPolicy.finalPower;
+  const mandatoryPowerReady = directionalPower >= 45;
+  const finalPowerReady = directionalPower >= 45;
   const technicalCandidate = ['POSSIBLE_BUY', 'POSSIBLE_SELL', 'ENTER_BUY', 'ENTER_SELL'].includes(ui);
   const technicalFinal = ['ENTER_BUY', 'ENTER_SELL'].includes(ui);
   const professional = signal.analytics?.professional || {};
@@ -294,13 +294,15 @@ function baseDecision(state = {}) {
   const recent = signal?.recent || {};
   const localTriggerReady = recent.breakout === direction
     || recent.rejection === direction
-    || (recent.continuationDirection === direction && Number(recent.continuationScore || 0) >= 50);
+    || (recent.continuationDirection === direction && Number(recent.continuationScore || 0) >= 60);
   // A next-candle candidate must have a concrete local chart trigger. Momentum
   // or candle strength alone can describe context but cannot create an entry.
   // Score + clear direction is sufficient to create the pre-signal.
   // Other diagnostics stay available for traceability but do not suppress
   // a usable candidate at score >= 55.
-  const technicalPatternReady = !!direction && score >= possibleScore;
+  const technicalPatternReady = !!direction
+    && score >= possibleScore
+    && mandatoryPowerReady;
 
   const common = {
     profile: pref.mode,
@@ -417,7 +419,9 @@ function baseDecision(state = {}) {
     && additionalConfluenceReady;
   // Final window assertiveness: exact timing + clear direction + score >= 55
   // is enough to finish the existing two-sample hold and emit ENTER.
-  const assertiveFinalReady = !!direction && score >= 55;
+  const assertiveFinalReady = !!direction
+    && score >= finalScore
+    && finalPowerReady;
   const finalQuality = technicalFinalReady
     || assertiveFinalReady
     || (technicalFinal && score >= finalScore && finalPowerReady && additionalConfluenceReady

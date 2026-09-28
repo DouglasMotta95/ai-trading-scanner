@@ -145,10 +145,9 @@ function decisionQuality(signal = {}, direction = null, thresholds = getThreshol
   // engine to qualify when it has a ready candle pattern and enough independent
   // evidence. Manual execution and timing gates remain unchanged.
   const recentReady = signal?.recent?.ready === true;
-  const technicalPatternReady = recentReady
-    && !!direction
+  const technicalPatternReady = !!direction
     && score >= signalPolicy.possibleScore
-    && localTriggerReady;
+    && power >= 45;
   const entryTriggerReady = professional.triggerReady === true || localTriggerReady;
   const qualityContextReady = professionalReady || technicalPatternReady;
   const commonReady = !!direction
@@ -255,8 +254,12 @@ function decisionQuality(signal = {}, direction = null, thresholds = getThreshol
 }
 
 function possibleQuality(signal = {}, direction = null, score = 0, thresholds = getThresholds()) {
-  // Score >=55 plus a clear BUY/SELL direction is enough to surface POSSIBLE.
-  return ['BUY', 'SELL'].includes(direction) && Number(score) >= 55;
+  const signalPolicy = getSignalPolicy(thresholds.profile);
+  const analytics = signal.analytics || {};
+  const power = Number(direction === 'BUY' ? analytics.buyPower : analytics.sellPower) || 0;
+  return ['BUY', 'SELL'].includes(direction)
+    && Number(score) >= signalPolicy.possibleScore
+    && power >= 45;
 }
 
 function possibleWithHysteresis(cycle, allowed, direction, at) {
@@ -591,7 +594,9 @@ export function processSnapshot(snapshot = {}, state = {}) {
     };
   }
 
-  const assertiveFinalReady = ['BUY', 'SELL'].includes(direction) && score >= 55;
+  const assertiveFinalReady = ['BUY', 'SELL'].includes(direction)
+    && score >= signalPolicy.finalScore
+    && power >= 45;
   const stable = timingVerified
     ? observeDecision(cycle, direction, assertiveFinalReady, at)
     : false;
