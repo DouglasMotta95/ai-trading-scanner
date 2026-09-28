@@ -208,6 +208,15 @@ export function waitingFor(recent = {}, direction = null, score = 0, profile = '
       gap: Math.max(0, 60 - continuation) / 60,
       text: `Aguardando continuidade ${buy ? 'compradora' : 'vendedora'} ficar consistente (${Math.round(continuation)}%/60%).`
     });
+
+    const nextCandle = recent.nextCandle || {};
+    if (!nextCandle.ready || nextCandle.direction !== chosenDirection) add({
+      type: 'next_candle_continuation', direction: chosenDirection,
+      label: 'Pressão para a próxima vela', level: null,
+      current: Number(nextCandle.score || 0), required: 64,
+      gap: Math.max(0, 64 - Number(nextCandle.score || 0)) / 64,
+      text: nextCandle.reason || `Aguardando pressão ${buy ? 'compradora' : 'vendedora'} confirmar a próxima vela.`
+    });
   }
 
   const targetScore = Number(score) < thresholds.possibleScore
@@ -355,6 +364,82 @@ function analystMetrics(rows = [], profile = 'MEDIO') {
   };
 }
 
+export function nextCandleContinuation(rows = [], direction = null, metrics = {}, evidence = {}) {
+  const last = Array.isArray(rows) && rows.length ? rows[rows.length - 1] : null;
+  if (!last || !['BUY', 'SELL'].includes(direction)) {
+    return {
+      direction: direction || null,
+      ready: false,
+      score: 0,
+      pressure: 0,
+      favorableClose: 0,
+      bodyStrength: 0,
+      opposingWick: 100,
+      previousAlignment: 0,
+      momentumAligned: false,
+      momentumScore: 0,
+      followThrough: false,
+      reason: 'Sem vela direcional válida para confirmar a próxima vela.'
+    };
+  }
+
+  const range = Math.max(1e-12, Number(last.range || 0));
+  const closeFromLow = clamp(((Number(last.close) - Number(last.low)) / range) * 100);
+  const closeFromHigh = clamp(((Number(last.high) - Number(last.close)) / range) * 100);
+  const favorableClose = direction === 'BUY' ? closeFromLow : closeFromHigh;
+  const bodyStrength = clamp(Number(last.bodyRatio || 0) * 100);
+  const opposingWick = clamp(
+    Number(direction === 'BUY' ? last.upperRatio : last.lowerRatio || 0) * 100
+  );
+  const pressure = clamp(Number(direction === 'BUY' ? metrics.buyPower : metrics.sellPower) || 0);
+  const momentumScore = clamp(Number(metrics.momentumScore || 0));
+  const momentumAligned = metrics.momentumDirection === direction;
+  const previous = Array.isArray(rows) ? rows.slice(0, -1).slice(-3) : [];
+  const previousAlignment = previous.length
+    ? previous.filter(row => row.direction === direction).length / previous.length
+    : 0;
+  const triggerAligned = evidence.breakout === direction
+    || evidence.rejection === direction
+    || (evidence.continuationDirection === direction && Number(evidence.continuationScore || 0) >= 60);
+
+  // Entry-only gate for the NEXT candle. It intentionally does not modify the
+  // technical score, current direction, sensitivity profiles, or POSSÍVEL flow.
+  const score = clamp(
+    favorableClose * .30
+      + bodyStrength * .25
+      + pressure * .25
+      + (momentumAligned ? momentumScore : 0) * .12
+      + previousAlignment * 100 * .08
+      - opposingWick * .15
+  );
+
+  const shapeReady = favorableClose >= 58 && bodyStrength >= 30 && opposingWick <= 38;
+  const pressureReady = pressure >= 58 && score >= 64;
+  const followThrough = (momentumAligned && momentumScore >= 45)
+    || previousAlignment >= .67
+    || triggerAligned;
+  const ready = score >= 64 && shapeReady && pressureReady && followThrough;
+
+  const reason = ready
+    ? `Pressão ${direction === 'BUY' ? 'compradora' : 'vendedora'} confirma continuação da próxima vela (${Math.round(score)}/100).`
+    : `Pressão para a próxima vela ainda insuficiente (${Math.round(score)}/100).`;
+
+  return {
+    direction,
+    ready,
+    score,
+    pressure,
+    favorableClose,
+    bodyStrength,
+    opposingWick,
+    previousAlignment,
+    momentumAligned,
+    momentumScore,
+    followThrough,
+    reason
+  };
+}
+
 export function recentPriceAction(candles = [], profile = 'MEDIO') {
   const thresholds = getThresholds(profile);
   const rows = (Array.isArray(candles) ? candles : []).map(shape).filter(Boolean).slice(-10);
@@ -462,6 +547,13 @@ export function recentPriceAction(candles = [], profile = 'MEDIO') {
   if (lateral && decisiveLocalSetup) reasons.push('Mercado lateral, mas com gatilho local confirmado');
   score = clamp(score);
 
+  const nextCandle = nextCandleContinuation(rows, direction, metrics, {
+    breakout,
+    rejection,
+    continuationDirection,
+    continuationScore
+  });
+
   const opinion = !direction
     ? (reasons[reasons.length - 1] || 'Sem direção clara no padrão atual.')
     : reasons[0] || `Movimento recente favorece ${direction}.`;
@@ -491,6 +583,7 @@ export function recentPriceAction(candles = [], profile = 'MEDIO') {
     resistance,
     averageRange,
     lastClose: last.close,
+    nextCandle,
     reasons
   };
 }
@@ -638,7 +731,7 @@ export function analyzeCandles(candles = [], indicatorCandles = candles, profile
       reasons: [recent.opinion],
       recent,
       indicators: indicatorReinforcement(indicatorRows, null),
-      analytics: { ...(recent.metrics || {}), ...levelAnalytics },
+      analytics: { ...(recent.metrics || {}), ...levelAnalytics, nextCandle: recent.nextCandle || null },
       waitingFor: waitingFor(recent, null, 0, thresholds.profile)
     };
   }
@@ -651,7 +744,7 @@ export function analyzeCandles(candles = [], indicatorCandles = candles, profile
       reasons: recent.reasons,
       recent,
       indicators: indicatorReinforcement(indicatorRows, null),
-      analytics: { ...(recent.metrics || {}), ...levelAnalytics },
+      analytics: { ...(recent.metrics || {}), ...levelAnalytics, nextCandle: recent.nextCandle || null },
       waitingFor: waitingFor(recent, null, recent.score, thresholds.profile)
     };
   }
@@ -677,6 +770,7 @@ export function analyzeCandles(candles = [], indicatorCandles = candles, profile
       ...levelAnalytics,
       continuationDirection: recent.continuationDirection || null,
       continuationScore: Number(recent.continuationScore || 0),
+      nextCandle: recent.nextCandle || null,
       rsi: indicators.rsi?.value ?? null,
       macdHistogram: indicators.macd?.histogram ?? null,
       legacyScore: professional.legacyScore,
