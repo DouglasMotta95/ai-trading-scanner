@@ -294,7 +294,7 @@ function baseDecision(state = {}) {
   const recent = signal?.recent || {};
   const localTriggerReady = recent.breakout === direction
     || recent.rejection === direction
-    || (recent.continuationDirection === direction && Number(recent.continuationScore || 0) >= 60);
+    || (recent.continuationDirection === direction && Number(recent.continuationScore || 0) >= 55);
   // A next-candle candidate must have a concrete local chart trigger. Momentum
   // or candle strength alone can describe context but cannot create an entry.
   const technicalPatternReady = recent.ready === true
