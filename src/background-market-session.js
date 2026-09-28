@@ -521,7 +521,7 @@ export async function applyFocus(message = {}, sender = {}) {
       const existingFocus = state.diagnostics?.focusedAsset || null;
       const existingFocusFresh = existingFocus?.reliable === true
         && Number(existingFocus.at || 0) > 0
-        && Date.now() - Number(existingFocus.at) < 7000;
+        && Date.now() - Number(existingFocus.at) < 12000;
       const contextChanged = message.contextChanged === true;
 
       // Chart layout/DOM changes are not proof of a market change.
