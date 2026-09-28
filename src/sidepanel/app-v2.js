@@ -87,8 +87,10 @@ function expirationObservation(state = {}) {
   // merely because 7 seconds elapsed since the selector change.
   const realFresh = !!realValue && realAt > 0 && Date.now() - realAt < 15000 && realSource !== 'user-declared';
   const at = realFresh ? realAt : observedAt;
-  const manualFresh = observedAt > 0;
-  const manualValue = manualFresh ? normExp(controls.observed?.expiration || controls.userDeclaredExpiration || '') : null;
+  const declaredValue = normExp(controls.userDeclaredExpiration || '');
+  const observedManualValue = normExp(controls.observed?.expiration || '');
+  const manualValue = declaredValue || observedManualValue || null;
+  const manualFresh = !!manualValue;
   const value = realFresh ? realValue : manualValue;
   const source = realFresh ? (realSource || 'casatrade-observed') : manualValue ? 'user-declared' : '';
   return { value, fresh: realFresh || manualFresh, verified: realFresh, source, at, ageMs: at > 0 ? Date.now() - at : Infinity };
@@ -295,8 +297,8 @@ function entryBlockReason(state = {}) {
   const operation = operationRequirement(state);
   const expirationLabel = operation.expiration === '300s' ? '5 MINUTOS' : '1 MINUTO';
   const expiration = expirationObservation(state);
-  if (!expiration.value) return 'EXPIRAÇÃO REAL PENDENTE — AGUARDANDO LEITURA DA CASATRADE';
-  if (expiration.verified !== true) return 'EXPIRAÇÃO INFORMADA, MAS NÃO VERIFICADA — AGUARDANDO A CASATRADE';
+  if (!expiration.value) return 'EXPIRAÇÃO PENDENTE — informe a duração da operação ou aguarde a leitura da CasaTrade';
+  if (expiration.verified !== true) return 'EXPIRAÇÃO MANUAL ACEITA — aguardando apenas o countdown real da CasaTrade';
   if (expiration.value !== operation.expiration) return `AJUSTE A EXPIRAÇÃO DA CASATRADE PARA ${expirationLabel}`;
 
   const clock = state.diagnostics?.marketClock || {};
