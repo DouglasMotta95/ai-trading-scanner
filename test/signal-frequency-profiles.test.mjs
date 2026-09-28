@@ -102,3 +102,16 @@ test('network transport rotation does not clear the live market authority', () =
   assert.match(session, /existingFocusFresh/);
   assert.match(session, /12000/);
 });
+
+
+test('next-candle pressure is an entry-only gate and does not replace signal thresholds', () => {
+  const analysis = read('src/core/analysis.js');
+  const orchestrator = read('src/core/orchestrator.js');
+  const fast = read('src/core/live-fast-decision.js');
+  assert.match(analysis, /export function nextCandleContinuation/);
+  assert.match(analysis, /score >= 64 && shapeReady && pressureReady && followThrough/);
+  assert.match(orchestrator, /const nextCandleReady/);
+  assert.match(orchestrator, /&& nextCandleReady;/);
+  assert.match(fast, /q\.nextCandleReady === true/);
+  assert.match(fast, /score >= signalPolicy\.finalScore/);
+});
