@@ -906,17 +906,16 @@ export async function applyFeed(payload = {}, sender = {}) {
 
     const asset = normAsset(focus.asset);
     const stateTimeframe = normTf(state.diagnostics?.marketClock?.timeframe || state.analysisTimeframe || state.timeframe);
-    let candidate = bestForFocus(payload, asset);
+    const candidate = bestForFocus(payload, asset);
 
-    // CasaTrade can publish the candle history before the quote candidate.
-    // Use the latest validated close only as a bootstrap value; live quotes
-    // replace it as soon as they arrive.
-    if (!candidate) {
-      const bootstrapRows = historyFor(payload, asset, stateTimeframe);
-      const latest = bootstrapRows.at(-1);
-      const bootstrapPrice = num(latest?.close);
-      if (latest && bootstrapPrice != null) {
-        candidate = {
+    // CasaTrade can publish candle history before the quote effectiveCandidate.
+    // Keep the canonical candidate declaration stable, then use a bounded
+    // history fallback only when the quote candidate is absent.
+    const bootstrapRows = historyFor(payload, asset, stateTimeframe);
+    const latest = bootstrapRows.at(-1);
+    const bootstrapPrice = num(latest?.close);
+    const effectiveCandidate = candidate || (latest && bootstrapPrice != null
+      ? {
           asset,
           price: bootstrapPrice,
           timeframe: normTf(latest.timeframe) || stateTimeframe,
@@ -925,28 +924,21 @@ export async function applyFeed(payload = {}, sender = {}) {
           selected: true,
           assetSource: 'network-history-fallback',
           assetRaw: focus.asset
-        };
-      }
-    }
-    if (!candidate) return;
-
-    // Cross-frame feed is accepted only when its candidate is the same
-    // market already proven by the trusted visual focus. It never changes
-    // focus, asset identity, or session ownership.
-    const candidateMatchesFocus = sameMarket(candidate.asset, focus.asset);
-    if (!candidateMatchesFocus) return;
+        }
+      : null);
+    if (!effectiveCandidate) return;
 
     const assetIdentity = {
-      networkRawAssetName: clean(candidate.assetRaw || ''),
-      networkAsset: clean(candidate.asset || ''),
+      networkRawAssetName: clean(effectiveCandidate.assetRaw || ''),
+      networkAsset: clean(effectiveCandidate.asset || ''),
       finalAsset: clean(asset || ''),
-      finalSource: clean(candidate.assetSource || 'network'),
-      fallbackUsed: ['network-payload-fallback', 'trusted-visual-fallback', 'network-history-fallback'].includes(clean(candidate.assetSource)),
+      finalSource: clean(effectiveCandidate.assetSource || 'network'),
+      fallbackUsed: ['network-payload-fallback', 'trusted-visual-fallback', 'network-history-fallback'].includes(clean(effectiveCandidate.assetSource)),
       contextChanged: false,
       at: Date.now()
     };
 
-    const candidateTimeframe = normTf(candidate.timeframe);
+    const candidateTimeframe = normTf(effectiveCandidate.timeframe);
     if (candidateTimeframe && stateTimeframe && candidateTimeframe !== stateTimeframe) {
       return {
         ...state,
@@ -954,7 +946,7 @@ export async function applyFeed(payload = {}, sender = {}) {
           ...(state.diagnostics || {}),
           rejectedMarketData: {
             asset,
-            candidateAsset: candidate.asset || null,
+            candidateAsset: effectiveCandidate.asset || null,
             candidateTimeframe,
             expectedTimeframe: stateTimeframe,
             reason: 'timeframe_identity_mismatch',
@@ -977,8 +969,8 @@ export async function applyFeed(payload = {}, sender = {}) {
     const mergedHistory = mergeRows(previousHistory, incomingHistory);
     const bundle = validateMarketBundle({
       focusAsset: asset,
-      candidateAsset: candidate.asset,
-      price: candidate.price,
+      candidateAsset: effectiveCandidate.asset,
+      price: effectiveCandidate.price,
       candles: mergedHistory,
       requireCandles: true
     });
@@ -989,7 +981,7 @@ export async function applyFeed(payload = {}, sender = {}) {
           ...(state.diagnostics || {}),
           rejectedMarketData: {
             asset,
-            candidateAsset: candidate.asset || null,
+            candidateAsset: effectiveCandidate.asset || null,
             reason: bundle.reason,
             at: Date.now()
           }
@@ -999,9 +991,9 @@ export async function applyFeed(payload = {}, sender = {}) {
     const acceptedHistory = sanitizeRows(bundle.candles);
     const marketHistory = { [asset]: acceptedHistory };
     const clock = usableClock(state, info);
-    const timeframe = normTf(clock?.timeframe || state.analysisTimeframe || candidate.timeframe) || null;
+    const timeframe = normTf(clock?.timeframe || state.analysisTimeframe || effectiveCandidate.timeframe) || null;
     const price = Number(bundle.price);
-    // candidate.timestamp is often the candle OPEN timestamp and can remain static
+    // effectiveCandidate.timestamp is often the candle OPEN timestamp and can remain static
     // for the full minute. Runtime observation time must advance for stability logic.
     const serverTime = Date.now();
     const historicalJump = incomingHistory.length > 1 && acceptedHistory.length - previousHistory.length > 1;
@@ -1049,7 +1041,7 @@ export async function applyFeed(payload = {}, sender = {}) {
               : `Sessão ao vivo ${asset} • ${timeframe || '—'} usando clock temporário estimado até a CasaTrade expor o fechamento exato.`
             : 'Preço e histórico prontos. Sincronizando o relógio da vela.',
           clockQuality: clock?.verified === true ? 'exact' : clock ? 'fallback' : 'missing',
-          priceSource: candidate.transport || payload.primaryTransport || 'market', candleCount: acceptedHistory.length, requiredCandles: 2,
+          priceSource: effectiveCandidate.transport || payload.primaryTransport || 'market', candleCount: acceptedHistory.length, requiredCandles: 2,
           feedQuality: Number(payload.feedQuality || 0), at: Date.now()
         },
         inspector: state.diagnostics?.inspector || null,
@@ -1057,7 +1049,7 @@ export async function applyFeed(payload = {}, sender = {}) {
           ...(state.diagnostics?.assetIdentity || {}),
           ...assetIdentity,
           contextKey: clean(state.diagnostics?.networkContext?.contextKey || ''),
-          fallbackSource: clean(candidate.assetSource || ''),
+          fallbackSource: clean(effectiveCandidate.assetSource || ''),
           at: Date.now()
         }
       }
