@@ -21,6 +21,7 @@ const profileHoldSeconds = value => {
 };
 
 const PANEL_OPENED_AT = Date.now();
+const FOCUS_FRESH_MS = 12000;
 let prefs = { ...DEFAULT_PREFS };
 let liveOhlc = null;
 let audioContext = null;
@@ -164,7 +165,7 @@ function focusReady(state = {}) {
     && (focus.embeddedTrader === true || focus.casaTradeFrame === true)
     && sameMarket(focus.asset, state.asset)
     && Number(focus.at || 0) > 0
-    && Date.now() - Number(focus.at) < 5500;
+    && Date.now() - Number(focus.at) < FOCUS_FRESH_MS;
 }
 
 function clockBoundToFocus(clock = {}, focus = {}) {
@@ -351,7 +352,7 @@ function decisionModel(state = {}) {
       title: earlyDirection === 'BUY' ? 'COMPRA — POSSÍVEL' : 'VENDA — POSSÍVEL',
       text: earlyDirection === 'BUY' ? 'POSSÍVEL COMPRA' : 'POSSÍVEL VENDA',
       sub: liveTimingReady(state) ? 'Alta confiança detectada; aguardando janela final.' : 'Pré-sinal técnico detectado; aguardando sincronização final da entrada.',
-      tone: 'possible', reason: earlyReason, score: earlyScore, actionable: false, direction: earlyDirection
+      tone: earlyDirection === 'BUY' ? 'possible-buy' : 'possible-sell', reason: earlyReason, score: earlyScore, actionable: false, direction: earlyDirection
     };
   }
 
@@ -395,10 +396,10 @@ function decisionModel(state = {}) {
       const side = possibleDirection === 'BUY' ? 'COMPRA' : 'VENDA';
       return {
         uiState: possibleDirection === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL',
-        title: `${side} — ALTA CONFIANÇA`,
-        text: `PRÉ-SINAL: ${side}`,
+        title: `${side} — POSSÍVEL`,
+        text: `POSSÍVEL ${side}`,
         sub: blocked,
-        tone: 'possible',
+        tone: possibleDirection === 'BUY' ? 'possible-buy' : 'possible-sell',
         reason: `${reason} • ${blocked}`,
         score,
         actionable: false,
@@ -410,8 +411,8 @@ function decisionModel(state = {}) {
 
   if (ui === 'ANALYZING_MARKET') return { uiState: ui, title: 'ANALISANDO MERCADO', text: 'ANALISANDO MERCADO', sub: reason, tone: 'waiting', reason, score, actionable: false };
   if (ui === 'BUILDING_PATTERN' || ui === 'DECIDING') return { uiState: ui, title: 'AGUARDAR', text: 'AGUARDAR', sub: 'Buscando alta confiança técnica.', tone: 'waiting', reason, score, actionable: false };
-  if (ui === 'POSSIBLE_BUY') return { uiState: ui, title: 'COMPRA — ALTA CONFIANÇA', text: 'PRÉ-SINAL: COMPRA', sub: 'Alta confiança detectada; aguardando janela final.', tone: 'possible', reason, score, actionable: false, direction: 'BUY' };
-  if (ui === 'POSSIBLE_SELL') return { uiState: ui, title: 'VENDA — ALTA CONFIANÇA', text: 'PRÉ-SINAL: VENDA', sub: 'Alta confiança detectada; aguardando janela final.', tone: 'possible', reason, score, actionable: false, direction: 'SELL' };
+  if (ui === 'POSSIBLE_BUY') return { uiState: ui, title: 'COMPRA — ALTA CONFIANÇA', text: 'PRÉ-SINAL: COMPRA', sub: 'Alta confiança detectada; aguardando janela final.', tone: 'possible-buy', reason, score, actionable: false, direction: 'BUY' };
+  if (ui === 'POSSIBLE_SELL') return { uiState: ui, title: 'VENDA — ALTA CONFIANÇA', text: 'PRÉ-SINAL: VENDA', sub: 'Alta confiança detectada; aguardando janela final.', tone: 'possible-sell', reason, score, actionable: false, direction: 'SELL' };
   if (ui === 'ENTER_BUY' && p.actionable === true) return { uiState: ui, title: 'COMPRA — ALTA CONFIANÇA', text: 'COMPRA — ALTA CONFIANÇA', sub: 'ENTRAR NA PRÓXIMA VELA', tone: 'buy', reason, score, actionable: true, direction: 'BUY' };
   if (ui === 'ENTER_SELL' && p.actionable === true) return { uiState: ui, title: 'VENDA — ALTA CONFIANÇA', text: 'VENDA — ALTA CONFIANÇA', sub: 'ENTRAR NA PRÓXIMA VELA', tone: 'sell', reason, score, actionable: true, direction: 'SELL' };
   return { uiState: 'WAIT', title: 'AGUARDAR', text: 'AGUARDAR', sub: 'Padrão sem confirmação suficiente.', tone: 'no-trade', reason: reason.startsWith('AGUARDAR') ? reason : `AGUARDAR — ${reason}`, score, actionable: false };
@@ -584,7 +585,7 @@ function render(state = {}) {
   if (decisionCard) decisionCard.className = `card decision-card ${model.tone}`;
   const banner = $('decisionBanner');
   if (banner) banner.className = `decision-banner ${model.tone}`;
-  const badgeTone = model.tone === 'buy' ? 'ok' : model.tone === 'sell' ? 'bad' : 'warn';
+  const badgeTone = ['buy','possible-buy'].includes(model.tone) ? 'ok' : ['sell','possible-sell'].includes(model.tone) ? 'bad' : 'warn';
   setBadge('signalBadge', model.actionable ? 'ENTRAR' : model.uiState.startsWith('POSSIBLE_') ? 'POSSÍVEL' : 'AGUARDAR', badgeTone);
 
   const duration = timeframeSeconds(actualTf);
