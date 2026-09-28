@@ -900,7 +900,29 @@ export async function applyFeed(payload = {}, sender = {}) {
     if (!sameFocusFrame && (!state.targetTabId || Number(state.targetTabId) !== Number(info.tabId))) return;
 
     const asset = normAsset(focus.asset);
-    const candidate = bestForFocus(payload, asset);
+    const stateTimeframe = normTf(state.diagnostics?.marketClock?.timeframe || state.analysisTimeframe || state.timeframe);
+    let candidate = bestForFocus(payload, asset);
+
+    // CasaTrade can publish the candle history before the quote candidate.
+    // Use the latest validated close only as a bootstrap value; live quotes
+    // replace it as soon as they arrive.
+    if (!candidate) {
+      const bootstrapRows = historyFor(payload, asset, stateTimeframe);
+      const latest = bootstrapRows.at(-1);
+      const bootstrapPrice = num(latest?.close);
+      if (latest && bootstrapPrice != null) {
+        candidate = {
+          asset,
+          price: bootstrapPrice,
+          timeframe: normTf(latest.timeframe) || stateTimeframe,
+          timestamp: latest.time ?? latest.timestamp ?? Date.now(),
+          confidence: 70,
+          selected: true,
+          assetSource: 'network-history-fallback',
+          assetRaw: focus.asset
+        };
+      }
+    }
     if (!candidate) return;
 
     // Cross-frame feed is accepted only when its candidate is the same
@@ -914,13 +936,12 @@ export async function applyFeed(payload = {}, sender = {}) {
       networkAsset: clean(candidate.asset || ''),
       finalAsset: clean(asset || ''),
       finalSource: clean(candidate.assetSource || 'network'),
-      fallbackUsed: ['network-payload-fallback', 'trusted-visual-fallback'].includes(clean(candidate.assetSource)),
+      fallbackUsed: ['network-payload-fallback', 'trusted-visual-fallback', 'network-history-fallback'].includes(clean(candidate.assetSource)),
       contextChanged: false,
       at: Date.now()
     };
 
     const candidateTimeframe = normTf(candidate.timeframe);
-    const stateTimeframe = normTf(state.diagnostics?.marketClock?.timeframe || state.analysisTimeframe || state.timeframe);
     if (candidateTimeframe && stateTimeframe && candidateTimeframe !== stateTimeframe) {
       return {
         ...state,
@@ -1069,7 +1090,10 @@ export async function applyChartPrice(message = {}, sender = {}) {
     // otherwise repopulate the new session with the previous instrument's price.
     if (!message.asset || !sameMarket(message.asset, focus.asset)) return;
     const session = state.diagnostics?.marketSession || {};
-    if (session.dataReady !== true || !sameMarket(session.confirmedAsset, focus.asset) || !sameMarket(state.asset, focus.asset)) return;
+    // A trusted chart quote is a bootstrap input. dataReady is produced by
+    // successful acquisition, so it cannot be a prerequisite here.
+    if (state.asset && !sameMarket(state.asset, focus.asset)) return;
+    if (session.confirmedAsset && !sameMarket(session.confirmedAsset, focus.asset)) return;
     const bundle = validateMarketBundle({
       focusAsset: focus.asset,
       candidateAsset: message.asset,
