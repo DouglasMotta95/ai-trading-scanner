@@ -139,6 +139,8 @@ function decisionQuality(signal = {}, direction = null, thresholds = getThreshol
   const localTriggerReady = signal?.recent?.breakout === direction
     || signal?.recent?.rejection === direction
     || (signal?.recent?.continuationDirection === direction && continuationScore >= 50);
+  const nextCandle = analytics.nextCandle || signal?.recent?.nextCandle || null;
+  const nextCandleReady = nextCandle?.direction === direction && nextCandle?.ready === true;
   // The entry engine is intentionally centered on the chart's local trigger:
   // breakout, rejection, or a confirmed continuation aligned with recent price
   // action. Momentum/strength alone can build context, but cannot create a
@@ -160,7 +162,8 @@ function decisionQuality(signal = {}, direction = null, thresholds = getThreshol
     && entryTriggerReady
     && score >= finalScore
     && power >= signalPolicy.finalPower
-    && evidence.length >= signalPolicy.minimumConfluence;
+    && evidence.length >= signalPolicy.minimumConfluence
+    && nextCandleReady;
   const commonReason = !direction
     ? 'sem direção'
     : !qualityContextReady
@@ -171,9 +174,11 @@ function decisionQuality(signal = {}, direction = null, thresholds = getThreshol
           ? `poder ${Math.round(power)} < ${signalPolicy.finalPower}`
           : evidence.length < signalPolicy.minimumConfluence
             ? `confluências fortes ${evidence.length}/${signalPolicy.minimumConfluence}`
-            : !entryTriggerReady
-              ? 'gatilho local ainda não confirmado'
-              : 'alta confiança confirmada';
+            : !nextCandleReady
+              ? (nextCandle?.reason || 'pressão para a próxima vela ainda não confirmada')
+              : !entryTriggerReady
+                ? 'gatilho local ainda não confirmado'
+                : 'alta confiança confirmada';
 
   if (mode === 'SIMPLES') {
     const setups = [
@@ -650,7 +655,8 @@ export function processSnapshot(snapshot = {}, state = {}) {
 
   const assertiveFinalReady = ['BUY', 'SELL'].includes(direction)
     && score >= signalPolicy.finalScore
-    && power >= 45;
+    && power >= 45
+    && nextCandleReady;
   const stable = timingVerified
     ? observeDecision(cycle, direction, assertiveFinalReady, at)
     : false;
