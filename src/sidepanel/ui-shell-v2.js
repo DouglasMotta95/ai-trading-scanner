@@ -426,12 +426,23 @@ function renderShell(state = {}) {
   const expirationDivergence = expirationGuard.divergence === true;
   const expiration = realExpirationFresh ? clean(state.platformControls?.realExpiration || '') : clean(declaredExpiration || expirationGuard.actual || '');
   const expirationVerified = realExpirationFresh && expirationGuard.verified === true;
-  const expirationWrong = dataConnected && expirationVerified && !!expiration && expiration !== operation.expiration;
+  const manualExpirationAccepted = !!declaredExpiration
+    && normExp(declaredExpiration) === operation.expiration
+    && !expirationDivergence;
+  const expirationWrong = dataConnected && ((expirationVerified && !!expiration && expiration !== operation.expiration)
+    || (!expirationVerified && !!declaredExpiration && !manualExpirationAccepted));
   const sessionStartedAt = Number(session.startedAt || state.diagnostics?.target?.connectedAt || 0);
   const sessionAge = sessionStartedAt > 0 ? Date.now() - sessionStartedAt : 0;
   const panelAge = Math.max(0, Date.now() - PANEL_OPENED_AT);
   const expirationWaitAge = sessionAge > 0 ? Math.min(sessionAge, panelAge) : panelAge;
-  const expirationPending = dataConnected && !expirationVerified && !expirationDivergence && expirationWaitAge >= 1500;
+  // A matching manual expiration is a valid timing fallback. Do not label it
+  // as a pending real expiration; the UI must distinguish "not verified"
+  // from "missing/blocked".
+  const expirationPending = dataConnected
+    && !expirationVerified
+    && !manualExpirationAccepted
+    && !expirationDivergence
+    && expirationWaitAge >= 1500;
   const marketPending = !dataConnected
     && !switching
     && activeLicense(state)
@@ -476,7 +487,7 @@ function renderShell(state = {}) {
           : expirationDivergence
             ? clean(expirationGuard.reason || 'A expiração lida da CasaTrade diverge do valor informado. Entrada bloqueada.')
             : expirationPending
-              ? 'EXPIRAÇÃO REAL PENDENTE — aguardando a CasaTrade confirmar o valor. O campo manual não libera entrada.'
+              ? 'EXPIRAÇÃO PENDENTE — informe uma duração compatível com o modo selecionado ou aguarde a leitura da CasaTrade.'
               : connected && expirationWrong
             ? `Ajuste a expiração da CasaTrade para ${operation.expirationLabel}.`
             : tradeReady
@@ -507,7 +518,7 @@ function renderShell(state = {}) {
   const expirationChoice = $('userExpirationChoice');
   const expirationSelect = $('userDeclaredExpiration');
   const expirationStatus = $('userDeclaredExpirationStatus');
-  const showExpirationChoice = expirationPending || expirationSource === 'user-declared' || expirationDivergence;
+  const showExpirationChoice = expirationPending || expirationSource === 'user-declared' || expirationDivergence || manualExpirationAccepted;
   if (expirationChoice) expirationChoice.hidden = !showExpirationChoice;
   if (expirationSelect) {
     const storedValue = declaredExpiration || '';
