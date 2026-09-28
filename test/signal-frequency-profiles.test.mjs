@@ -92,3 +92,12 @@ test('panel keeps the live link through a short reader gap and uses directional 
   assert.match(css, /decision-card\.possible-buy/);
   assert.match(css, /decision-card\.possible-sell/);
 });
+
+
+test('network transport rotation does not clear the live market authority', () => {
+  const session = read('src/background-market-session.js');
+  assert.match(session, /network-context-rotated/);
+  assert.doesNotMatch(session, /return clearMarketAuthorityState\(state, \{[\s\S]*network-context-change/);
+  assert.match(session, /Keep the proven market session alive/);
+  assert.match(session, /Date\.now\(\) - Number\(existingFocus\.at \|\| 0\) < 12000/);
+});
