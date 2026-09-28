@@ -192,9 +192,9 @@ export function fastLiveDecision(signal = {}, context = {}) {
   const operationMode = getOperationMode(context.operationMode || context.timeframe || 'M1');
   const preSignalWindowSeconds = 30;
   const finalWindowSeconds = operationMode.timeframe === 'M1'
-    ? 5
+    ? 10
     : operationMode.timeframe === 'M5'
-      ? 8
+      ? 15
       : thresholds.entryWindowSeconds;
   if (signal.uiState === 'ENTER_BUY' || signal.uiState === 'ENTER_SELL' || signal.state === 'CONFIRM') return signal;
 
@@ -258,12 +258,13 @@ export function fastLiveDecision(signal = {}, context = {}) {
   const direction = stabilized.direction;
   const q = quality(signal, direction, thresholds, confirmationMode, signalPolicy);
 
-  if (!q.strong) {
+  const minimumPossibleReady = score >= signalPolicy.possibleScore && q.power >= 45;
+  if (!minimumPossibleReady) {
     const heldHits = observe(key, direction, false, at, q, score);
     if (seconds <= finalWindowSeconds && heldHits > 0) {
       return possible(signal, direction, score, seconds, q);
     }
-    return waitFinal(signal, score, `confiança insuficiente: poder ${Math.round(q.power)}/${signalPolicy.possiblePower}, confluências ${q.reasons.length}/${signalPolicy.minimumConfluence}`);
+    return waitFinal(signal, score, `confiança insuficiente: score ${Math.round(score)}/${signalPolicy.possibleScore}, poder ${Math.round(q.power)}/45`);
   }
 
   if (seconds > finalWindowSeconds) {
@@ -272,8 +273,7 @@ export function fastLiveDecision(signal = {}, context = {}) {
   }
 
   const strong = score >= signalPolicy.finalScore
-    && q.power >= signalPolicy.finalPower
-    && q.reasons.length >= signalPolicy.minimumConfluence;
+    && q.power >= 45;
   const hits = observe(key, direction, strong, at, q, score);
   if (strong && hits >= FAST_DECISION.confirmHits) return enter(signal, direction, score, seconds, q);
 
