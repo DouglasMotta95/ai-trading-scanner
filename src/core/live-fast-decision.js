@@ -34,13 +34,15 @@ function directionOf(signal = {}) {
 function quality(signal = {}, direction = null, thresholds = getThresholds(), confirmationMode = 'SIMPLES', signalPolicy = getSignalPolicy(thresholds.profile)) {
   if (!direction) return { strong: false, power: 0, reasons: [], setup: null };
   const a = signal.analytics || {};
+  const nextCandle = a.nextCandle || signal?.recent?.nextCandle || null;
+  const nextCandleReady = nextCandle?.direction === direction && nextCandle?.ready === true;
   const buy = direction === 'BUY';
   const power = Number(buy ? a.buyPower : a.sellPower) || 0;
   const professional = a.professional || {};
   const professionalReady = professional.contextReady === true && professional.triggerReady === true;
   const mode = clean(confirmationMode).toUpperCase() === 'EXIGENTE' ? 'EXIGENTE' : 'SIMPLES';
   if (!professionalReady) {
-    return { strong: false, power, reasons: [], setup: null, professionalReady: false };
+    return { strong: false, power, reasons: [], setup: null, professionalReady: false, nextCandle, nextCandleReady };
   }
 
   if (mode === 'SIMPLES') {
@@ -61,7 +63,9 @@ function quality(signal = {}, direction = null, thresholds = getThresholds(), co
       strong: power >= signalPolicy.possiblePower && reasons.length >= signalPolicy.minimumConfluence,
       power,
       reasons,
-      setup: reasons.length >= signalPolicy.minimumConfluence ? reasons.slice(0, 2).join(' + ') : null
+      setup: reasons.length >= signalPolicy.minimumConfluence ? reasons.slice(0, 2).join(' + ') : null,
+      nextCandle,
+      nextCandleReady
     };
   }
 
@@ -79,7 +83,9 @@ function quality(signal = {}, direction = null, thresholds = getThresholds(), co
     strong: power >= signalPolicy.possiblePower && reasons.length >= signalPolicy.minimumConfluence,
     power,
     reasons,
-    setup: reasons.length >= signalPolicy.minimumConfluence ? reasons.slice(0, 2).join(' + ') : null
+    setup: reasons.length >= signalPolicy.minimumConfluence ? reasons.slice(0, 2).join(' + ') : null,
+    nextCandle,
+    nextCandleReady
   };
 }
 
@@ -276,7 +282,8 @@ export function fastLiveDecision(signal = {}, context = {}) {
   }
 
   const strong = score >= signalPolicy.finalScore
-    && q.power >= 45;
+    && q.power >= 45
+    && q.nextCandleReady === true;
   const hits = observe(key, direction, strong, at, q, score);
   if (strong && hits >= FAST_DECISION.confirmHits) return enter(signal, direction, score, seconds, q);
 
