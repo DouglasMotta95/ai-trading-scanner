@@ -909,13 +909,14 @@ export async function applyFeed(payload = {}, sender = {}) {
     const candidate = bestForFocus(payload, asset);
 
     // CasaTrade can publish candle history before the quote effectiveCandidate.
-    // Keep the canonical candidate declaration stable, then use a bounded
-    // history fallback only when the quote candidate is absent.
-    const bootstrapRows = historyFor(payload, asset, stateTimeframe);
-    const latest = bootstrapRows.at(-1);
-    const bootstrapPrice = num(latest?.close);
-    const effectiveCandidate = candidate || (latest && bootstrapPrice != null
-      ? {
+    // Use the latest validated close only as a bounded bootstrap value.
+    let bootstrapCandidate = null;
+    if (!candidate) {
+      const bootstrapRows = historyFor(payload, asset, stateTimeframe);
+      const latest = bootstrapRows.at(-1);
+      const bootstrapPrice = num(latest?.close);
+      if (latest && bootstrapPrice != null) {
+        bootstrapCandidate = {
           asset,
           price: bootstrapPrice,
           timeframe: normTf(latest.timeframe) || stateTimeframe,
@@ -924,8 +925,10 @@ export async function applyFeed(payload = {}, sender = {}) {
           selected: true,
           assetSource: 'network-history-fallback',
           assetRaw: focus.asset
-        }
-      : null);
+        };
+      }
+    }
+    const effectiveCandidate = candidate || bootstrapCandidate;
     if (!effectiveCandidate) return;
 
     const assetIdentity = {
