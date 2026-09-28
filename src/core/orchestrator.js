@@ -12,6 +12,11 @@ const CONFIRM_HITS = 2;
 const DECISION_HIT_GAP_MS = 7000;
 const POSSIBLE_DROP_HITS = 2;
 const FINAL_WEAK_HITS = 2;
+// A possible direction is sticky inside one target candle. An opposite side
+// must prove itself across several fresh samples before replacing it.
+const DIRECTION_LOCK_HITS = 3;
+const DIRECTION_LOCK_MIN_MS = 1200;
+const DIRECTION_LOCK_WINDOW_MS = 4000;
 const cycles = new Map();
 const wrapperCompletedDecisions = new Map();
 const WRAPPER_ROW_PREFIX = 'wrapper-cycle:';
@@ -263,21 +268,65 @@ function possibleQuality(signal = {}, direction = null, score = 0, thresholds = 
 }
 
 function possibleWithHysteresis(cycle, allowed, direction, at) {
-  if (allowed && direction) {
+  const current = cycle.possibleDirection;
+  if (!direction) {
+    if (!current) return null;
+    cycle.possibleWeakHits = Number(cycle.possibleWeakHits || 0) + 1;
+    if (cycle.possibleWeakHits < POSSIBLE_DROP_HITS) return current;
+    cycle.possibleDirection = null;
+    cycle.possibleWeakHits = 0;
+    cycle.pendingDirection = null;
+    cycle.pendingDirectionHits = 0;
+    cycle.pendingDirectionSince = 0;
+    return null;
+  }
+
+  if (!current) {
+    if (!allowed) return null;
     cycle.possibleDirection = direction;
     cycle.possibleWeakHits = 0;
     cycle.possibleLastStrongAt = at;
+    cycle.pendingDirection = null;
+    cycle.pendingDirectionHits = 0;
+    cycle.pendingDirectionSince = 0;
     return direction;
   }
-  // One weak/throttled observation must not make POSSÍVEL disappear. Preserve
-  // the last confirmed candidate direction for one weak sample, then drop it
-  // only after a second consecutive weak observation.
-  if (!cycle.possibleDirection) return null;
-  cycle.possibleWeakHits = Number(cycle.possibleWeakHits || 0) + 1;
-  if (cycle.possibleWeakHits < POSSIBLE_DROP_HITS) return cycle.possibleDirection;
-  cycle.possibleDirection = null;
+
+  if (current === direction) {
+    cycle.possibleDirection = current;
+    cycle.possibleWeakHits = 0;
+    cycle.possibleLastStrongAt = at;
+    cycle.pendingDirection = null;
+    cycle.pendingDirectionHits = 0;
+    cycle.pendingDirectionSince = 0;
+    return current;
+  }
+
+  // Opposite direction: do not flip POSSÍVEL/ENTER on one fast sample.
+  // Only a technically valid opposite candidate that persists long enough
+  // can replace the direction locked for this target candle.
+  if (!allowed) return current;
+  const samePending = cycle.pendingDirection === direction
+    && at - Number(cycle.pendingDirectionSince || at) <= DIRECTION_LOCK_WINDOW_MS;
+  cycle.pendingDirection = direction;
+  cycle.pendingDirectionHits = samePending
+    ? Number(cycle.pendingDirectionHits || 0) + 1
+    : 1;
+  cycle.pendingDirectionSince = samePending
+    ? Number(cycle.pendingDirectionSince || at)
+    : at;
+
+  const sustained = cycle.pendingDirectionHits >= DIRECTION_LOCK_HITS
+    && at - Number(cycle.pendingDirectionSince) >= DIRECTION_LOCK_MIN_MS;
+  if (!sustained) return current;
+
+  cycle.possibleDirection = direction;
   cycle.possibleWeakHits = 0;
-  return null;
+  cycle.possibleLastStrongAt = at;
+  cycle.pendingDirection = null;
+  cycle.pendingDirectionHits = 0;
+  cycle.pendingDirectionSince = 0;
+  return direction;
 }
 
 function seedCycle(key, snapshot, signal, state = {}) {
@@ -288,7 +337,7 @@ function seedCycle(key, snapshot, signal, state = {}) {
     cycle = {
       key, targetStart: targetStartOf(snapshot, signal), candidateDirection: null,
       confirmHits: 0, lastHitAt: null, locked: null, direction: null, score: 0,
-      setup: null, reason: null, decidedAt: null, resolved: false
+      setup: null, reason: null, decidedAt: null, resolved: false, possibleDirection: null, possibleWeakHits: 0, possibleLastStrongAt: null, pendingDirection: null, pendingDirectionHits: 0, pendingDirectionSince: 0
     };
   }
   cycles.set(key, cycle);
@@ -497,10 +546,15 @@ export function processSnapshot(snapshot = {}, state = {}) {
   const cycle = seedCycle(key, snapshot, signal, state);
   const at = num(snapshot.serverTime) ?? Date.now();
   const score = Number(signal.analysisScore ?? signal.score ?? 0);
-  const direction = directionOf(signal);
+  const rawDirection = directionOf(signal);
+  const rawPossible = possibleQuality(signal, rawDirection, score, thresholds);
+  // Lock the direction for this target candle before evaluating final quality.
+  // This prevents a one-sample BUY/SELL oscillation from reaching ENTER.
+  const lockedDirection = possibleWithHysteresis(cycle, rawPossible, rawDirection, at);
+  const direction = lockedDirection || rawDirection;
   const analytics = signal.analytics || {};
   const power = Number(direction === 'BUY' ? analytics.buyPower : analytics.sellPower) || 0;
-  const rawPossible = possibleQuality(signal, direction, score, thresholds);
+  const directionalPossible = possibleQuality(signal, direction, score, thresholds);
   const signalPolicy = getSignalPolicy(thresholds.profile);
   const quality = decisionQuality(signal, direction, thresholds, confirmationMode);
   const technicalDirection = clean(signal.direction).toUpperCase();
@@ -532,7 +586,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
     secondsRemaining,
     updatedAt: at
   });
-  const possibleDirection = possibleWithHysteresis(cycle, rawPossible, direction, at);
+  const possibleDirection = directionalPossible && direction ? direction : null;
   const canShowPossible = !!possibleDirection;
   const recovered = resolveWrapperDecision(snapshot, result, key, state);
   const rolledLastConfirmed = newerDecision(newerDecision(result.lastConfirmed, latestWrapperCompleted(snapshot)), recovered);
