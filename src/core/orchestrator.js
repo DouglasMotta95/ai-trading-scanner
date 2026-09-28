@@ -129,7 +129,7 @@ function decisionQuality(signal = {}, direction = null, thresholds = getThreshol
   const finalScore = signalPolicy.finalScore;
   const localTriggerReady = signal?.recent?.breakout === direction
     || signal?.recent?.rejection === direction
-    || (signal?.recent?.continuationDirection === direction && continuationScore >= 60);
+    || (signal?.recent?.continuationDirection === direction && continuationScore >= 55);
   // The entry engine is intentionally centered on the chart's local trigger:
   // breakout, rejection, or a confirmed continuation aligned with recent price
   // action. Momentum/strength alone can build context, but cannot create a
@@ -263,7 +263,7 @@ function possibleQuality(signal = {}, direction = null, score = 0, thresholds = 
   if (!direction || Number(score) < signalPolicy.possibleScore) return false;
   const localTriggerReady = recent.breakout === direction
     || recent.rejection === direction
-    || (recent.continuationDirection === direction && Number(recent.continuationScore || 0) >= 60);
+    || (recent.continuationDirection === direction && Number(recent.continuationScore || 0) >= 55);
   if (!localTriggerReady && professional.triggerReady !== true) return false;
   const power = Number(direction === 'BUY' ? analytics.buyPower : analytics.sellPower) || 0;
   if (power < signalPolicy.possiblePower) return false;
