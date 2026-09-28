@@ -897,7 +897,7 @@ export async function applyFeed(payload = {}, sender = {}) {
     // never becomes dataReady -> scanner remains stuck at "AGUARDANDO DADOS".
     const sameFocusFrame = Number(focus.frameId) === Number(info.frameId)
       && clean(focus.frameHost).toLowerCase() === info.frameHost;
-    if (!sameFocusFrame && state.targetTabId && Number(state.targetTabId) !== Number(info.tabId)) return;
+    if (!sameFocusFrame && (!state.targetTabId || Number(state.targetTabId) !== Number(info.tabId))) return;
 
     const asset = normAsset(focus.asset);
     const candidate = bestForFocus(payload, asset);
