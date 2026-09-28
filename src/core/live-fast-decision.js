@@ -13,9 +13,12 @@ export const FAST_DECISION = Object.freeze({
 
 const trackers = new Map();
 const directionTrackers = new Map();
-const DIRECTION_FLIP_HITS = 2;
-const DIRECTION_FLIP_MIN_MS = 600;
-const DIRECTION_FLIP_WINDOW_MS = 2600;
+// Direction changes are deliberately slower than score changes. A single
+// counter-candle inside the same target cycle must not flip the entry side.
+const DIRECTION_FLIP_HITS = 3;
+const DIRECTION_FLIP_MIN_MS = 1200;
+const DIRECTION_FLIP_WINDOW_MS = 4000;
+const DIRECTION_FLIP_SCORE_EDGE = 22;
 
 function directionOf(signal = {}) {
   const analysis = clean(signal.analysisDirection).toUpperCase();
@@ -105,7 +108,7 @@ function stabilizeDirection(key, rawDirection, at, score) {
   const pendingSince = samePending ? Number(old.pendingSince || at) : at;
   const next = { ...old, pending: rawDirection, pendingHits, pendingSince, at };
   const sustained = pendingHits >= DIRECTION_FLIP_HITS && at - pendingSince >= DIRECTION_FLIP_MIN_MS;
-  const materiallyStronger = pendingHits >= DIRECTION_FLIP_HITS && Number(score || 0) >= Number(old.stableScore || 0) + 18;
+  const materiallyStronger = pendingHits >= DIRECTION_FLIP_HITS && Number(score || 0) >= Number(old.stableScore || 0) + DIRECTION_FLIP_SCORE_EDGE;
   if (sustained || materiallyStronger) {
     directionTrackers.set(key, { stable: rawDirection, stableScore: score, pending: null, pendingHits: 0, pendingSince: 0, at });
     return { direction: rawDirection, transitioning: false, changed: true, from: old.stable };
