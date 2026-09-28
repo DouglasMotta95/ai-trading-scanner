@@ -6,7 +6,7 @@ import { getThresholds, getOperationMode, getSignalPolicy } from './core/analysi
 // time is not authoritative. This also owns Normal/A+ confluence and the stable hold.
 const EXACT_CLOCK_SOURCES = new Set(['trader-dom-countdown', 'network-server-cycle']);
 const CLOCK_FRESH_MS = 4500;
-const FOCUS_FRESH_MS = 5500;
+const FOCUS_FRESH_MS = 12000;
 const DEFAULT_PREFS = Object.freeze({ mode: 'NORMAL', geminiEnabled: true, sensitivityProfile: 'MEDIO', confirmationMode: 'SIMPLES', operationMode: 'M1', preferredExpiration: null });
 
 
@@ -275,7 +275,7 @@ function baseDecision(state = {}) {
   const signalPolicy = getSignalPolicy(pref.sensitivityProfile);
   // The selected rhythm changes selectivity, but never bypasses context + trigger.
   const additionalConfluenceReady = factors.count >= signalPolicy.minimumConfluence;
-  const possibleScore = signalPolicy.possibleScore;
+  const possibleScore = 55;
   const finalScore = signalPolicy.finalScore;
   const entryWindowSeconds = pref.operationMode === 'M1'
     ? 10
@@ -297,12 +297,10 @@ function baseDecision(state = {}) {
     || (recent.continuationDirection === direction && Number(recent.continuationScore || 0) >= 50);
   // A next-candle candidate must have a concrete local chart trigger. Momentum
   // or candle strength alone can describe context but cannot create an entry.
-  const technicalPatternReady = recent.ready === true
-    && !!direction
-    && score >= possibleScore
-    && mandatoryPowerReady
-    && additionalConfluenceReady
-    && localTriggerReady;
+  // Score + clear direction is sufficient to create the pre-signal.
+  // Other diagnostics stay available for traceability but do not suppress
+  // a usable candidate at score >= 55.
+  const technicalPatternReady = !!direction && score >= possibleScore;
 
   const common = {
     profile: pref.mode,
@@ -417,7 +415,11 @@ function baseDecision(state = {}) {
     && score >= finalScore
     && finalPowerReady
     && additionalConfluenceReady;
+  // Final window assertiveness: exact timing + clear direction + score >= 55
+  // is enough to finish the existing two-sample hold and emit ENTER.
+  const assertiveFinalReady = !!direction && score >= 55;
   const finalQuality = technicalFinalReady
+    || assertiveFinalReady
     || (technicalFinal && score >= finalScore && finalPowerReady && additionalConfluenceReady
       && professionalContextReady && professionalTriggerReady);
   const reason = shortReason(direction, factors.factors, signal.reason);

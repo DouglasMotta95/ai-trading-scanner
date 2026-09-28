@@ -527,31 +527,36 @@ export async function applyFocus(message = {}, sender = {}) {
         && Date.now() - Number(existingFocus.at) < 7000;
       const contextChanged = message.contextChanged === true;
 
+      // Chart layout/DOM changes are not proof of a market change.
+      // Keep the current session when the observed asset still matches it.
       if (contextChanged) {
-        return clearMarketAuthorityState(state, {
-          scanner: 'scanning',
-          connection: state.connection === 'offline' ? 'connecting' : state.connection,
-          targetTabId: info.tabId,
-          diagnostics: {
-            ...(state.diagnostics || {}),
-            focusDiagnostic: {
-              asset: asset || null,
-              reliable: false,
-              reliableReason: reason,
-              contextChanged: true,
-              frameId: info.frameId,
-              frameHost: info.frameHost,
-              at: Number(message.at || Date.now())
-            },
-            assetIdentity: {
-              ...(state.diagnostics?.assetIdentity || {}),
-              contextChanged: true,
-              contextChangeSource: 'visual-focus',
-              at: Number(message.at || Date.now())
+        const expected = normAsset(state.asset || state.diagnostics?.marketSession?.confirmedAsset || '');
+        const contextAssetChanged = !!asset && !!expected && !sameMarket(asset, expected);
+        if (contextAssetChanged || !expected) {
+          return clearMarketAuthorityState(state, {
+            scanner: 'scanning',
+            connection: state.connection === 'offline' ? 'connecting' : state.connection,
+            targetTabId: info.tabId,
+            diagnostics: {
+              ...(state.diagnostics || {}),
+              focusDiagnostic: {
+                asset: asset || null,
+                reliable: false,
+                reliableReason: reason,
+                contextChanged: true,
+                frameId: info.frameId,
+                frameHost: info.frameHost,
+                at: Number(message.at || Date.now())
+              },
+              assetIdentity: {
+                ...(state.diagnostics?.assetIdentity || {}),
+                contextChanged: true,
+                contextChangeSource: 'visual-focus',
+                at: Number(message.at || Date.now())
+              }
             }
-          },
-          marketSessionSource: 'visual-context-change'
-        });
+          });
+        }
       }
 
       const rejectedFocus = {
@@ -633,7 +638,7 @@ export async function applyFocus(message = {}, sender = {}) {
     const oldFresh = Number(old?.at || 0) > 0 && now - Number(old.at) < 2600;
     const oldEmbeddedTrader = old?.embeddedTrader === true;
     const incomingExplicit = message.explicit === true;
-    const incomingStable = Number(message.stableFor || 0) >= 220 || Number(message.samples || 0) >= 3;
+    const incomingStable = Number(message.stableFor || 0) >= 1200 && Number(message.samples || 0) >= 4;
     const session = state.diagnostics?.marketSession || {};
     const incomingProtocolOnly = message.visual === false || clean(message.source) === 'protocol-selected';
     const transitionProtectsCurrentFocus = session.transitioning === true

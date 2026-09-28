@@ -418,7 +418,14 @@ function renderShell(state = {}) {
   const operation = operationRequirement(state);
 
   const expirationGuard = state.diagnostics?.expirationGuard || {};
-  const declaredExpiration = clean(state.platformControls?.userDeclaredExpiration || expirationGuard.userDeclared || '');
+  let rememberedUserExpiration = '';
+  try { rememberedUserExpiration = clean(localStorage.getItem('atsUserDeclaredExpiration') || ''); } catch {}
+  const declaredExpiration = clean(
+    state.platformControls?.userDeclaredExpiration
+      || expirationGuard.userDeclared
+      || rememberedUserExpiration
+      || ''
+  );
   const realExpirationAt = Number(state.platformControls?.realExpirationAt || 0);
   const realExpirationSource = clean(state.platformControls?.realExpirationSource || '');
   const realExpirationFresh = realExpirationAt > 0 && Date.now() - realExpirationAt < 15000 && realExpirationSource !== 'user-declared';
@@ -569,6 +576,22 @@ function renderShell(state = {}) {
   const expirationDiagnostic = $('copyExpirationDiagnostic');
   if (expirationDiagnostic) expirationDiagnostic.hidden = !expirationPending && expirationSource !== 'user-declared' && !expirationDivergence;
 }
+function renderShellSafe(state = {}) {
+  try {
+    return renderShell(state);
+  } catch (error) {
+    console.error('[AI Trading Scanner] sidepanel render recovered', error);
+    setText('syncTitle', 'CONECTADO — RECUPERANDO PAINEL');
+    setText('syncText', 'Atualização visual recuperada; mantendo a leitura do mercado.');
+    setText('signalTitle', 'AGUARDAR');
+    setText('decisionText', 'AGUARDAR');
+    setText('decisionSubtext', 'O painel continua ativo e será atualizado no próximo ciclo.');
+    const strip = $('syncStrip');
+    if (strip) strip.className = 'sync-strip live';
+    return null;
+  }
+}
+
 async function persistPanelConnectDiagnostic(patch = {}) {
   const previous = await chrome.storage.session.get(PANEL_CONNECT_DIAGNOSTIC_KEY).catch(() => ({}));
   const current = previous?.[PANEL_CONNECT_DIAGNOSTIC_KEY] || {};
@@ -1046,6 +1069,7 @@ $('retryLiveRead')?.addEventListener('click', () => refreshLiveReaders().catch((
 $('copyExpirationDiagnostic')?.addEventListener('click', () => copyExpirationDiagnostic().catch(() => {}));
 $('userDeclaredExpiration')?.addEventListener('change', async event => {
   const expiration = clean(event.currentTarget?.value || '');
+  try { localStorage.setItem('atsUserDeclaredExpiration', expiration); } catch {}
   if (!expiration) return;
   const response = await chrome.runtime.sendMessage({
     type: 'ATS_SET_USER_DECLARED_EXPIRATION',

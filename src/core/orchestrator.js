@@ -20,7 +20,11 @@ const num = value => value == null || value === '' ? null : Number.isFinite(Numb
 const clean = value => String(value ?? '').trim();
 const directionOf = signal => ['BUY', 'SELL'].includes(signal?.analysisDirection)
   ? signal.analysisDirection
-  : ['BUY', 'SELL'].includes(signal?.direction) ? signal.direction : null;
+  : ['BUY', 'SELL'].includes(signal?.direction)
+    ? signal.direction
+    : ['BUY', 'SELL'].includes(signal?.recent?.direction)
+      ? signal.recent.direction
+      : null;
 const assetIdentity = value => clean(value).toUpperCase().replace(/\s*\(\s*OTC\s*\)\s*$/i, '');
 const sameAsset = (a, b) => !!assetIdentity(a) && assetIdentity(a) === assetIdentity(b);
 const epochMs = value => {
@@ -57,10 +61,10 @@ function decisionWindows(snapshot = {}, signal = {}, thresholds = getThresholds(
   // latest CasaTrade price action. Leave a small late cutoff so the 2-hit
   // confirmation still has time to complete without publishing at the turn.
   if (timeframe === 'M1') {
-    return { pre: 30, decision: 5, skip: 1, duration, timeframe };
+    return { pre: 30, decision: 10, skip: 1, duration, timeframe };
   }
   if (timeframe === 'M5') {
-    return { pre: 30, decision: 8, skip: 2, duration, timeframe };
+    return { pre: 30, decision: 15, skip: 2, duration, timeframe };
   }
 
   // Longer/shorter candles keep proportional windows.
@@ -251,26 +255,8 @@ function decisionQuality(signal = {}, direction = null, thresholds = getThreshol
 }
 
 function possibleQuality(signal = {}, direction = null, score = 0, thresholds = getThresholds()) {
-  const signalPolicy = getSignalPolicy(thresholds.profile);
-  const analytics = signal.analytics || {};
-  const professional = analytics.professional || {};
-  const recent = signal?.recent || {};
-  const recentReady = recent.ready === true;
-  // POSSÍVEL is reserved for a concrete next-candle setup. The recent chart
-  // reader must identify a local trigger (breakout, rejection, or confirmed
-  // continuation); trend/momentum/strength alone remain context.
-  if (!recentReady && professional.contextReady !== true) return false;
-  if (!direction || Number(score) < signalPolicy.possibleScore) return false;
-  const localTriggerReady = recent.breakout === direction
-    || recent.rejection === direction
-    || (recent.continuationDirection === direction && Number(recent.continuationScore || 0) >= 50);
-  if (!localTriggerReady && professional.triggerReady !== true) return false;
-  const power = Number(direction === 'BUY' ? analytics.buyPower : analytics.sellPower) || 0;
-  if (power < signalPolicy.possiblePower) return false;
-  if (highConfidenceEvidence(signal, direction, thresholds).length < signalPolicy.minimumConfluence) return false;
-  const stableDirection = clean(signal.stability?.possibleDirection).toUpperCase();
-  const publishedDirection = clean(signal.direction).toUpperCase();
-  return stableDirection === direction || (signal.state === 'WATCH' && publishedDirection === direction);
+  // Score >=55 plus a clear BUY/SELL direction is enough to surface POSSIBLE.
+  return ['BUY', 'SELL'].includes(direction) && Number(score) >= 55;
 }
 
 function possibleWithHysteresis(cycle, allowed, direction, at) {
@@ -605,8 +591,9 @@ export function processSnapshot(snapshot = {}, state = {}) {
     };
   }
 
+  const assertiveFinalReady = ['BUY', 'SELL'].includes(direction) && score >= 55;
   const stable = timingVerified
-    ? observeDecision(cycle, direction, quality.qualifies, at)
+    ? observeDecision(cycle, direction, assertiveFinalReady, at)
     : false;
   if (quality.qualifies) cycle.setup = quality.setup;
   if (stable) {

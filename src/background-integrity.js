@@ -8,7 +8,7 @@ const num = value => value == null || value === '' ? null : Number.isFinite(Numb
 const casaHost = value => value === 'casatrade.com' || value.endsWith('.casatrade.com') || value === 'casatrade.io' || value.endsWith('.casatrade.io');
 const traderHost = value => value === 'casatraders.online' || value.endsWith('.casatraders.online') || value === 'ivcasatraders.online' || value.endsWith('.ivcasatraders.online');
 const licenseActive = state => ['active', 'valid'].includes(String(state?.license?.status || '').toLowerCase());
-const FOCUS_FRESH_MS = 2600;
+const FOCUS_FRESH_MS = 12000;
 const CLOCK_FRESH_MS = 2200;
 let integrityRepairing = false;
 
@@ -66,18 +66,31 @@ function stateIntegrityIssue(nextState = {}) {
   if (!licenseActive(nextState)) return null;
   const now = Date.now();
   const validFocus = focusValid(nextState, now);
-  const focusAsset = validFocus ? normAsset(nextState.diagnostics?.focusedAsset?.asset) : '';
+  const focusAsset = normAsset(nextState.diagnostics?.focusedAsset?.asset || '');
   const session = nextState.diagnostics?.marketSession || {};
   const sessionAsset = normAsset(session.asset || session.pendingAsset || session.confirmedAsset || '');
-  const assetMismatch = !!nextState.asset && !!sessionAsset && !sameAsset(nextState.asset, sessionAsset);
+  const stateAsset = normAsset(nextState.asset || '');
+  const assetMismatch = !!stateAsset && !!sessionAsset && !sameAsset(stateAsset, sessionAsset);
   const focusSessionMismatch = !!focusAsset && !!sessionAsset && !sameAsset(focusAsset, sessionAsset);
-  if (!validFocus || assetMismatch || focusSessionMismatch) {
+
+  // A stale/missing focus sample is not proof that the active market changed.
+  // Keep the live session while asset/session/history remain coherent and fresh.
+  const ownedLiveSession = !!stateAsset
+    && !!sessionAsset
+    && sameAsset(stateAsset, sessionAsset)
+    && session.transitioning !== true
+    && Number(nextState.lastSeen || 0) > 0
+    && now - Number(nextState.lastSeen) < 15000
+    && Array.isArray(nextState.candles)
+    && nextState.candles.filter(row => [row?.open,row?.high,row?.low,row?.close].every(value => num(value) != null)).length >= 2;
+
+  if (assetMismatch || focusSessionMismatch || (!validFocus && !ownedLiveSession)) {
     return {
       epoch: marketSessionEpoch(nextState),
       validFocus,
       focusAsset: focusAsset || null,
       sessionAsset: sessionAsset || null,
-      reason: !validFocus ? 'awaiting_visible_chart_asset' : 'market_session_mismatch'
+      reason: assetMismatch || focusSessionMismatch ? 'market_session_mismatch' : 'awaiting_visible_chart_asset'
     };
   }
   return null;
