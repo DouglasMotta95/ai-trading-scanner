@@ -212,7 +212,8 @@ function decisionQuality(signal = {}, direction = null, thresholds = getThreshol
       checks: setups,
       mode,
       commonReady,
-      commonReason
+      commonReason,
+      nextCandleReady
     };
   }
 
@@ -259,7 +260,8 @@ function decisionQuality(signal = {}, direction = null, thresholds = getThreshol
     checks: setups,
     mode,
     commonReady,
-    commonReason
+    commonReason,
+    nextCandleReady
   };
 }
 
@@ -656,7 +658,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
   const assertiveFinalReady = ['BUY', 'SELL'].includes(direction)
     && score >= signalPolicy.finalScore
     && power >= 45
-    && nextCandleReady;
+    && quality.nextCandleReady === true;
   const stable = timingVerified
     ? observeDecision(cycle, direction, assertiveFinalReady, at)
     : false;
