@@ -886,10 +886,28 @@ export async function applyFeed(payload = {}, sender = {}) {
     if (!licenseActive(state)) return;
     if (state.targetTabId && state.targetTabId !== info.tabId) return;
     const focus = state.diagnostics?.focusedAsset || null;
-    if (!focus?.asset || Number(focus.frameId) !== Number(info.frameId) || clean(focus.frameHost).toLowerCase() !== info.frameHost) return;
+    if (!focus?.asset) return;
+
+    // The market feed and the visual focus do not always originate from the
+    // same iframe on CasaTrade mobile/tablet. The focus frame remains the
+    // authority for WHICH market is active, while any trusted frame in the
+    // same CasaTrade tab may provide the structured candles/quote for that
+    // exact market. This breaks the previous recovery deadlock:
+    // focus(frame A) -> feed(frame B) -> rejected -> no candles -> session
+    // never becomes dataReady -> scanner remains stuck at "AGUARDANDO DADOS".
+    const sameFocusFrame = Number(focus.frameId) === Number(info.frameId)
+      && clean(focus.frameHost).toLowerCase() === info.frameHost;
+    if (!sameFocusFrame && state.targetTabId && Number(state.targetTabId) !== Number(info.tabId)) return;
+
     const asset = normAsset(focus.asset);
     const candidate = bestForFocus(payload, asset);
     if (!candidate) return;
+
+    // Cross-frame feed is accepted only when its candidate is the same
+    // market already proven by the trusted visual focus. It never changes
+    // focus, asset identity, or session ownership.
+    const candidateMatchesFocus = sameMarket(candidate.asset, focus.asset);
+    if (!candidateMatchesFocus) return;
 
     const assetIdentity = {
       networkRawAssetName: clean(candidate.assetRaw || ''),
