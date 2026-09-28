@@ -103,6 +103,8 @@ function liveTransportHandshake(state = {}) {
   const clock = state.diagnostics?.marketClock || {};
   const dataFresh = Number(state.lastSeen || 0) > 0
     && Date.now() - Number(state.lastSeen) < LIVE_TRANSPORT_FRESH_MS;
+  const sessionHeartbeat = Number(session.lastLiveAt || 0) > 0
+    && Date.now() - Number(session.lastLiveAt) < LIVE_TRANSPORT_FRESH_MS;
   const exactClockAlive = clock?.verified === true
     && clock?.available !== false
     && EXACT_CLOCK_SOURCES.has(clean(clock?.source))
@@ -121,7 +123,7 @@ function liveTransportHandshake(state = {}) {
     && sameMarket(focus?.asset, state.asset)
     && sameMarket(session.confirmedAsset || session.asset, state.asset)
     && session.transitioning !== true
-    && (dataFresh || exactClockAlive);
+    && (dataFresh || sessionHeartbeat || exactClockAlive);
 }
 
 function baseHandshake(state = {}) {
