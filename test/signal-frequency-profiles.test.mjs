@@ -65,3 +65,30 @@ test('panel exposes user-facing rhythm names while keeping stored compatibility 
   const loose = getThresholds('SOLTO');
   assert.equal(loose.holdSeconds, 1);
 });
+
+
+test('possible candidate survives a short timing recheck without becoming actionable', () => {
+  const policy = read('src/background-decision-policy.js');
+  assert.match(policy, /if \(!time\.ready && previousPossible && technicalCoreStillReady\)/);
+  assert.match(policy, /pré-sinal preservado enquanto a CasaTrade reconfirma o tempo/i);
+  assert.match(policy, /actionable: false/);
+});
+
+test('panel keeps the live link through a short reader gap and uses directional colors for possible signals', () => {
+  const app = read('src/sidepanel/app-v2.js');
+  const shell = read('src/sidepanel/ui-shell-v2.js');
+  const css = read('src/sidepanel/styles.css');
+  assert.match(app, /const FOCUS_FRESH_MS = 12000/);
+  assert.match(app, /tone: earlyDirection === 'BUY' \? 'possible-buy' : 'possible-sell'/);
+  assert.match(app, /tone: possibleDirection === 'BUY' \? 'possible-buy' : 'possible-sell'/);
+  assert.match(app, /tone: 'possible-buy'/);
+  assert.match(app, /tone: 'possible-sell'/);
+  assert.match(app, /POSSÍVEL COMPRA/);
+  assert.match(app, /POSSÍVEL VENDA/);
+  assert.match(shell, /sessionHeartbeat/);
+  assert.match(shell, /dataFresh \|\| sessionHeartbeat \|\| exactClockAlive/);
+  assert.match(css, /decision-banner\.possible-buy/);
+  assert.match(css, /decision-banner\.possible-sell/);
+  assert.match(css, /decision-card\.possible-buy/);
+  assert.match(css, /decision-card\.possible-sell/);
+});
