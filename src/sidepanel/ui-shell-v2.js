@@ -400,7 +400,7 @@ async function checkLatestVersion() {
   } catch {}
 }
 
-function renderShell(state = {}) {
+function renderShellCore(state = {}) {
   syncConfirmationMode(state);
   renderOperationalPulse(state);
   renderVersionNotice();
@@ -576,9 +576,9 @@ function renderShell(state = {}) {
   const expirationDiagnostic = $('copyExpirationDiagnostic');
   if (expirationDiagnostic) expirationDiagnostic.hidden = !expirationPending && expirationSource !== 'user-declared' && !expirationDivergence;
 }
-function renderShellSafe(state = {}) {
+function renderShell(state = {}) {
   try {
-    return renderShell(state);
+    return renderShellCore(state);
   } catch (error) {
     console.error('[AI Trading Scanner] sidepanel render recovered', error);
     setText('syncTitle', 'CONECTADO — RECUPERANDO PAINEL');
