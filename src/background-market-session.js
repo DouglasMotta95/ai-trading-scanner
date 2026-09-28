@@ -451,41 +451,38 @@ export async function applyNetworkContext(message = {}, sender = {}) {
       source: clean(payload.source || 'network-probe')
     };
 
-    if (!changed) {
-      return {
-        ...state,
-        diagnostics: {
-          ...(state.diagnostics || {}),
-          networkContext
-        }
-      };
-    }
-
-    return clearMarketAuthorityState(state, {
+    // A network context change means the transport/socket session changed.
+    // It does NOT prove that the user changed the visible market. The old code
+    // treated every WS reconnect as a market-authority reset, which cleared
+    // asset/price/candles/clock and made the panel fall to DESCONECTADO or
+    // ATUALIZANDO ATIVO even while CasaTrade remained on the same instrument.
+    // Keep the proven market session alive and let visual focus + feed identity
+    // decide whether an actual asset transition occurred.
+    return {
+      ...state,
       scanner: 'scanning',
-      connection: state.connection === 'offline' ? 'connecting' : state.connection,
+      connection: clean(state.connection).toLowerCase() === 'offline' ? 'connecting' : state.connection,
       targetTabId: info.tabId,
       diagnostics: {
         ...(state.diagnostics || {}),
         networkContext,
-        focusRejected: {
+        focusRejected: changed ? {
           ...(state.diagnostics?.focusRejected || {}),
-          reason: 'network-context-changed',
+          reason: 'network-context-rotated',
           previousContextKey: previousKey || null,
           contextKey,
           at: Date.now()
-        },
-        assetIdentity: {
+        } : (state.diagnostics?.focusRejected || {}),
+        assetIdentity: changed ? {
           ...(state.diagnostics?.assetIdentity || {}),
           contextChanged: true,
           contextChangeSource: 'network-probe',
           contextKey,
           previousContextKey: previousKey || null,
           at: Date.now()
-        }
-      },
-      marketSessionSource: 'network-context-change'
-    });
+        } : (state.diagnostics?.assetIdentity || {})
+      }
+    };
   });
 }
 
