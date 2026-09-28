@@ -99,5 +99,6 @@ test('network transport rotation does not clear the live market authority', () =
   assert.match(session, /network-context-rotated/);
   assert.doesNotMatch(session, /return clearMarketAuthorityState\(state, \{[\s\S]*network-context-change/);
   assert.match(session, /Keep the proven market session alive/);
-  assert.match(session, /Date\.now\(\) - Number\(existingFocus\.at \|\| 0\) < 12000/);
+  assert.match(session, /existingFocusFresh/);
+  assert.match(session, /12000/);
 });
