@@ -278,9 +278,9 @@ function baseDecision(state = {}) {
   const possibleScore = signalPolicy.possibleScore;
   const finalScore = signalPolicy.finalScore;
   const entryWindowSeconds = pref.operationMode === 'M1'
-    ? 5
+    ? 10
     : pref.operationMode === 'M5'
-      ? 8
+      ? 15
       : pref.thresholds.entryWindowSeconds;
   const preSignalWindowSeconds = 30;
   const directionalPower = Number(direction === 'BUY' ? signal.analytics?.buyPower : signal.analytics?.sellPower) || 0;
@@ -294,7 +294,7 @@ function baseDecision(state = {}) {
   const recent = signal?.recent || {};
   const localTriggerReady = recent.breakout === direction
     || recent.rejection === direction
-    || (recent.continuationDirection === direction && Number(recent.continuationScore || 0) >= 55);
+    || (recent.continuationDirection === direction && Number(recent.continuationScore || 0) >= 50);
   // A next-candle candidate must have a concrete local chart trigger. Momentum
   // or candle strength alone can describe context but cannot create an entry.
   const technicalPatternReady = recent.ready === true
