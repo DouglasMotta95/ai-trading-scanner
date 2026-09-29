@@ -565,8 +565,22 @@ function renderLicense(state = {}) {
 }
 
 function ensureLiveClockUi() {
-  const bar = $('liveClockBar');
-  if (!bar) return;
+  const decisionCard = $('decisionCard');
+  if (!decisionCard) return;
+
+  let bar = $('liveClockBar');
+  if (!bar) {
+    bar = document.createElement('section');
+    bar.id = 'liveClockBar';
+    bar.className = 'live-clock-bar pending';
+    bar.setAttribute('aria-live', 'polite');
+    bar.innerHTML = '<div class="live-clock-main"><span>HORÁRIO ATUAL</span><b id="liveClockNow">--:--:--</b></div>' +
+      '<div class="live-clock-next"><span>PRÓXIMA VELA</span><b id="liveClockNext">--:--:--</b><small id="liveClockCountdown">AGUARDANDO CLOCK</small></div>';
+    const syncStrip = $('syncStrip');
+    if (syncStrip) syncStrip.insertAdjacentElement('afterend', bar);
+    else decisionCard.insertAdjacentElement('beforebegin', bar);
+  }
+
   if ($('atsLiveClockStyle')) return;
   const style = document.createElement('style');
   style.id = 'atsLiveClockStyle';
