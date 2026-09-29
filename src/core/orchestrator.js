@@ -4,7 +4,7 @@ import {
   serializeCompletedDecisions as legacySerializeCompletedDecisions,
   restoreCompletedDecisions as legacyRestoreCompletedDecisions
 } from './orchestrator-legacy.js';
-import { getThresholds, getSignalPolicy } from './analysis.js';
+import { getThresholds, getSignalPolicy, calculateEntryQuality } from './analysis.js';
 
 // Price action/indicators remain in the legacy analyst. This wrapper owns exactly
 // one bounded decision for each target candle: ENTER BUY, ENTER SELL or WAIT.
@@ -140,7 +140,13 @@ function decisionQuality(signal = {}, direction = null, thresholds = getThreshol
     || signal?.recent?.rejection === direction
     || (signal?.recent?.continuationDirection === direction && continuationScore >= 50);
   const nextCandle = analytics.nextCandle || signal?.recent?.nextCandle || null;
-  const nextCandleReady = nextCandle?.direction === direction && nextCandle?.ready === true;
+  const entryQuality = analytics.entryQuality
+    || signal?.recent?.entryQuality
+    || calculateEntryQuality({ analytics, recent: signal?.recent, nextCandle }, direction);
+  const entryQualityReady = entryQuality?.ready === true && entryQuality?.borderline !== true;
+  const nextCandleReady = nextCandle?.direction === direction
+    && nextCandle?.ready === true
+    && entryQualityReady;
   // The entry engine is intentionally centered on the chart's local trigger:
   // breakout, rejection, or a confirmed continuation aligned with recent price
   // action. Momentum/strength alone can build context, but cannot create a
@@ -163,7 +169,8 @@ function decisionQuality(signal = {}, direction = null, thresholds = getThreshol
     && score >= finalScore
     && power >= signalPolicy.finalPower
     && evidence.length >= signalPolicy.minimumConfluence
-    && nextCandleReady;
+    && nextCandleReady
+    && entryQualityReady;
   const commonReason = !direction
     ? 'sem direção'
     : !qualityContextReady
@@ -176,7 +183,9 @@ function decisionQuality(signal = {}, direction = null, thresholds = getThreshol
             ? `confluências fortes ${evidence.length}/${signalPolicy.minimumConfluence}`
             : !nextCandleReady
               ? (nextCandle?.reason || 'pressão para a próxima vela ainda não confirmada')
-              : !entryTriggerReady
+              : !entryQualityReady
+                ? (entryQuality?.reason || 'qualidade de entrada ainda não confirmada')
+                : !entryTriggerReady
                 ? 'gatilho local ainda não confirmado'
                 : 'alta confiança confirmada';
 
@@ -213,7 +222,9 @@ function decisionQuality(signal = {}, direction = null, thresholds = getThreshol
       mode,
       commonReady,
       commonReason,
-      nextCandleReady
+      nextCandleReady,
+      entryQuality,
+      entryQualityReady
     };
   }
 
@@ -658,7 +669,8 @@ export function processSnapshot(snapshot = {}, state = {}) {
   const assertiveFinalReady = ['BUY', 'SELL'].includes(direction)
     && score >= signalPolicy.finalScore
     && power >= 45
-    && quality.nextCandleReady === true;
+    && quality.nextCandleReady === true
+    && quality.entryQualityReady === true;
   const stable = timingVerified
     ? observeDecision(cycle, direction, assertiveFinalReady, at)
     : false;
