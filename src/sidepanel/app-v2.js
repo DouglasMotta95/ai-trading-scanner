@@ -234,7 +234,10 @@ function liveCycleKey(state = {}) {
   const tf = normTf(state.analysisTimeframe || state.timeframe);
   const seconds = timeframeSeconds(tf);
   if (!state.asset || !tf || !seconds) return '';
-  const targetStart = num(state.signal?.targetStart) ?? num(state.diagnostics?.marketClock?.closeAt);
+  const clock = state.diagnostics?.marketClock || {};
+  const candleOpenAt = num(clock.openAt) ?? num(clock.candleOpenAt);
+  if (candleOpenAt != null) return `${marketId(state.asset)}|${tf}|${Math.round(candleOpenAt / 1000) * 1000}`;
+  const targetStart = num(state.signal?.targetStart) ?? num(clock.closeAt);
   if (targetStart != null) return `${marketId(state.asset)}|${tf}|${Math.round(targetStart / 1000) * 1000}`;
   const remaining = num(state.diagnostics?.marketClock?.secondsRemaining);
   if (remaining == null) return `${marketId(state.asset)}|${tf}|unknown`;
