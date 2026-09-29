@@ -575,9 +575,16 @@ function ensureEntryScheduleUi() {
       .entry-schedule span{font-size:10px;font-weight:800;letter-spacing:.11em;color:#7fa0b8}
       .entry-schedule b{font-size:34px;line-height:1.05;letter-spacing:.03em;color:#edf8ff}
       .entry-schedule small{font-size:12px;font-weight:800;letter-spacing:.08em}
+      .entry-schedule em{display:block;margin-top:4px;font-size:11px;font-style:normal;font-weight:900;color:#9db3c5}
+      .entry-schedule .entry-now{display:block;margin-top:7px;font-size:12px;font-weight:800;color:#d8e7f3}
+      .entry-schedule .entry-now strong{font-size:15px}
+      .entry-schedule .entry-action{display:block;margin-top:5px;font-size:11px;font-weight:900;letter-spacing:.05em}
       .entry-schedule.buy{border-color:#27654f;background:#0b241e}.entry-schedule.buy small{color:#72d7b2}
+      .entry-schedule.buy .entry-action{color:#72d7b2}
       .entry-schedule.sell{border-color:#6b3343;background:#241019}.entry-schedule.sell small{color:#ee829b}
+      .entry-schedule.sell .entry-action{color:#ee829b}
       .entry-schedule.waiting{border-color:#5f4f28;background:#1c180b}.entry-schedule.waiting small{color:#e0c56e}
+      .entry-schedule.waiting .entry-action{color:#e0c56e}
     `;
     document.head.append(style);
   }
@@ -593,33 +600,118 @@ function ensureEntryScheduleUi() {
   }
 }
 
+function tickEntryScheduleClock() {
+  const box = $('entrySchedule');
+  if (!box || box.hidden) return;
+  const target = Number(box.dataset.entryTarget || 0);
+  if (!Number.isFinite(target) || target <= 0) return;
+
+  const now = Date.now();
+  const remaining = Math.max(0, Math.ceil((target - now) / 1000));
+  const nowText = new Date(now).toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+  const targetText = new Date(target).toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+
+  setText('entryScheduleTime', targetText);
+  setText('entrySchedulePrice', remaining > 0 ? 'VIRA EM ' + remaining + 's' : 'VIRANDO AGORA');
+
+  const nowEl = $('entryScheduleNow');
+  if (nowEl) nowEl.innerHTML = 'AGORA <strong>' + nowText + '</strong>';
+
+  const actionEl = $('entryScheduleAction');
+  if (actionEl && remaining > 0) {
+    const action = box.dataset.entryAction || 'NÃO ENTRAR';
+    const side = box.dataset.entryDirection || '';
+    actionEl.textContent = action + (side ? ' • ' + side : '');
+  }
+}
+
 function renderEntrySchedule(state = {}, model = {}) {
   ensureEntryScheduleUi();
   const box = $('entrySchedule');
   if (!box) return;
   const ui = String(model.uiState || '').toUpperCase();
   const signal = state.signal || {};
+  const clock = state.diagnostics?.marketClock || {};
+  const tf = normTf(state.analysisTimeframe || state.timeframe || clock.timeframe);
+  const tfMs = timeframeSeconds(tf) * 1000;
   const activeRow = (Array.isArray(state.signalHistory) ? state.signalHistory : [])
     .filter(row => row && !row.result && String(row.status || '').toLowerCase() !== 'resolved')
     .at(-1);
-  const target = num(signal.targetStart ?? signal.entryAt ?? activeRow?.targetStart ?? state.decisionCycle?.targetStart);
-  const visible = ['POSSIBLE_BUY','POSSIBLE_SELL','ENTER_BUY','ENTER_SELL','OPERATION_ACTIVE'].includes(ui) || !!activeRow;
-  box.hidden = !visible || target == null;
-  if (box.hidden) return;
-  let timeText = '—';
-  try { timeText = new Date(Number(target)).toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit' }); } catch {}
+
+  const signalVisible = ['POSSIBLE_BUY','POSSIBLE_SELL','ENTER_BUY','ENTER_SELL','OPERATION_ACTIVE'].includes(ui);
+  const visible = signalVisible || (ui === 'OPERATION_ACTIVE' && !!activeRow);
+  if (!visible || !state.asset || !tf) {
+    box.hidden = true;
+    return;
+  }
+
+  // Never display a stale target from a previous candle/session. CasaTrade's
+  // exact closeAt is preferred; otherwise advance a valid signal target or use
+  // the local timeframe grid only as a display fallback.
+  let target = num(clock.closeAt);
+  if (target == null || target <= Date.now() + 500) {
+    const candidate = num(signal.targetStart ?? signal.entryAt ?? activeRow?.targetStart ?? state.decisionCycle?.targetStart);
+    if (candidate != null && candidate > Date.now() + 500) target = candidate;
+  }
+  if ((target == null || target <= Date.now() + 500) && tfMs) {
+    target = Math.floor(Date.now() / tfMs) * tfMs + tfMs;
+  }
+  if (target == null) {
+    box.hidden = true;
+    return;
+  }
+
+  const nowText = new Date().toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+  const targetText = new Date(Number(target)).toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+  const remainingSeconds = Math.max(0, Math.ceil((Number(target) - Date.now()) / 1000));
   const direction = activeRow?.direction || model.direction || signal.direction || '';
   const side = direction === 'BUY' ? 'COMPRA' : direction === 'SELL' ? 'VENDA' : '';
-  const status = ui === 'OPERATION_ACTIVE' || activeRow ? 'OPERAÇÃO EM ANDAMENTO' : model.actionable ? 'ENTRAR NA PRÓXIMA VELA' : 'PRÓXIMA VELA';
+
+  let status = 'AGUARDAR — SEM ENTRADA';
+  let action = 'NÃO ENTRAR';
+  if (ui === 'OPERATION_ACTIVE' || activeRow) {
+    status = 'OPERAÇÃO EM ANDAMENTO';
+    action = 'AGUARDE O RESULTADO';
+  } else if (model.actionable === true && String(model.uiState || '').startsWith('ENTER_')) {
+    status = 'ENTRADA CONFIRMADA';
+    action = 'PREPARE O TOQUE MANUAL';
+  } else if (String(model.uiState || '').startsWith('POSSIBLE_')) {
+    status = 'PRÉ-SINAL — POSSÍVEL';
+    action = 'NÃO ENTRAR AINDA';
+  }
+
+  box.hidden = false;
+  box.dataset.entryTarget = String(Number(target));
+  box.dataset.entryDirection = side || '';
+  box.dataset.entryUiState = ui;
+  box.dataset.entryAction = action;
   box.className = 'entry-schedule ' + (side === 'COMPRA' ? 'buy' : side === 'VENDA' ? 'sell' : 'waiting');
   setText('entryScheduleLabel', status);
-  setText('entryScheduleTime', timeText);
+  setText('entryScheduleTime', targetText);
   setText('entryScheduleDirection', side || 'AGUARDAR');
-  const price = num(activeRow?.entryPrice ?? model.entryPrice ?? signal.entryPrice);
-  setText('entrySchedulePrice', price != null ? 'PREÇO DE ENTRADA: ' + fmtPrice(price) : '');
+  setText('entrySchedulePrice', remainingSeconds > 0 ? 'VIRA EM ' + remainingSeconds + 's' : 'VIRANDO AGORA');
   const priceEl = $('entrySchedulePrice');
-  if (priceEl) priceEl.hidden = price == null; 
+  if (priceEl) priceEl.hidden = false;
+
+  let nowEl = $('entryScheduleNow');
+  if (!nowEl) {
+    nowEl = document.createElement('span');
+    nowEl.id = 'entryScheduleNow';
+    nowEl.className = 'entry-now';
+    box.appendChild(nowEl);
+  }
+  nowEl.innerHTML = 'AGORA <strong>' + nowText + '</strong>';
+
+  let actionEl = $('entryScheduleAction');
+  if (!actionEl) {
+    actionEl = document.createElement('span');
+    actionEl.id = 'entryScheduleAction';
+    actionEl.className = 'entry-action';
+    box.appendChild(actionEl);
+  }
+  actionEl.textContent = action + (side ? ' • ' + side : '');
 }
+
 
 function normalizeOperationalPulseLabels() {
   const replacements = { funnelCandidates: 'PRÉ-SINAIS ANALISADOS', funnelPossible: 'ENTRADAS CONFIRMADAS', funnelEntries: 'OPERAÇÕES FINALIZADAS' };
@@ -983,6 +1075,9 @@ setInterval(() => {
   const actualTf = normTf(lastRenderedState.diagnostics?.marketClock?.timeframe || lastRenderedState.analysisTimeframe || lastRenderedState.timeframe);
   setText('heroCountdown', remaining == null ? '—' : exact ? `${Math.ceil(remaining)}s` : `~${Math.ceil(remaining)}s`);
   setText('secondsRemaining', remaining == null ? '—' : exact ? String(Math.max(0, Math.ceil(remaining))) : `~${Math.max(0, Math.ceil(remaining))}`);
+  // The entry card has its own 250ms clock. It must not depend on a new
+  // background snapshot to advance the visible seconds.
+  tickEntryScheduleClock();
   const duration = timeframeSeconds(actualTf);
   const progress = $('candleProgress');
   if (progress) {

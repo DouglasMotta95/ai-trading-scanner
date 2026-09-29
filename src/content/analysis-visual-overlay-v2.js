@@ -123,8 +123,77 @@
     const level = num(waiting.level) ?? (dir === 'BUY' ? num(analytics.breakoutHigh) : num(analytics.breakoutLow));
     return level == null ? null : { direction: dir, price: level };
   }
+  function renderSignalAlert(box, rect) {
+    box.querySelector('[data-ats-signal-alert]')?.remove();
+    if (!marketIntegrityOk()) return;
+    const signal = state?.signal || {};
+    const professional = state?.professionalDecision || {};
+    const ui = String(professional.uiState || '').toUpperCase();
+    const direction = String(professional.direction || signal.direction || '').toUpperCase();
+    if (!['POSSIBLE_BUY','POSSIBLE_SELL','ENTER_BUY','ENTER_SELL'].includes(ui)) return;
+    if (!['BUY','SELL'].includes(direction)) return;
+
+    const clock = state?.diagnostics?.marketClock || {};
+    const now = Date.now();
+    const rawRemaining = num(clock.secondsRemaining);
+    const observedAt = Number(clock.at || 0);
+    const projected = clock.verified === true && rawRemaining != null
+      ? Math.max(0, rawRemaining - Math.max(0, (now - observedAt) / 1000))
+      : null;
+    const target = num(signal.targetStart ?? state.decisionCycle?.targetStart ?? clock.closeAt);
+    // A persisted signal whose target already passed belongs to the previous
+    // candle/session and must not appear as a fresh opportunity after reopen.
+    if (target == null || target <= now + 500) return;
+    let targetText = 'PRÓXIMA VELA';
+    try {
+      if (target != null) targetText = new Date(target).toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+    } catch {}
+
+    const buy = direction === 'BUY';
+    const alert = document.createElement('div');
+    alert.dataset.atsSignalAlert = '1';
+    Object.assign(alert.style, {
+      position: 'absolute',
+      left: '12px',
+      top: '12px',
+      width: 'min(260px, 42%)',
+      minWidth: '190px',
+      padding: '11px 13px',
+      borderRadius: '14px',
+      background: 'rgba(6,12,20,.94)',
+      border: '1px solid ' + (buy ? 'rgba(67,226,165,.65)' : 'rgba(255,100,127,.65)'),
+      boxShadow: '0 12px 32px rgba(0,0,0,.36)',
+      color: '#fff',
+      font: '600 12px system-ui',
+      pointerEvents: 'none',
+      lineHeight: '1.35',
+      backdropFilter: 'blur(7px)'
+    });
+
+    const title = document.createElement('div');
+    title.style.cssText = 'font-weight:900;font-size:13px;letter-spacing:.04em;color:' + (buy ? '#6ee8bc' : '#ff91a5');
+    title.textContent = (ui.startsWith('ENTER_') ? 'ENTRADA CONFIRMADA' : 'PRÉ-SINAL') + ' • ' + (buy ? 'COMPRA' : 'VENDA');
+
+    const time = document.createElement('div');
+    time.style.cssText = 'font-weight:900;font-size:21px;margin-top:3px';
+    time.textContent = projected != null ? targetText + ' • ' + Math.ceil(projected) + 's' : targetText;
+
+    const hint = document.createElement('div');
+    hint.style.cssText = 'margin-top:4px;color:#b7c5d4;font-size:10px;font-weight:800';
+    hint.textContent = ui.startsWith('ENTER_')
+      ? 'Toque MANUALMENTE em ' + (buy ? 'COMPRAR' : 'VENDER') + ' na CasaTrade.'
+      : 'Acompanhe; a confirmação final fica para a próxima janela.';
+
+    alert.append(title, time, hint);
+    box.appendChild(alert);
+  }
+
   function render() {
-    if (!prefs.overlayEnabled || !marketIntegrityOk()) { if (root) root.hidden = true; return; }
+    const liveOk = marketIntegrityOk();
+    if (!liveOk) { if (root) root.hidden = true; return; }
+    const signalUi = String(state?.professionalDecision?.uiState || state?.signal?.uiState || '').toUpperCase();
+    const showSignalAlert = ['POSSIBLE_BUY','POSSIBLE_SELL','ENTER_BUY','ENTER_SELL'].includes(signalUi);
+    if (!prefs.overlayEnabled && !showSignalAlert) { if (root) root.hidden = true; return; }
     const rect = chartRect(), yFor = priceMapper(rect, state); if (!rect || !yFor) { if (root) root.hidden = true; return; }
     const box = ensureRoot(); box.hidden = false;
     Object.assign(box.style, { left: `${Math.round(rect.left)}px`, top: `${Math.round(rect.top)}px`, width: `${Math.round(rect.width)}px`, height: `${Math.round(rect.height)}px` });
@@ -153,7 +222,7 @@
     if (trigger) {
       addLine(trigger.price, trigger.direction === 'BUY' ? 'Entrada COMPRA' : 'Entrada VENDA', trigger.direction === 'BUY' ? '#58d6ad' : '#f07b94', true);
     }
-    // Deliberately no generic syncing banner on the chart: only actionable lines belong here.
+    renderSignalAlert(box, rect);
   }
   async function refresh() {
     if (busy) return; busy = true;

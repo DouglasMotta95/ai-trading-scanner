@@ -35,9 +35,20 @@
     });
   };
 
+  chrome.runtime.onMessage?.addListener?.((message, _sender, sendResponse) => {
+    if (message?.type !== 'ATS_GET_DEVICE_ANCHOR') return false;
+    let anchor = existing;
+    if (!anchor) {
+      try { anchor = String(localStorage.getItem(KEY) || '').trim(); } catch {}
+    }
+    sendResponse({ ok: !!anchor, anchor: anchor || null });
+    return false;
+  });
+
   sendRuntimeMessage({ type: 'ATS_DEVICE_ANCHOR', anchor: existing || null }).then(response => {
     const anchor = String(response?.anchor || '').trim();
     if (!anchor || anchor.length > 160) return;
+    existing = anchor;
     try { localStorage.setItem(KEY, anchor); } catch {}
   }).catch(() => {});
 })();
