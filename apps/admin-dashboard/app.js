@@ -205,7 +205,7 @@ function messageFor(type, l = {}) {
   const plan = l.planLabel || l.plan || $('#msgPlan').value.trim() || 'Plano';
   const limit = l.dailyLimit == null ? 'sem limite diário' : `${l.dailyLimit} sinais por dia`;
   const days = remainingDays(l); const validity = days == null ? 'sem expiração' : `${days} dia${days === 1 ? '' : 's'}`;
-  if (type === 'trial') return `🎁 *TESTE GRÁTIS LIBERADO!*\n\nOlá, ${name}! Seu acesso de teste ao *AI Trading Bot* foi criado.\n\n✅ Plano: ${plan}\n⏳ Validade: ${validity}\n📊 Limite: ${limit}\n\n🔑 *Licença:*\n${key}\n\nAbra a extensão, cole a licença e conecte o scanner à plataforma. Aproveite o teste! 🚀`;
+  if (type === 'trial') return `🎁 *TESTE GRÁTIS LIBERADO!*\n\nOlá, ${name}! Seu acesso de teste ao *AI Trading Bot* foi criado.\n\n✅ Plano: ${plan}\n⏳ Validade: ${validity}\n📊 Limite: ${limit}\n\n🔑 *Licença:*\n${key}\n\nAbra a extensão, cole a licença e conecte o robô à plataforma. Aproveite o teste! 🚀`;
   if (type === 'renew') return `✅ *ACESSO RENOVADO!*\n\nOlá, ${name}! Sua licença do *AI Trading Bot* foi renovada com sucesso.\n\n🔑 Licença: ${key}\n📦 Plano: ${plan}\n⏳ Validade atual: ${validity}\n\nSeu acesso continua liberado normalmente. 🚀`;
   if (type === 'reset') return `♻️ *EXTENSÃO LIBERADA NOVAMENTE!*\n\nOlá, ${name}! O reset do seu *AI Trading Bot* foi concluído.\n\n🔑 Licença: ${key}\n\nOs vínculos anteriores foram limpos e você já pode ativar a extensão novamente. ✅`;
   if (type === 'blocked') return `⛔ *ACESSO TEMPORARIAMENTE BLOQUEADO*\n\nOlá, ${name}. A licença ${key} do *AI Trading Bot* está bloqueada no momento.\n\nSe o acesso já deveria estar liberado, entre em contato para conferirmos a situação.`;
