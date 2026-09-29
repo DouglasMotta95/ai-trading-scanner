@@ -482,15 +482,115 @@ function renderOhlc(state = {}) {
       : 'Aguardando abertura/range confiáveis da vela atual.');
 }
 
+function ensureLicenseGateUi() {
+  const main = document.querySelector('main.shell');
+  const card = $('licenseCard');
+  if (!main || !card) return;
+  if (!$('atsLicenseGateStyle')) {
+    const style = document.createElement('style');
+    style.id = 'atsLicenseGateStyle';
+    style.textContent = `
+      main.license-gate-locked{padding-bottom:18px}
+      main.license-gate-locked > :not(.topbar):not(#licenseCard){display:none!important}
+      main.license-gate-locked > #licenseCard{display:block!important;margin-top:14px;min-height:280px}
+      main.license-gate-locked > .topbar .top-status #connectScanner{display:none!important}
+      #licenseCard.license-gate-card{box-shadow:0 16px 45px rgba(0,0,0,.25)}
+      #licenseCard .license-gate-intro{margin:4px 0 16px;color:#9db7c9;line-height:1.55}
+    `;
+    document.head.append(style);
+  }
+  const topbar = main.querySelector('.topbar');
+  if (topbar && card.previousElementSibling !== topbar) topbar.insertAdjacentElement('afterend', card);
+  card.classList.add('license-gate-card');
+}
+
 function renderLicense(state = {}) {
+  ensureLicenseGateUi();
   const license = state.license || {};
   const active = activeLicense(state);
+  const main = document.querySelector('main.shell');
   const card = $('licenseCard');
-  if (card) card.classList.toggle('active', active);
-  setText('licenseTitle', active ? `Licença ${license.planLabel || license.plan || 'ATIVA'}` : 'Licença necessária');
+  if (main) main.classList.toggle('license-gate-locked', !active);
+  if (card) {
+    card.classList.toggle('active', active);
+    card.hidden = active;
+    const intro = card.querySelector('.license-gate-intro');
+    if (intro) intro.textContent = active
+      ? 'Acesso validado. O scanner pode ler o mercado aberto.'
+      : 'Ative sua chave para liberar o scanner. Antes da ativação, a tela operacional permanece bloqueada.';
+    card.querySelectorAll('.secondary').forEach(button => { button.hidden = !active; });
+  }
+  setText('licenseTitle', active ? 'Licença ' + (license.planLabel || license.plan || 'ATIVA') : 'Ativação necessária');
   setBadge('licenseHealth', active ? 'ATIVA' : 'INATIVA', active ? 'ok' : 'warn');
-  setText('licenseText', active ? 'Acesso validado. O scanner pode ler o mercado aberto.' : (license.error ? `Acesso: ${license.error}` : 'Insira sua chave para ativar.'));
+  setText('licenseText', active
+    ? 'Acesso validado. O scanner pode ler o mercado aberto.'
+    : (license.error ? 'Acesso: ' + license.error : 'Digite sua chave para iniciar.'));
   const box = $('activationBox'); if (box) box.hidden = active;
+  return active;
+}
+
+function ensureEntryScheduleUi() {
+  const card = $('decisionCard');
+  if (!card) return;
+  if (!$('atsEntryScheduleStyle')) {
+    const style = document.createElement('style');
+    style.id = 'atsEntryScheduleStyle';
+    style.textContent = `
+      .entry-schedule{display:grid;gap:3px;margin:8px 0 12px;padding:13px 14px;border:1px solid #294862;border-radius:16px;background:linear-gradient(180deg,#0a1a29,#081521);text-align:center}
+      .entry-schedule span{font-size:10px;font-weight:800;letter-spacing:.11em;color:#7fa0b8}
+      .entry-schedule b{font-size:34px;line-height:1.05;letter-spacing:.03em;color:#edf8ff}
+      .entry-schedule small{font-size:12px;font-weight:800;letter-spacing:.08em}
+      .entry-schedule.buy{border-color:#27654f;background:#0b241e}.entry-schedule.buy small{color:#72d7b2}
+      .entry-schedule.sell{border-color:#6b3343;background:#241019}.entry-schedule.sell small{color:#ee829b}
+      .entry-schedule.waiting{border-color:#5f4f28;background:#1c180b}.entry-schedule.waiting small{color:#e0c56e}
+    `;
+    document.head.append(style);
+  }
+  let box = $('entrySchedule');
+  if (!box) {
+    const head = card.querySelector('.compact-decision-head');
+    box = document.createElement('div');
+    box.id = 'entrySchedule';
+    box.className = 'entry-schedule waiting';
+    box.hidden = true;
+    box.innerHTML = '<span id="entryScheduleLabel">PRÓXIMA VELA</span><b id="entryScheduleTime">—</b><small id="entryScheduleDirection">AGUARDAR</small>';
+    head?.insertAdjacentElement('afterend', box);
+  }
+}
+
+function renderEntrySchedule(state = {}, model = {}) {
+  ensureEntryScheduleUi();
+  const box = $('entrySchedule');
+  if (!box) return;
+  const ui = String(model.uiState || '').toUpperCase();
+  const signal = state.signal || {};
+  const activeRow = (Array.isArray(state.signalHistory) ? state.signalHistory : [])
+    .filter(row => row && !row.result && String(row.status || '').toLowerCase() !== 'resolved')
+    .at(-1);
+  const target = num(signal.targetStart ?? signal.entryAt ?? activeRow?.targetStart ?? state.decisionCycle?.targetStart);
+  const visible = ['POSSIBLE_BUY','POSSIBLE_SELL','ENTER_BUY','ENTER_SELL','OPERATION_ACTIVE'].includes(ui) || !!activeRow;
+  box.hidden = !visible || target == null;
+  if (box.hidden) return;
+  let timeText = '—';
+  try { timeText = new Date(Number(target)).toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit', second:'2-digit' }); } catch {}
+  const direction = activeRow?.direction || model.direction || signal.direction || '';
+  const side = direction === 'BUY' ? 'COMPRA' : direction === 'SELL' ? 'VENDA' : '';
+  const status = ui === 'OPERATION_ACTIVE' || activeRow ? 'OPERAÇÃO EM ANDAMENTO' : model.actionable ? 'ENTRAR NA PRÓXIMA VELA' : 'PRÓXIMA VELA';
+  box.className = 'entry-schedule ' + (side === 'COMPRA' ? 'buy' : side === 'VENDA' ? 'sell' : 'waiting');
+  setText('entryScheduleLabel', status);
+  setText('entryScheduleTime', timeText);
+  setText('entryScheduleDirection', side || 'AGUARDAR');
+}
+
+function normalizeOperationalPulseLabels() {
+  const replacements = { funnelCandidates: 'PRÉ-SINAIS ANALISADOS', funnelPossible: 'ENTRADAS CONFIRMADAS', funnelEntries: 'OPERAÇÕES FINALIZADAS' };
+  for (const [id, label] of Object.entries(replacements)) {
+    const value = $(id);
+    const small = value?.parentElement?.querySelector('small');
+    if (small) small.textContent = label;
+  }
+  const blocker = $('currentBlocker');
+  if (blocker && /CANDIDATO MANTIDO/i.test(blocker.textContent || '')) blocker.textContent = blocker.textContent.replace(/CANDIDATO MANTIDO/ig, 'PRÉ-SINAL MANTIDO');
 }
 
 let lastRenderedState = {};
@@ -526,7 +626,10 @@ function smoothedRemaining(state = {}) {
 }
 
 function render(state = {}) {
+  const licensed = renderLicense(state);
+  if (!licensed) return;
   const model = decisionModel(state);
+  renderEntrySchedule(state, model);
   const clock = state.diagnostics?.marketClock || {};
   const exact = exactClockReady(state);
   const dataLive = sessionReady(state);
@@ -619,7 +722,12 @@ function render(state = {}) {
     const kind = gateKind(state);
     actionStatus.classList.remove('rule-block','technical-block');
     if (model.actionable && timeReady) {
-      actionStatus.textContent = `Entrada manual liberada para ${model.direction === 'BUY' ? 'COMPRA' : 'VENDA'} na próxima vela.`;
+      const target = num(state.signal?.targetStart ?? state.decisionCycle?.targetStart);
+      let schedule = 'PRÓXIMA VELA';
+      try { if (target != null) schedule = 'PRÓXIMA VELA • ' + new Date(target).toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit',second:'2-digit'}); } catch {}
+      actionStatus.textContent = 'ENTRADA CONFIRMADA: ' + (model.direction === 'BUY' ? 'COMPRA' : 'VENDA') + ' • ' + schedule + '.';
+    } else if (model.uiState === 'OPERATION_ACTIVE') {
+      actionStatus.textContent = 'OPERAÇÃO EM ANDAMENTO • aguarde a resolução antes de uma nova entrada.';
     } else if (!timeReady) {
       const block = entryBlockReason(state);
       if (kind === 'rule') {
@@ -632,9 +740,12 @@ function render(state = {}) {
         actionStatus.textContent = block;
       }
     } else if (model.uiState.startsWith('POSSIBLE_')) {
-      actionStatus.textContent = `Possível sinal em hold (${Math.ceil(Number(state.professionalDecision?.holdRemainingMs || 0) / 1000)}s restantes).`;
+      const target = num(state.signal?.targetStart ?? state.decisionCycle?.targetStart);
+      let schedule = 'PRÓXIMA VELA';
+      try { if (target != null) schedule = 'PRÓXIMA VELA • ' + new Date(target).toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit',second:'2-digit'}); } catch {}
+      actionStatus.textContent = 'PRÉ-SINAL: ' + (model.direction === 'BUY' ? 'COMPRA' : 'VENDA') + ' • ' + schedule + '.';
     } else {
-      actionStatus.textContent = 'Aguardando decisão final desta vela.';
+      actionStatus.textContent = 'Aguardando nova entrada confirmada.';
     }
   }
 
@@ -680,8 +791,9 @@ function render(state = {}) {
 
   renderOhlc(freshMarket ? state : {});
   renderCandles(freshMarket ? state : {});
-  renderLicense(state);
+  normalizeOperationalPulseLabels();
   globalThis.__ATS_MARK_UI_READY__?.();
+  setTimeout(normalizeOperationalPulseLabels, 0);
 }
 
 function tone(frequency, delay, duration, gain = .12) {
@@ -825,6 +937,7 @@ $('activateLicense')?.addEventListener('click', async () => {
 });
 
 setInterval(() => {
+  normalizeOperationalPulseLabels();
   if (!lastRenderedState || !Object.keys(lastRenderedState).length) return;
   const remaining = smoothedRemaining(lastRenderedState);
   const exact = exactClockReady(lastRenderedState);
