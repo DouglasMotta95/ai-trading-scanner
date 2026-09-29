@@ -553,7 +553,7 @@ function renderLicense(state = {}) {
   setText('licenseTitle', active ? 'Licença ' + (license.planLabel || license.plan || 'ATIVA') : 'Ativação necessária');
   setBadge('licenseHealth', active ? 'ATIVA' : 'INATIVA', active ? 'ok' : 'warn');
   setText('licenseText', active
-    ? 'Acesso validado. O scanner pode ler o mercado aberto.'
+    ? 'Acesso validado. O robô pode monitorar o mercado aberto.'
     : (license.error ? 'Acesso: ' + license.error : 'Digite sua chave para iniciar.'));
   const box = $('activationBox'); if (box) box.hidden = active;
   return active;
