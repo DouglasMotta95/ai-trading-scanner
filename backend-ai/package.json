@@ -1,0 +1,12 @@
+{
+  "name": "ai-trading-scanner-gemini-gateway",
+  "version": "0.11.12",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
