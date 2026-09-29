@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>AI Trading Scanner</title>
+  <title>AI Trading Bot</title>
   <style>html,body{margin:0;min-height:100%;background:#06101a;color:#eaf4ff;color-scheme:dark}</style>
   <link rel="stylesheet" href="styles.css">
   <link rel="stylesheet" href="asset-quality.css">
@@ -13,6 +13,7 @@
   <link rel="stylesheet" href="compact-live.css">
   <link rel="stylesheet" href="ui-polish.css">
   <link rel="stylesheet" href="responsive-panel.css">
+  <link rel="stylesheet" href="bot-identity.css">
 </head>
 <body>
   <div id="bootError" class="boot-error" hidden role="alert">
@@ -24,13 +25,19 @@
     <header class="topbar compact-topbar">
       <div class="brand-lockup">
         <span class="brand-orb" aria-hidden="true"><i></i></span>
-        <div><span class="eyebrow">AI TRADING SCANNER</span><h1 id="scannerModeTitle">M1 AO VIVO</h1></div>
+        <div><span class="eyebrow">AI TRADING BOT</span><h1 id="scannerModeTitle">M1 AO VIVO</h1></div>
       </div>
       <div class="top-status">
         <button id="connectScanner" class="connect-btn" type="button"><span class="connect-dot"></span><b id="connectScannerText">CONECTAR</b></button>
         <span id="extensionVersion" class="version">v—</span>
       </div>
     </header>
+
+    <section id="botIdentity" class="bot-identity monitoring" aria-live="polite">
+      <div class="bot-identity-avatar" aria-hidden="true"><span class="robot-mini-antenna"></span><span class="robot-mini-head"><i></i><i></i></span><span class="robot-mini-body"><i></i><i></i><i></i></span></div>
+      <div class="bot-identity-copy"><small>AI TRADING BOT</small><b id="botIdentityTitle">ROBÔ EM ESPERA</b><span id="botIdentityText">Ative o acesso e conecte a CasaTrade para iniciar o monitoramento.</span></div>
+      <span id="botIdentityBadge" class="bot-identity-badge">AGUARDAR</span>
+    </section>
 
     <section id="syncStrip" class="sync-strip syncing compact-sync" aria-live="polite">
       <span class="scan-pulse" aria-hidden="true"></span>
@@ -53,7 +60,7 @@
     </section>
 
     <section id="licenseCard" class="card license-card">
-      <div class="section-head"><div><span class="eyebrow">ACESSO DO SCANNER</span><h2 id="licenseTitle">Verificando acesso…</h2></div><span id="licenseHealth" class="badge">—</span></div>
+      <div class="section-head"><div><span class="eyebrow">ACESSO DO ROBÔ</span><h2 id="licenseTitle">Verificando acesso…</h2></div><span id="licenseHealth" class="badge">—</span></div>
       <p id="licenseText" class="muted">Digite sua chave de acesso para ativar este aparelho.</p>
       <div id="activationBox" class="activation-box"><input id="licenseKey" autocomplete="off" placeholder="Digite sua chave de acesso" aria-label="Chave de acesso"><button id="activateLicense" class="primary">ATIVAR ACESSO</button></div>
       <button id="copyScannerDiagnostics" class="secondary" type="button">COPIAR DIAGNÓSTICO</button>
@@ -140,15 +147,15 @@
         </section>
 
         <section id="aiAuditCard" class="card ai-audit-card">
-          <div class="section-head"><div><span class="eyebrow">GEMINI • SEGUNDA LEITURA</span><h2 id="aiAuditTitle">AGUARDANDO CONFIRMAÇÃO TÉCNICA</h2></div><span id="aiAuditBadge" class="badge">EM ESPERA</span></div>
-          <p id="aiAuditSummary" class="ai-audit-summary">A Gemini só é acionada depois de ENTRAR ser confirmado pelo motor técnico primário.</p>
+          <div class="section-head"><div><span class="eyebrow">GEMINI • SEGUNDA LEITURA DO ROBÔ</span><h2 id="aiAuditTitle">AGUARDANDO CONFIRMAÇÃO TÉCNICA</h2></div><span id="aiAuditBadge" class="badge">EM ESPERA</span></div>
+          <p id="aiAuditSummary" class="ai-audit-summary">A Gemini só é acionada depois de ENTRAR ser confirmado pelo motor técnico primário do robô.</p>
           <div class="ai-audit-grid"><div><span>DIREÇÃO IA</span><b id="aiAuditDirection">—</b></div><div><span>ALINHAMENTO</span><b id="aiAuditAlignment">—</b></div><div><span>LEITURA</span><b id="aiAuditImpact">—</b></div></div>
           <ul id="aiAuditEvidence" class="ai-audit-evidence" hidden></ul>
           <div class="ai-audit-foot"><span id="aiAuditMeta">Motor técnico primário é autoritativo</span><b>SEM EXECUÇÃO AUTOMÁTICA</b></div>
         </section>
 
         <section class="card preferences-card professional-settings compact-settings">
-          <div class="section-head"><div><span class="eyebrow">OPERAÇÃO</span><h2 id="scannerModeHeading">Scanner M1</h2></div><span class="badge ok">MANUAL</span></div>
+          <div class="section-head"><div><span class="eyebrow">OPERAÇÃO</span><h2 id="scannerModeHeading">Bot M1</h2></div><span class="badge ok">MANUAL</span></div>
           <div class="fixed-strategy">
             <span><b id="operationTimeframeDisplay">M1</b><small>timeframe</small></span>
             <span><b id="operationExpirationDisplay">1 min</b><small>expiração</small></span>
