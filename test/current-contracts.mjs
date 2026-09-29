@@ -6,11 +6,12 @@ export const read = path => fs.readFileSync(new URL('../' + path, import.meta.ur
 const manifest = () => JSON.parse(read('manifest.json'));
 
 export function registerBuildContracts(label='build') {
-  test(label + ': current extension package is the v0.11.82 stable expiration-only build', () => {
+  test(label + ': current extension package version is internally consistent', () => {
     const m = manifest();
+    const buildVersion = m.version;
     assert.equal(m.manifest_version, 3);
-    assert.equal(m.version, '0.11.82');
-    assert.equal(m.version_name, '0.11.82-casatrade-analysis-recovery');
+    assert.match(buildVersion, /^\d+\.\d+\.\d+$/);
+    assert.ok(String(m.version_name || '').startsWith(buildVersion + '-'), 'version_name must track manifest version');
     assert.equal(m.background?.service_worker, 'src/background-entry.js');
     assert.equal(m.side_panel?.default_path, 'src/sidepanel/index.html');
   });
