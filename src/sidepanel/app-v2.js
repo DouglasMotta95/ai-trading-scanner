@@ -564,6 +564,60 @@ function renderLicense(state = {}) {
   return active;
 }
 
+function ensureLiveClockUi() {
+  const bar = $('liveClockBar');
+  if (!bar) return;
+  if ($('atsLiveClockStyle')) return;
+  const style = document.createElement('style');
+  style.id = 'atsLiveClockStyle';
+  style.textContent = `
+    .live-clock-bar{display:grid;grid-template-columns:1fr 1.15fr;gap:8px;margin:8px 0 10px;padding:10px 12px;border:1px solid #294862;border-radius:16px;background:linear-gradient(180deg,#0a1a29,#081521);box-shadow:0 10px 28px rgba(0,0,0,.18);text-align:center}
+    .live-clock-bar>div{display:grid;gap:2px;min-width:0}
+    .live-clock-bar span{font-size:9px;font-weight:900;letter-spacing:.11em;color:#7fa0b8}
+    .live-clock-bar b{font-size:23px;line-height:1.05;font-weight:900;color:#edf8ff;font-variant-numeric:tabular-nums}
+    .live-clock-bar small{font-size:10px;font-weight:900;color:#74dcb5;letter-spacing:.05em;min-height:12px}
+    .live-clock-bar.pending{border-color:#5f4f28}.live-clock-bar.pending small{color:#e0c56e}
+  `;
+  document.head.append(style);
+}
+
+function liveClockTarget(state = {}) {
+  const clock = state.diagnostics?.marketClock || {};
+  const now = Date.now();
+  const closeAt = num(clock.closeAt);
+  if (closeAt != null && closeAt > now + 250) return closeAt;
+  const at = Number(clock.at || 0);
+  const remaining = num(clock.secondsRemaining);
+  if (at > 0 && remaining != null) {
+    const target = at + Math.max(0, remaining) * 1000;
+    if (target > now + 250) return target;
+  }
+  return null;
+}
+
+function tickLiveClock(state = {}) {
+  const bar = $('liveClockBar');
+  if (!bar) return;
+  const now = Date.now();
+  const nowEl = $('liveClockNow');
+  if (nowEl) nowEl.textContent = new Date(now).toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+
+  const target = liveClockTarget(state);
+  const nextEl = $('liveClockNext');
+  const countEl = $('liveClockCountdown');
+  if (!target) {
+    bar.classList.add('pending');
+    if (nextEl) nextEl.textContent = '--:--:--';
+    if (countEl) countEl.textContent = 'AGUARDANDO CLOCK DA CASATRADE';
+    return;
+  }
+
+  bar.classList.remove('pending');
+  const remaining = Math.max(0, Math.ceil((target - now) / 1000));
+  if (nextEl) nextEl.textContent = new Date(target).toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+  if (countEl) countEl.textContent = remaining > 0 ? 'VIRA EM ' + remaining + 's' : 'VIRANDO AGORA';
+}
+
 function ensureEntryScheduleUi() {
   const card = $('decisionCard');
   if (!card) return;
@@ -759,6 +813,8 @@ function smoothedRemaining(state = {}) {
 function render(state = {}) {
   const licensed = renderLicense(state);
   if (!licensed) return;
+  ensureLiveClockUi();
+  tickLiveClock(state);
   const model = decisionModel(state);
   renderEntrySchedule(state, model);
   const clock = state.diagnostics?.marketClock || {};
@@ -1069,6 +1125,7 @@ $('activateLicense')?.addEventListener('click', async () => {
 
 setInterval(() => {
   normalizeOperationalPulseLabels();
+  tickLiveClock(lastRenderedState);
   if (!lastRenderedState || !Object.keys(lastRenderedState).length) return;
   const remaining = smoothedRemaining(lastRenderedState);
   const exact = exactClockReady(lastRenderedState);
