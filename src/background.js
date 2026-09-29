@@ -529,7 +529,7 @@ function reconcileSignalHistory(state = {}, next = {}, snapshot = {}) {
   const outcomeTargetStart = targetStart == null || !timeframe ? targetStart : performanceTargetBucket(targetStart, timeframe);
   const technicalConfirmed = signal.state === 'CONFIRM'
     || ['ENTER_BUY', 'ENTER_SELL'].includes(clean(signal.uiState).toUpperCase());
-  const professional = state.professionalDecision || {};
+  const professional = next.professionalDecision || state.professionalDecision || {};
   const professionalUi = clean(professional.uiState).toUpperCase();
   const professionalConfirmed = professional.actionable === true
     && ['ENTER_BUY', 'ENTER_SELL'].includes(professionalUi)
