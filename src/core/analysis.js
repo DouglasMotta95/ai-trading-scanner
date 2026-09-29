@@ -121,6 +121,109 @@ export function getOperationMode(value = 'M1') {
 // getThresholds(profile); RIGIDO remains the exact historical threshold set.
 export const ANALYST_THRESHOLDS = THRESHOLD_PROFILES.RIGIDO;
 
+export function calculateEntryQuality(input = {}, direction = null) {
+  const analytics = input?.analytics || input?.metrics || input || {};
+  const recent = input?.recent || input || {};
+  const next = input?.nextCandle || analytics?.nextCandle || recent?.nextCandle || input || {};
+  if (!['BUY', 'SELL'].includes(direction)) {
+    return {
+      score: 0, ready: false, borderline: false,
+      pressure: 0, opposingPressure: 0, directionalEdge: 0,
+      favorableClose: 0, bodyStrength: 0, opposingWick: 100,
+      followThrough: 0, triggerAligned: false, momentumAligned: false,
+      reason: 'Direção insuficiente para calcular qualidade de entrada.'
+    };
+  }
+
+  const pressure = clamp(Number(next.pressure ?? analytics[direction === 'BUY' ? 'buyPower' : 'sellPower'] ?? 0));
+  const oppositeKey = direction === 'BUY' ? 'sellPower' : 'buyPower';
+  const opposingPressure = clamp(Number(next.opposingPressure ?? analytics[oppositeKey] ?? 0));
+  const directionalEdge = pressure - opposingPressure;
+  const favorableClose = clamp(Number(next.favorableClose || 0));
+  const bodyStrength = clamp(Number(next.bodyStrength || 0));
+  const opposingWick = clamp(Number(next.opposingWick || 100));
+  const previousAlignment = clamp(Number(next.previousAlignment || 0), 0, 1);
+  const momentumScore = clamp(Number(next.momentumScore || analytics.momentumScore || 0));
+  const momentumAligned = next.momentumAligned === true || analytics.momentumDirection === direction;
+  const triggerAligned = recent.breakout === direction
+    || recent.rejection === direction
+    || (recent.continuationDirection === direction && Number(recent.continuationScore || 0) >= 60)
+    || input.breakout === direction
+    || input.rejection === direction
+    || (input.continuationDirection === direction && Number(input.continuationScore || 0) >= 60);
+
+  const followThrough = Math.max(
+    momentumAligned ? momentumScore : 0,
+    previousAlignment * 100,
+    triggerAligned ? 72 : 0
+  );
+  const edgeQuality = clamp(directionalEdge * 4);
+  const bodyQuality = bodyStrength < 18
+    ? clamp(bodyStrength * 3)
+    : clamp(55 + bodyStrength * .45);
+  const wickQuality = clamp(100 - opposingWick);
+
+  const score = clamp(
+    favorableClose * .28
+      + pressure * .24
+      + edgeQuality * .18
+      + wickQuality * .12
+      + bodyQuality * .08
+      + followThrough * .10
+  );
+
+  // Borderline protection filters the "almost tied" entries without requiring
+  // a large candle. A short candle is allowed when it closes well, has pressure
+  // and either a real trigger, momentum or three-candle follow-through.
+  const tinyNoisy = bodyStrength < 14 || (bodyStrength < 18 && opposingWick > 42);
+  const tie = directionalEdge < 8;
+  const weakPressure = pressure < 48;
+  const structureSupport = triggerAligned || momentumAligned || previousAlignment >= .67;
+  const edgeReady = directionalEdge >= 12
+    || (triggerAligned && directionalEdge >= 9 && pressure >= 56);
+  const coreReady = favorableClose >= 54
+    && opposingWick <= 52
+    && bodyStrength >= 14
+    && pressure >= 50;
+  const ready = coreReady
+    && score >= 57
+    && edgeReady
+    && structureSupport
+    && !tinyNoisy
+    && !tie
+    && !weakPressure;
+
+  const reasons = [];
+  if (tie) reasons.push('pressões quase empatadas');
+  if (weakPressure) reasons.push('pressão direcional fraca');
+  if (tinyNoisy) reasons.push('vela curta sem geometria limpa');
+  if (favorableClose < 54) reasons.push('fechamento pouco favorável');
+  if (opposingWick > 52) reasons.push('pavio contrário excessivo');
+  if (!edgeReady) reasons.push('vantagem direcional pequena');
+  if (!structureSupport) reasons.push('sem gatilho/momentum/continuidade suficiente');
+
+  return {
+    score,
+    ready,
+    borderline: !ready && (tie || weakPressure || tinyNoisy || score < 57 || !edgeReady),
+    pressure,
+    opposingPressure,
+    directionalEdge,
+    favorableClose,
+    bodyStrength,
+    opposingWick,
+    previousAlignment,
+    momentumAligned,
+    momentumScore,
+    followThrough,
+    triggerAligned,
+    structureSupport,
+    reason: ready
+      ? `Qualidade de entrada ${Math.round(score)}/100 com vantagem direcional de ${Math.round(directionalEdge)} pontos.`
+      : `Qualidade de entrada ${Math.round(score)}/100 — ${reasons.join(', ') || 'confirmação insuficiente'}.`
+  };
+}
+
 const formatLevel = value => {
   const n = finite(value);
   if (n == null) return '—';
@@ -430,14 +533,38 @@ export function nextCandleContinuation(rows = [], direction = null, metrics = {}
     || triggerAligned;
   const ready = score >= 58 && shapeReady && pressureReady && followThrough;
 
-  const reason = ready
-    ? `Pressão ${direction === 'BUY' ? 'compradora' : 'vendedora'} confirma continuação da próxima vela (${Math.round(score)}/100).`
-    : `Pressão para a próxima vela ainda insuficiente (${Math.round(score)}/100).`;
+  const entryQuality = calculateEntryQuality({
+    buyPower: metrics.buyPower,
+    sellPower: metrics.sellPower,
+    momentumDirection: metrics.momentumDirection,
+    momentumScore,
+    nextCandle: {
+      pressure,
+      opposingPressure: direction === 'BUY' ? metrics.sellPower : metrics.buyPower,
+      favorableClose,
+      bodyStrength,
+      opposingWick,
+      previousAlignment,
+      momentumAligned,
+      momentumScore
+    },
+    breakout: evidence.breakout,
+    rejection: evidence.rejection,
+    continuationDirection,
+    continuationScore
+  }, direction);
+
+  // Keep the next-candle gate entry-only, but use the quality engine to block
+  // borderline/tied setups while still admitting short, clean candles.
+  const readyWithQuality = entryQuality.ready === true;
+  const reason = readyWithQuality
+    ? `Pressão ${direction === 'BUY' ? 'compradora' : 'vendedora'} confirma continuação da próxima vela (${Math.round(entryQuality.score)}/100).`
+    : `Pressão para a próxima vela ainda insuficiente (${entryQuality.reason})`;
 
   return {
-    direction, ready, score, pressure, favorableClose, bodyStrength,
+    direction, ready: readyWithQuality, score, pressure, favorableClose, bodyStrength,
     opposingWick, previousAlignment, momentumAligned, momentumScore,
-    followThrough, reason
+    followThrough, entryQuality, reason
   };
 }
 
@@ -585,6 +712,7 @@ export function recentPriceAction(candles = [], profile = 'MEDIO') {
     averageRange,
     lastClose: last.close,
     nextCandle,
+    entryQuality: nextCandle?.entryQuality || null,
     reasons
   };
 }
@@ -732,7 +860,7 @@ export function analyzeCandles(candles = [], indicatorCandles = candles, profile
       reasons: [recent.opinion],
       recent,
       indicators: indicatorReinforcement(indicatorRows, null),
-      analytics: { ...(recent.metrics || {}), ...levelAnalytics, nextCandle: recent.nextCandle || null },
+      analytics: { ...(recent.metrics || {}), ...levelAnalytics, nextCandle: recent.nextCandle || null, entryQuality: recent.entryQuality || null },
       waitingFor: waitingFor(recent, null, 0, thresholds.profile)
     };
   }
@@ -745,7 +873,7 @@ export function analyzeCandles(candles = [], indicatorCandles = candles, profile
       reasons: recent.reasons,
       recent,
       indicators: indicatorReinforcement(indicatorRows, null),
-      analytics: { ...(recent.metrics || {}), ...levelAnalytics, nextCandle: recent.nextCandle || null },
+      analytics: { ...(recent.metrics || {}), ...levelAnalytics, nextCandle: recent.nextCandle || null, entryQuality: recent.entryQuality || null },
       waitingFor: waitingFor(recent, null, recent.score, thresholds.profile)
     };
   }
@@ -772,6 +900,7 @@ export function analyzeCandles(candles = [], indicatorCandles = candles, profile
       continuationDirection: recent.continuationDirection || null,
       continuationScore: Number(recent.continuationScore || 0),
       nextCandle: recent.nextCandle || null,
+      entryQuality: recent.entryQuality || null,
       rsi: indicators.rsi?.value ?? null,
       macdHistogram: indicators.macd?.histogram ?? null,
       legacyScore: professional.legacyScore,
