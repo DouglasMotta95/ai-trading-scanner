@@ -198,20 +198,28 @@
     const count = sameAnchor && localDelta > 80 && localDelta < 5000
       ? Math.min(8, Number(previous.count || 1) + 1)
       : 1;
+    const newCandleAnchor = !sameAnchor;
     candleClockProbe = { asset: focusMarket, timeframe, openAt, observedAt: now, count };
-    if (count < 2) {
+
+    // At a real candle rollover the first observation of the new candle is
+    // already a valid boundary. Waiting for a second sample here can cost
+    // several seconds and make the scanner miss the next-candle entry window.
+    // Keep the two-sample stability check for repeated observations of the same
+    // candle, but publish the new on-grid candle immediately.
+    if (count < 2 && !newCandleAnchor) {
       lastBoundaryDiagnosticReason = 'count<2';
       return null;
     }
 
-    const remainingMs = openAt + durationMs - now;
+    const closeAt = openAt + durationMs;
+    const remainingMs = closeAt - now;
     const secondsRemaining = Math.max(0, Math.min(duration, Math.ceil(remainingMs / 1000)));
     if (!Number.isFinite(secondsRemaining) || secondsRemaining < 0 || secondsRemaining > duration) {
       lastBoundaryDiagnosticReason = 'boundary nulo';
       return null;
     }
 
-    return { timeframe, secondsRemaining, openAt, count, clockMode };
+    return { timeframe, secondsRemaining, openAt, closeAt, count, cycleKey: focusMarket + '|' + timeframe + '|' + openAt, clockMode };
   }
 
   async function publishCandleBoundaryClock(payload = {}, state = {}, focus = null, candidate = null) {
@@ -228,6 +236,9 @@
     await sendMessage({
       type: 'ATS_MARKET_CLOCK_V2', asset: focus.asset, timeframe: boundary.timeframe,
       secondsRemaining: boundary.secondsRemaining,
+      candleOpenAt: boundary.openAt,
+      candleCloseAt: boundary.closeAt,
+      cycleKey: boundary.cycleKey,
       expiration: state.targetExpiration || state.expiration || candidate?.expiration || null,
       available: true, verified: true, clockRole: 'candle-close',
       clockSource: 'network-server-cycle', clockMode: boundary.clockMode,
