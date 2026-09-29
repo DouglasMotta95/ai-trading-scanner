@@ -269,10 +269,7 @@ function liveCycleKey(state = {}) {
   if (remaining == null) return `${marketId(state.asset)}|${tf}|unknown`;
   const estimatedClose = Date.now() + remaining * 1000;
   return `${marketId(state.asset)}|${tf}|${Math.round(estimatedClose / Math.max(1000, seconds * 1000))}`;
-}
-}
-
-function currentOhlc(state = {}) {
+(state = {}) {
   const direct = state.signal?.currentCandle || state.currentCandle || null;
   if (direct && completeCandle(direct)) {
     return {
