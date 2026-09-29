@@ -30,6 +30,6 @@ test('AI Trading Bot identity is present on core product surfaces', () => {
   assert.match(shell, /ROBÔ: VENDA CONFIRMADA/);
 
   const server = read('backend/src/server.js');
-  assert.match(server, /const VERSION = '0\.11\.105'/);
+  assert.match(server, /const VERSION = '0.11.107'/);
   assert.match(server, /product: 'AI Trading Bot'/);
 });
