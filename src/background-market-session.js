@@ -404,7 +404,18 @@ export function resetForSession(state = {}, { asset, timeframe = null, info, rea
 function clockRecord(message = {}, info = {}, asset = '', timeframe = null, secondsRemaining = null, focus = null) {
   const verified = message.verified === true;
   const at = Date.now();
-  const closeAt = secondsRemaining == null ? null : Math.round((at + Number(secondsRemaining) * 1000) / 1000) * 1000;
+  const suppliedCloseAt = num(message.closeAt);
+  const durationMs = Math.max(1, timeframeSeconds(timeframe) || 60) * 1000;
+  // secondsRemaining is an integer snapshot. Reconstructing closeAt as
+  // "sample time + rounded seconds" introduced a one-second drift (20:45:01)
+  // and could make the runtime roll straight to 20:46 before processing the
+  // 20:45 boundary. Prefer an explicit closeAt; otherwise snap to the real
+  // timeframe boundary.
+  const closeAt = suppliedCloseAt != null
+    ? suppliedCloseAt
+    : secondsRemaining == null
+      ? null
+      : Math.ceil(at / durationMs) * durationMs;
   const crossFrameControl = message.crossFrameControl === true;
   return {
     asset, timeframe, secondsRemaining, closeAt, available: true, verified,
