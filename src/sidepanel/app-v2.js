@@ -653,6 +653,7 @@ function startLiveClockRuntime() {
     try {
       ensureLiveClockUi();
       tickLiveClock();
+      tickEntryScheduleClock();
     } catch {}
   };
   pump();
