@@ -10,7 +10,7 @@ const read = file => fs.readFileSync(path.join(root, file), 'utf8');
 test('AI Trading Bot identity is present on core product surfaces', () => {
   const manifest = JSON.parse(read('manifest.json'));
   assert.equal(manifest.name, 'AI Trading Bot');
-  assert.equal(manifest.version, '0.11.105');
+  assert.equal(manifest.version, '0.11.107');
   assert.match(manifest.description, /AI Trading Bot/);
 
   const portal = read('apps/customer-portal/index.html');
