@@ -4,11 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#050914">
-  <meta name="description" content="AI Trading Scanner: scanner de mercado com análise por confluência, controle de acesso, extensão Chrome/Edge e acompanhamento operacional em tempo real.">
-  <meta property="og:title" content="AI Trading Scanner">
-  <meta property="og:description" content="Conecte sua conta, use a extensão e acompanhe setups com critérios técnicos e qualidade de feed.">
+  <meta name="description" content="AI Trading Bot: scanner de mercado com análise por confluência, controle de acesso, extensão Chrome/Edge e acompanhamento operacional em tempo real.">
+  <meta property="og:title" content="AI Trading Bot">
+  <meta property="og:description" content="Conecte sua conta e deixe o robô monitorar o mercado, validar o contexto e preparar a próxima entrada.">
   <meta property="og:type" content="website">
-  <title>AI Trading Scanner</title>
+  <title>AI Trading Bot</title>
   <link rel="stylesheet" href="/customer.css">
   <style>
     .service-notice{max-width:1180px;margin:-24px auto 40px;padding:14px 18px;border:1px solid #574a26;border-radius:14px;background:#1c180d;color:#f8dfa1;display:flex;gap:10px;align-items:flex-start}.service-notice b{display:block;color:#ffe9af;margin-bottom:3px}.service-notice small{color:#cdbb8b;line-height:1.45}.plans-availability{margin:14px auto 0;max-width:720px;text-align:center;color:#8ea6bb;font-size:12px}.faq-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.faq-grid article{padding:22px;border:1px solid #18324a;border-radius:18px;background:#091522}.faq-grid h3{margin:0 0 8px;font-size:16px}.faq-grid p{margin:0;color:#88a2b9;line-height:1.55}.copy-code-row{display:flex;justify-content:center;margin-top:10px}.copy-code-row button{min-width:180px}.verify-actions{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:18px}.site-footer{max-width:1180px;margin:0 auto;padding:34px 20px 48px;border-top:1px solid #132a3d;display:grid;grid-template-columns:1fr auto;gap:28px;color:#7892a9}.site-footer b{color:#dcebf6}.site-footer p{max-width:760px;margin:7px 0 0;line-height:1.55;font-size:12px}.site-footer-links{display:flex;gap:16px;align-items:start;flex-wrap:wrap}.site-footer a{color:#86d9c1;text-decoration:none}.risk-note{display:inline-flex;margin-top:10px;padding:7px 10px;border:1px solid #1b3c4e;border-radius:999px;color:#8fb7c8;font-size:10px;letter-spacing:.04em}.auth-msg[aria-live],.toast[aria-live]{min-height:18px}.extension-onboarding{display:grid;gap:14px;margin-top:18px}.extension-step{display:grid;grid-template-columns:auto 1fr;gap:14px;padding:18px;border:1px solid #18324a;border-radius:16px;background:#07121d}.extension-step>strong{display:grid;place-items:center;width:38px;height:38px;border-radius:12px;background:#0f2536;color:#7fe0c2;font-size:13px}.extension-step h3{margin:0 0 5px;font-size:15px}.extension-step p{margin:0;color:#8ca6ba;line-height:1.5;font-size:12px}.extension-step .primary,.extension-step .secondary{margin-top:12px;display:inline-flex;justify-content:center;text-decoration:none}.install-note{margin-top:8px;color:#6f8da5;font-size:11px;line-height:1.45}@media(max-width:800px){.faq-grid{grid-template-columns:1fr}.site-footer{grid-template-columns:1fr}.service-notice{margin:-10px 16px 30px}.site-footer-links{gap:12px}}
@@ -17,7 +17,7 @@
 <body>
 <div class="bg-grid"></div>
 <header class="site-header">
-  <a class="brand" href="/"><span>ATS</span><div><b>AI TRADING</b><small>SMART MARKET SCANNER</small></div></a>
+  <a class="brand" href="/"><span>ATS</span><div><b>AI TRADING</b><small>ACTIVE TRADING BOT</small></div></a>
   <nav><a href="#como">Como funciona</a><a href="#recursos">Recursos</a><a href="#planos">Planos</a><a href="#plataformas">Plataformas</a></nav>
   <div class="header-actions"><a id="supportTop" class="ghost" target="_blank" rel="noopener">Suporte</a><button id="accountBtn" class="primary">ENTRAR</button></div>
 </header>
@@ -25,25 +25,31 @@
 <main id="publicView">
   <section class="hero">
     <div class="hero-copy">
-      <span class="eyebrow">SCANNER M1/M5 • PRÓXIMA VELA • EXECUÇÃO MANUAL</span>
-      <h1>Do padrão ao <em>ENTRAR</em>, com o motivo de cada decisão.</h1>
-      <p>O AI Trading Scanner acompanha o ativo em tempo real, prepara POSSÍVEL COMPRA/VENDA, confirma a entrada para a próxima vela e registra o resultado observado — sem clicar por você.</p>
+      <span class="eyebrow">BOT M1/M5 • PRÓXIMA VELA • EXECUÇÃO MANUAL</span>
+      <h1>Um robô que monitora o mercado e prepara a próxima entrada com contexto.</h1>
+      <p>O AI Trading Bot fica ativo na sua operação: acompanha ativo, preço, velas e tempo em tempo real; encontra oportunidades, confirma o setup e destaca a entrada da próxima vela — sem clicar por você.</p>
       <span class="release-chip">VERSÃO ATUAL <b id="latestHeroVersion">—</b></span>
-      <div class="hero-actions"><button class="primary xl" data-open-auth="signup">TESTAR GRÁTIS</button><a class="secondary xl" href="#planos">VER PLANOS</a></div>
-      <div class="hero-notes"><span>✓ Trial controlado</span><span>✓ 1 aparelho por acesso</span><span>✓ Entrada com confirmação manual</span></div>
+      <div class="hero-actions"><button class="primary xl" data-open-auth="signup">TESTAR O ROBÔ</button><a class="secondary xl" href="#planos">VER PLANOS DO ROBÔ</a></div>
+      <div class="hero-notes"><span>✓ Robô em monitoramento</span><span>✓ 1 aparelho por acesso</span><span>✓ Entrada final sob sua confirmação</span></div>
       <span class="risk-note">Ferramenta de apoio à análise • resultados de mercado não são garantidos</span>
     </div>
-    <div class="terminal-card">
-      <div class="terminal-head"><span><i></i> ATS LIVE</span><small>DEMONSTRAÇÃO</small></div>
-      <div class="asset"><div><small>MERCADO EM FOCO</small><b>EUR/USD</b></div><strong>84</strong></div>
-      <div class="signal buy"><span>ESTADO OPERACIONAL</span><b>POSSÍVEL COMPRA → ENTRAR</b><small>direção estável + score + poder + evidência técnica</small></div>
-      <div class="terminal-grid"><div><small>TIMEFRAME</small><b>M1 / M5</b></div><div><small>CONFIRMAÇÃO</small><b>SIMPLES</b></div><div><small>FEED</small><b>ESTRUTURADO</b></div><div><small>EXECUÇÃO</small><b>MANUAL</b></div></div>
-      <div class="criteria"><span>Confluência do setup</span><div><i style="width:84%"></i></div><small>6 critérios monitorados</small></div>
+    <div class="bot-hero-card">
+      <div class="bot-console-head"><span class="bot-live-dot"><i></i> AI TRADING BOT</span><small>ROBÔ ATIVO</small></div>
+      <div class="bot-main">
+        <div class="robot-avatar large" aria-label="Robô AI Trading Bot">
+          <div class="robot-antenna"></div><div class="robot-head"><i></i><i></i></div><div class="robot-body"><span></span><span></span><span></span></div>
+        </div>
+        <div class="bot-copy"><small>ESTADO DO ROBÔ</small><b>MONITORANDO EUR/USD</b><p>Leitura contínua de preço, velas, contexto e janela de entrada.</p></div>
+        <strong>84</strong>
+      </div>
+      <div class="signal buy"><span>DECISÃO DO ROBÔ</span><b>POSSÍVEL COMPRA → ENTRAR</b><small>direção estável + score + poder + evidência técnica</small></div>
+      <div class="terminal-grid"><div><small>TIMEFRAME</small><b>M1 / M5</b></div><div><small>CICLO</small><b>PRÓXIMA VELA</b></div><div><small>FEED</small><b>VALIDADO</b></div><div><small>EXECUÇÃO</small><b>MANUAL</b></div></div>
+      <div class="criteria"><span>NÍVEL DE CONFIANÇA</span><div><i style="width:84%"></i></div><small>O robô monitora vários critérios antes de liberar uma entrada.</small></div>
     </div>
   </section>
 
   <section id="recursos" class="section product-showcase">
-    <div class="section-title"><span class="eyebrow">O PRODUTO REAL</span><h2>Um fluxo claro da leitura até a próxima vela.</h2><p>Você vê o que o scanner está fazendo e por que uma entrada foi liberada ou bloqueada.</p></div>
+    <div class="section-title"><span class="eyebrow">O PRODUTO REAL</span><h2>Um robô ativo, do monitoramento à próxima vela.</h2><p>Você vê o que o robô está fazendo, em que etapa ele está e por que uma entrada foi liberada ou bloqueada.</p></div>
     <div class="product-flow">
       <article><b>01</b><h3>ANALISA</h3><p>Ativo, preço, OHLC, últimas velas, timeframe e countdown reais da CasaTrade.</p></article>
       <article><b>02</b><h3>PREPARA</h3><p>Exibe POSSÍVEL COMPRA/VENDA quando direção, score e poder passam pelo filtro.</p></article>
@@ -55,34 +61,34 @@
       <article><span>◎</span><h3>Bloqueio explicado</h3><p>Score, poder, hold e evidência técnica aparecem no diagnóstico e no estado operacional.</p></article>
       <article><span>⇄</span><h3>Troca de ativo protegida</h3><p>O estado do ativo anterior é limpo para evitar mistura de preço, OHLC e sinais.</p></article>
       <article><span>◉</span><h3>Feed validado</h3><p>Leitura por DOM, controles e feed estruturado da própria sessão da plataforma.</p></article>
-      <article><span>✓</span><h3>WIN / LOSS observado</h3><p>O scanner salva a cotação da nova vela e compara o resultado após a expiração.</p></article>
+      <article><span>✓</span><h3>WIN / LOSS observado</h3><p>O robô salva a cotação da nova vela e compara o resultado após a expiração.</p></article>
       <article><span>🔒</span><h3>Controle de licença</h3><p>Conta, plano, dispositivo, trial e conexão por código temporário em um único ecossistema.</p></article>
     </div>
-    <p class="showcase-note">O ATS é uma ferramenta de apoio à análise. A entrada financeira continua manual e não há promessa de lucro ou taxa de acerto.</p>
+    <p class="showcase-note">O AI Trading Bot é uma ferramenta de apoio à análise e preparação de entradas. A entrada financeira continua manual e não há promessa de lucro ou taxa de acerto.</p>
   </section>
 
   <section id="serviceNotice" class="service-notice" hidden><span>⚙</span><div><b>Alguns recursos comerciais ainda estão em configuração.</b><small id="serviceNoticeText">Você ainda pode conhecer a plataforma e falar com o suporte.</small></div></section>
 
   <section id="como" class="section">
-    <div class="section-title"><span class="eyebrow">FLUXO SIMPLES</span><h2>Comece sem pedir chave no WhatsApp.</h2></div>
+    <div class="section-title"><span class="eyebrow">FLUXO SIMPLES</span><h2>Ative o robô sem depender de processo manual no suporte.</h2></div>
     <div class="steps"><article><b>01</b><h3>Crie sua conta</h3><p>Use e-mail e senha ou Google quando configurado.</p></article><article><b>02</b><h3>Confirme o e-mail</h3><p>O Trial é liberado automaticamente após a confirmação.</p></article><article><b>03</b><h3>Conecte a extensão</h3><p>Use um código de 6 dígitos. A licença fica invisível.</p></article><article><b>04</b><h3>Assine quando quiser</h3><p>Pagamento aprovado atualiza o acesso da conta.</p></article></div>
   </section>
 
   <section id="planos" class="section plans-section">
-    <div class="section-title"><span class="eyebrow">PLANOS</span><h2>Escolha o nível de uso ideal.</h2><p>Preços e limites são controlados pelo administrador.</p></div>
+    <div class="section-title"><span class="eyebrow">PLANOS</span><h2>Escolha o plano do seu robô.</h2><p>Preços e limites são controlados pelo administrador.</p></div>
     <div id="plansGrid" class="plans-grid"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>
     <p id="paymentNotice" class="plans-availability" hidden>Pagamento online ainda está sendo configurado. O suporte pode orientar a ativação enquanto isso.</p>
   </section>
 
   <section id="plataformas" class="section platform-section">
-    <div class="platform-copy"><span class="eyebrow">MULTIPLATAFORMA</span><h2>CasaTrade primeiro. Arquitetura pronta para outras plataformas.</h2><p>A CasaTrade é a integração inicial recomendada, mas o motor usa adapters independentes.</p><div class="platform-actions"><a id="casaTradeBtn" class="primary" target="_blank" rel="noopener" hidden>ABRIR CASATRADE</a><button class="secondary" data-open-auth="signup">CRIAR CONTA ATS</button></div></div>
+    <div class="platform-copy"><span class="eyebrow">MULTIPLATAFORMA</span><h2>CasaTrade primeiro. O robô foi pensado para crescer para outras plataformas.</h2><p>A CasaTrade é a integração inicial recomendada, mas o motor usa adapters independentes.</p><div class="platform-actions"><a id="casaTradeBtn" class="primary" target="_blank" rel="noopener" hidden>ABRIR CASATRADE</a><button class="secondary" data-open-auth="signup">CRIAR CONTA ATS</button></div></div>
     <div class="platform-stack"><div class="platform-card featured"><b>★ CasaTrade</b><span>Integração inicial</span></div><div class="platform-card"><b>+ Novas plataformas</b><span>Adapters independentes</span></div></div>
   </section>
 
   <section class="section">
     <div class="section-title"><span class="eyebrow">DÚVIDAS RÁPIDAS</span><h2>Antes de começar.</h2></div>
     <div class="faq-grid">
-      <article><h3>O scanner executa a operação sozinho?</h3><p>Não. O ATS analisa, sinaliza e pode destacar a direção. A confirmação financeira final continua manual na plataforma.</p></article>
+      <article><h3>O scanner executa a operação sozinho?</h3><p>Não. O robô analisa, sinaliza e pode destacar a direção. A confirmação financeira final continua manual na plataforma.</p></article>
       <article><h3>O Trial renova todo dia?</h3><p>Não. O teste possui limite total de sinais e fica associado ao aparelho para evitar reutilização indevida.</p></article>
       <article><h3>Existe garantia de resultado?</h3><p>Não. O mercado envolve risco. Scores e resultados observados servem para análise e acompanhamento, não como promessa de lucro.</p></article>
     </div>
@@ -92,7 +98,7 @@
 <main id="accountView" class="account-shell" hidden>
   <aside class="account-rail"><a class="brand" href="/"><span>ATS</span><div><b>MINHA CONTA</b><small>CLIENT PORTAL</small></div></a><nav><button class="active" data-account-page="home">⌂ <b>Visão geral</b></button><button data-account-page="plans">◆ <b>Planos</b></button><button data-account-page="device">◉ <b>Extensão</b></button></nav><a id="supportRail" class="support-link" target="_blank" rel="noopener">💬 Suporte</a><button id="logoutBtn" class="logout">Sair</button></aside>
   <section class="account-workspace">
-    <header class="account-top"><div><span class="eyebrow">AI TRADING SCANNER</span><h1 id="helloTitle">Minha conta</h1><p id="accountEmail">—</p></div><span id="accountStatus" class="status-pill">ATIVO</span></header>
+    <header class="account-top"><div><span class="eyebrow">AI TRADING BOT</span><h1 id="helloTitle">Minha conta</h1><p id="accountEmail">—</p></div><span id="accountStatus" class="status-pill">ATIVO</span></header>
     <section class="account-page active" data-account-view="home">
       <div class="account-hero"><div><span class="eyebrow">SEU ACESSO</span><h2 id="planTitle">Carregando...</h2><p id="planText">Sincronizando assinatura e dispositivo.</p></div><button class="primary" data-account-page="device">BAIXAR / CONECTAR EXTENSÃO</button></div>
       <div class="kpi-grid"><article><span>PLANO</span><b id="kpiPlan">—</b><small id="kpiExpiry">—</small></article><article><span id="kpiUsageLabel">USO HOJE</span><b id="kpiUsage">—</b><small>sinais confirmados</small></article><article><span>APARELHO</span><b id="kpiDevice">—</b><small>1 acesso por dispositivo</small></article><article><span>STATUS</span><b id="kpiStatus">—</b><small>sincronizado com o scanner</small></article></div>
@@ -103,11 +109,11 @@
       <div class="device-connect">
         <span class="eyebrow">SUA EXTENSÃO</span>
         <h2>Baixar, instalar e conectar</h2>
-        <p>Faça os três passos abaixo no computador em que você vai usar o AI Trading Scanner.</p>
+        <p>Faça os três passos abaixo no computador em que você vai usar o AI Trading Bot.</p>
         <div class="extension-onboarding">
-          <div class="extension-step"><strong>01</strong><div><h3>Baixe a extensão</h3><p>Baixe sempre a versão mais recente do AI Trading Scanner. Versão publicada: <b id="extensionLatestVersion">—</b>.</p><a id="extensionDownload" class="primary" href="#" aria-disabled="true">DOWNLOAD EM CONFIGURAÇÃO</a></div></div>
+          <div class="extension-step"><strong>01</strong><div><h3>Baixe a extensão</h3><p>Baixe sempre a versão mais recente do AI Trading Bot. Versão publicada: <b id="extensionLatestVersion">—</b>.</p><a id="extensionDownload" class="primary" href="#" aria-disabled="true">DOWNLOAD EM CONFIGURAÇÃO</a></div></div>
           <div class="extension-step"><strong>02</strong><div><h3>Instale no Chrome ou Edge</h3><p>Extraia o arquivo ZIP, abra a página de extensões do navegador, ative o modo do desenvolvedor e carregue a pasta que contém o <b>manifest.json</b>.</p><div class="install-note">Chrome: chrome://extensions • Edge: edge://extensions</div></div></div>
-          <div class="extension-step"><strong>03</strong><div><h3>Conecte sua conta</h3><p>Abra o painel lateral da extensão e informe o código temporário abaixo. Ele expira em 10 minutos e só pode ser usado uma vez.</p><button id="generateCode" class="primary xl">GERAR CÓDIGO DE CONEXÃO</button><div id="connectCodeBox" class="connect-code" hidden><small>CÓDIGO</small><strong id="connectCode">------</strong><span id="connectExpiry">expira em 10:00</span><div class="copy-code-row"><button id="copyConnectCode" class="secondary" type="button">COPIAR CÓDIGO</button></div></div></div></div>
+          <div class="extension-step"><strong>03</strong><div><h3>Conecte sua conta</h3><p>Abra o painel lateral do robô e informe o código temporário abaixo. Ele expira em 10 minutos e só pode ser usado uma vez.</p><button id="generateCode" class="primary xl">GERAR CÓDIGO DE CONEXÃO</button><div id="connectCodeBox" class="connect-code" hidden><small>CÓDIGO</small><strong id="connectCode">------</strong><span id="connectExpiry">expira em 10:00</span><div class="copy-code-row"><button id="copyConnectCode" class="secondary" type="button">COPIAR CÓDIGO</button></div></div></div></div>
         </div>
         <aside>🔒 O Trial é limitado por conta e por instalação. Outro e-mail no mesmo aparelho não libera outro Trial.</aside>
       </div>
@@ -121,7 +127,7 @@
 <div id="toast" class="toast" aria-live="polite"></div>
 
 <footer class="site-footer">
-  <div><b>AI Trading Scanner</b><p>Software de apoio à análise de mercado. Não há garantia de lucro, taxa mínima de acerto ou resultado futuro. Valide a ferramenta em ambiente Demo antes de qualquer uso com capital real.</p></div>
+  <div><b>AI Trading Bot</b><p>Software de apoio à análise de mercado. Não há garantia de lucro, taxa mínima de acerto ou resultado futuro. Valide a ferramenta em ambiente Demo antes de qualquer uso com capital real.</p></div>
   <div class="site-footer-links"><a id="supportFooter" target="_blank" rel="noopener">Suporte</a><a href="#como">Como funciona</a><a href="#planos">Planos</a><a href="/terms">Termos</a><a href="/privacy">Privacidade</a><a href="/refund">Cancelamento</a></div>
 </footer>
 
