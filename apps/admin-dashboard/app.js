@@ -2,7 +2,7 @@ const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
 const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const apiBase = location.origin;
-let metrics = {}, plans = [], licenses = [], clients = [], auditEvents = [];
+let metrics = {}, plans = [], licenses = [], clients = [], auditEvents = [], productHealth = {};
 let licenseFilter = 'all', selectedLicenseKey = '', modalMode = 'trial', activeTemplate = 'trial';
 
 const api = async (path, opt = {}) => {
@@ -50,7 +50,7 @@ function pageMeta(name) {
     licenses:['Licenças','Busque, filtre e gerencie cada acesso em poucos toques.'],
     clients:['Clientes','Dispositivos conectados e presença em tempo real.'],
     messages:['Mensagens','Modelos automáticos para enviar ao cliente.'],
-    operations:['Operação ao vivo','Extensões online, scanners, heartbeat, sinais e resultados observados.'],
+    operations:['Operação ao vivo','Robôs online, extensões, heartbeat, sinais e resultados observados.'],
     system:['Sistema','Sessão administrativa, backend e versão ativa.']
   })[name] || ['Central de controle',''];
 }
@@ -72,7 +72,7 @@ function renderMetrics() {
     metric('🔑','Licenças ativas',metrics.activeLicenses ?? 0,`${metrics.licenses ?? 0} emitidas`),
     metric('🎁','Testes ativos',metrics.activeTrials ?? 0,'Trial em andamento'),
     metric('●','Clientes online',metrics.licensedOnline ?? 0,'último minuto'),
-    metric('◉','Scanners ativos',metrics.scanners ?? 0,'em leitura'),
+    metric('◉','Robôs ativos',metrics.scanners ?? 0,'em leitura'),
     metric('↗','Sinais hoje',metrics.signalsToday ?? 0,'consumo dos planos'),
     metric('⚠','Vencendo em 3 dias',metrics.expiringSoon ?? 0,'pedem renovação')
   ].join('');
@@ -138,11 +138,20 @@ function renderClients() {
   const q = ($('#clientSearch').value || '').trim().toLowerCase();
   const list = clients.filter(c => !q || [c.customerName,c.email,c.licenseKey,c.planLabel,c.installationId].some(v => String(v || '').toLowerCase().includes(q)));
   const online = clients.filter(c => c.online).length; $('#onlineBadge').textContent = `${online} ONLINE`;
-  $('#clientsGrid').innerHTML = list.length ? list.map(c => `<article class="client-card"><div class="client-top"><div><b>${esc(c.customerName || 'Sem nome')}</b><small>${esc(c.licenseKey)}</small></div><span class="online-dot ${c.online ? 'on' : ''}">${c.online ? 'ONLINE' : 'OFFLINE'}</span></div><div class="client-meta"><div><span>PLANO</span><b>${esc(c.planLabel || c.plan)}</b></div><div><span>VERSÃO</span><b>${esc(c.version || '—')}</b></div><div><span>ÚLTIMA ATIVIDADE</span><b>${esc(ago(c.lastSeen))}</b></div><div><span>DISPOSITIVO</span><b>${esc(String(c.installationId || '').slice(0, 10) || '—')}</b></div></div><div class="client-actions"><button class="btn primary full" data-client-reset="${esc(c.licenseKey)}">RESETAR EXTENSÃO</button></div></article>`).join('') : '<div class="empty-panel">Nenhum dispositivo encontrado.</div>';
+  const latestVersion = String(productHealth.extensionLatestVersion || '').replace(/^v/i,'');
+  $('#clientsGrid').innerHTML = list.length ? list.map(c => `<article class="client-card"><div class="client-top"><div><b>${esc(c.customerName || 'Sem nome')}</b><small>${esc(c.licenseKey)}</small></div><span class="online-dot ${c.online ? 'on' : ''}">${c.online ? 'ONLINE' : 'OFFLINE'}</span></div><div class="client-meta"><div><span>PLANO</span><b>${esc(c.planLabel || c.plan)}</b></div><div><span>VERSÃO</span><b>${esc(c.version || '—')}</b><small>${latestVersion && String(c.version || '').replace(/^v/i,'') !== latestVersion ? `ATUALIZAR → ${esc(latestVersion)}` : 'ATUAL'}</small></div><div><span>ÚLTIMA ATIVIDADE</span><b>${esc(ago(c.lastSeen))}</b></div><div><span>DISPOSITIVO</span><b>${esc(String(c.installationId || '').slice(0, 10) || '—')}</b></div></div><div class="client-actions"><button class="btn primary full" data-client-reset="${esc(c.licenseKey)}">RESETAR EXTENSÃO</button></div></article>`).join('') : '<div class="empty-panel">Nenhum dispositivo encontrado.</div>';
   $$('[data-client-reset]').forEach(b => b.onclick = () => openModal('reset', b.dataset.clientReset));
 }
 function renderSystem(health, authStatus) {
-  $('#systemHealth').innerHTML = [['API',health.ok ? 'ONLINE' : 'OFFLINE'],['Autenticação',health.adminAuthConfigured ? 'ATIVA' : 'NÃO CONFIGURADA'],['Licenças carregadas',health.licenses ?? 0],['Versão',health.version || metrics.version || '—']].map(([a,b]) => `<div class="system-row"><span>${esc(a)}</span><b>${esc(b)}</b></div>`).join('');
+  $('#systemHealth').innerHTML = [['API',health.ok ? 'ONLINE' : 'OFFLINE'],['Autenticação',health.adminAuthConfigured ? 'ATIVA' : 'NÃO CONFIGURADA'],['Licenças carregadas',health.licenses ?? 0],['Backend',health.version || metrics.version || '—']].map(([a,b]) => `<div class="system-row"><span>${esc(a)}</span><b>${esc(b)}</b></div>`).join('');
+  const product = $('#productReadiness');
+  if (product) product.innerHTML = [
+    ['Extensão publicada', health.extensionLatestVersion ? `v${health.extensionLatestVersion}` : '—'],
+    ['Download oficial', health.extensionDownloadConfigured ? 'ATIVO' : 'PENDENTE'],
+    ['E-mail', health.emailDeliveryConfigured ? 'ATIVO' : 'PENDENTE'],
+    ['Pagamento', health.paymentsConfigured ? 'ATIVO' : 'PENDENTE'],
+    ['Login Google', health.googleConfigured ? 'ATIVO' : 'PENDENTE']
+  ].map(([a,b]) => `<div class="system-row"><span>${esc(a)}</span><b>${esc(b)}</b></div>`).join('');
   $('#sessionInfo').textContent = `Sessão segura lembrada por até ${authStatus.sessionDays || 30} dias.`;
 }
 
@@ -155,7 +164,7 @@ async function refreshData() {
   if (failures.some(e => e?.status === 401)) return showLogin();
   const value = i => settled[i].status === 'fulfilled' ? settled[i].value : null;
   const m=value(0),p=value(1),l=value(2),c=value(3),a=value(4),h=value(5),s=value(6);
-  if(m)metrics=m;if(p)plans=p.plans||[];if(l)licenses=l.licenses||[];if(c)clients=c.clients||[];if(a)auditEvents=a.events||[];
+  if(m)metrics=m;if(p)plans=p.plans||[];if(l)licenses=l.licenses||[];if(c)clients=c.clients||[];if(a)auditEvents=a.events||[];if(h)productHealth=h;
   renderMetrics(); renderPlans(); renderRecent(); renderAudit(); renderLicenseSelects(); renderLicenses(); renderInspector(); renderClients();
   if(h&&s)renderSystem(h,s);
   if(failures.length) toast(`Atualização parcial: ${failures.length} fonte${failures.length===1?'':'s'} indisponível${failures.length===1?'':'is'}.`);
@@ -196,11 +205,11 @@ function messageFor(type, l = {}) {
   const plan = l.planLabel || l.plan || $('#msgPlan').value.trim() || 'Plano';
   const limit = l.dailyLimit == null ? 'sem limite diário' : `${l.dailyLimit} sinais por dia`;
   const days = remainingDays(l); const validity = days == null ? 'sem expiração' : `${days} dia${days === 1 ? '' : 's'}`;
-  if (type === 'trial') return `🎁 *TESTE GRÁTIS LIBERADO!*\n\nOlá, ${name}! Seu acesso de teste ao *AI Trading Scanner* foi criado.\n\n✅ Plano: ${plan}\n⏳ Validade: ${validity}\n📊 Limite: ${limit}\n\n🔑 *Licença:*\n${key}\n\nAbra a extensão, cole a licença e conecte o scanner à plataforma. Aproveite o teste! 🚀`;
-  if (type === 'renew') return `✅ *ACESSO RENOVADO!*\n\nOlá, ${name}! Sua licença do *AI Trading Scanner* foi renovada com sucesso.\n\n🔑 Licença: ${key}\n📦 Plano: ${plan}\n⏳ Validade atual: ${validity}\n\nSeu acesso continua liberado normalmente. 🚀`;
-  if (type === 'reset') return `♻️ *EXTENSÃO LIBERADA NOVAMENTE!*\n\nOlá, ${name}! O reset do seu *AI Trading Scanner* foi concluído.\n\n🔑 Licença: ${key}\n\nOs vínculos anteriores foram limpos e você já pode ativar a extensão novamente. ✅`;
-  if (type === 'blocked') return `⛔ *ACESSO TEMPORARIAMENTE BLOQUEADO*\n\nOlá, ${name}. A licença ${key} do *AI Trading Scanner* está bloqueada no momento.\n\nSe o acesso já deveria estar liberado, entre em contato para conferirmos a situação.`;
-  return `🔑 *AI TRADING SCANNER LIBERADO!*\n\nOlá, ${name}! Seu acesso foi ativado com sucesso.\n\n✅ Plano: ${plan}\n⏳ Validade: ${validity}\n📊 Limite: ${limit}\n\n🔑 *Licença:*\n${key}\n\nAbra a extensão, cole o código acima e faça a ativação. 🚀`;
+  if (type === 'trial') return `🎁 *TESTE GRÁTIS LIBERADO!*\n\nOlá, ${name}! Seu acesso de teste ao *AI Trading Bot* foi criado.\n\n✅ Plano: ${plan}\n⏳ Validade: ${validity}\n📊 Limite: ${limit}\n\n🔑 *Licença:*\n${key}\n\nAbra a extensão, cole a licença e conecte o robô à plataforma. Aproveite o teste! 🚀`;
+  if (type === 'renew') return `✅ *ACESSO RENOVADO!*\n\nOlá, ${name}! Sua licença do *AI Trading Bot* foi renovada com sucesso.\n\n🔑 Licença: ${key}\n📦 Plano: ${plan}\n⏳ Validade atual: ${validity}\n\nSeu acesso continua liberado normalmente. 🚀`;
+  if (type === 'reset') return `♻️ *EXTENSÃO LIBERADA NOVAMENTE!*\n\nOlá, ${name}! O reset do seu *AI Trading Bot* foi concluído.\n\n🔑 Licença: ${key}\n\nOs vínculos anteriores foram limpos e você já pode ativar a extensão novamente. ✅`;
+  if (type === 'blocked') return `⛔ *ACESSO TEMPORARIAMENTE BLOQUEADO*\n\nOlá, ${name}. A licença ${key} do *AI Trading Bot* está bloqueada no momento.\n\nSe o acesso já deveria estar liberado, entre em contato para conferirmos a situação.`;
+  return `🔑 *AI TRADING BOT LIBERADO!*\n\nOlá, ${name}! Seu acesso foi ativado com sucesso.\n\n✅ Plano: ${plan}\n⏳ Validade: ${validity}\n📊 Limite: ${limit}\n\n🔑 *Licença:*\n${key}\n\nAbra a extensão, cole o código acima e faça a ativação. 🚀`;
 }
 function sampleFor(type) {
   return type === 'trial' ? {customerName:$('#msgName').value || 'Cliente', key:$('#msgKey').value || 'ATS-XXXXXX-XXXXXX-XXXX', planLabel:$('#msgPlan').value || 'Trial', dailyLimit:3, expiresAt:new Date(Date.now()+3*86400000).toISOString()} : {customerName:$('#msgName').value || 'Cliente', key:$('#msgKey').value || 'ATS-XXXXXX-XXXXXX-XXXX', planLabel:$('#msgPlan').value || 'Pro', dailyLimit:20, expiresAt:new Date(Date.now()+30*86400000).toISOString()};
@@ -287,7 +296,7 @@ function renderOperations() {
   const summaryRoot = $('#liveSummary');
   if (summaryRoot) summaryRoot.innerHTML = [
     ['●','CLIENTES ONLINE',summary.onlineClients ?? 0,'heartbeat nos últimos 20s','green'],
-    ['◉','SCANNERS ATIVOS',summary.scanningClients ?? 0,'leitura em execução','blue'],
+    ['◉','ROBÔS ATIVOS',summary.scanningClients ?? 0,'leitura em execução','blue'],
     ['↗','SINAIS CONFIRMADOS',summary.confirmedSignals ?? 0,`${summary.pendingSignals ?? 0} aguardando resultado`,'violet'],
     ['✓','ACERTO OBSERVADO',accuracy,`${summary.wins ?? 0} win • ${summary.losses ?? 0} loss`,'gold']
   ].map(([icon,label,value,hint,tone]) => `<article class="live-kpi ${tone}"><span>${icon}</span><small>${label}</small><strong>${esc(value)}</strong><em>${esc(hint)}</em></article>`).join('');
@@ -317,7 +326,7 @@ function renderOperations() {
   if ($('#liveEventCount')) $('#liveEventCount').textContent = events.length;
   if ($('#liveEvents')) $('#liveEvents').innerHTML = events.length ? events.slice(0,30).map(e => {
     const d = e.data || {};
-    const labels = {scanner_started:'Scanner iniciado',scanner_stopped:'Scanner pausado',platform_connected:'Plataforma conectada',signal_confirmed:'Entrada confirmada',signal_state:'Estado do sinal alterado',license_activated:'Licença ativada'};
+    const labels = {scanner_started:'Robô iniciado',scanner_stopped:'Robô pausado',platform_connected:'Plataforma conectada',signal_confirmed:'Entrada confirmada',signal_state:'Estado do sinal alterado',license_activated:'Licença ativada'};
     return `<div class="live-event"><i></i><div><b>${esc(labels[e.type] || e.type)}</b><small>${esc(e.customerName || 'Cliente')}${d.asset ? ` • ${esc(d.asset)}` : ''}${d.direction ? ` • ${esc(d.direction)}` : ''}</small></div><time>${fmtTime(e.at)}</time></div>`;
   }).join('') : '<div class="attention-empty">Os eventos da extensão aparecerão aqui.</div>';
   if ($('#liveSync')) $('#liveSync').textContent = `ATUALIZADO ${new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}`;

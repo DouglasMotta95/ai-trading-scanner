@@ -1,577 +1,842 @@
-import { CandleBuilder, TIMEFRAMES } from './candles.js';
-import { analyzeCandles, ANALYST_THRESHOLDS } from './analysis.js';
-import { marketRegime } from './market-regime.js';
+import {
+  processSnapshot as legacyProcessSnapshot,
+  resetOrchestrator as legacyResetOrchestrator,
+  serializeCompletedDecisions as legacySerializeCompletedDecisions,
+  restoreCompletedDecisions as legacyRestoreCompletedDecisions
+} from './orchestrator-legacy.js';
+import { getThresholds, getSignalPolicy, calculateEntryQuality } from './analysis.js';
 
-const builders = new Map();
-const finalDecisions = new Map();
-const completedDecisions = new Map();
-const signalStability = new Map();
-const num = v => v == null || v === '' ? null : Number.isFinite(Number(v)) ? Number(v) : null;
-const clean = v => String(v ?? '').trim();
-const POSSIBLE_HITS = 2;
+// Price action/indicators remain in the legacy analyst. This wrapper owns exactly
+// one bounded decision for each target candle: ENTER BUY, ENTER SELL or WAIT.
 const CONFIRM_HITS = 2;
-const POSSIBLE_HOLD_MS = 2500;
-const CANDIDATE_MAX_GAP_MS = 3500;
+const DECISION_HIT_GAP_MS = 7000;
+const POSSIBLE_DROP_HITS = 2;
+const FINAL_WEAK_HITS = 2;
+// A possible direction is sticky inside one target candle. An opposite side
+// must prove itself across several fresh samples before replacing it.
+const DIRECTION_LOCK_HITS = 3;
+const DIRECTION_LOCK_MIN_MS = 1200;
+const DIRECTION_LOCK_WINDOW_MS = 4000;
+const cycles = new Map();
+const wrapperCompletedDecisions = new Map();
+const WRAPPER_ROW_PREFIX = 'wrapper-cycle:';
+
+const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
+const clean = value => String(value ?? '').trim();
+const directionOf = signal => ['BUY', 'SELL'].includes(signal?.analysisDirection)
+  ? signal.analysisDirection
+  : ['BUY', 'SELL'].includes(signal?.direction)
+    ? signal.direction
+    : ['BUY', 'SELL'].includes(signal?.recent?.direction)
+      ? signal.recent.direction
+      : null;
+const assetIdentity = value => clean(value).toUpperCase().replace(/\s*\(\s*OTC\s*\)\s*$/i, '');
+const sameAsset = (a, b) => !!assetIdentity(a) && assetIdentity(a) === assetIdentity(b);
+const epochMs = value => {
+  const n = num(value);
+  if (n == null || n <= 0) return null;
+  return n < 1e12 ? n * 1000 : n;
+};
 
 function timeframeMs(value = 'M1') {
-  return TIMEFRAMES[clean(value).toUpperCase()] || TIMEFRAMES.M1;
+  const tf = clean(value).toUpperCase();
+  let match = tf.match(/^S(\d+)$/); if (match) return Math.max(1, Number(match[1])) * 1000;
+  match = tf.match(/^M(\d+)$/); if (match) return Math.max(1, Number(match[1])) * 60_000;
+  match = tf.match(/^H(\d+)$/); if (match) return Math.max(1, Number(match[1])) * 3_600_000;
+  return 60_000;
 }
 
-function builderKey(snapshot = {}) {
-  return `${clean(snapshot.platformId || 'casatrade')}|${clean(snapshot.asset)}|${clean(snapshot.analysisTimeframe || snapshot.timeframe || 'M1')}`;
+function prioritizeCasaTradeCountdown(snapshot = {}, signal = {}, timeframe = 'M1') {
+  const direct = num(snapshot?.secondsRemaining);
+  if (direct == null || direct < 0) return signal;
+  const duration = Math.max(1, Math.round(timeframeMs(timeframe) / 1000));
+  if (direct > duration + 1) return signal;
+  const existing = num(signal?.secondsRemaining);
+  const tolerance = clean(timeframe).toUpperCase() === 'M5' ? 8 : 5;
+  const accepted = existing == null || direct <= 10 || Math.abs(existing - direct) <= tolerance;
+  if (!accepted) return signal;
+  return { ...signal, secondsRemaining: direct };
 }
 
-function getBuilder(snapshot = {}) {
-  const key = builderKey(snapshot);
-  if (!builders.has(key)) builders.set(key, new CandleBuilder(timeframeMs(snapshot.analysisTimeframe || snapshot.timeframe || 'M1')));
-  return builders.get(key);
+function decisionWindows(snapshot = {}, signal = {}, thresholds = getThresholds()) {
+  const timeframe = clean(snapshot.analysisTimeframe || snapshot.timeframe || signal.timeframe || 'M1').toUpperCase();
+  const duration = Math.max(2, Math.round(timeframeMs(timeframe) / 1000));
+  // Operation contract: keep the ~30s preparation window, but make the final
+  // confirmation much closer to candle close so the decision reflects the
+  // latest CasaTrade price action. Leave a small late cutoff so the 2-hit
+  // confirmation still has time to complete without publishing at the turn.
+  if (timeframe === 'M1') {
+    return { pre: 30, decision: 10, skip: 1, duration, timeframe };
+  }
+  if (timeframe === 'M5') {
+    return { pre: 30, decision: 15, skip: 2, duration, timeframe };
+  }
+
+  // Longer/shorter candles keep proportional windows.
+  const pre = Math.max(2, Math.min(duration - 1, 60, Math.round(duration * .50)));
+  const decision = Math.max(1, Math.min(pre - 1, 30, Math.round(duration * .25)));
+  const skip = Math.max(1, Math.min(decision, 8, Math.round(duration * .067)));
+  return { pre, decision, skip, duration, timeframe };
 }
 
-function candleTime(raw = {}) {
-  let t = Number(raw?.time ?? raw?.timestamp);
-  if (Number.isFinite(t) && t > 0 && t < 1e12) t *= 1000;
-  return Number.isFinite(t) ? t : null;
+function latestCandleStart(snapshot = {}, timeframe = 'M1') {
+  const tfMs = timeframeMs(timeframe);
+  const rows = Array.isArray(snapshot?.candles) ? snapshot.candles : [];
+  for (let index = rows.length - 1; index >= 0; index -= 1) {
+    const raw = num(rows[index]?.time ?? rows[index]?.timestamp);
+    const time = raw != null && raw > 0 && raw < 1e12 ? raw * 1000 : raw;
+    if (time == null || !Number.isFinite(time)) continue;
+    return Math.floor(time / tfMs) * tfMs;
+  }
+  return null;
 }
 
-function validCandle(raw = {}) {
-  const open = num(raw.open), high = num(raw.high), low = num(raw.low), close = num(raw.close);
-  if ([open, high, low, close].some(v => v == null)) return null;
-  return { ...raw, open, high, low, close };
+function targetStartOf(snapshot = {}, signal = {}) {
+  const timeframe = clean(snapshot.analysisTimeframe || snapshot.timeframe || signal.timeframe || 'M1').toUpperCase();
+  const tfMs = timeframeMs(timeframe);
+  const now = epochMs(snapshot.serverTime) ?? Date.now();
+
+  // Prefer the acquisition layer's authoritative next-candle boundary. During
+  // rollover the candle feed can still contain the previous candle, so a stale
+  // target is never allowed to survive once its start time has passed.
+  const candidates = [
+    num(snapshot.nextCandleStart),
+    num(snapshot.candleCloseAt),
+    (() => {
+      const currentStart = latestCandleStart(snapshot, timeframe);
+      return currentStart != null ? currentStart + tfMs : null;
+    })(),
+    num(signal.targetStart)
+  ];
+  let target = candidates.find(value => value != null && value > 0) ?? (Math.floor(now / tfMs) * tfMs + tfMs);
+  if (target <= now + 250) {
+    const steps = Math.floor((now - target) / tfMs) + 1;
+    target += Math.max(1, steps) * tfMs;
+  }
+  return Math.floor(target / tfMs) * tfMs;
 }
 
-function sameTimeframe(raw = {}, wanted = 'M1') {
-  const tf = clean(raw?.timeframe).toUpperCase();
-  return !tf || tf === clean(wanted).toUpperCase();
+function cycleKey(snapshot = {}, signal = {}) {
+  const asset = clean(snapshot.asset || 'unknown');
+  const timeframe = clean(snapshot.analysisTimeframe || snapshot.timeframe || signal.timeframe || 'M1').toUpperCase();
+  const rawTarget = targetStartOf(snapshot, signal);
+  return asset + '|' + timeframe + '|' + (rawTarget || 0);
 }
 
-function currentFromSnapshot(candles = [], bucket, timeframeMsValue, timeframeLabel, price) {
-  const row = [...(Array.isArray(candles) ? candles : [])].reverse().find(raw => {
-    if (!sameTimeframe(raw, timeframeLabel)) return false;
-    const t = candleTime(raw);
-    return t != null && Math.floor(t / timeframeMsValue) * timeframeMsValue === bucket;
-  });
-  const c = row ? validCandle(row) : null;
-  if (!c) return null;
+function confirmationModeOf(state = {}) {
+  return clean(state.analystPreferences?.confirmationMode).toUpperCase() === 'EXIGENTE' ? 'EXIGENTE' : 'SIMPLES';
+}
+
+function highConfidenceEvidence(signal = {}, direction = null, thresholds = getThresholds()) {
+  const analytics = signal.analytics || {};
+  const currentStrength = Number(analytics.currentStrength || 0);
+  const rejectionStrength = Number(analytics.rejectionStrength || 0);
+  const continuationScore = Number(analytics.continuationScore || 0);
+  const momentumScore = Number(analytics.momentumScore || 0);
+  const directionalRejection = analytics.rejectionDirection === direction
+    || Number(direction === 'BUY' ? analytics.rejectionBuy : analytics.rejectionSell) >= thresholds.rejectionStrength;
+  const evidence = [];
+  if (directionalRejection && rejectionStrength >= thresholds.rejectionStrength) evidence.push('rejeição');
+  if (analytics.continuationDirection === direction && continuationScore >= 55) evidence.push('continuação');
+  if (analytics.momentumDirection === direction && momentumScore >= 40) evidence.push('momentum');
+  if (currentStrength >= thresholds.candleStrength) evidence.push('força');
+  return evidence;
+}
+
+function decisionQuality(signal = {}, direction = null, thresholds = getThresholds(), confirmationMode = 'SIMPLES') {
+  const mode = clean(confirmationMode).toUpperCase() === 'EXIGENTE' ? 'EXIGENTE' : 'SIMPLES';
+  const score = Number(signal.analysisScore ?? signal.score ?? 0);
+  const analytics = signal.analytics || {};
+  const power = Number(direction === 'BUY' ? analytics.buyPower : analytics.sellPower) || 0;
+  const currentStrength = Number(analytics.currentStrength || 0);
+  const rejectionStrength = Number(analytics.rejectionStrength || 0);
+  const continuationScore = Number(analytics.continuationScore || 0);
+  const momentumScore = Number(analytics.momentumScore || 0);
+  const directionalRejection = analytics.rejectionDirection === direction
+    || Number(direction === 'BUY' ? analytics.rejectionBuy : analytics.rejectionSell) >= thresholds.rejectionStrength;
+  const continuation = analytics.continuationDirection === direction && continuationScore >= 55;
+  const momentum = analytics.momentumDirection === direction && momentumScore >= 40;
+  const strongCandle = currentStrength >= thresholds.candleStrength;
+  const rejection = directionalRejection && rejectionStrength >= thresholds.rejectionStrength;
+  const regime = String(signal.regime?.type || '').toLowerCase();
+  const professional = analytics.professional || {};
+  const professionalReady = professional.contextReady === true && professional.triggerReady === true;
+  const signalPolicy = getSignalPolicy(thresholds.profile);
+  const evidence = highConfidenceEvidence(signal, direction, thresholds);
+  const finalScore = signalPolicy.finalScore;
+  const localTriggerReady = signal?.recent?.breakout === direction
+    || signal?.recent?.rejection === direction
+    || (signal?.recent?.continuationDirection === direction && continuationScore >= 50);
+  const nextCandle = analytics.nextCandle || signal?.recent?.nextCandle || null;
+  const entryQuality = analytics.entryQuality
+    || signal?.recent?.entryQuality
+    || calculateEntryQuality({ analytics, recent: signal?.recent, nextCandle }, direction);
+  const entryQualityReady = entryQuality?.ready === true && entryQuality?.borderline !== true;
+  const nextCandleReady = nextCandle?.direction === direction
+    && nextCandle?.ready === true
+    && entryQualityReady;
+  // The entry engine is intentionally centered on the chart's local trigger:
+  // breakout, rejection, or a confirmed continuation aligned with recent price
+  // action. Momentum/strength alone can build context, but cannot create a
+  // next-candle entry candidate by themselves.
+  // The professional layer is an enhancement, not the sole path to a signal.
+  // v0.11.66 could produce a valid technical direction/score while this layer
+  // remained incomplete, which made BOTH POSSÍVEL and final entries disappear.
+  // Keep the existing score/power/confluence gates, but allow the technical
+  // engine to qualify when it has a ready candle pattern and enough independent
+  // evidence. Manual execution and timing gates remain unchanged.
+  const recentReady = signal?.recent?.ready === true;
+  const technicalPatternReady = !!direction
+    && score >= signalPolicy.possibleScore
+    && power >= 45;
+  const entryTriggerReady = professional.triggerReady === true || localTriggerReady;
+  const qualityContextReady = professionalReady || technicalPatternReady;
+  const commonReady = !!direction
+    && qualityContextReady
+    && entryTriggerReady
+    && score >= finalScore
+    && power >= signalPolicy.finalPower
+    && evidence.length >= signalPolicy.minimumConfluence
+    && nextCandleReady
+    && entryQualityReady;
+  const commonReason = !direction
+    ? 'sem direção'
+    : !qualityContextReady
+      ? 'padrão técnico ainda incompleto'
+      : score < finalScore
+        ? `score ${Math.round(score)} < ${finalScore}`
+        : power < signalPolicy.finalPower
+          ? `poder ${Math.round(power)} < ${signalPolicy.finalPower}`
+          : evidence.length < signalPolicy.minimumConfluence
+            ? `confluências fortes ${evidence.length}/${signalPolicy.minimumConfluence}`
+            : !nextCandleReady
+              ? (nextCandle?.reason || 'pressão para a próxima vela ainda não confirmada')
+              : !entryQualityReady
+                ? (entryQuality?.reason || 'qualidade de entrada ainda não confirmada')
+                : !entryTriggerReady
+                ? 'gatilho local ainda não confirmado'
+                : 'alta confiança confirmada';
+
+  if (mode === 'SIMPLES') {
+    const setups = [
+      {
+        name: 'rejeição',
+        ok: rejection,
+        reason: `rejeição direcional=${rejection} | strength ${Math.round(rejectionStrength)} ${rejectionStrength >= thresholds.rejectionStrength ? '>=' : '<'} ${thresholds.rejectionStrength}`
+      },
+      {
+        name: 'continuação',
+        ok: continuation,
+        reason: `continuação direcional=${analytics.continuationDirection === direction} | score ${Math.round(continuationScore)} ${continuationScore >= 55 ? '>=' : '<'} 55`
+      },
+      {
+        name: 'momentum',
+        ok: momentum,
+        reason: `momentum direcional=${analytics.momentumDirection === direction} | score ${Math.round(momentumScore)} ${momentumScore >= 40 ? '>=' : '<'} 40`
+      },
+      {
+        name: 'força da vela',
+        ok: strongCandle,
+        reason: `currentStrength ${Math.round(currentStrength)} ${strongCandle ? '>=' : '<'} ${thresholds.candleStrength}`
+      }
+    ];
+    const matched = setups.find(item => item.ok) || null;
+    return {
+      // SIMPLES no longer bypasses setup quality: every final signal must have
+      // high score, directional power and at least two independent confirmations.
+      qualifies: commonReady,
+      setup: matched ? matched.name : evidence.join(' + ') || 'alta confiança',
+      checks: setups,
+      mode,
+      commonReady,
+      commonReason,
+      nextCandleReady,
+      entryQuality,
+      entryQualityReady
+    };
+  }
+
+  // EXIGENTE preserves the v0.11.43 decision gates exactly.
+  const setups = regime === 'range'
+    ? [
+        {
+          name: 'rejeição no range',
+          ok: power >= 52 && rejection,
+          reason: `power>=52=${power >= 52} | rejeição direcional>=${thresholds.rejectionStrength}=${rejection}`
+        },
+        {
+          name: 'continuação confirmada no range',
+          ok: power >= 55 && score >= 64 && continuation && momentum,
+          reason: `power>=55=${power >= 55} | score>=64=${score >= 64} | continuação>=55=${continuation} | momentum>=40=${momentum}`
+        }
+      ]
+    : [
+        {
+          name: 'rejeição',
+          ok: power >= 48 && rejection,
+          reason: `power>=48=${power >= 48} | rejeição direcional>=${thresholds.rejectionStrength}=${rejection}`
+        },
+        {
+          name: 'continuação',
+          ok: power >= 50 && continuation,
+          reason: `power>=50=${power >= 50} | continuação direcional>=55=${continuation}`
+        },
+        {
+          name: 'momentum',
+          ok: power >= 50 && strongCandle && momentum,
+          reason: `power>=50=${power >= 50} | currentStrength>=${thresholds.candleStrength}=${strongCandle} | momentum direcional>=40=${momentum}`
+        },
+        {
+          name: 'confluência forte',
+          ok: power >= 48 && score >= 68 && momentum && (strongCandle || continuation),
+          reason: `power>=48=${power >= 48} | score>=68=${score >= 68} | momentum=${momentum} | força/continuação=${strongCandle || continuation}`
+        }
+      ];
+  const matched = commonReady ? setups.find(item => item.ok) || null : null;
   return {
-    ...c,
-    time: bucket,
-    high: Math.max(c.high, price),
-    low: Math.min(c.low, price),
-    close: price
+    qualifies: !!matched,
+    setup: matched?.name || null,
+    checks: setups,
+    mode,
+    commonReady,
+    commonReason,
+    nextCandleReady
   };
 }
 
-function trackerFor(key, bucket, at) {
-  let tracker = signalStability.get(key);
-  if (!tracker || tracker.bucket !== bucket) {
-    tracker = {
-      bucket,
-      candidateDirection: null,
-      candidateHits: 0,
-      candidateSince: null,
-      lastCandidateAt: null,
-      publishedDirection: null,
-      publishedAt: null,
-      lastStrongAt: null,
-      publishedScore: 0,
-      weakHits: 0,
-      confirmDirection: null,
-      confirmHits: 0,
-      lastConfirmAt: null,
-      updatedAt: at
+function possibleQuality(signal = {}, direction = null, score = 0, thresholds = getThresholds()) {
+  const signalPolicy = getSignalPolicy(thresholds.profile);
+  const analytics = signal.analytics || {};
+  const power = Number(direction === 'BUY' ? analytics.buyPower : analytics.sellPower) || 0;
+  return ['BUY', 'SELL'].includes(direction)
+    && Number(score) >= signalPolicy.possibleScore
+    && power >= 45;
+}
+
+function possibleWithHysteresis(cycle, allowed, direction, at) {
+  const current = cycle.possibleDirection;
+  if (!direction) {
+    if (!current) return null;
+    cycle.possibleWeakHits = Number(cycle.possibleWeakHits || 0) + 1;
+    if (cycle.possibleWeakHits < POSSIBLE_DROP_HITS) return current;
+    cycle.possibleDirection = null;
+    cycle.possibleWeakHits = 0;
+    cycle.pendingDirection = null;
+    cycle.pendingDirectionHits = 0;
+    cycle.pendingDirectionSince = 0;
+    return null;
+  }
+
+  if (!current) {
+    if (!allowed) return null;
+    cycle.possibleDirection = direction;
+    cycle.possibleWeakHits = 0;
+    cycle.possibleLastStrongAt = at;
+    cycle.pendingDirection = null;
+    cycle.pendingDirectionHits = 0;
+    cycle.pendingDirectionSince = 0;
+    return direction;
+  }
+
+  if (current === direction) {
+    cycle.possibleDirection = current;
+    cycle.possibleWeakHits = 0;
+    cycle.possibleLastStrongAt = at;
+    cycle.pendingDirection = null;
+    cycle.pendingDirectionHits = 0;
+    cycle.pendingDirectionSince = 0;
+    return current;
+  }
+
+  // Opposite direction: do not flip POSSÍVEL/ENTER on one fast sample.
+  // Only a technically valid opposite candidate that persists long enough
+  // can replace the direction locked for this target candle.
+  if (!allowed) return current;
+  const samePending = cycle.pendingDirection === direction
+    && at - Number(cycle.pendingDirectionSince || at) <= DIRECTION_LOCK_WINDOW_MS;
+  cycle.pendingDirection = direction;
+  cycle.pendingDirectionHits = samePending
+    ? Number(cycle.pendingDirectionHits || 0) + 1
+    : 1;
+  cycle.pendingDirectionSince = samePending
+    ? Number(cycle.pendingDirectionSince || at)
+    : at;
+
+  const sustained = cycle.pendingDirectionHits >= DIRECTION_LOCK_HITS
+    && at - Number(cycle.pendingDirectionSince) >= DIRECTION_LOCK_MIN_MS;
+  if (!sustained) return current;
+
+  cycle.possibleDirection = direction;
+  cycle.possibleWeakHits = 0;
+  cycle.possibleLastStrongAt = at;
+  cycle.pendingDirection = null;
+  cycle.pendingDirectionHits = 0;
+  cycle.pendingDirectionSince = 0;
+  return direction;
+}
+
+function seedCycle(key, snapshot, signal, state = {}) {
+  const stored = state?.decisionCycle;
+  let cycle = cycles.get(key);
+  if (!cycle && stored?.key === key) cycle = { ...stored };
+  if (!cycle) {
+    cycle = {
+      key, targetStart: targetStartOf(snapshot, signal), candidateDirection: null,
+      confirmHits: 0, lastHitAt: null, locked: null, direction: null, score: 0,
+      setup: null, reason: null, decidedAt: null, resolved: false, possibleDirection: null, possibleWeakHits: 0, possibleLastStrongAt: null, pendingDirection: null, pendingDirectionHits: 0, pendingDirectionSince: 0
     };
-    signalStability.set(key, tracker);
   }
-  tracker.updatedAt = at;
-  return tracker;
+  cycles.set(key, cycle);
+  return cycle;
 }
 
-function observePossible(tracker, direction, score, at) {
-  const qualifies = ['BUY', 'SELL'].includes(direction) && Number(score) >= ANALYST_THRESHOLDS.possibleScore;
-  if (qualifies) {
-    const sameCandidate = tracker.candidateDirection === direction
-      && tracker.lastCandidateAt != null
-      && at - tracker.lastCandidateAt <= CANDIDATE_MAX_GAP_MS;
-    if (sameCandidate) {
-      tracker.candidateHits += 1;
-    } else {
-      tracker.candidateDirection = direction;
-      tracker.candidateHits = 1;
-      tracker.candidateSince = at;
+function observeDecision(cycle, direction, qualifies, at) {
+  if (!qualifies || !direction) {
+    // Preserve one valid final-window hit through one weak/throttled snapshot.
+    // Video 15290 showed a valid SELL candidate at 5s being erased at 4s and
+    // recreated at 3s, so two-hit confirmation could never complete.
+    if (cycle.candidateDirection && cycle.confirmHits > 0 && cycle.lastHitAt != null
+      && at - Number(cycle.lastHitAt) <= DECISION_HIT_GAP_MS) {
+      cycle.finalWeakHits = Number(cycle.finalWeakHits || 0) + 1;
+      if (cycle.finalWeakHits < FINAL_WEAK_HITS) return false;
     }
-    tracker.lastCandidateAt = at;
-
-    if (tracker.publishedDirection === direction) {
-      tracker.weakHits = 0;
-      tracker.lastStrongAt = at;
-      tracker.publishedScore = Number(score);
-    } else if (tracker.candidateHits >= POSSIBLE_HITS) {
-      tracker.publishedDirection = direction;
-      tracker.publishedAt = at;
-      tracker.lastStrongAt = at;
-      tracker.publishedScore = Number(score);
-      tracker.weakHits = 0;
-    } else if (tracker.publishedDirection) {
-      tracker.weakHits += 1;
-    }
-  } else {
-    tracker.candidateDirection = null;
-    tracker.candidateHits = 0;
-    tracker.candidateSince = null;
-    tracker.lastCandidateAt = null;
-    tracker.weakHits += 1;
-  }
-
-  if (tracker.publishedDirection) {
-    const staleFor = at - Number(tracker.lastStrongAt || tracker.publishedAt || at);
-    if (staleFor > POSSIBLE_HOLD_MS && tracker.weakHits >= 3) {
-      tracker.publishedDirection = null;
-      tracker.publishedAt = null;
-      tracker.lastStrongAt = null;
-      tracker.publishedScore = 0;
-      tracker.weakHits = 0;
-    }
-  }
-  return tracker.publishedDirection;
-}
-
-function confirmationQuality(result = {}, direction = null) {
-  if (!direction || !result?.recent?.ready) return false;
-  const metrics = result.analytics || result.recent?.metrics || {};
-  const directionalPower = direction === 'BUY' ? Number(metrics.buyPower || 0) : Number(metrics.sellPower || 0);
-  const candleStrong = Number(metrics.currentStrength || 0) >= ANALYST_THRESHOLDS.candleStrength;
-  const rejected = result.recent?.rejection === direction
-    && Number(metrics.rejectionStrength || 0) >= ANALYST_THRESHOLDS.rejectionStrength;
-  const broke = result.recent?.breakout === direction;
-  const continuation = result.recent?.continuationDirection === direction
-    && Number(result.recent?.continuationScore || 0) >= 60;
-  return directionalPower >= 50 && (candleStrong || rejected || broke || continuation);
-}
-
-function observeConfirmation(tracker, result, direction, score, at) {
-  const qualifies = tracker.publishedDirection === direction
-    && Number(score) >= ANALYST_THRESHOLDS.confirmScore
-    && confirmationQuality(result, direction);
-  if (!qualifies) {
-    tracker.confirmDirection = null;
-    tracker.confirmHits = 0;
-    tracker.lastConfirmAt = null;
+    cycle.candidateDirection = null;
+    cycle.confirmHits = 0;
+    cycle.lastHitAt = null;
+    cycle.finalWeakHits = 0;
     return false;
   }
+  const same = cycle.candidateDirection === direction
+    && cycle.lastHitAt != null
+    && at - Number(cycle.lastHitAt) <= DECISION_HIT_GAP_MS;
+  cycle.candidateDirection = direction;
+  cycle.confirmHits = same ? Number(cycle.confirmHits || 0) + 1 : 1;
+  cycle.lastHitAt = at;
+  cycle.finalWeakHits = 0;
+  return cycle.confirmHits >= CONFIRM_HITS;
+}
 
-  const same = tracker.confirmDirection === direction
-    && tracker.lastConfirmAt != null
-    && at - tracker.lastConfirmAt <= CANDIDATE_MAX_GAP_MS;
-  if (same) tracker.confirmHits += 1;
-  else {
-    tracker.confirmDirection = direction;
-    tracker.confirmHits = 1;
+function appendTrace(state = {}, row = {}) {
+  const rows = Array.isArray(state.decisionTrace) ? state.decisionTrace : [];
+  return [...rows.filter(item => item?.key !== row.key), row].slice(-40);
+}
+
+function upsertCandidateBlockerTrace(state = {}, row = {}) {
+  const rows = Array.isArray(state.candidateBlockerTrace) ? state.candidateBlockerTrace.slice(-20) : [];
+  if (!row?.key || !['BUY', 'SELL'].includes(row?.candidateDirection)) return rows;
+  const previous = rows.find(item => item?.key === row.key) || {};
+  const merged = {
+    ...previous,
+    ...row,
+    lastWaitSeconds: row.lastWaitSeconds ?? previous.lastWaitSeconds ?? null,
+    finalBlockMessage: row.finalBlockMessage ?? previous.finalBlockMessage ?? null
+  };
+  return [...rows.filter(item => item?.key !== row.key), merged].slice(-20);
+}
+
+function markCandidateWait(rows = [], key = '', secondsRemaining = null, message = '') {
+  return (Array.isArray(rows) ? rows : []).map(row => row?.key === key
+    ? {
+        ...row,
+        lastWaitSeconds: num(secondsRemaining),
+        finalBlockMessage: clean(message || row.finalBlockMessage || '')
+      }
+    : row);
+}
+
+function entryScheduleLabel(targetStart, direction) {
+  const value = num(targetStart);
+  const side = direction === 'BUY' ? 'COMPRA' : direction === 'SELL' ? 'VENDA' : 'ENTRADA';
+  if (value == null) return side + ' • PRÓXIMA VELA';
+  try {
+    return side + ' • PRÓXIMA VELA • ' + new Date(value).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  } catch {
+    return side + ' • PRÓXIMA VELA';
   }
-  tracker.lastConfirmAt = at;
-  return tracker.confirmHits >= CONFIRM_HITS;
 }
 
-function analyticsSummary(result = {}, direction = null) {
-  const metrics = result.analytics || result.recent?.metrics || {};
-  if (!direction) return 'Mercado sem domínio claro entre compra e venda.';
-  const power = direction === 'BUY' ? Number(metrics.buyPower || 0) : Number(metrics.sellPower || 0);
-  const parts = [`poder ${direction === 'BUY' ? 'comprador' : 'vendedor'} ${Math.round(power)}%`];
-  if (Number(metrics.currentStrength || 0) > 0) parts.push(`força da vela ${Math.round(Number(metrics.currentStrength || 0))}%`);
-  if (result.recent?.rejection === direction) parts.push(`rejeição ${Math.round(Number(metrics.rejectionStrength || 0))}%`);
-  if (result.recent?.breakout === direction) parts.push('rompimento recente');
-  if (metrics.momentumDirection === direction && Number(metrics.momentumScore || 0) >= 45) parts.push('momentum favorável');
-  return parts.join(' • ');
-}
-
-function reasonFor(result = {}, direction = null, final = false) {
-  if (!result?.recent?.ready) return 'Montando o padrão com as velas recentes e a vela atual.';
-  if (!direction) return 'Sem direção firme para a próxima vela neste momento.';
-  return `${final ? 'Padrão confirmado' : 'Padrão consistente'}: ${analyticsSummary(result, direction)}.`;
-}
-
-function baseSignal({
-  state = 'WAIT', direction = null, provisional = true, reason, timeframe = 'M1', expiration = null,
-  candleCount = 0, secondsRemaining = null, progress = null, currentCandle = null, score = 0,
-  analysisDirection = null, analysisScore = null, phase = 'ANALYZING', targetStart = null,
-  uiState = 'ANALYZING_MARKET', analytics = {}, stability = null, regime = null
-} = {}) {
-  const diagnosis = ['WATCH', 'CONFIRM'].includes(state) && ['BUY', 'SELL'].includes(direction)
-    ? direction
-    : 'WAIT';
+function enterSignal(signal, cycle, direction, score, reason = null) {
+  const schedule = entryScheduleLabel(cycle.targetStart, direction);
   return {
-    state,
-    direction,
-    diagnosis,
-    uiState,
-    provisional,
-    phase,
-    hint: reason,
-    reason,
-    candleCount,
-    warmup: { current: candleCount, required: ANALYST_THRESHOLDS.minimumClosedCandles },
-    timeframe,
-    targetExpiration: expiration,
-    secondsRemaining,
-    progress,
-    currentCandle,
-    score,
-    analysisDirection,
-    analysisScore: analysisScore == null ? score : analysisScore,
-    analytics,
-    regime,
-    stability,
-    targetStart,
-    targetLabel: targetStart ? new Date(targetStart).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : null
+    ...signal, state: 'CONFIRM', direction, diagnosis: direction,
+    uiState: direction === 'BUY' ? 'ENTER_BUY' : 'ENTER_SELL', provisional: false, phase: 'FINAL',
+    score, analysisScore: score, setup: cycle.setup || signal.setup || null,
+    reason: reason || schedule + ' • ALTA CONFIANÇA.',
+    hint: reason || schedule + ' • ALTA CONFIANÇA.',
+    targetStart: cycle.targetStart,
+    entryAt: cycle.targetStart,
+    targetCandleStart: cycle.targetStart,
+    entryPrice: null,
+    entryStatus: 'waiting_candle_open',
+    operationStatus: 'scheduled'
   };
 }
 
-function completedDecision(decision = {}, fallback = {}) {
-  const state = decision.state === 'CONFIRM' ? 'CONFIRM' : 'NO_TRADE';
-  const targetStart = Number(decision.targetStart) || Number(decision.bucket) + Number(fallback.timeframeMs || 0) || null;
-  const candidateEntryPrice = state === 'CONFIRM' ? num(fallback.entryPrice) : null;
-  const entryConfirmed = state === 'CONFIRM'
-    ? fallback.entryConfirmed !== false && candidateEntryPrice != null
-    : null;
-  const entryPrice = entryConfirmed ? candidateEntryPrice : null;
-  const entryTime = entryConfirmed ? (Number(fallback.entryTime) || targetStart) : null;
+function waitSignal(signal, reason) {
   return {
-    state,
-    direction: state === 'CONFIRM' && ['BUY', 'SELL'].includes(decision.direction) ? decision.direction : null,
-    score: Number(decision.score || 0),
-    time: targetStart,
-    targetStart,
-    entryPrice,
-    entryTime,
-    entryConfirmed,
-    entryStatus: state === 'CONFIRM' ? (entryConfirmed ? 'confirmed' : 'unconfirmed') : 'not_applicable',
-    entryReason: state === 'CONFIRM' && !entryConfirmed
-      ? (fallback.entryReason || 'Preço de entrada não confirmado: a vela-alvo não foi observada.')
-      : null,
-    capturedAt: entryConfirmed ? (Number(fallback.capturedAt) || null) : null,
-    asset: decision.asset || fallback.asset || null,
-    timeframe: decision.timeframe || fallback.timeframe || null
+    ...signal, state: 'NO_TRADE', direction: null, diagnosis: 'WAIT', uiState: 'WAIT',
+    provisional: false, phase: 'FINAL', reason, hint: reason
   };
 }
 
-function stabilitySnapshot(tracker = {}) {
+function possibleSignal(signal, windows, direction, score) {
+  const seconds = Math.max(0, Math.ceil(Number(signal.secondsRemaining || 0)));
+  const side = direction === 'BUY' ? 'COMPRA' : 'VENDA';
+  const schedule = entryScheduleLabel(signal.targetStart, direction);
+  const reason = 'POSSÍVEL ' + side + ' • ' + schedule + ' • ' + seconds + 's restantes para confirmação.';
   return {
-    possibleDirection: tracker.publishedDirection || null,
-    possibleHits: Number(tracker.candidateHits || 0),
-    possibleSince: tracker.publishedAt || null,
-    confirmHits: Number(tracker.confirmHits || 0)
+    ...signal,
+    state: 'WATCH', direction, diagnosis: direction,
+    uiState: direction === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL',
+    provisional: true, phase: 'POSSIBLE', score, analysisScore: score,
+    reason, hint: reason, decisionWindow: windows,
+    targetStart: signal.targetStart,
+    entryAt: signal.targetStart,
+    operationStatus: 'pre_signal'
   };
+}
+
+function decidingSignal(signal, windows) {
+  const seconds = Math.max(0, Math.ceil(Number(signal.secondsRemaining || 0)));
+  const reason = `AGUARDAR • ${seconds}s — confiança ainda abaixo do nível exigido para entrada.`;
+  return { ...signal, state: 'WAIT', direction: null, diagnosis: 'WAIT', uiState: 'DECIDING', provisional: true, phase: 'FINAL', reason, hint: reason, decisionWindow: windows };
+}
+
+function buildingSignal(signal, windows) {
+  const direction = directionOf(signal);
+  const reason = direction
+    ? `Montando a leitura da próxima vela • viés ${direction === 'BUY' ? 'comprador' : 'vendedor'} em formação.`
+    : (signal.waitingFor?.text || 'Montando a leitura da próxima vela com as velas recentes e a vela atual.');
+  return { ...signal, state: 'WAIT', direction: null, diagnosis: 'WAIT', uiState: 'BUILDING_PATTERN', provisional: true, phase: 'BUILDING', reason, hint: reason, decisionWindow: windows };
+}
+
+function targetCandle(snapshot = {}, result = {}, targetBucket, tfMs) {
+  const current = result?.currentCandle || null;
+  const currentTime = num(current?.time ?? current?.timestamp);
+  if (currentTime != null && Math.floor(currentTime / tfMs) * tfMs === targetBucket) return current;
+  const rows = Array.isArray(snapshot.candles) ? snapshot.candles : [];
+  for (let index = rows.length - 1; index >= 0; index -= 1) {
+    const row = rows[index];
+    let time = num(row?.time ?? row?.timestamp);
+    if (time != null && time > 0 && time < 1e12) time *= 1000;
+    if (time == null || Math.floor(time / tfMs) * tfMs !== targetBucket) continue;
+    return row;
+  }
+  return null;
+}
+
+function completedFromCycle(cycle, snapshot = {}, result = {}) {
+  const now = epochMs(snapshot.serverTime) ?? Date.now();
+  const asset = clean(snapshot.asset || '');
+  const timeframe = clean(snapshot.analysisTimeframe || snapshot.timeframe || result?.signal?.timeframe || 'M1').toUpperCase();
+  const tfMs = timeframeMs(timeframe);
+  const targetStart = Number(cycle.targetStart);
+  if (!Number.isFinite(targetStart) || targetStart <= 0) return null;
+  const targetBucket = Math.round(targetStart / tfMs) * tfMs;
+  if (now < targetBucket) return null;
+  const exactTarget = targetCandle(snapshot, result, targetBucket, tfMs);
+  const entryPrice = num(exactTarget?.open);
+  const entryConfirmed = entryPrice != null;
+  return {
+    state: 'CONFIRM', direction: cycle.direction, score: Number(cycle.score || 0), time: targetBucket,
+    targetStart: targetBucket, entryPrice: entryConfirmed ? entryPrice : null,
+    entryTime: entryConfirmed ? targetBucket : null, entryConfirmed,
+    entryStatus: entryConfirmed ? 'confirmed' : 'unconfirmed',
+    entryReason: entryConfirmed ? null : 'Preço de entrada não confirmado: a vela-alvo não foi observada.',
+    capturedAt: entryConfirmed ? now : null, asset, timeframe
+  };
+}
+
+function wrapperCompletionKey(decision = {}) {
+  return `${assetIdentity(decision.asset)}|${clean(decision.timeframe).toUpperCase()}|${Number(decision.targetStart || 0)}`;
+}
+function rememberWrapperCompleted(decision = {}) {
+  if (!decision || decision.state !== 'CONFIRM') return;
+  const key = wrapperCompletionKey(decision);
+  if (!key || key.endsWith('|0')) return;
+  wrapperCompletedDecisions.set(key, { ...decision });
+  if (wrapperCompletedDecisions.size > 50) {
+    const oldest = [...wrapperCompletedDecisions.entries()].sort((a, b) => Number(a[1]?.targetStart || 0) - Number(b[1]?.targetStart || 0))[0]?.[0];
+    if (oldest) wrapperCompletedDecisions.delete(oldest);
+  }
+}
+function latestWrapperCompleted(snapshot = {}) {
+  const asset = clean(snapshot.asset || '');
+  const timeframe = clean(snapshot.analysisTimeframe || snapshot.timeframe || 'M1').toUpperCase();
+  return [...wrapperCompletedDecisions.values()].filter(row => sameAsset(row?.asset, asset) && clean(row?.timeframe).toUpperCase() === timeframe)
+    .sort((a, b) => Number(b?.targetStart || 0) - Number(a?.targetStart || a?.time || 0))[0] || null;
+}
+function newerDecision(a, b) {
+  if (!a) return b || null;
+  if (!b) return a;
+  return Number(b.targetStart || b.time || 0) > Number(a.targetStart || a.time || 0) ? b : a;
+}
+
+function activeOperation(state = {}) {
+  const rows = Array.isArray(state?.signalHistory) ? state.signalHistory : [];
+  return rows
+    .filter(row => row && !row.result && clean(row.status).toLowerCase() !== 'resolved')
+    .sort((a, b) => Number(a.targetStart || 0) - Number(b.targetStart || 0))
+    .at(-1) || null;
+}
+
+function resolveWrapperDecision(snapshot = {}, result = {}, currentKey = '', state = {}) {
+  const now = epochMs(snapshot.serverTime) ?? Date.now();
+  const asset = clean(snapshot.asset || '');
+  const timeframe = clean(snapshot.analysisTimeframe || snapshot.timeframe || 'M1').toUpperCase();
+  const candidates = [...cycles.values()];
+  const persisted = state?.decisionCycle;
+  if (persisted?.locked === 'ENTER' && !persisted.resolved && !candidates.some(row => row?.key === persisted.key)) candidates.push({ ...persisted });
+  for (const cycle of candidates) {
+    if (!cycle || cycle.key === currentKey || cycle.locked !== 'ENTER' || cycle.resolved) continue;
+    const cycleAsset = clean(cycle.key).split('|')[0] || asset;
+    const cycleTimeframe = clean(cycle.key).split('|')[1] || timeframe;
+    if (!sameAsset(cycleAsset, asset) || cycleTimeframe.toUpperCase() !== timeframe) continue;
+    if (!Number.isFinite(Number(cycle.targetStart)) || now < Number(cycle.targetStart)) continue;
+    const completed = completedFromCycle(cycle, snapshot, result);
+    if (!completed) continue;
+    cycle.resolved = true;
+    cycles.set(cycle.key, cycle);
+    rememberWrapperCompleted(completed);
+    return completed;
+  }
+  return null;
 }
 
 export function processSnapshot(snapshot = {}, state = {}) {
-  const price = num(snapshot.price);
-  if (!snapshot.asset || price == null) {
+  const thresholds = getThresholds(state.analystPreferences?.sensitivityProfile || 'MEDIO');
+  const confirmationMode = confirmationModeOf(state);
+  const result = legacyProcessSnapshot(snapshot, state);
+  let signal = result?.signal;
+  if (!signal) return result;
+  const timeframe = clean(snapshot.analysisTimeframe || snapshot.timeframe || signal.timeframe || 'M1').toUpperCase();
+  signal = prioritizeCasaTradeCountdown(snapshot, signal, timeframe);
+  if (signal !== result.signal) result.signal = signal;
+  const secondsRemaining = num(signal.secondsRemaining);
+  if (secondsRemaining == null) return result;
+  const timingVerified = snapshot?.clockVerified === true;
+
+  const windows = decisionWindows(snapshot, signal, thresholds);
+  const targetStart = targetStartOf(snapshot, signal);
+  signal = { ...signal, targetStart, entryAt: targetStart, targetCandleStart: targetStart };
+  result.signal = signal;
+  const key = cycleKey(snapshot, signal);
+  const cycle = seedCycle(key, snapshot, signal, state);
+  cycle.targetStart = targetStart;
+  const at = num(snapshot.serverTime) ?? Date.now();
+
+  const active = activeOperation(state);
+  if (active) {
+    const activeSide = clean(active.direction).toUpperCase() === 'BUY' ? 'COMPRA' : 'VENDA';
+    const scheduled = Number(active.targetStart || 0);
+    let schedule = 'horário não confirmado';
+    try { if (scheduled > 0) schedule = new Date(scheduled).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }); } catch {}
+    const entryPrice = num(active.entryPrice);
+    const activeSignal = {
+      ...signal, state: 'NO_TRADE', direction: null, diagnosis: 'WAIT',
+      uiState: 'OPERATION_ACTIVE', provisional: false, phase: 'OPERATION',
+      score: Number(active.score || signal.analysisScore || signal.score || 0),
+      analysisScore: Number(active.score || signal.analysisScore || signal.score || 0),
+      targetStart: scheduled || targetStart,
+      entryAt: Number(active.entryTime || scheduled || targetStart),
+      targetCandleStart: scheduled || targetStart,
+      entryPrice,
+      entryStatus: active.entryStatus || 'waiting_candle_open',
+      operationStatus: entryPrice != null ? 'open' : 'waiting_candle_open',
+      operationId: active.id,
+      reason: entryPrice != null
+        ? 'OPERAÇÃO EM ANDAMENTO • ' + activeSide + ' • ' + schedule + ' • preço ' + entryPrice + ' • aguardando resultado.'
+        : 'OPERAÇÃO EM ANDAMENTO • ' + activeSide + ' • PRÓXIMA VELA ' + schedule + ' • aguardando abertura/preço.',
+      hint: 'Nenhuma nova entrada será liberada até esta operação ser resolvida.'
+    };
     return {
-      lastConfirmed: null,
-      signal: baseSignal({
-        state: 'WAIT',
-        phase: 'CONNECTING',
-        uiState: 'ANALYZING_MARKET',
-        reason: 'Confirmando ativo e cotação reais da CasaTrade.'
-      })
+      ...result, signal: activeSignal,
+      decisionCycle: { ...cycle, locked: 'WAIT', direction: null, reason: activeSignal.reason },
+      candidateBlockerTrace: Array.isArray(state.candidateBlockerTrace) ? state.candidateBlockerTrace : []
     };
   }
-
-  const analysisTimeframe = snapshot.analysisTimeframe || snapshot.timeframe || state.analysisTimeframe || state.timeframe || 'M1';
-  const tfMs = timeframeMs(analysisTimeframe);
-  const sampleAt = Number.isFinite(Number(snapshot.serverTime)) && Number(snapshot.serverTime) > 0 ? Number(snapshot.serverTime) : Date.now();
-  const currentBucket = Math.floor(sampleAt / tfMs) * tfMs;
-  const key = builderKey({ ...snapshot, analysisTimeframe });
-  const builder = getBuilder({ ...snapshot, analysisTimeframe });
-
-  const history = (Array.isArray(snapshot.candles) ? snapshot.candles : []).filter(raw => {
-    if (!sameTimeframe(raw, analysisTimeframe)) return false;
-    const t = candleTime(raw);
-    return t != null && Math.floor(t / tfMs) * tfMs < currentBucket;
-  });
-  if (history.length) builder.seed(history);
-  builder.push(price, sampleAt);
-
-  const shot = builder.snapshot();
-  const closed = shot.closed.slice(-120);
-  const current = currentFromSnapshot(snapshot.candles, currentBucket, tfMs, analysisTimeframe, price) || shot.current;
-  const combined = current ? [...closed.slice(-9), current] : closed.slice(-10);
-  const indicatorHistory = current ? [...closed, current] : closed;
-  const liveResult = analyzeCandles(combined, indicatorHistory);
-  const regime = marketRegime(closed);
-  const candleCount = closed.length;
-
-  const clockRemaining = num(snapshot.secondsRemaining);
-  const fallbackRemainingMs = Math.max(0, currentBucket + tfMs - sampleAt);
-  const remainingMs = clockRemaining != null
-    ? Math.max(0, Math.min(tfMs, Math.round(clockRemaining * 1000)))
-    : fallbackRemainingMs;
-  const secondsRemaining = Math.max(0, Math.ceil(remainingMs / 1000));
-  const progress = Math.max(0, Math.min(100, Math.round(((tfMs - remainingMs) / tfMs) * 100)));
-  const targetStart = clockRemaining != null ? sampleAt + remainingMs : currentBucket + tfMs;
-  const direction = ['BUY', 'SELL'].includes(liveResult.direction) ? liveResult.direction : null;
-  const score = Number(liveResult.score || 0);
-  const expiration = snapshot.targetExpiration || state.targetExpiration || snapshot.expiration || state.expiration || null;
-  const tracker = trackerFor(key, currentBucket, sampleAt);
-  const possibleDirection = observePossible(tracker, direction, score, sampleAt);
-  const common = {
-    timeframe: analysisTimeframe,
-    expiration,
-    candleCount,
-    secondsRemaining,
-    progress,
-    currentCandle: current ? { ...current } : null,
+  const score = Number(signal.analysisScore ?? signal.score ?? 0);
+  const rawDirection = directionOf(signal);
+  const rawPossible = possibleQuality(signal, rawDirection, score, thresholds);
+  // Lock the direction for this target candle before evaluating final quality.
+  // This prevents a one-sample BUY/SELL oscillation from reaching ENTER.
+  const lockedDirection = possibleWithHysteresis(cycle, rawPossible, rawDirection, at);
+  const direction = lockedDirection || rawDirection;
+  const analytics = signal.analytics || {};
+  const power = Number(direction === 'BUY' ? analytics.buyPower : analytics.sellPower) || 0;
+  const directionalPossible = possibleQuality(signal, direction, score, thresholds);
+  const signalPolicy = getSignalPolicy(thresholds.profile);
+  const quality = decisionQuality(signal, direction, thresholds, confirmationMode);
+  const technicalDirection = clean(signal.direction).toUpperCase();
+  const technicalFinal = (signal.state === 'CONFIRM' || ['ENTER_BUY', 'ENTER_SELL'].includes(clean(signal.uiState).toUpperCase()))
+    && ['BUY', 'SELL'].includes(technicalDirection)
+    && technicalDirection === direction;
+  let candidateBlockerTrace = upsertCandidateBlockerTrace(state, {
+    key,
+    targetStart: cycle.targetStart,
+    candidateDirection: direction,
+    confirmationMode,
     score,
-    analysisDirection: direction,
-    analysisScore: score,
-    analytics: liveResult.analytics || {},
-    regime,
-    stability: stabilitySnapshot(tracker),
-    targetStart
-  };
+    power,
+    currentStrength: Number(analytics.currentStrength || 0),
+    rejectionStrength: Number(analytics.rejectionStrength || 0),
+    continuationScore: Number(analytics.continuationScore || 0),
+    momentumScore: Number(analytics.momentumScore || 0),
+    possibleQuality: rawPossible,
+    decisionQuality: {
+      qualifies: quality.qualifies,
+      setup: quality.setup,
+      commonReady: quality.commonReady,
+      commonReason: quality.commonReason,
+      setups: quality.checks || []
+    },
+    technicalFinal,
+    mandatoryPowerReady: power >= signalPolicy.possiblePower,
+    signalPolicy,
+    secondsRemaining,
+    updatedAt: at
+  });
+  const possibleDirection = directionalPossible && direction ? direction : null;
+  const canShowPossible = !!possibleDirection;
+  signal.targetStart = cycle.targetStart;
+  signal.entryAt = cycle.targetStart;
+  signal.targetCandleStart = cycle.targetStart;
+  const recovered = resolveWrapperDecision(snapshot, result, key, state);
+  const rolledLastConfirmed = newerDecision(newerDecision(result.lastConfirmed, latestWrapperCompleted(snapshot)), recovered);
 
-  let lastConfirmed = completedDecisions.get(key) || null;
-  const previousDecision = finalDecisions.get(key);
-  if (previousDecision && currentBucket > previousDecision.bucket) {
-    const expectedBucket = Number(previousDecision.bucket) + tfMs;
-    const rawTarget = Number(previousDecision.targetStart);
-    const targetBucket = Number.isFinite(rawTarget) && rawTarget > 0
-      ? Math.round(rawTarget / tfMs) * tfMs
-      : expectedBucket;
-    const targetObserved = currentBucket === expectedBucket && targetBucket === expectedBucket;
-    const realEntryPrice = targetObserved ? (num(current?.open) ?? price) : null;
-
-    lastConfirmed = completedDecision(previousDecision, {
-      asset: snapshot.asset,
-      timeframe: analysisTimeframe,
-      timeframeMs: tfMs,
-      entryPrice: realEntryPrice,
-      entryTime: targetObserved ? currentBucket : null,
-      capturedAt: targetObserved ? sampleAt : null,
-      entryConfirmed: targetObserved,
-      entryReason: targetObserved ? null : 'Preço de entrada não confirmado: a vela-alvo não foi observada.'
-    });
-    completedDecisions.set(key, lastConfirmed);
-    finalDecisions.delete(key);
-  }
-
-  if (candleCount < ANALYST_THRESHOLDS.minimumClosedCandles || !current) {
+  if (cycle.locked === 'ENTER') {
     return {
-      candles: closed,
-      currentCandle: current || null,
-      lastConfirmed,
-      signal: baseSignal({
-        ...common,
-        state: 'SEARCHING',
-        phase: 'HISTORY',
-        uiState: 'ANALYZING_MARKET',
-        reason: `Analisando mercado atual • ${candleCount}/${ANALYST_THRESHOLDS.minimumClosedCandles} velas fechadas reais.`
-      })
+      ...result,
+      lastConfirmed: rolledLastConfirmed || result.lastConfirmed,
+      signal: enterSignal(signal, cycle, cycle.direction, Math.max(score, Number(cycle.score || 0)), cycle.reason),
+      decisionCycle: { ...cycle },
+      candidateBlockerTrace
+    };
+  }
+  if (cycle.locked === 'WAIT') {
+    const reason = cycle.reason || 'AGUARDAR — padrão não confirmou a tempo.';
+    candidateBlockerTrace = markCandidateWait(candidateBlockerTrace, key, secondsRemaining, reason);
+    return {
+      ...result,
+      lastConfirmed: rolledLastConfirmed || result.lastConfirmed,
+      signal: waitSignal(signal, reason),
+      decisionCycle: { ...cycle },
+      candidateBlockerTrace
     };
   }
 
-  const latched = finalDecisions.get(key);
-  if (latched?.bucket === currentBucket && latched.state === 'CONFIRM') {
+  if (secondsRemaining > windows.pre) {
+    // POSSÍVEL is only a preparation signal. Before the 30s pre-signal window,
+    // keep the UI in pattern-building even when the technical evidence is already strong.
+    const nextSignal = buildingSignal(signal, windows);
+    if (clean(nextSignal?.uiState).toUpperCase() === 'WAIT' || nextSignal?.state === 'NO_TRADE') {
+      candidateBlockerTrace = markCandidateWait(candidateBlockerTrace, key, secondsRemaining, nextSignal.reason);
+    }
+    return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: nextSignal, decisionCycle: { ...cycle }, candidateBlockerTrace };
+  }
+  if (secondsRemaining > windows.decision) {
+    const nextSignal = canShowPossible ? possibleSignal(signal, windows, possibleDirection, score) : signal;
+    if (clean(nextSignal?.uiState).toUpperCase() === 'WAIT' || nextSignal?.state === 'NO_TRADE') {
+      candidateBlockerTrace = markCandidateWait(candidateBlockerTrace, key, secondsRemaining, nextSignal.reason);
+    }
+    return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: nextSignal, decisionCycle: { ...cycle }, candidateBlockerTrace };
+  }
+
+  if (timingVerified && technicalFinal && quality.qualifies) {
+    cycle.locked = 'ENTER';
+    cycle.direction = direction;
+    cycle.score = Math.max(score, Number(signal.score || 0));
+    cycle.setup = signal.setup || quality.setup || null;
+    cycle.reason = signal.reason;
+    cycle.decidedAt = at;
+    cycles.set(key, cycle);
+    const trace = appendTrace(state, { key, targetStart: cycle.targetStart, decision: 'ENTER', direction: cycle.direction, score: cycle.score, setup: cycle.setup, reason: cycle.reason, decidedAt: at });
     return {
-      candles: closed,
-      currentCandle: current,
-      lastConfirmed,
-      signal: baseSignal({
-        ...common,
-        ...latched,
-        state: 'CONFIRM',
-        direction: latched.direction,
-        provisional: false,
-        phase: 'FINAL',
-        uiState: latched.direction === 'BUY' ? 'ENTER_BUY' : 'ENTER_SELL',
-        reason: latched.reason,
-        score: Math.max(Number(latched.score || 0), score),
-        stability: stabilitySnapshot(tracker),
-        targetStart: latched.targetStart || targetStart
-      })
+      ...result,
+      lastConfirmed: rolledLastConfirmed || result.lastConfirmed,
+      signal: enterSignal(signal, cycle, direction, cycle.score, cycle.reason),
+      decisionCycle: { ...cycle },
+      decisionTrace: trace,
+      candidateBlockerTrace
     };
   }
 
-  if (secondsRemaining <= 10) {
-    const rangeBlocked = regime?.type === 'range';
-    if (rangeBlocked) {
-      tracker.confirmDirection = null;
-      tracker.confirmHits = 0;
-      tracker.lastConfirmAt = null;
-    }
-    const canConfirm = !rangeBlocked && observeConfirmation(tracker, liveResult, direction, score, sampleAt);
-    if (canConfirm) {
-      const latestDecision = {
-        bucket: currentBucket,
-        state: 'CONFIRM',
-        direction,
-        provisional: false,
-        reason: reasonFor(liveResult, direction, true),
-        score,
-        targetStart,
-        asset: snapshot.asset,
-        timeframe: analysisTimeframe
-      };
-      finalDecisions.set(key, latestDecision);
-      return {
-        candles: closed,
-        currentCandle: current,
-        lastConfirmed,
-        signal: baseSignal({
-          ...common,
-          ...latestDecision,
-          phase: 'FINAL',
-          uiState: direction === 'BUY' ? 'ENTER_BUY' : 'ENTER_SELL',
-          stability: stabilitySnapshot(tracker)
-        })
-      };
-    }
-
-    const noTradeReason = rangeBlocked
-      ? 'AGUARDANDO — mercado sem tendência definida.'
-      : 'Sem confirmação estável suficiente para liberar a próxima vela.';
-    finalDecisions.set(key, {
-      bucket: currentBucket,
-      state: 'NO_TRADE',
-      direction: null,
-      provisional: false,
-      reason: noTradeReason,
-      score,
-      targetStart,
-      asset: snapshot.asset,
-      timeframe: analysisTimeframe
-    });
-
-    if (rangeBlocked) {
-      return {
-        candles: closed,
-        currentCandle: current,
-        lastConfirmed,
-        signal: baseSignal({
-          ...common,
-          state: 'NO_TRADE',
-          direction: null,
-          provisional: false,
-          phase: 'FINAL',
-          uiState: 'WAIT',
-          reason: noTradeReason,
-          stability: stabilitySnapshot(tracker)
-        })
-      };
-    }
-
-    if (possibleDirection) {
-      return {
-        candles: closed,
-        currentCandle: current,
-        lastConfirmed,
-        signal: baseSignal({
-          ...common,
-          state: 'WATCH',
-          direction: possibleDirection,
-          provisional: true,
-          phase: 'POSSIBLE',
-          uiState: possibleDirection === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL',
-          reason: reasonFor(liveResult, possibleDirection, false),
-          score: Math.max(score, Number(tracker.publishedScore || 0)),
-          stability: stabilitySnapshot(tracker)
-        })
-      };
-    }
-
+  const assertiveFinalReady = ['BUY', 'SELL'].includes(direction)
+    && score >= signalPolicy.finalScore
+    && power >= 45
+    && quality.nextCandleReady === true
+    && quality.entryQualityReady === true;
+  const stable = timingVerified
+    ? observeDecision(cycle, direction, assertiveFinalReady, at)
+    : false;
+  if (quality.qualifies) cycle.setup = quality.setup;
+  if (stable) {
+    cycle.locked = 'ENTER';
+    cycle.direction = direction;
+    cycle.score = score;
+    cycle.reason = `${direction === 'BUY' ? 'COMPRA' : 'VENDA'} — ALTA CONFIANÇA • ENTRAR NA PRÓXIMA VELA • score ${Math.round(score)}/100 • ${cycle.setup || 'confluência forte'}.`;
+    cycle.decidedAt = at;
+    cycles.set(key, cycle);
+    const trace = appendTrace(state, { key, targetStart: cycle.targetStart, decision: 'ENTER', direction, score, setup: cycle.setup, reason: cycle.reason, decidedAt: at });
     return {
-      candles: closed,
-      currentCandle: current,
-      lastConfirmed,
-      signal: baseSignal({
-        ...common,
-        state: 'NO_TRADE',
-        direction: null,
-        provisional: false,
-        phase: 'FINAL',
-        uiState: 'WAIT',
-        reason: 'Sem padrão estável forte o suficiente para a próxima vela.',
-        stability: stabilitySnapshot(tracker)
-      })
+      ...result,
+      lastConfirmed: rolledLastConfirmed || result.lastConfirmed,
+      signal: enterSignal(signal, cycle, direction, score, cycle.reason),
+      decisionCycle: { ...cycle },
+      decisionTrace: trace,
+      candidateBlockerTrace
     };
   }
 
-  if (secondsRemaining <= 30) {
-    if (possibleDirection) {
-      return {
-        candles: closed,
-        currentCandle: current,
-        lastConfirmed,
-        signal: baseSignal({
-          ...common,
-          state: 'WATCH',
-          direction: possibleDirection,
-          provisional: true,
-          phase: 'POSSIBLE',
-          uiState: possibleDirection === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL',
-          reason: reasonFor(liveResult, possibleDirection, false),
-          score: Math.max(score, Number(tracker.publishedScore || 0)),
-          stability: stabilitySnapshot(tracker)
-        })
-      };
-    }
-
+  if (timingVerified && secondsRemaining <= windows.skip) {
+    const blocker = clean(signal.waitingFor?.text || signal.reason || quality.commonReason || 'qualidade insuficiente para a próxima vela');
+    cycle.locked = 'WAIT';
+    cycle.direction = null;
+    cycle.score = score;
+    cycle.reason = `AGUARDAR — ${blocker}`;
+    cycle.decidedAt = at;
+    cycles.set(key, cycle);
+    candidateBlockerTrace = markCandidateWait(candidateBlockerTrace, key, secondsRemaining, cycle.reason);
+    const trace = appendTrace(state, { key, targetStart: cycle.targetStart, decision: 'WAIT', direction: null, score, setup: cycle.setup, reason: cycle.reason, decidedAt: at });
     return {
-      candles: closed,
-      currentCandle: current,
-      lastConfirmed,
-      signal: baseSignal({
-        ...common,
-        state: 'WAIT',
-        direction: null,
-        provisional: true,
-        phase: 'ANALYZING',
-        uiState: 'WAIT',
-        reason: 'Padrão ainda sem qualidade suficiente para sinalizar a próxima vela.',
-        stability: stabilitySnapshot(tracker)
-      })
+      ...result,
+      lastConfirmed: rolledLastConfirmed || result.lastConfirmed,
+      signal: waitSignal(signal, cycle.reason),
+      decisionCycle: { ...cycle },
+      decisionTrace: trace,
+      candidateBlockerTrace
     };
   }
 
-  const buildingPattern = !!direction && score >= 30;
-  return {
-    candles: closed,
-    currentCandle: current,
-    lastConfirmed,
-    signal: baseSignal({
-      ...common,
-      state: 'WAIT',
-      direction: null,
-      provisional: true,
-      phase: buildingPattern ? 'BUILDING' : 'ANALYZING',
-      uiState: buildingPattern ? 'BUILDING_PATTERN' : 'ANALYZING_MARKET',
-      reason: buildingPattern
-        ? `Montando padrão da próxima vela: ${analyticsSummary(liveResult, direction)}.`
-        : 'Analisando poder de compra/venda, rejeição, força e momentum do mercado atual.',
-      stability: stabilitySnapshot(tracker)
-    })
-  };
+  cycles.set(key, cycle);
+  const nextSignal = canShowPossible
+    ? possibleSignal(signal, windows, possibleDirection, score)
+    : decidingSignal(signal, windows);
+  return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: nextSignal, decisionCycle: { ...cycle }, candidateBlockerTrace };
+}
+
+export function resetOrchestrator() {
+  cycles.clear();
+  wrapperCompletedDecisions.clear();
+  legacyResetOrchestrator();
 }
 
 export function serializeCompletedDecisions() {
-  return [...completedDecisions.entries()].slice(-50).map(([key, decision]) => ({
-    key,
-    decision: { ...decision }
-  }));
+  const legacyRows = legacySerializeCompletedDecisions();
+  const legacyKeys = new Set(legacyRows.map(row => wrapperCompletionKey(row?.decision || {})).filter(key => key && !key.endsWith('|0')));
+  const wrapperRows = [...wrapperCompletedDecisions.entries()].filter(([key]) => !legacyKeys.has(key)).slice(-50).map(([key, decision]) => ({ key: `${WRAPPER_ROW_PREFIX}${key}`, decision: { ...decision } }));
+  return [...legacyRows, ...wrapperRows].slice(-50);
 }
 
 export function restoreCompletedDecisions(rows = []) {
-  completedDecisions.clear();
+  wrapperCompletedDecisions.clear();
+  const legacyRows = [];
   for (const row of Array.isArray(rows) ? rows.slice(-50) : []) {
     const key = clean(row?.key);
     const decision = row?.decision;
     if (!key || !decision || typeof decision !== 'object') continue;
-    completedDecisions.set(key, { ...decision });
+    if (key.startsWith(WRAPPER_ROW_PREFIX)) wrapperCompletedDecisions.set(key.slice(WRAPPER_ROW_PREFIX.length), { ...decision });
+    else legacyRows.push(row);
   }
-}
-
-export function resetOrchestrator() {
-  builders.clear();
-  finalDecisions.clear();
-  completedDecisions.clear();
-  signalStability.clear();
+  return legacyRestoreCompletedDecisions(legacyRows);
 }
