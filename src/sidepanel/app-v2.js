@@ -254,12 +254,12 @@ function liveCycleKey(state = {}) {
   const seconds = timeframeSeconds(tf);
   if (!state.asset || !tf || !seconds) return '';
   const clock = state.diagnostics?.marketClock || {};
-  let targetStart = num(clock.closeAt);
-  // The live candle identity follows CasaTrade's authoritative countdown when
-  // available. A persisted signal target is only used when the clock has no
-  // usable boundary.
+  // Prefer the consolidated snapshot's live candle boundary so the UI can keep
+  // one stable cycle identity during short exact-clock reader gaps.
+  let targetStart = num(state.nextCandleStart) ?? num(state.candleCloseAt) ?? num(clock.closeAt);
+  // A persisted signal target is only a fallback when no live boundary exists.
   if (targetStart == null || targetStart <= Date.now() - 500) {
-    targetStart = num(state.signal?.targetStart) ?? num(state.diagnostics?.marketClock?.closeAt);
+    targetStart = num(state.signal?.targetStart) ?? num(state.nextCandleStart) ?? num(state.candleCloseAt) ?? num(clock.closeAt);
   }
   if (targetStart != null) {
     if (targetStart <= Date.now() - 500) targetStart += Math.floor((Date.now() - targetStart) / (seconds * 1000) + 1) * seconds * 1000;
