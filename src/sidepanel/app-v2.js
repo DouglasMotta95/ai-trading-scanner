@@ -221,9 +221,7 @@ function clockBaseReady(state = {}) {
 }
 
 function exactClockReady(state = {}) {
-  const clock = state.diagnostics?.marketClock?.available !== false
-    ? (state.diagnostics?.marketClock || {})
-    : (state.diagnostics?.marketClockLastGood || {});
+  const clock = state.diagnostics?.marketClock || {};
   const focus = state.diagnostics?.focusedAsset || {};
   return focusReady(state)
     && clock.available !== false
