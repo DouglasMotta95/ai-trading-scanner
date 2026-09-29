@@ -43,15 +43,15 @@ jobs:
       - name: Prepare extension package
         if: always()
         run: |
-          rm -rf dist/ai-trading-scanner-extension
-          mkdir -p dist/ai-trading-scanner-extension
-          cp manifest.json dist/ai-trading-scanner-extension/manifest.json
-          cp -R src dist/ai-trading-scanner-extension/src
+          rm -rf dist/ai-trading-bot-extension
+          mkdir -p dist/ai-trading-bot-extension
+          cp manifest.json dist/ai-trading-bot-extension/manifest.json
+          cp -R src dist/ai-trading-bot-extension/src
       - name: Upload extension test package
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ai-trading-scanner-extension-demo
-          path: dist/ai-trading-scanner-extension/
+          name: ai-trading-bot-extension-demo
+          path: dist/ai-trading-bot-extension/
           if-no-files-found: error
           retention-days: 30
