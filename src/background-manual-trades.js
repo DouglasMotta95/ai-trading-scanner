@@ -1,4 +1,4 @@
-import { readScannerState } from './services/scanner-state-atomic.js';
+import { readScannerState, updateScannerState } from './services/scanner-state-atomic.js';
 import { storageLocalGet, storageLocalSet } from './services/chrome-compat.js';
 import { createManualTrade, mergeManualTrade, resolveManualTrades, resolveManualTradesFromFeed, manualTradeMetrics } from './core/manual-trades.js';
 
@@ -54,7 +54,39 @@ async function registerClick(message = {}, sender = {}) {
   if (!trade) return { ok: false, error: 'market_not_ready' };
   const rows = mergeManualTrade(previous.rows, trade, 500);
   await persist(rows);
-  return { ok: true, trade, metrics: cached.metrics };
+
+  // Mirror a matched manual click into the signal operation ledger. This keeps
+  // the bot's confirmed operation history aware of the real click time/price
+  // while retaining the separate manual-click ledger for audit purposes.
+  let signalLinked = false;
+  if (trade.matchedSignal && trade.signalId) {
+    const current = await readScannerState();
+    const history = Array.isArray(current.signalHistory) ? current.signalHistory : [];
+    if (history.some(row => row?.id === trade.signalId)) {
+      await updateScannerState(currentState => ({
+        ...currentState,
+        signalHistory: (Array.isArray(currentState.signalHistory) ? currentState.signalHistory : []).map(row =>
+          row?.id === trade.signalId
+            ? {
+                ...row,
+                manualClickAt: trade.clickedAt,
+                manualEntryPrice: trade.entryPrice,
+                manualEntrySource: trade.entrySource,
+                manualEntryDirection: trade.direction,
+                entryPrice: trade.entryPrice ?? row.entryPrice,
+                entryTime: trade.clickedAt ?? row.entryTime,
+                entryCapturedAt: trade.clickedAt ?? row.entryCapturedAt,
+                entryStatus: trade.entryPrice == null ? row.entryStatus : 'confirmed',
+                entrySource: 'manual-click'
+              }
+            : row
+        )
+      })).catch(() => {});
+      signalLinked = true;
+    }
+  }
+
+  return { ok: true, trade, signalLinked, metrics: cached.metrics };
 }
 
 async function resolveAgainstState(state = {}) {
