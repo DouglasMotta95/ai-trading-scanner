@@ -94,17 +94,27 @@ function latestCandleStart(snapshot = {}, timeframe = 'M1') {
 function targetStartOf(snapshot = {}, signal = {}) {
   const timeframe = clean(snapshot.analysisTimeframe || snapshot.timeframe || signal.timeframe || 'M1').toUpperCase();
   const tfMs = timeframeMs(timeframe);
-  // Always prefer the real start of the next candle supplied by acquisition.
-  const explicitNext = num(snapshot.nextCandleStart);
-  if (explicitNext != null && explicitNext > 0) return explicitNext;
-  const exactClose = num(snapshot.candleCloseAt);
-  if (exactClose != null && exactClose > 0) return exactClose;
-  const currentStart = latestCandleStart(snapshot, timeframe);
-  if (currentStart != null) return currentStart + tfMs;
-  const explicitSignalTarget = num(signal.targetStart);
-  if (explicitSignalTarget != null && explicitSignalTarget > 0) return Math.floor(explicitSignalTarget / tfMs) * tfMs;
-  const sampleAt = epochMs(snapshot.serverTime) ?? Date.now();
-  return Math.floor(sampleAt / tfMs) * tfMs + tfMs;
+  const now = epochMs(snapshot.serverTime) ?? Date.now();
+
+  // Prefer the acquisition layer's authoritative next-candle boundary. During
+  // rollover the candle feed can still contain the previous candle, so a stale
+  // target is never allowed to survive once its start time has passed.
+  const candidates = [
+    num(snapshot.nextCandleStart),
+    num(snapshot.candleCloseAt),
+    (() => {
+      const currentStart = latestCandleStart(snapshot, timeframe);
+      return currentStart != null ? currentStart + tfMs : null;
+    })(),
+    num(signal.targetStart)
+  ];
+  let target = candidates.find(value => value != null && value > 0) ?? (Math.floor(now / tfMs) * tfMs + tfMs);
+  if (target <= now + 250) {
+    const steps = Math.floor((now - target) / tfMs) + 1;
+    target += Math.max(1, steps) * tfMs;
+  }
+  return Math.floor(target / tfMs) * tfMs;
+}
 }
 
 function cycleKey(snapshot = {}, signal = {}) {
