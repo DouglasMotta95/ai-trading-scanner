@@ -112,7 +112,8 @@ test('next-candle pressure is an entry-only gate and does not replace signal thr
   assert.match(analysis, /const entryQuality = calculateEntryQuality/);
   assert.match(analysis, /ready: readyWithQuality|ready: readyWithQuality/);
   assert.match(orchestrator, /const nextCandleReady/);
-  assert.match(orchestrator, /&& nextCandleReady;/);
+  assert.match(orchestrator, /&& nextCandleReady/);
+  assert.match(orchestrator, /entryQualityReady/);
   assert.match(fast, /q\.nextCandleReady === true/);
   assert.match(fast, /score >= signalPolicy\.finalScore/);
 });
@@ -123,7 +124,9 @@ test('v0.11.99 derives next-candle pressure from raw OHLC and preserves live-ses
   const control = read('src/background-control.js');
   assert.match(analysis, /const open = Number\(last\.open\)/);
   assert.match(analysis, /const bodyStrength = clamp\(\(body \/ range\) \* 100\)/);
-  assert.match(analysis, /const pressureReady = pressure >= 55 && score >= 60/);
+  assert.match(analysis, /const entryQuality = calculateEntryQuality/);
+  assert.match(analysis, /entryQuality\.ready === true/);
+  assert.match(analysis, /continuationDirection: evidence\.continuationDirection/);
   assert.match(control, /transient focus-reader blink/);
   assert.match(control, /candlesReady/);
 });
