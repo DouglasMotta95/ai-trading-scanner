@@ -183,6 +183,8 @@ function exactLiveTime(state = {}) {
   if (!exactClockReady(state)) return false;
   const clock = state.diagnostics?.marketClock || {};
   const operation = operationRequirement(state);
+  const professional = state.professionalDecision || {};
+  renderBotIdentity(state, { activeLicense: activeLicense(state), failure, switching, connecting, connected, tradeReady, pendingAsset, professional, operation });
   const controls = state.platformControls || {};
   const realAt = Number(controls.realExpirationAt || 0);
   const realSource = clean(controls.realExpirationSource || controls.expirationSource || '');
@@ -402,6 +404,35 @@ async function checkLatestVersion() {
   } catch {}
 }
 
+function renderBotIdentity(state = {}, ctx = {}) {
+  const root = $('botIdentity');
+  if (!root) return;
+  const title = $('botIdentityTitle');
+  const body = $('botIdentityText');
+  const badge = $('botIdentityBadge');
+  const { activeLicense, failure, switching, connecting, connected, tradeReady, pendingAsset, professional, operation } = ctx;
+  const uiState = clean(professional?.uiState || '').toUpperCase();
+  const direction = clean(professional?.direction || state.signal?.direction || '').toUpperCase();
+  let tone = 'monitoring';
+  let head = 'ROBÔ MONITORANDO MERCADO';
+  let copy = 'Lendo ativo, preço, velas, contexto e janela da próxima operação.';
+  let tag = 'MONITORANDO';
+  if (!activeLicense) { tone='locked'; head='ROBÔ AGUARDANDO ATIVAÇÃO'; copy='Ative o acesso para colocar o robô em monitoramento.'; tag='BLOQUEADO'; }
+  else if (failure) { tone='error'; head='ROBÔ RECONECTANDO'; copy='A conexão caiu; o robô está tentando recuperar a leitura sem perder a segurança.'; tag='RECONECTANDO'; }
+  else if (switching) { tone='switching'; head='ROBÔ TROCANDO DE ATIVO'; copy=`Limpando o ciclo anterior e confirmando ${pendingAsset || 'novo ativo'}.`; tag='TROCANDO'; }
+  else if (connecting) { tone='connecting'; head='ROBÔ CONECTANDO'; copy='Vinculando a CasaTrade e iniciando os leitores ao vivo.'; tag='CONECTANDO'; }
+  else if (!connected) { tone='waiting'; head='ROBÔ EM ESPERA'; copy='Abra a CasaTrade e conecte o robô para começar o monitoramento.'; tag='AGUARDAR'; }
+  else if (uiState === 'ENTER_BUY' || (professional?.actionable === true && direction === 'BUY')) { tone='entry-buy'; head='ROBÔ: COMPRA CONFIRMADA'; copy='Entrada preparada para a próxima vela. Confirme manualmente na CasaTrade.'; tag='ENTRAR • COMPRA'; }
+  else if (uiState === 'ENTER_SELL' || (professional?.actionable === true && direction === 'SELL')) { tone='entry-sell'; head='ROBÔ: VENDA CONFIRMADA'; copy='Entrada preparada para a próxima vela. Confirme manualmente na CasaTrade.'; tag='ENTRAR • VENDA'; }
+  else if (uiState === 'POSSIBLE_BUY' || uiState === 'POSSIBLE_SELL') { tone='possible'; head=`ROBÔ: POSSÍVEL ${direction === 'SELL' ? 'VENDA' : 'COMPRA'}`; copy='Pré-sinal mantido enquanto o robô confirma direção, força e contexto.'; tag='POSSÍVEL'; }
+  else if (tradeReady) { tone='ready'; head='ROBÔ PRONTO PARA ANALISAR'; copy=`${clean(state.asset || 'Mercado')} • ${clean(operation?.timeframe || 'M1')} • tempo confirmado.`; tag='PRONTO'; }
+  else { tone='monitoring'; head='ROBÔ MONITORANDO MERCADO'; copy='Recebendo dados reais e validando o próximo ciclo.'; tag='MONITORANDO'; }
+  root.className = `bot-identity ${tone}`;
+  if (title) title.textContent = head;
+  if (body) body.textContent = copy;
+  if (badge) badge.textContent = tag;
+}
+
 function renderShellCore(state = {}) {
   syncConfirmationMode(state);
   renderOperationalPulse(state);
@@ -507,7 +538,7 @@ function renderShellCore(state = {}) {
                   ? clean(acquisition.reason || 'Identificando ativo, preço, velas, countdown e expiração.')
                   : activeLicense(state)
                     ? 'Abra a CasaTrade e toque em CONECTAR.'
-                    : 'Ative o acesso para iniciar o scanner.');
+                    : 'Ative o acesso para iniciar o robô.');
   }
 
   const button = $('connectScanner');
@@ -582,7 +613,7 @@ function renderShell(state = {}) {
   try {
     return renderShellCore(state);
   } catch (error) {
-    console.error('[AI Trading Scanner] sidepanel render recovered', error);
+    console.error('[AI Trading Bot] sidepanel render recovered', error);
     setText('syncTitle', 'CONECTADO — RECUPERANDO PAINEL');
     setText('syncText', 'Atualização visual recuperada; mantendo a leitura do mercado.');
     setText('signalTitle', 'AGUARDAR');
