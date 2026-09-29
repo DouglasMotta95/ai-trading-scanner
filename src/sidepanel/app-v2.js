@@ -342,6 +342,19 @@ function decisionModel(state = {}) {
     actionable: false
   };
 
+  if (state.connection !== 'online') return {
+    uiState: 'ANALYZING_MARKET',
+    title: 'CONECTANDO À CASATRADE',
+    text: 'CONECTANDO',
+    sub: 'O robô só libera sinais quando a conexão ao mercado está online e o ativo atual foi confirmado.',
+    tone: 'waiting',
+    reason: 'Conexão ainda não está online.',
+    score: 0,
+    actionable: false
+  };
+
+
+
   // A POSSÍVEL is a technical pre-signal and must remain visible even when
   // the final entry timing gate is still waiting for an exact clock/expiration.
   // This does not create a signal or change thresholds; it only prevents the
