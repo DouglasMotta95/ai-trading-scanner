@@ -248,7 +248,7 @@ function ensureOperationalPulseUi() {
   root.id = 'operationalPulse';
   root.className = 'operational-pulse';
   root.innerHTML = `
-    <div class="operational-pulse-head"><b>SAÚDE DO SCANNER</b><span id="funnelMode">SIMPLES</span></div>
+    <div class="operational-pulse-head"><b>SAÚDE DO ROBÔ</b><span id="funnelMode">SIMPLES</span></div>
     <div class="operational-health" aria-label="Saúde dos componentes em tempo real">
       <div id="healthAsset" class="health-chip warn"><small>ATIVO</small><b>PENDENTE</b></div>
       <div id="healthFeed" class="health-chip warn"><small>FEED</small><b>PENDENTE</b></div>
@@ -261,7 +261,7 @@ function ensureOperationalPulseUi() {
       <div><small>FINALIZADAS HOJE</small><b id="funnelEntries">0</b></div>
       <div><small>RESTAM NO PLANO</small><b id="funnelRemaining">—</b></div>
     </div>
-    <p id="currentBlocker" class="operational-blocker"><strong>STATUS:</strong> aguardando dados do scanner.</p>
+    <p id="currentBlocker" class="operational-blocker"><strong>STATUS:</strong> aguardando dados do robô.</p>
     <small id="backendPulse" class="operational-backend">BACKEND: aguardando heartbeat</small>
   `;
   decision.insertAdjacentElement('afterend', root);
@@ -353,7 +353,7 @@ function renderOperationalPulse(state = {}) {
   }
   const professional = state.professionalDecision || {}, technical = state.signal || {}, lastTrace = traces.at(-1) || {};
   let status = clean(professional.reason || lastTrace.finalBlockMessage || technical.reason || 'Aguardando leitura técnica.');
-  if (!activeLicense(state)) status = 'LICENÇA: ative o acesso para iniciar o scanner.';
+  if (!activeLicense(state)) status = 'LICENÇA: ative o acesso para iniciar o robô.';
   else if (session.transitioning === true) status = `ATIVO: confirmando ${clean(session.pendingAsset || session.asset || 'novo ativo')}.`;
   else if (!assetReady) status = 'ATIVO: aguardando confirmação do gráfico e da sessão.';
   else if (!feedReady) status = 'FEED: aguardando preço e pelo menos duas velas reais.';
@@ -938,7 +938,7 @@ function expirationDiagnosticText(response = {}) {
     : '- Nenhum dos últimos ciclos registrou direção candidata.';
 
   return [
-    'AI Trading Scanner — diagnóstico de leitura de expiração',
+    'AI Trading Bot — diagnóstico de leitura de expiração',
     `Frames examinados: ${Number(response.frameCount || response.frames?.length || 0)}`,
     `Frame selecionado: ${row.frameId ?? '—'} | host=${row.host || '—'} | top=${row.isTop === true ? 'sim' : 'não'}`,
     `Seletor selecionado: ${row.selectedSelector || 'nenhum'}`,
