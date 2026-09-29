@@ -1,4 +1,4 @@
-import { getThresholds, getOperationMode, getSignalPolicy } from './analysis.js';
+import { getThresholds, getOperationMode, getSignalPolicy, calculateEntryQuality } from './analysis.js';
 const clean = value => String(value ?? '').trim();
 const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
 
@@ -32,17 +32,32 @@ function directionOf(signal = {}) {
 }
 
 function quality(signal = {}, direction = null, thresholds = getThresholds(), confirmationMode = 'SIMPLES', signalPolicy = getSignalPolicy(thresholds.profile)) {
-  if (!direction) return { strong: false, power: 0, reasons: [], setup: null };
+  if (!direction) return {
+    strong: false, power: 0, reasons: [], setup: null,
+    nextCandle: null, nextCandleReady: false,
+    entryQuality: calculateEntryQuality({}, direction),
+    entryQualityReady: false
+  };
   const a = signal.analytics || {};
   const nextCandle = a.nextCandle || signal?.recent?.nextCandle || null;
-  const nextCandleReady = nextCandle?.direction === direction && nextCandle?.ready === true;
+  const entryQuality = a.entryQuality
+    || signal?.recent?.entryQuality
+    || calculateEntryQuality({ analytics: a, recent: signal?.recent, nextCandle }, direction);
+  const entryQualityReady = entryQuality?.ready === true && entryQuality?.borderline !== true;
+  const nextCandleReady = nextCandle?.direction === direction
+    && nextCandle?.ready === true
+    && entryQualityReady;
   const buy = direction === 'BUY';
   const power = Number(buy ? a.buyPower : a.sellPower) || 0;
   const professional = a.professional || {};
   const professionalReady = professional.contextReady === true && professional.triggerReady === true;
   const mode = clean(confirmationMode).toUpperCase() === 'EXIGENTE' ? 'EXIGENTE' : 'SIMPLES';
   if (!professionalReady) {
-    return { strong: false, power, reasons: [], setup: null, professionalReady: false, nextCandle, nextCandleReady };
+    return {
+      strong: false, power, reasons: [], setup: null,
+      professionalReady: false, nextCandle, nextCandleReady,
+      entryQuality, entryQualityReady
+    };
   }
 
   if (mode === 'SIMPLES') {
@@ -65,7 +80,9 @@ function quality(signal = {}, direction = null, thresholds = getThresholds(), co
       reasons,
       setup: reasons.length >= signalPolicy.minimumConfluence ? reasons.slice(0, 2).join(' + ') : null,
       nextCandle,
-      nextCandleReady
+      nextCandleReady,
+      entryQuality,
+      entryQualityReady
     };
   }
 
@@ -85,7 +102,9 @@ function quality(signal = {}, direction = null, thresholds = getThresholds(), co
     reasons,
     setup: reasons.length >= signalPolicy.minimumConfluence ? reasons.slice(0, 2).join(' + ') : null,
     nextCandle,
-    nextCandleReady
+    nextCandleReady,
+    entryQuality,
+    entryQualityReady
   };
 }
 
@@ -283,7 +302,8 @@ export function fastLiveDecision(signal = {}, context = {}) {
 
   const strong = score >= signalPolicy.finalScore
     && q.power >= 45
-    && q.nextCandleReady === true;
+    && q.nextCandleReady === true
+    && q.entryQualityReady === true;
   const hits = observe(key, direction, strong, at, q, score);
   if (strong && hits >= FAST_DECISION.confirmHits) return enter(signal, direction, score, seconds, q);
 
