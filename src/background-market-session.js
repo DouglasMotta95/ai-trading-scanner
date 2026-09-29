@@ -380,6 +380,7 @@ export function resetForSession(state = {}, { asset, timeframe = null, info, rea
     diagnostics: {
       ...(sessionBase.diagnostics || {}),
       marketClock: null,
+      marketClockLastGood: null,
       assetSwitchLog: switchLog,
       marketSession: {
         epoch,
@@ -812,6 +813,34 @@ export async function applyClock(message = {}, sender = {}) {
       // CasaTrade re-renders controls. Do not erase a still-fresh authoritative
       // clock with that transient pending observation.
       if (previousClock) return state;
+      const lastGoodClock = state.diagnostics?.marketClockLastGood || null;
+      if (lastGoodClock
+        && sameMarket(lastGoodClock.asset, asset)
+        && normTf(lastGoodClock.timeframe) === timeframe
+        && Number(lastGoodClock.closeAt || 0) > Date.now() - timeframeSeconds(timeframe) * 1000
+        && Number(lastGoodClock.at || 0) > 0) {
+        return {
+          ...state,
+          diagnostics: {
+            ...(state.diagnostics || {}),
+            marketClock: {
+              ...lastGoodClock,
+              available: true,
+              operational: true,
+              quality: 'fallback',
+              mode: 'last-good',
+              at: Date.now()
+            },
+            acquisition: {
+              ...(state.diagnostics?.acquisition || {}),
+              stage: 'diagnosing_next_candle',
+              reason: 'Countdown temporariamente ausente; mantendo a última leitura válida da CasaTrade.',
+              clockQuality: 'fallback',
+              at: Date.now()
+            }
+          }
+        };
+      }
       return {
         ...state,
         diagnostics: {
@@ -861,6 +890,7 @@ export async function applyClock(message = {}, sender = {}) {
       diagnostics: {
         ...(next.diagnostics || {}),
         marketClock: record,
+        marketClockLastGood: { ...record, lastGoodAt: Date.now() },
         marketSession: {
           ...(next.diagnostics?.marketSession || {}), asset, timeframe,
           frameId: Number(focus.frameId), frameHost: clean(focus.frameHost).toLowerCase(),
