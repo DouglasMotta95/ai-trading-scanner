@@ -192,7 +192,7 @@ function shadowMeasurements(state = {}, direction = '') {
 
 function performanceEmission(state = {}) {
   const signal = state.signal || {};
-  const professional = next.professionalDecision || state.professionalDecision || {};
+  const professional = state.professionalDecision || {};
   const professionalUi = clean(professional.uiState).toUpperCase();
   const technicalUi = clean(signal.uiState).toUpperCase();
   const hasProfessionalDecision = !!professionalUi || Number(professional.updatedAt || 0) > 0;
