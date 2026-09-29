@@ -184,10 +184,11 @@ test('next-candle entry-quality path uses scoped continuation evidence', () => {
 
 test('v0.11.104 keeps the operational ledger runtime-safe and ENTER-only', () => {
   const background = read('src/background.js');
-  assert.match(background, /function performanceEmission\(state = \{\}\)/);
-  assert.match(background, /const professional = state\.professionalDecision \|\| \{\};/);
-  assert.doesNotMatch(background, /const professional = next\.professionalDecision/);
-  assert.match(background, /const type = 'ENTER'/);
+  const emissionBlock = background.match(/function performanceEmission[\\s\\S]*?\\n}\\n\\nfunction performanceFeedAdvancedPastTarget/);
+  assert.ok(emissionBlock, 'performanceEmission block must exist');
+  assert.match(emissionBlock[0], /const professional = state\.professionalDecision \|\| \{\};/);
+  assert.doesNotMatch(emissionBlock[0], /const professional = next\.professionalDecision/);
+  assert.match(emissionBlock[0], /const type = 'ENTER'/);
   assert.match(background, /\['ENTER_BUY','ENTER_SELL'\]\.includes\(professionalUi\)/);
   assert.match(background, /filter\(row => clean\(row\?\.type\)\.toUpperCase\(\) !== 'POSSIBLE'\)/);
 });
