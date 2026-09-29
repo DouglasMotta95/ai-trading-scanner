@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { getThresholds, getSignalPolicy } from '../src/core/analysis.js';
+import { getThresholds, getSignalPolicy, calculateEntryQuality } from '../src/core/analysis.js';
 
 const read = path => fs.readFileSync(new URL('../' + path, import.meta.url), 'utf8');
 
@@ -109,7 +109,8 @@ test('next-candle pressure is an entry-only gate and does not replace signal thr
   const orchestrator = read('src/core/orchestrator.js');
   const fast = read('src/core/live-fast-decision.js');
   assert.match(analysis, /export function nextCandleContinuation/);
-  assert.match(analysis, /score >= 64 && shapeReady && pressureReady && followThrough/);
+  assert.match(analysis, /const entryQuality = calculateEntryQuality/);
+  assert.match(analysis, /ready: readyWithQuality|ready: readyWithQuality/);
   assert.match(orchestrator, /const nextCandleReady/);
   assert.match(orchestrator, /&& nextCandleReady;/);
   assert.match(fast, /q\.nextCandleReady === true/);
@@ -125,4 +126,47 @@ test('v0.11.99 derives next-candle pressure from raw OHLC and preserves live-ses
   assert.match(analysis, /const pressureReady = pressure >= 55 && score >= 60/);
   assert.match(control, /transient focus-reader blink/);
   assert.match(control, /candlesReady/);
+});
+
+
+test('entry quality admits a short clean candle and blocks borderline/tiny noisy entries', () => {
+  const shortClean = calculateEntryQuality({
+    buyPower: 58,
+    sellPower: 44,
+    momentumDirection: null,
+    nextCandle: {
+      pressure: 58,
+      opposingPressure: 44,
+      favorableClose: 67,
+      bodyStrength: 16,
+      opposingWick: 28,
+      previousAlignment: 0.67,
+      momentumAligned: false,
+      momentumScore: 35
+    },
+    breakout: 'BUY'
+  }, 'BUY');
+
+  assert.equal(shortClean.ready, true);
+  assert.ok(shortClean.score >= 57);
+  assert.ok(shortClean.directionalEdge >= 12);
+
+  const borderline = calculateEntryQuality({
+    buyPower: 54,
+    sellPower: 51,
+    nextCandle: {
+      pressure: 54,
+      opposingPressure: 51,
+      favorableClose: 58,
+      bodyStrength: 16,
+      opposingWick: 45,
+      previousAlignment: 0,
+      momentumAligned: false,
+      momentumScore: 20
+    }
+  }, 'BUY');
+
+  assert.equal(borderline.ready, false);
+  assert.equal(borderline.borderline, true);
+  assert.ok(borderline.directionalEdge < 8);
 });
