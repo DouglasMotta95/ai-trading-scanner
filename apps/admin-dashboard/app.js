@@ -72,7 +72,7 @@ function renderMetrics() {
     metric('🔑','Licenças ativas',metrics.activeLicenses ?? 0,`${metrics.licenses ?? 0} emitidas`),
     metric('🎁','Testes ativos',metrics.activeTrials ?? 0,'Trial em andamento'),
     metric('●','Clientes online',metrics.licensedOnline ?? 0,'último minuto'),
-    metric('◉','Scanners ativos',metrics.scanners ?? 0,'em leitura'),
+    metric('◉','Robôs ativos',metrics.scanners ?? 0,'em leitura'),
     metric('↗','Sinais hoje',metrics.signalsToday ?? 0,'consumo dos planos'),
     metric('⚠','Vencendo em 3 dias',metrics.expiringSoon ?? 0,'pedem renovação')
   ].join('');
@@ -205,11 +205,11 @@ function messageFor(type, l = {}) {
   const plan = l.planLabel || l.plan || $('#msgPlan').value.trim() || 'Plano';
   const limit = l.dailyLimit == null ? 'sem limite diário' : `${l.dailyLimit} sinais por dia`;
   const days = remainingDays(l); const validity = days == null ? 'sem expiração' : `${days} dia${days === 1 ? '' : 's'}`;
-  if (type === 'trial') return `🎁 *TESTE GRÁTIS LIBERADO!*\n\nOlá, ${name}! Seu acesso de teste ao *AI Trading Scanner* foi criado.\n\n✅ Plano: ${plan}\n⏳ Validade: ${validity}\n📊 Limite: ${limit}\n\n🔑 *Licença:*\n${key}\n\nAbra a extensão, cole a licença e conecte o scanner à plataforma. Aproveite o teste! 🚀`;
-  if (type === 'renew') return `✅ *ACESSO RENOVADO!*\n\nOlá, ${name}! Sua licença do *AI Trading Scanner* foi renovada com sucesso.\n\n🔑 Licença: ${key}\n📦 Plano: ${plan}\n⏳ Validade atual: ${validity}\n\nSeu acesso continua liberado normalmente. 🚀`;
-  if (type === 'reset') return `♻️ *EXTENSÃO LIBERADA NOVAMENTE!*\n\nOlá, ${name}! O reset do seu *AI Trading Scanner* foi concluído.\n\n🔑 Licença: ${key}\n\nOs vínculos anteriores foram limpos e você já pode ativar a extensão novamente. ✅`;
-  if (type === 'blocked') return `⛔ *ACESSO TEMPORARIAMENTE BLOQUEADO*\n\nOlá, ${name}. A licença ${key} do *AI Trading Scanner* está bloqueada no momento.\n\nSe o acesso já deveria estar liberado, entre em contato para conferirmos a situação.`;
-  return `🔑 *AI TRADING SCANNER LIBERADO!*\n\nOlá, ${name}! Seu acesso foi ativado com sucesso.\n\n✅ Plano: ${plan}\n⏳ Validade: ${validity}\n📊 Limite: ${limit}\n\n🔑 *Licença:*\n${key}\n\nAbra a extensão, cole o código acima e faça a ativação. 🚀`;
+  if (type === 'trial') return `🎁 *TESTE GRÁTIS LIBERADO!*\n\nOlá, ${name}! Seu acesso de teste ao *AI Trading Bot* foi criado.\n\n✅ Plano: ${plan}\n⏳ Validade: ${validity}\n📊 Limite: ${limit}\n\n🔑 *Licença:*\n${key}\n\nAbra a extensão, cole a licença e conecte o scanner à plataforma. Aproveite o teste! 🚀`;
+  if (type === 'renew') return `✅ *ACESSO RENOVADO!*\n\nOlá, ${name}! Sua licença do *AI Trading Bot* foi renovada com sucesso.\n\n🔑 Licença: ${key}\n📦 Plano: ${plan}\n⏳ Validade atual: ${validity}\n\nSeu acesso continua liberado normalmente. 🚀`;
+  if (type === 'reset') return `♻️ *EXTENSÃO LIBERADA NOVAMENTE!*\n\nOlá, ${name}! O reset do seu *AI Trading Bot* foi concluído.\n\n🔑 Licença: ${key}\n\nOs vínculos anteriores foram limpos e você já pode ativar a extensão novamente. ✅`;
+  if (type === 'blocked') return `⛔ *ACESSO TEMPORARIAMENTE BLOQUEADO*\n\nOlá, ${name}. A licença ${key} do *AI Trading Bot* está bloqueada no momento.\n\nSe o acesso já deveria estar liberado, entre em contato para conferirmos a situação.`;
+  return `🔑 *AI TRADING BOT LIBERADO!*\n\nOlá, ${name}! Seu acesso foi ativado com sucesso.\n\n✅ Plano: ${plan}\n⏳ Validade: ${validity}\n📊 Limite: ${limit}\n\n🔑 *Licença:*\n${key}\n\nAbra a extensão, cole o código acima e faça a ativação. 🚀`;
 }
 function sampleFor(type) {
   return type === 'trial' ? {customerName:$('#msgName').value || 'Cliente', key:$('#msgKey').value || 'ATS-XXXXXX-XXXXXX-XXXX', planLabel:$('#msgPlan').value || 'Trial', dailyLimit:3, expiresAt:new Date(Date.now()+3*86400000).toISOString()} : {customerName:$('#msgName').value || 'Cliente', key:$('#msgKey').value || 'ATS-XXXXXX-XXXXXX-XXXX', planLabel:$('#msgPlan').value || 'Pro', dailyLimit:20, expiresAt:new Date(Date.now()+30*86400000).toISOString()};
@@ -326,7 +326,7 @@ function renderOperations() {
   if ($('#liveEventCount')) $('#liveEventCount').textContent = events.length;
   if ($('#liveEvents')) $('#liveEvents').innerHTML = events.length ? events.slice(0,30).map(e => {
     const d = e.data || {};
-    const labels = {scanner_started:'Scanner iniciado',scanner_stopped:'Scanner pausado',platform_connected:'Plataforma conectada',signal_confirmed:'Entrada confirmada',signal_state:'Estado do sinal alterado',license_activated:'Licença ativada'};
+    const labels = {bot_started:'Robô iniciado',bot_stopped:'Robô pausado',platform_connected:'Plataforma conectada',signal_confirmed:'Entrada confirmada',signal_state:'Estado do sinal alterado',license_activated:'Licença ativada'};
     return `<div class="live-event"><i></i><div><b>${esc(labels[e.type] || e.type)}</b><small>${esc(e.customerName || 'Cliente')}${d.asset ? ` • ${esc(d.asset)}` : ''}${d.direction ? ` • ${esc(d.direction)}` : ''}</small></div><time>${fmtTime(e.at)}</time></div>`;
   }).join('') : '<div class="attention-empty">Os eventos da extensão aparecerão aqui.</div>';
   if ($('#liveSync')) $('#liveSync').textContent = `ATUALIZADO ${new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}`;
