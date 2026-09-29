@@ -73,8 +73,14 @@ export function createManualTrade(state = {}, click = {}, now = Date.now(), id =
   const derivedBucket = Math.floor(clickedAt / tfMs) * tfMs;
   const targetStart = Math.round((match.targetStart ?? derivedBucket) / tfMs) * tfMs;
   const timingDeltaMs = clickedAt - targetStart;
-  const timingAligned = match.matched && timingDeltaMs >= -2500 && timingDeltaMs <= 10_000;
+  // Allow the normal manual click window immediately around the candle open,
+  // including a bounded pre-open click when ENTER is displayed.
+  const leadToleranceMs = tfMs <= 60_000 ? 8_000 : 12_000;
+  const timingAligned = match.matched && timingDeltaMs >= -leadToleranceMs && timingDeltaMs <= 8_000;
   const matchedSignal = match.matched && timingAligned;
+  const signalId = matchedSignal && match.targetStart != null
+    ? `${asset}|${timeframe}|${Math.round(Number(targetStart) / tfMs) * tfMs}|${direction}`
+    : null;
 
   return {
     id: id || `${Math.round(clickedAt)}-${direction}-${asset.replace(/[^A-Z0-9]/g,'')}`,
@@ -82,7 +88,7 @@ export function createManualTrade(state = {}, click = {}, now = Date.now(), id =
     entryPrice, entrySource: entryPrice == null ? 'unavailable' : 'canonical_quote_at_click',
     targetStart, targetEnd: targetStart + tfMs,
     expiration: state.targetExpiration || state.expiration || timeframe,
-    matchedSignal, matchSource: match.source, timingAligned, timingDeltaMs,
+    matchedSignal, matchSource: match.source, signalId, timingAligned, timingDeltaMs,
     signalScore: match.score, setup: match.setup,
     signalUiState: state.signal?.uiState || null,
     buttonLabel: clean(click.label).slice(0, 100),

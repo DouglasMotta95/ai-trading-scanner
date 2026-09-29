@@ -474,8 +474,29 @@ function consolidatedSnapshot(state = {}) {
   if (candles.length < 2) return null;
   const tfMs = performanceTimeframeMs(timeframe);
   const latestCandleAt = candleTimestamp(candles.at(-1));
-  const currentCandleStart = latestCandleAt != null ? Math.floor(latestCandleAt / tfMs) * tfMs : null;
-  const nextCandleStart = currentCandleStart != null ? currentCandleStart + tfMs : null;
+  // Preserve v0.11.105 analysis behavior: the real candle feed remains the
+  // analysis fallback. Only the candle boundary uses CasaTrade's exact clock
+  // when that exact sample is fresh, preventing rollover from keeping the old
+  // candle as "next".
+  const exactClockCloseAt = exactClock
+    ? num(clock.closeAt)
+      ?? ((num(clock.at) != null && num(clock.secondsRemaining) != null)
+        ? num(clock.at) + Math.max(0, num(clock.secondsRemaining)) * 1000
+        : null)
+    : null;
+  const authoritativeCloseAt = exactClockCloseAt != null
+    ? Math.round(exactClockCloseAt / tfMs) * tfMs
+    : null;
+  const currentCandleStart = authoritativeCloseAt != null
+    ? authoritativeCloseAt - tfMs
+    : latestCandleAt != null
+      ? Math.floor(latestCandleAt / tfMs) * tfMs
+      : null;
+  const nextCandleStart = authoritativeCloseAt != null
+    ? authoritativeCloseAt
+    : currentCandleStart != null
+      ? currentCandleStart + tfMs
+      : null;
   const derivedSecondsRemaining = deriveCandleRemaining(candles, timeframe);
   const secondsRemaining = exactClock
     ? num(clock.secondsRemaining)
