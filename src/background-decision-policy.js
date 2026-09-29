@@ -118,6 +118,59 @@ export function exactCasaTradeTime(state = {}) {
   return { ready: true, timeframe: liveTf, secondsRemaining: projectedRemaining, source: clock.source, operationMode: operationMode.timeframe, projectedFromExact: clockAgeMs > 250 };
 }
 
+function usableCasaTradeTime(state = {}) {
+  const exact = exactCasaTradeTime(state);
+  if (exact.ready) return { ...exact, authoritative: true, quality: 'exact' };
+
+  const focus = state.diagnostics?.focusedAsset || {};
+  const current = state.diagnostics?.marketClock || null;
+  const lastGood = state.diagnostics?.marketClockLastGood || null;
+  const candidates = [current, lastGood].filter(Boolean);
+  const operationMode = getOperationMode(state.analystPreferences?.operationMode || 'M1');
+  const timeframe = normTf(operationMode.timeframe);
+  const tfMs = operationMode.durationSeconds * 1000;
+  const now = Date.now();
+
+  for (const clock of candidates) {
+    if (!clock || clock.available === false) continue;
+    if (!sameMarket(clock.asset, state.asset)) continue;
+    if (normTf(clock.timeframe) !== timeframe) continue;
+    if (!clockBoundToFocus(clock, focus)) continue;
+    let closeAt = num(clock.closeAt);
+    const anchorAt = Number(clock.at || 0);
+    const remaining = num(clock.secondsRemaining);
+    if (closeAt == null && anchorAt > 0 && remaining != null) closeAt = anchorAt + Math.max(0, remaining) * 1000;
+    if (closeAt == null) continue;
+    while (closeAt <= now + 250) closeAt += tfMs;
+    const secondsRemaining = Math.max(0, Math.min(operationMode.durationSeconds, Math.ceil((closeAt - now) / 1000)));
+    if (secondsRemaining <= 0) continue;
+    const exact = clock.verified === true
+      && EXACT_CLOCK_SOURCES.has(text(clock.source))
+      && anchorAt > 0
+      && now - anchorAt < CLOCK_FRESH_MS;
+    return {
+      ready: true,
+      timeframe,
+      secondsRemaining,
+      source: text(clock.source || 'last-good-casatrade'),
+      operationMode: timeframe,
+      authoritative: exact,
+      quality: exact ? 'exact' : 'fallback',
+      projectedFromLastGood: !exact
+    };
+  }
+
+  return {
+    ready: false,
+    timeframe,
+    secondsRemaining: null,
+    source: null,
+    operationMode: timeframe,
+    authoritative: false,
+    quality: 'missing'
+  };
+}
+
 export function CasaTradeExpiration(state = {}, timeframe = null) {
   const operationMode = getOperationMode(state.analystPreferences?.operationMode || 'M1');
   const controls = state.platformControls || {};
@@ -264,7 +317,7 @@ function baseDecision(state = {}) {
   const signal = state.signal || {};
   const now = Date.now();
   const identity = marketIdentity(state, signal);
-  const time = exactCasaTradeTime(state);
+  const time = usableCasaTradeTime(state);
   const expiration = CasaTradeExpiration(state, time.timeframe || state.analysisTimeframe || state.timeframe);
   const rows = completeCandles(state);
   const direction = signalDirection(signal);
@@ -450,18 +503,10 @@ function baseDecision(state = {}) {
   // If it already promoted the same cycle to ENTER with the unchanged score/power/
   // confluence gates, the policy layer must not downgrade it merely because the
   // optional professional context/trigger layer is still incomplete.
-  const technicalFinalReady = technicalFinal
-    && technicalPatternReady
+  const technicalFinalReady = !!direction
     && score >= finalScore
-    && finalPowerReady
-    && additionalConfluenceReady
-    && entryQualityReady;
-  // Final window assertiveness: exact timing + clear direction + score >= 55
-  // is enough to finish the existing two-sample hold and emit ENTER.
-  const assertiveFinalReady = !!direction
-    && score >= finalScore
-    && finalPowerReady
-    && entryQualityReady;
+    && finalPowerReady;
+  const assertiveFinalReady = technicalFinalReady;
   const finalQuality = technicalFinalReady
     || assertiveFinalReady
     || (technicalFinal && score >= finalScore && finalPowerReady && additionalConfluenceReady
@@ -530,19 +575,8 @@ function baseDecision(state = {}) {
     };
   }
 
-  if (heldFor < holdMs) {
-    return {
-      ...common,
-      uiState: direction === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL',
-      direction,
-      actionable: false,
-      alert: 'discrete',
-      possibleSince,
-      holdRemainingMs: Math.max(0, holdMs - heldFor),
-      reason: `${side} — ALTA CONFIANÇA • confirmação final recebida; estabilizando hold.`
-    };
-  }
-
+  // Core final contract: score + directional power + direction inside the final
+  // window promote immediately. Optional entry-quality telemetry never vetoes it.
   return {
     ...common,
     uiState: direction === 'BUY' ? 'ENTER_BUY' : 'ENTER_SELL',
