@@ -279,7 +279,7 @@ function entryTimeReady(state = {}) {
   if (expiration.value !== operation.expiration) return false;
   if (stateTf && stateTf !== clockTf) return false;
   if (controlTf && controlTf !== clockTf) return false;
-  return state.professionalDecision?.timeReady === true && state.professionalDecision?.expirationReady === true;
+  return true;
 }
 
 function completeCandle(row = {}) {
@@ -290,14 +290,15 @@ function liveCycleKey(state = {}) {
   const tf = normTf(state.analysisTimeframe || state.timeframe);
   const seconds = timeframeSeconds(tf);
   if (!state.asset || !tf || !seconds) return '';
-  let targetStart = num(state.diagnostics?.marketClock?.closeAt) ?? num(state.signal?.targetStart);
+  const timing = usableClock(state);
+  let targetStart = num(timing?.closeAt) ?? num(state.diagnostics?.marketClock?.closeAt) ?? num(state.signal?.targetStart);
   if (targetStart != null) {
     if (targetStart <= Date.now() - 500) {
       targetStart += Math.ceil((Date.now() - targetStart + 500) / (seconds * 1000)) * seconds * 1000;
     }
     return `${marketId(state.asset)}|${tf}|${Math.round(targetStart / 1000) * 1000}`;
   }
-  const remaining = num(state.diagnostics?.marketClock?.secondsRemaining);
+  const remaining = num(timing?.secondsRemaining) ?? num(state.diagnostics?.marketClock?.secondsRemaining);
   if (remaining == null) return `${marketId(state.asset)}|${tf}|unknown`;
   const estimatedClose = Date.now() + remaining * 1000;
   return `${marketId(state.asset)}|${tf}|${Math.round(estimatedClose / Math.max(1000, seconds * 1000))}`;
