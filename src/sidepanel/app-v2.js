@@ -620,6 +620,9 @@ function renderEntrySchedule(state = {}, model = {}) {
     return;
   }
 
+  // Never display a stale target from a previous candle/session. CasaTrade's
+  // exact closeAt is preferred; otherwise advance a valid signal target or use
+  // the local timeframe grid only as a display fallback.
   let target = num(clock.closeAt);
   if (target == null || target <= Date.now() + 500) {
     const candidate = num(signal.targetStart ?? signal.entryAt ?? activeRow?.targetStart ?? state.decisionCycle?.targetStart);
@@ -679,6 +682,7 @@ function renderEntrySchedule(state = {}, model = {}) {
   }
   actionEl.textContent = action + (side ? ' • ' + side : '');
 }
+
 
 function normalizeOperationalPulseLabels() {
   const replacements = { funnelCandidates: 'PRÉ-SINAIS ANALISADOS', funnelPossible: 'ENTRADAS CONFIRMADAS', funnelEntries: 'OPERAÇÕES FINALIZADAS' };
@@ -1042,6 +1046,9 @@ setInterval(() => {
   const actualTf = normTf(lastRenderedState.diagnostics?.marketClock?.timeframe || lastRenderedState.analysisTimeframe || lastRenderedState.timeframe);
   setText('heroCountdown', remaining == null ? '—' : exact ? `${Math.ceil(remaining)}s` : `~${Math.ceil(remaining)}s`);
   setText('secondsRemaining', remaining == null ? '—' : exact ? String(Math.max(0, Math.ceil(remaining))) : `~${Math.max(0, Math.ceil(remaining))}`);
+  // Refresh the schedule continuously: current time keeps its seconds and the
+  // VIRA EM counter remains live instead of freezing on a single timestamp.
+  renderEntrySchedule(lastRenderedState, decisionModel(lastRenderedState));
   const duration = timeframeSeconds(actualTf);
   const progress = $('candleProgress');
   if (progress) {
