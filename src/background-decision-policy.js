@@ -350,6 +350,21 @@ function baseDecision(state = {}) {
     return { ...common, uiState: 'BUILDING_PATTERN', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: 'Montando o padrão com as velas reais da CasaTrade.' };
   }
 
+  // Never preserve or create a user-facing signal while the live transport is
+  // reconnecting. A stale professionalDecision must not resurrect an entry as
+  // soon as the connection badge changes.
+  if (state.connection !== 'online') {
+    return {
+      ...common,
+      uiState: 'ANALYZING_MARKET',
+      direction: null,
+      actionable: false,
+      alert: 'silent',
+      possibleSince: null,
+      reason: 'CONECTANDO — aguardando conexão online antes de liberar qualquer entrada.'
+    };
+  }
+
   // Keep a bounded POSSÍVEL during short-lived clock/expiration regressions.
   // The candidate is already technical, belongs to the same cycle/direction,
   // and remains non-actionable until timing is authoritative again.
