@@ -1,4 +1,4 @@
-import { readScannerState } from './services/scanner-state-atomic.js';
+import { readScannerState, updateScannerState } from './services/scanner-state-atomic.js';
 import { storageLocalGet, storageLocalSet } from './services/chrome-compat.js';
 import { createManualTrade, mergeManualTrade, resolveManualTrades, resolveManualTradesFromFeed, manualTradeMetrics } from './core/manual-trades.js';
 
@@ -54,7 +54,35 @@ async function registerClick(message = {}, sender = {}) {
   if (!trade) return { ok: false, error: 'market_not_ready' };
   const rows = mergeManualTrade(previous.rows, trade, 500);
   await persist(rows);
-  return { ok: true, trade, metrics: cached.metrics };
+  const signalLinked = await linkMatchedSignal(trade);
+  return { ok: true, trade, signalLinked, metrics: cached.metrics };
+}
+
+async function linkMatchedSignal(trade = {}) {
+  if (!trade?.matchedSignal || !trade.signalId) return false;
+  const current = await readScannerState();
+  const history = Array.isArray(current.signalHistory) ? current.signalHistory : [];
+  if (!history.some(row => row?.id === trade.signalId)) return false;
+  await updateScannerState(currentState => ({
+    ...currentState,
+    signalHistory: (Array.isArray(currentState.signalHistory) ? currentState.signalHistory : []).map(row =>
+      row?.id === trade.signalId
+        ? {
+            ...row,
+            manualClickAt: trade.clickedAt,
+            manualEntryPrice: trade.entryPrice,
+            manualEntrySource: trade.entrySource,
+            manualEntryDirection: trade.direction,
+            entryPrice: trade.entryPrice ?? row.entryPrice,
+            entryTime: trade.clickedAt ?? row.entryTime,
+            entryCapturedAt: trade.clickedAt ?? row.entryCapturedAt,
+            entryStatus: trade.entryPrice == null ? row.entryStatus : 'confirmed',
+            entrySource: 'manual-click'
+          }
+        : row
+    )
+  })).catch(() => {});
+  return true;
 }
 
 async function resolveAgainstState(state = {}) {
