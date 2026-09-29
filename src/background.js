@@ -442,6 +442,12 @@ function consolidatedSnapshot(state = {}) {
   const clock = state.diagnostics?.marketClock || null;
   if (!asset || price == null || !focus?.asset || !sameMarket(focus.asset, asset)) return null;
   if (focus.reliable !== true || focus.chartScoped !== true || focus.trustedChartFrame !== true) return null;
+  // Never analyze from a stale persisted session while CasaTrade is opening.
+  // Both the focused chart and the market feed must have produced a fresh
+  // observation for the current live session before the technical engine runs.
+  const focusAge = Date.now() - Number(focus.at || 0);
+  const dataAge = Date.now() - Number(state.lastSeen || 0);
+  if (Number(focus.at || 0) <= 0 || focusAge > 12000 || Number(state.lastSeen || 0) <= 0 || dataAge > 12000) return null;
 
   // Market analysis must continue through short clock-reader gaps. The clock is
   // an entry-authority gate, not the sole source of market data. When exact clock
