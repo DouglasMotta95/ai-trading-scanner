@@ -13,7 +13,7 @@ test('v0.11.107 anchors the live cycle to CasaTrade exact close time', () => {
   assert.match(background, /currentCandleStart = authoritativeCloseAt != null/);
   assert.match(background, /nextCandleStart = authoritativeCloseAt != null/);
 
-  assert.match(orchestrator, /const candidates = [/);
+  assert.match(orchestrator, /const candidates = \[/);
   assert.match(orchestrator, /num\(snapshot\.nextCandleStart\)/);
   assert.match(orchestrator, /if \(target <= now \+ 250\)/);
   assert.match(orchestrator, /target \+= Math\.max\(1, steps\) \* tfMs/);
