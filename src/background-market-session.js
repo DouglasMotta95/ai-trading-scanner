@@ -862,9 +862,11 @@ export async function applyClock(message = {}, sender = {}) {
     const session = state.diagnostics?.marketSession || {};
     const frameChanged = Number(session.frameId) !== Number(focus.frameId)
       || clean(session.frameHost).toLowerCase() !== clean(focus.frameHost).toLowerCase();
+    // A frame re-mount is a transport/DOM event, not an asset change. Keep the
+    // live market session and its last-good clock unless the instrument or mode
+    // actually changes.
     const sessionChanged = !sameMarket(session.asset, asset)
-      || clean(session.timeframe).toUpperCase() !== clean(timeframe).toUpperCase()
-      || frameChanged;
+      || clean(session.timeframe).toUpperCase() !== clean(timeframe).toUpperCase();
     let next = state;
     if (sessionChanged) {
       const sessionInfo = crossFrameControl
@@ -876,6 +878,19 @@ export async function applyClock(message = {}, sender = {}) {
           ? `Sessão ${asset} • ${timeframe || '—'} sincronizada ao fechamento real da vela.`
           : `Sessão ${asset} • ${timeframe || '—'} em leitura ao vivo com clock temporário de contingência.`
       });
+    } else if (frameChanged) {
+      next = {
+        ...next,
+        diagnostics: {
+          ...(next.diagnostics || {}),
+          marketSession: {
+            ...(next.diagnostics?.marketSession || {}),
+            frameId: Number(focus.frameId),
+            frameHost: clean(focus.frameHost).toLowerCase(),
+            transitioning: false
+          }
+        }
+      };
     }
 
     const record = clockRecord(message, info, asset, timeframe, secondsRemaining, focus);
