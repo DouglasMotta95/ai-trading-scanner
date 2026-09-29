@@ -104,7 +104,7 @@ test('network transport rotation does not clear the live market authority', () =
 });
 
 
-test('next-candle pressure is an entry-only gate and does not replace signal thresholds', () => {
+test('next-candle pressure is diagnostic and cannot veto the selected profile thresholds', () => {
   const analysis = read('src/core/analysis.js');
   const orchestrator = read('src/core/orchestrator.js');
   const fast = read('src/core/live-fast-decision.js');
@@ -112,10 +112,12 @@ test('next-candle pressure is an entry-only gate and does not replace signal thr
   assert.match(analysis, /const entryQuality = calculateEntryQuality/);
   assert.match(analysis, /ready: readyWithQuality|ready: readyWithQuality/);
   assert.match(orchestrator, /const nextCandleReady/);
-  assert.match(orchestrator, /&& nextCandleReady/);
-  assert.match(orchestrator, /entryQualityReady/);
-  assert.match(fast, /q\.nextCandleReady === true/);
+  assert.match(orchestrator, /score >= signalPolicy\.finalScore/);
+  assert.match(orchestrator, /power >= signalPolicy\.finalPower/);
+  assert.doesNotMatch(orchestrator, /finalMinimumReady[\s\S]*&& nextCandleReady/);
+  assert.doesNotMatch(orchestrator, /finalMinimumReady[\s\S]*&& entryQualityReady/);
   assert.match(fast, /score >= signalPolicy\.finalScore/);
+  assert.match(fast, /q\.power >= signalPolicy\.finalPower/);
 });
 
 
