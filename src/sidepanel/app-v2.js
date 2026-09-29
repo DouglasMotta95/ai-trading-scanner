@@ -253,8 +253,13 @@ function liveCycleKey(state = {}) {
   const tf = normTf(state.analysisTimeframe || state.timeframe);
   const seconds = timeframeSeconds(tf);
   if (!state.asset || !tf || !seconds) return '';
-  const targetStart = num(state.signal?.targetStart) ?? num(state.diagnostics?.marketClock?.closeAt);
-  if (targetStart != null) return `${marketId(state.asset)}|${tf}|${Math.round(targetStart / 1000) * 1000}`;
+  let targetStart = num(state.diagnostics?.marketClock?.closeAt) ?? num(state.signal?.targetStart);
+  if (targetStart != null) {
+    if (targetStart <= Date.now() - 500) {
+      targetStart += Math.ceil((Date.now() - targetStart + 500) / (seconds * 1000)) * seconds * 1000;
+    }
+    return `${marketId(state.asset)}|${tf}|${Math.round(targetStart / 1000) * 1000}`;
+  }
   const remaining = num(state.diagnostics?.marketClock?.secondsRemaining);
   if (remaining == null) return `${marketId(state.asset)}|${tf}|unknown`;
   const estimatedClose = Date.now() + remaining * 1000;
