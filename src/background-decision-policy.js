@@ -1,5 +1,5 @@
 import { readScannerState, updateScannerState } from './services/scanner-state-atomic.js';
-import { getThresholds, getOperationMode, getSignalPolicy } from './core/analysis.js';
+import { getThresholds, getOperationMode, getSignalPolicy, calculateEntryQuality } from './core/analysis.js';
 
 // Product policy layer. The technical engine can keep collecting evidence with an
 // estimated clock, but the user-facing decision is never promoted while CasaTrade
@@ -295,6 +295,10 @@ function baseDecision(state = {}) {
   const localTriggerReady = recent.breakout === direction
     || recent.rejection === direction
     || (recent.continuationDirection === direction && Number(recent.continuationScore || 0) >= 60);
+  const entryQuality = signal.analytics?.entryQuality
+    || recent.entryQuality
+    || calculateEntryQuality(signal, direction);
+  const entryQualityReady = entryQuality?.ready === true && entryQuality?.borderline !== true;
   // A next-candle candidate must have a concrete local chart trigger. Momentum
   // or candle strength alone can describe context but cannot create an entry.
   // Score + clear direction is sufficient to create the pre-signal.
@@ -318,6 +322,10 @@ function baseDecision(state = {}) {
     professionalContextReady,
     professionalTriggerReady,
     localTriggerReady,
+    entryQualityScore: Number(entryQuality?.score || 0),
+    entryQualityReady,
+    entryQualityBorderline: entryQuality?.borderline === true,
+    entryQualityReason: entryQuality?.reason || null,
     technicalPatternReady,
     professionalScoreBlocks: professional.blocks || null,
     signalPolicy,
@@ -433,12 +441,14 @@ function baseDecision(state = {}) {
     && technicalPatternReady
     && score >= finalScore
     && finalPowerReady
-    && additionalConfluenceReady;
+    && additionalConfluenceReady
+    && entryQualityReady;
   // Final window assertiveness: exact timing + clear direction + score >= 55
   // is enough to finish the existing two-sample hold and emit ENTER.
   const assertiveFinalReady = !!direction
     && score >= finalScore
-    && finalPowerReady;
+    && finalPowerReady
+    && entryQualityReady;
   const finalQuality = technicalFinalReady
     || assertiveFinalReady
     || (technicalFinal && score >= finalScore && finalPowerReady && additionalConfluenceReady
