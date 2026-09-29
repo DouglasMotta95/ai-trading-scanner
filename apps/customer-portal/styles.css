@@ -4,3 +4,32 @@
 .release-chip{display:inline-flex;gap:7px;margin-top:16px;padding:7px 10px;border:1px solid #1a4550;border-radius:999px;background:#071a22;color:#7ca6b5;font-size:10px;letter-spacing:.08em}.release-chip b{color:#7fe0c2}
 .product-showcase{padding-top:26px}.product-flow{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:24px}.product-flow article,.feature-grid article{border:1px solid #17344a;background:linear-gradient(180deg,#081724,#07121d);border-radius:18px;padding:20px}.product-flow article>b{display:grid;place-items:center;width:34px;height:34px;border-radius:11px;background:#0e2a35;color:#7fe0c2;font-size:11px}.product-flow h3,.feature-grid h3{margin:12px 0 6px}.product-flow p,.feature-grid p{margin:0;color:#83a0b6;font-size:12px;line-height:1.55}.feature-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:14px}.feature-grid article>span{font-size:22px}.showcase-note{margin:16px 0 0;padding:12px 14px;border:1px solid #183247;border-radius:14px;color:#7594a9;font-size:11px;text-align:center}
 @media(max-width:900px){.product-flow{grid-template-columns:repeat(2,1fr)}.feature-grid{grid-template-columns:repeat(2,1fr)}}@media(max-width:620px){.product-flow,.feature-grid{grid-template-columns:1fr}}
+
+/* AI Trading Bot product identity */
+.bot-hero-card{position:relative;border:1px solid #28516b;background:linear-gradient(155deg,#0e1c2e,#06111b);border-radius:28px;padding:24px;box-shadow:0 40px 100px #0009,0 0 100px #45e0b51c;overflow:hidden}
+.bot-hero-card:before{content:"";position:absolute;width:290px;height:290px;border-radius:50%;background:#45e0b51a;filter:blur(65px);right:-100px;top:-100px}
+.bot-console-head,.bot-main,.bot-hero-card .signal,.bot-hero-card .terminal-grid,.bot-hero-card .criteria{position:relative}
+.bot-console-head{display:flex;justify-content:space-between;align-items:center}
+.bot-console-head small{color:var(--muted);font-size:10px;letter-spacing:.12em;font-weight:800}
+.bot-live-dot{font-size:12px;font-weight:950;letter-spacing:.12em}
+.bot-live-dot i{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 15px var(--green);margin-right:7px}
+.bot-main{display:grid;grid-template-columns:88px minmax(0,1fr) auto;gap:16px;align-items:center;margin:34px 0 18px}
+.robot-avatar{position:relative;display:grid;justify-items:center;width:78px;height:88px}
+.robot-head{width:62px;height:47px;border-radius:16px 16px 13px 13px;background:linear-gradient(145deg,#69e8c5,#3e94e9);display:flex;align-items:center;justify-content:center;gap:10px;box-shadow:0 12px 30px #41cfa82b,inset 0 -7px 0 #123248}
+.robot-head i{width:8px;height:8px;background:#05131c;border-radius:50%;box-shadow:0 0 8px #bffff0}
+.robot-antenna{position:absolute;top:-2px;width:3px;height:14px;background:#7aecc9;border-radius:999px}
+.robot-antenna:after{content:"";position:absolute;top:-5px;left:-3px;width:9px;height:9px;border-radius:50%;background:#68e7c1;box-shadow:0 0 12px #68e7c1}
+.robot-body{width:52px;height:26px;margin-top:-1px;border:2px solid #2c6887;border-radius:10px 10px 14px 14px;background:#0a2332;display:flex;align-items:center;justify-content:center;gap:5px}
+.robot-body span{width:6px;height:6px;border-radius:50%;background:#69dfb0}
+.bot-copy{display:grid;gap:5px}
+.bot-copy small{font-size:9px;letter-spacing:.14em;color:#7894a9;font-weight:850}
+.bot-copy b{font-size:20px;line-height:1.1}
+.bot-copy p{margin:0;color:#89a5bb;font-size:12px;line-height:1.45}
+.bot-main>strong{width:70px;height:70px;border-radius:50%;display:grid;place-items:center;border:7px solid #2c8f79;background:#081822;font-size:22px}
+.bot-hero-card .terminal-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:9px;margin-top:12px}
+.bot-hero-card .terminal-grid div{padding:14px 10px;background:#07131f;border:1px solid #17364b;border-radius:13px}
+.bot-hero-card .terminal-grid small{display:block;color:#7690a9;font-size:9px;letter-spacing:.1em}
+.bot-hero-card .terminal-grid b{font-size:11px}
+.bot-hero-card .criteria{margin-top:22px}
+.bot-hero-card .criteria>span{font-size:13px;font-weight:850}
+@media(max-width:700px){.bot-main{grid-template-columns:72px minmax(0,1fr);gap:12px}.bot-main>strong{width:58px;height:58px;font-size:19px;grid-column:1/-1;justify-self:end;margin-top:-6px}.bot-copy b{font-size:17px}.bot-hero-card .terminal-grid{grid-template-columns:1fr 1fr}}
