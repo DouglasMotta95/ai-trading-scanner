@@ -197,7 +197,7 @@ function exactClockReady(state = {}) {
 }
 
 function operationalClockReady(state = {}) {
-  // There is no operational fallback clock anymore. The scanner may only use
+  // There is no operational fallback clock anymore. The bot may only use
   // an exact CasaTrade countdown source as time authority.
   return exactClockReady(state);
 }
@@ -546,8 +546,8 @@ function renderLicense(state = {}) {
     card.hidden = active;
     const intro = card.querySelector('.license-gate-intro');
     if (intro) intro.textContent = active
-      ? 'Acesso validado. O scanner pode ler o mercado aberto.'
-      : 'Ative sua chave para liberar o scanner. Antes da ativação, a tela operacional permanece bloqueada.';
+      ? 'Acesso validado. O robô pode monitorar o mercado aberto.'
+      : 'Ative sua chave para liberar o robô. Antes da ativação, a tela operacional permanece bloqueada.';
     card.querySelectorAll('.secondary').forEach(button => { button.hidden = !active; });
   }
   setText('licenseTitle', active ? 'Licença ' + (license.planLabel || license.plan || 'ATIVA') : 'Ativação necessária');
@@ -684,7 +684,7 @@ function render(state = {}) {
   const bootAwaitingFocus = !!state.targetTabId && !panelFocusFresh;
 
   setText('asset', visibleAsset || (pending ? `Atualizando para ${pending}…` : bootAwaitingFocus ? 'ATUALIZANDO…' : '—'));
-  // The summary TF represents the scanner operation mode, not a separate live
+  // The summary TF represents the bot operation mode, not a separate live
   // observation. The live CasaTrade timeframe is still validated below as an
   // entry gate, but every mode label now has one canonical source.
   setText('timeframe', freshMarket || pending || bootAwaitingFocus ? operation.timeframe : '—');
