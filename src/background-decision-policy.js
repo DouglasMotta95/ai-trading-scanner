@@ -246,8 +246,14 @@ function shortReason(direction, factors = [], fallback = '') {
 function cycleKey(state = {}, signal = {}) {
   const asset = marketId(state.asset || '');
   const timeframe = normTf(state.analysisTimeframe || state.timeframe || signal.timeframe) || 'UNCONFIRMED';
-  const target = num(signal.targetStart) ?? num(state.decisionCycle?.targetStart) ?? num(state.diagnostics?.marketClock?.closeAt);
-  return `${asset}|${timeframe}|${target == null ? 'pending' : Math.round(target / 1000) * 1000}`;
+  const clock = state.diagnostics?.marketClock || {};
+  // The active candle opening timestamp is immutable for the full cycle.
+  // Never use closeAt/secondsRemaining as the decision-cycle identity.
+  const target = num(clock.openAt)
+    ?? num(clock.candleOpenAt)
+    ?? num(signal.targetStart)
+    ?? num(state.decisionCycle?.targetStart);
+  return asset + '|' + timeframe + '|' + (target == null ? 'pending' : Math.round(target / 1000) * 1000);
 }
 
 function baseDecision(state = {}) {
