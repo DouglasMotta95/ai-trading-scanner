@@ -767,8 +767,9 @@ function observedCurrentCandle(state = {}, price, clock = null) {
   const remaining = num(clock?.secondsRemaining);
   const anchorAt = num(clock?.at);
   const closeAt = num(clock?.closeAt) ?? (remaining != null && anchorAt != null ? anchorAt + remaining * 1000 : null);
-  if (closeAt == null) return state.currentCandle || null;
-  const cycleKey = `${normAsset(state.asset)}|${timeframe}|${Math.round(closeAt / 5000) * 5000}`;
+  const openAt = num(clock?.openAt) ?? (closeAt != null ? closeAt - duration * 1000 : null);
+  if (closeAt == null || openAt == null) return state.currentCandle || null;
+  const cycleKey = `${normAsset(state.asset)}|${timeframe}|${Math.round(openAt / 1000) * 1000}`;
   const previous = state.currentCandle;
   const same = previous?.source === 'live-price-observed' && previous?.cycleKey === cycleKey;
   const open = same ? num(previous.open) : Number(price);
