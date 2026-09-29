@@ -253,12 +253,23 @@ function liveCycleKey(state = {}) {
   const tf = normTf(state.analysisTimeframe || state.timeframe);
   const seconds = timeframeSeconds(tf);
   if (!state.asset || !tf || !seconds) return '';
-  const targetStart = num(state.signal?.targetStart) ?? num(state.diagnostics?.marketClock?.closeAt);
-  if (targetStart != null) return `${marketId(state.asset)}|${tf}|${Math.round(targetStart / 1000) * 1000}`;
+  const clock = state.diagnostics?.marketClock || {};
+  let targetStart = num(clock.closeAt);
+  // The live candle identity follows CasaTrade's authoritative countdown when
+  // available. A persisted signal target is only used when the clock has no
+  // usable boundary.
+  if (targetStart == null || targetStart <= Date.now() - 500) {
+    targetStart = num(state.signal?.targetStart) ?? num(state.diagnostics?.marketClock?.closeAt);
+  }
+  if (targetStart != null) {
+    if (targetStart <= Date.now() - 500) targetStart += Math.floor((Date.now() - targetStart) / (seconds * 1000) + 1) * seconds * 1000;
+    return `${marketId(state.asset)}|${tf}|${Math.round(targetStart / 1000) * 1000}`;
+  }
   const remaining = num(state.diagnostics?.marketClock?.secondsRemaining);
   if (remaining == null) return `${marketId(state.asset)}|${tf}|unknown`;
   const estimatedClose = Date.now() + remaining * 1000;
   return `${marketId(state.asset)}|${tf}|${Math.round(estimatedClose / Math.max(1000, seconds * 1000))}`;
+}
 }
 
 function currentOhlc(state = {}) {
