@@ -1303,16 +1303,28 @@ function exactTradeReady(state = {}) {
   const clock = state.diagnostics?.marketClock || {};
   const focus = state.diagnostics?.focusedAsset || {};
   const professional = state.professionalDecision || {};
-  const expirationAt = Number(state.platformControls?.expirationCheckedAt || state.platformControls?.observed?.observedAt?.expiration || 0);
-  const controlsFresh = expirationAt > 0 && Date.now() - expirationAt < 7000;
-  const actualExpiration = controlsFresh ? clean(state.platformControls?.observed?.expiration || '') : '';
   if (professional.timeReady !== true || professional.expirationReady !== true || professional.actionable !== true) return false;
   if (clock.verified !== true || clock.available === false || clock.role !== 'candle-close' || !EXACT_CLOCK_SOURCES.has(clean(clock.source))) return false;
-  if (Date.now() - Number(clock.at || 0) >= 3000) return false;
+  const clockAt = Number(clock.at || 0);
+  const rawRemaining = Number(clock.secondsRemaining);
+  if (!(clockAt > 0) || !Number.isFinite(rawRemaining) || rawRemaining <= 0) return false;
+  const timeframe = clean(professional.timeframe || state.analysisTimeframe || state.timeframe).toUpperCase();
+  const durationSeconds = timeframe === 'M5' ? 300 : timeframe === 'M1' ? 60 : 0;
+  if (!durationSeconds || rawRemaining > durationSeconds + 2) return false;
+  const exactCloseAt = Number(clock.closeAt) > 0
+    ? Number(clock.closeAt)
+    : clockAt + rawRemaining * 1000;
+  if (!(exactCloseAt > Date.now() + 250)) return false;
   if (!sameAsset(clock.asset, state.asset) || !sameAsset(focus.asset, state.asset)) return false;
   if (!clockBoundToFocus(clock, focus)) return false;
-  if (!actualExpiration || !controlsFresh) return false;
-  return true;
+
+  // Real CasaTrade expiration is preferred. When the user explicitly selected
+  // the mode-compatible duration (1m/M1 or 5m/M5), professional.expirationReady
+  // is already the timing gate and we may proceed even when the control reader
+  // has not refreshed its text in the last few seconds.
+  const observedExpiration = clean(state.platformControls?.observed?.expiration || '');
+  const actualExpiration = observedExpiration || clean(professional.actualExpiration || state.targetExpiration || state.expiration || '');
+  return !!actualExpiration;
 }
 
 async function manualIntent(direction = '') {

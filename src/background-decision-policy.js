@@ -97,8 +97,9 @@ export function exactCasaTradeTime(state = {}) {
   if (!sameMarket(clock.asset, state.asset)) return { ready: false, reason: 'Relógio pertence a outro ativo.' };
   if (!clockBoundToFocus(clock, focus)) return { ready: false, reason: 'Relógio ainda não foi vinculado ao gráfico ativo.' };
   const clockAt = Number(clock.at || 0);
-  const clockAgeMs = Date.now() - clockAt;
-  if (clockAgeMs >= CLOCK_FRESH_MS) return { ready: false, reason: 'Relógio da CasaTrade ficou desatualizado.' };
+  const now = Date.now();
+  const clockAgeMs = now - clockAt;
+  if (!(clockAt > 0) || clockAgeMs < -1000) return { ready: false, reason: 'Amostra de tempo da CasaTrade inválida.' };
   const rawRemaining = num(clock.secondsRemaining);
   if (rawRemaining == null) return { ready: false, reason: 'Countdown da CasaTrade indisponível.' };
 
@@ -110,12 +111,28 @@ export function exactCasaTradeTime(state = {}) {
   if (liveTf !== operationMode.timeframe) return { ready: false, reason: `Ajuste o timeframe da CasaTrade para ${operationMode.timeframe}.` };
   if (stateTf && liveTf !== stateTf) return { ready: false, reason: 'Timeframe interno divergiu do gráfico.' };
   if (controlTf && liveTf !== controlTf) return { ready: false, reason: 'Timeframe visível divergiu do clock da vela.' };
-  // Bridge one missed DOM/feed observation with a bounded projection from the
-  // latest exact CasaTrade sample. We never roll a decision into the next candle:
-  // once projected time reaches zero the entry gate closes until a new exact sample.
-  const elapsedSeconds = Math.max(0, clockAgeMs / 1000);
-  const projectedRemaining = Math.max(0, Number(rawRemaining) - elapsedSeconds);
-  return { ready: true, timeframe: liveTf, secondsRemaining: projectedRemaining, source: clock.source, operationMode: operationMode.timeframe, projectedFromExact: clockAgeMs > 250 };
+  // Use the latest exact CasaTrade sample as the anchor for a live countdown.
+  // The browser may miss DOM updates for a few seconds, so we keep a monotonic
+  // projection from that exact sample. The projection ends at that candle's
+  // calculated close; it is never allowed to roll into a new candle.
+  const durationSeconds = liveTf[0] === 'M5' ? 300 : liveTf[0] === 'M1' ? 60 : null;
+  if (!durationSeconds || Number(rawRemaining) < 0 || Number(rawRemaining) > durationSeconds + 2) {
+    return { ready: false, reason: 'Countdown da CasaTrade fora do intervalo esperado.' };
+  }
+  const exactCloseAt = clockAt + Number(rawRemaining) * 1000;
+  const projectedRemaining = (exactCloseAt - now) / 1000;
+  if (!(projectedRemaining > 0.25)) {
+    return { ready: false, reason: 'Virada da vela em andamento; aguardando novo ciclo da CasaTrade.' };
+  }
+  return {
+    ready: true,
+    timeframe: liveTf,
+    secondsRemaining: projectedRemaining,
+    source: clock.source,
+    operationMode: operationMode.timeframe,
+    projectedFromExact: clockAgeMs > 250,
+    clockAgeMs
+  };
 }
 
 export function CasaTradeExpiration(state = {}, timeframe = null) {

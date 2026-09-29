@@ -180,14 +180,20 @@ function clockBoundToFocus(clock = {}, focus = {}) {
 function clockBaseReady(state = {}) {
   const clock = state.diagnostics?.marketClock || {};
   const focus = state.diagnostics?.focusedAsset || {};
-  return focusReady(state)
+  if (!(focusReady(state)
     && clock.available !== false
     && clock.role === 'candle-close'
     && sameMarket(clock.asset, state.asset)
     && clockBoundToFocus(clock, focus)
     && Number(clock.at || 0) > 0
-    && Date.now() - Number(clock.at) < 4500
-    && num(clock.secondsRemaining) != null;
+    && num(clock.secondsRemaining) != null)) return false;
+  const tf = normTf(clock.timeframe || state.analysisTimeframe || state.timeframe);
+  const duration = timeframeSeconds(tf);
+  const raw = Number(clock.secondsRemaining);
+  const ageMs = Date.now() - Number(clock.at);
+  if (!duration || !Number.isFinite(raw) || raw < 0 || raw > duration + 2 || ageMs < -1000) return false;
+  const projected = raw - Math.max(0, ageMs / 1000);
+  return projected > 0.25;
 }
 
 function exactClockReady(state = {}) {
@@ -197,8 +203,9 @@ function exactClockReady(state = {}) {
 }
 
 function operationalClockReady(state = {}) {
-  // There is no operational fallback clock anymore. The bot may only use
-  // an exact CasaTrade countdown source as time authority.
+  // The countdown is anchored to an exact CasaTrade observation. Between two
+  // CasaTrade samples we continue the monotonic second-by-second projection
+  // until that sampled candle closes; we never roll it into the next candle.
   return exactClockReady(state);
 }
 
@@ -739,11 +746,6 @@ function projectedRemaining(state = {}) {
   const elapsed = observedAt > 0 ? Math.max(0, (Date.now() - observedAt) / 1000) : 0;
   const duration = timeframeSeconds(clock.timeframe || state.analysisTimeframe || state.timeframe);
   const projected = raw - elapsed;
-  if (projected > 0) return projected;
-  if (duration && elapsed <= 4) {
-    const wrapped = duration + projected;
-    if (wrapped > 0 && wrapped <= duration) return wrapped;
-  }
   return Math.max(0, projected);
 }
 
@@ -1067,17 +1069,20 @@ $('activateLicense')?.addEventListener('click', async () => {
   if (response?.state) render(response.state);
 });
 
+let periodicStateReadBusy = false;
 setInterval(() => {
-  normalizeOperationalPulseLabels();
-  if (!lastRenderedState || !Object.keys(lastRenderedState).length) return;
-  const remaining = smoothedRemaining(lastRenderedState);
-  const exact = exactClockReady(lastRenderedState);
-  const actualTf = normTf(lastRenderedState.diagnostics?.marketClock?.timeframe || lastRenderedState.analysisTimeframe || lastRenderedState.timeframe);
-  setText('heroCountdown', remaining == null ? '—' : exact ? `${Math.ceil(remaining)}s` : `~${Math.ceil(remaining)}s`);
-  setText('secondsRemaining', remaining == null ? '—' : exact ? String(Math.max(0, Math.ceil(remaining))) : `~${Math.max(0, Math.ceil(remaining))}`);
-  // The entry card has its own 250ms clock. It must not depend on a new
-  // background snapshot to advance the visible seconds.
-  tickEntryScheduleClock();
+  try { normalizeOperationalPulseLabels(); } catch {}
+  try { tickEntryScheduleClock(); } catch {}
+
+  // Re-evaluate the decision against the same scanner state every second.
+  // This makes the POSSÍVEL -> ENTRADA CONFIRMADA transition independent of
+  // a new storage event and keeps the live countdown synchronized.
+  if (!lastRenderedState || !Object.keys(lastRenderedState).length || periodicStateReadBusy) return;
+  periodicStateReadBusy = true;
+  chrome.runtime.sendMessage({ type: 'ATS_READ_SCANNER_STATE' })
+    .then(response => { if (response?.state) render(response.state); })
+    .catch(() => {})
+    .finally(() => { periodicStateReadBusy = false; });
   const duration = timeframeSeconds(actualTf);
   const progress = $('candleProgress');
   if (progress) {

@@ -123,6 +123,63 @@
     const level = num(waiting.level) ?? (dir === 'BUY' ? num(analytics.breakoutHigh) : num(analytics.breakoutLow));
     return level == null ? null : { direction: dir, price: level };
   }
+  function liveNextCandleTarget() {
+    const now = Date.now();
+    const tfValue = tf(state?.analysisTimeframe || state?.timeframe || state?.diagnostics?.marketClock?.timeframe || 'M1');
+    const duration = secondsFor(tfValue);
+    if (!duration) return null;
+    const tfMs = duration * 1000;
+    const clock = state?.diagnostics?.marketClock || {};
+    let target = num(clock.closeAt);
+    if (target == null && Number(clock.at || 0) > 0 && num(clock.secondsRemaining) != null) {
+      target = Number(clock.at) + Number(clock.secondsRemaining) * 1000;
+    }
+    if (target == null) target = num(state?.candleCloseAt ?? state?.nextCandleStart);
+    if (target == null) {
+      target = Math.floor(now / tfMs) * tfMs + tfMs;
+    }
+    while (target <= now + 250) target += tfMs;
+    return { target, tf: tfValue, duration };
+  }
+
+  function renderLiveClockBadge(box, rect) {
+    box.querySelector('[data-ats-live-clock]')?.remove();
+    const next = liveNextCandleTarget();
+    if (!next) return;
+    const now = Date.now();
+    const remaining = Math.max(0, Math.ceil((next.target - now) / 1000));
+    const clock = document.createElement('div');
+    clock.dataset.atsLiveClock = '1';
+    Object.assign(clock.style, {
+      position: 'absolute', right: '12px', top: '12px', minWidth: '170px',
+      padding: '9px 11px', borderRadius: '13px', background: 'rgba(6,12,20,.94)',
+      border: '1px solid rgba(115,171,213,.42)', boxShadow: '0 10px 26px rgba(0,0,0,.34)',
+      color: '#fff', font: '600 11px system-ui', pointerEvents: 'none', lineHeight: '1.35',
+      textAlign: 'center', backdropFilter: 'blur(7px)'
+    });
+    clock.innerHTML =
+      '<div style="font-weight:900;letter-spacing:.08em;color:#8db5d1">CASATRADE • ' + next.tf + '</div>' +
+      '<div data-ats-now style="margin-top:2px;font-size:13px">AGORA ' + new Date(now).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'}) + '</div>' +
+      '<div data-ats-next style="margin-top:3px;font-weight:900;font-size:18px">' + new Date(next.target).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'}) + '</div>' +
+      '<div data-ats-left style="color:#74dcb5;font-weight:900">VIRA EM ' + remaining + 's</div>';
+    box.appendChild(clock);
+  }
+
+  function tickLiveClockBadge(box) {
+    const clock = box?.querySelector('[data-ats-live-clock]');
+    if (!clock) return;
+    const next = liveNextCandleTarget();
+    if (!next) return;
+    const now = Date.now();
+    const remaining = Math.max(0, Math.ceil((next.target - now) / 1000));
+    const nowEl = clock.querySelector('[data-ats-now]');
+    const nextEl = clock.querySelector('[data-ats-next]');
+    const leftEl = clock.querySelector('[data-ats-left]');
+    if (nowEl) nowEl.textContent = 'AGORA ' + new Date(now).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    if (nextEl) nextEl.textContent = new Date(next.target).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    if (leftEl) leftEl.textContent = remaining > 0 ? 'VIRA EM ' + remaining + 's' : 'VIRANDO AGORA';
+  }
+
   function renderSignalAlert(box, rect) {
     box.querySelector('[data-ats-signal-alert]')?.remove();
     if (!marketIntegrityOk()) return;
@@ -137,12 +194,12 @@
     const now = Date.now();
     const rawRemaining = num(clock.secondsRemaining);
     const observedAt = Number(clock.at || 0);
-    const projected = clock.verified === true && rawRemaining != null
+    const projected = rawRemaining != null && observedAt > 0
       ? Math.max(0, rawRemaining - Math.max(0, (now - observedAt) / 1000))
       : null;
-    const target = num(signal.targetStart ?? state.decisionCycle?.targetStart ?? clock.closeAt);
-    // A persisted signal whose target already passed belongs to the previous
-    // candle/session and must not appear as a fresh opportunity after reopen.
+    const signalTarget = num(signal.targetStart ?? state.decisionCycle?.targetStart);
+    const next = liveNextCandleTarget();
+    const target = signalTarget != null && signalTarget > now - 1200 && signalTarget <= (next?.target || now) + 1200 ? signalTarget : next?.target;
     if (target == null || target <= now + 500) return;
     let targetText = 'PRÓXIMA VELA';
     try {
@@ -222,6 +279,7 @@
     if (trigger) {
       addLine(trigger.price, trigger.direction === 'BUY' ? 'Entrada COMPRA' : 'Entrada VENDA', trigger.direction === 'BUY' ? '#58d6ad' : '#f07b94', true);
     }
+    renderLiveClockBadge(box, rect);
     renderSignalAlert(box, rect);
   }
   async function refresh() {
@@ -233,5 +291,9 @@
     if (changes[PREF_KEY]) { prefs = { ...DEFAULT_PREFS, ...(changes[PREF_KEY].newValue || {}) }; render(); }
     if (changes.scannerState) { state = changes.scannerState.newValue || null; render(); }
   });
-  setInterval(() => refresh().catch(() => {}), 1000); refresh().catch(() => {});
+  setInterval(() => {
+    try { tickLiveClockBadge(root); } catch {}
+    refresh().catch(() => {});
+  }, 1000);
+  refresh().catch(() => {});
 })();
