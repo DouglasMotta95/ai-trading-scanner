@@ -65,7 +65,7 @@ function performanceTargetBucket(targetStart, timeframe = 'M1') {
   const value = num(targetStart);
   if (value == null) return null;
   const tfMs = performanceTimeframeMs(timeframe);
-  return Math.round(value / tfMs) * tfMs;
+  return Math.floor(value / tfMs) * tfMs;
 }
 
 function median(values = []) {
@@ -192,18 +192,18 @@ function shadowMeasurements(state = {}, direction = '') {
 
 function performanceEmission(state = {}) {
   const signal = state.signal || {};
-  const professional = state.professionalDecision || {};
+  const professional = next.professionalDecision || state.professionalDecision || {};
   const professionalUi = clean(professional.uiState).toUpperCase();
   const technicalUi = clean(signal.uiState).toUpperCase();
   const hasProfessionalDecision = !!professionalUi || Number(professional.updatedAt || 0) > 0;
-  // Performance follows the user-facing professional decision. Once that layer
-  // exists, a technical ENTER blocked by time/expiration/hold is not a signal.
+  // Only a real ENTRADA belongs in the operational/performance ledger.
+  // POSSÍVEL remains analysis-only and never becomes a trade record.
   const ui = hasProfessionalDecision
-    ? (['ENTER_BUY','ENTER_SELL','POSSIBLE_BUY','POSSIBLE_SELL'].includes(professionalUi) ? professionalUi : '')
-    : (['ENTER_BUY','ENTER_SELL','POSSIBLE_BUY','POSSIBLE_SELL'].includes(technicalUi) ? technicalUi : '');
+    ? (['ENTER_BUY','ENTER_SELL'].includes(professionalUi) ? professionalUi : '')
+    : (['ENTER_BUY','ENTER_SELL'].includes(technicalUi) ? technicalUi : '');
   if (!ui) return null;
 
-  const type = ui.startsWith('ENTER_') ? 'ENTER' : 'POSSIBLE';
+  const type = 'ENTER';
   const direction = ui.endsWith('_BUY') ? 'BUY' : ui.endsWith('_SELL') ? 'SELL' : '';
   if (!direction) return null;
 
@@ -224,7 +224,7 @@ function performanceEmission(state = {}) {
 
   const analytics = signal.analytics || {};
   const power = Number(direction === 'BUY' ? analytics.buyPower : analytics.sellPower) || 0;
-  if (power < 50) return null;
+  if (power < 45) return null;
 
   const rawTargetStart = num(signal.targetStart ?? state.decisionCycle?.targetStart);
   if (rawTargetStart == null) return null;
@@ -279,7 +279,9 @@ async function updateSignalPerformanceLedger(state = {}) {
   const candles = Array.isArray(state.candles) ? state.candles : [];
   const stored = await storageLocalGet(SIGNAL_PERFORMANCE_KEY).catch(() => ({}));
   const current = stored?.[SIGNAL_PERFORMANCE_KEY];
-  let rows = Array.isArray(current?.rows) ? current.rows.slice(-SIGNAL_PERFORMANCE_MAX) : [];
+  let rows = Array.isArray(current?.rows)
+    ? current.rows.filter(row => clean(row?.type).toUpperCase() !== 'POSSIBLE').slice(-SIGNAL_PERFORMANCE_MAX)
+    : [];
   let changed = false;
 
   if (emission) {
@@ -470,6 +472,10 @@ function consolidatedSnapshot(state = {}) {
     return !rowTf || rowTf === timeframe;
   });
   if (candles.length < 2) return null;
+  const tfMs = performanceTimeframeMs(timeframe);
+  const latestCandleAt = candleTimestamp(candles.at(-1));
+  const currentCandleStart = latestCandleAt != null ? Math.floor(latestCandleAt / tfMs) * tfMs : null;
+  const nextCandleStart = currentCandleStart != null ? currentCandleStart + tfMs : null;
   const derivedSecondsRemaining = deriveCandleRemaining(candles, timeframe);
   const secondsRemaining = exactClock
     ? num(clock.secondsRemaining)
@@ -490,6 +496,9 @@ function consolidatedSnapshot(state = {}) {
     secondsRemaining,
     clockVerified: exactClock,
     clockSource: clean(clock?.source || ''),
+    candleOpenAt: currentCandleStart,
+    candleCloseAt: nextCandleStart,
+    nextCandleStart,
     serverTime: Date.now(),
     candles,
     capabilities: {
@@ -540,10 +549,17 @@ function reconcileSignalHistory(state = {}, next = {}, snapshot = {}) {
         expiration: snapshot.expiration || snapshot.targetExpiration || null,
         direction,
         targetStart: outcomeTargetStart,
+        targetCandleStart: outcomeTargetStart,
+        targetCandleId: [marketId(snapshot.asset), timeframe, Number(outcomeTargetStart)].join('|'),
+        signalAt: Date.now(),
+        signalPrice: num(state.price ?? next.price ?? snapshot.price),
         score: num(signal.analysisScore ?? signal.score),
         setup: signal.setup || null,
         createdAt: Date.now(),
+        entryTime: null,
         entryPrice: null,
+        entryStatus: 'waiting_candle_open',
+        entryCapturedAt: null,
         exitPrice: null,
         result: null,
         status: 'pending',
@@ -687,6 +703,30 @@ async function runCentralAnalysis(force = false) {
         : current;
 
       let processed = processSnapshot(snapshot, analysisState);
+      const processedUiBeforeGate = clean(processed?.signal?.uiState).toUpperCase();
+      const processedConfirmedBeforeGate = processed?.signal?.state === 'CONFIRM' || processedUiBeforeGate === 'ENTER_BUY' || processedUiBeforeGate === 'ENTER_SELL';
+      const activeOperationRows = (Array.isArray(current.signalHistory) ? current.signalHistory : [])
+        .filter(row => row && !row.result && clean(row.status).toLowerCase() !== 'resolved');
+      if (processedConfirmedBeforeGate && activeOperationRows.length) {
+        const currentTarget = Number(processed?.signal?.targetStart ?? processed?.decisionCycle?.targetStart ?? 0);
+        const sameActiveOperation = activeOperationRows.some(row =>
+          sameMarket(row.asset, snapshot.asset)
+          && clean(row.timeframe).toUpperCase() === clean(snapshot.analysisTimeframe || snapshot.timeframe).toUpperCase()
+          && Number(row.targetStart || 0) === currentTarget
+          && clean(row.direction).toUpperCase() === clean(processed?.signal?.direction).toUpperCase()
+        );
+        if (!sameActiveOperation) {
+          processed = {
+            ...processed,
+            signal: blockEntrySignal(processed.signal, 'operação anterior ainda não foi resolvida; aguardando resultado antes de liberar outra entrada'),
+            decisionCycle: {
+              ...(processed.decisionCycle || {}),
+              locked: 'WAIT',
+              reason: 'operação anterior ainda não foi resolvida; aguardando resultado antes de liberar outra entrada'
+            }
+          };
+        }
+      }
       const allowance = signalAllowance(analysisState);
       const processedUi = clean(processed?.signal?.uiState).toUpperCase();
       const processedConfirmed = processed?.signal?.state === 'CONFIRM' || processedUi === 'ENTER_BUY' || processedUi === 'ENTER_SELL';
