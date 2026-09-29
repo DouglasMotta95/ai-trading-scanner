@@ -128,7 +128,7 @@
     if (!marketIntegrityOk()) return;
     const signal = state?.signal || {};
     const professional = state?.professionalDecision || {};
-    const ui = String(professional.uiState || signal.uiState || '').toUpperCase();
+    const ui = String(professional.uiState || '').toUpperCase();
     const direction = String(professional.direction || signal.direction || '').toUpperCase();
     if (!['POSSIBLE_BUY','POSSIBLE_SELL','ENTER_BUY','ENTER_SELL'].includes(ui)) return;
     if (!['BUY','SELL'].includes(direction)) return;
@@ -141,6 +141,9 @@
       ? Math.max(0, rawRemaining - Math.max(0, (now - observedAt) / 1000))
       : null;
     const target = num(signal.targetStart ?? state.decisionCycle?.targetStart ?? clock.closeAt);
+    // A persisted signal whose target already passed belongs to the previous
+    // candle/session and must not appear as a fresh opportunity after reopen.
+    if (target == null || target <= now + 500) return;
     let targetText = 'PRÓXIMA VELA';
     try {
       if (target != null) targetText = new Date(target).toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
