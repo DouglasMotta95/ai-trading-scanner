@@ -213,8 +213,8 @@ export function waitingFor(recent = {}, direction = null, score = 0, profile = '
     if (!nextCandle.ready || nextCandle.direction !== chosenDirection) add({
       type: 'next_candle_continuation', direction: chosenDirection,
       label: 'Pressão para a próxima vela', level: null,
-      current: Number(nextCandle.score || 0), required: 64,
-      gap: Math.max(0, 64 - Number(nextCandle.score || 0)) / 64,
+      current: Number(nextCandle.score || 0), required: 60,
+      gap: Math.max(0, 60 - Number(nextCandle.score || 0)) / 60,
       text: nextCandle.reason || `Aguardando pressão ${buy ? 'compradora' : 'vendedora'} confirmar a próxima vela.`
     });
   }
@@ -368,42 +368,47 @@ export function nextCandleContinuation(rows = [], direction = null, metrics = {}
   const last = Array.isArray(rows) && rows.length ? rows[rows.length - 1] : null;
   if (!last || !['BUY', 'SELL'].includes(direction)) {
     return {
-      direction: direction || null,
-      ready: false,
-      score: 0,
-      pressure: 0,
-      favorableClose: 0,
-      bodyStrength: 0,
-      opposingWick: 100,
-      previousAlignment: 0,
-      momentumAligned: false,
-      momentumScore: 0,
+      direction: direction || null, ready: false, score: 0, pressure: 0,
+      favorableClose: 0, bodyStrength: 0, opposingWick: 100,
+      previousAlignment: 0, momentumAligned: false, momentumScore: 0,
       followThrough: false,
       reason: 'Sem vela direcional válida para confirmar a próxima vela.'
     };
   }
 
-  const range = Math.max(1e-12, Number(last.range || 0));
-  const closeFromLow = clamp(((Number(last.close) - Number(last.low)) / range) * 100);
-  const closeFromHigh = clamp(((Number(last.high) - Number(last.close)) / range) * 100);
+  // rows are raw OHLC candles here; derive the candle geometry locally.
+  const open = Number(last.open);
+  const high = Number(last.high);
+  const low = Number(last.low);
+  const close = Number(last.close);
+  const range = Math.max(1e-12, high - low);
+  const body = Math.abs(close - open);
+  const upper = Math.max(0, high - Math.max(open, close));
+  const lower = Math.max(0, Math.min(open, close) - low);
+  const bodyStrength = clamp((body / range) * 100);
+  const closeFromLow = clamp(((close - low) / range) * 100);
+  const closeFromHigh = clamp(((high - close) / range) * 100);
   const favorableClose = direction === 'BUY' ? closeFromLow : closeFromHigh;
-  const bodyStrength = clamp(Number(last.bodyRatio || 0) * 100);
-  const opposingWick = clamp(
-    Number(direction === 'BUY' ? last.upperRatio : last.lowerRatio || 0) * 100
-  );
+  const opposingWick = clamp(((direction === 'BUY' ? upper : lower) / range) * 100);
   const pressure = clamp(Number(direction === 'BUY' ? metrics.buyPower : metrics.sellPower) || 0);
   const momentumScore = clamp(Number(metrics.momentumScore || 0));
   const momentumAligned = metrics.momentumDirection === direction;
+
   const previous = Array.isArray(rows) ? rows.slice(0, -1).slice(-3) : [];
   const previousAlignment = previous.length
-    ? previous.filter(row => row.direction === direction).length / previous.length
+    ? previous.filter(row => {
+        const ro = Number(row?.open), rc = Number(row?.close);
+        const rowDirection = rc > ro ? 'BUY' : rc < ro ? 'SELL' : null;
+        return rowDirection === direction;
+      }).length / previous.length
     : 0;
+
   const triggerAligned = evidence.breakout === direction
     || evidence.rejection === direction
     || (evidence.continuationDirection === direction && Number(evidence.continuationScore || 0) >= 60);
 
-  // Entry-only gate for the NEXT candle. It intentionally does not modify the
-  // technical score, current direction, sensitivity profiles, or POSSÍVEL flow.
+  // Entry-only confirmation for the NEXT candle. This does not change the
+  // existing score, direction, POSSÍVEL signal or sensitivity profiles.
   const score = clamp(
     favorableClose * .30
       + bodyStrength * .25
@@ -413,30 +418,21 @@ export function nextCandleContinuation(rows = [], direction = null, metrics = {}
       - opposingWick * .15
   );
 
-  const shapeReady = favorableClose >= 58 && bodyStrength >= 30 && opposingWick <= 38;
-  const pressureReady = pressure >= 58 && score >= 64;
+  const shapeReady = favorableClose >= 58 && bodyStrength >= 30 && opposingWick <= 42;
+  const pressureReady = pressure >= 55 && score >= 60;
   const followThrough = (momentumAligned && momentumScore >= 45)
     || previousAlignment >= .67
     || triggerAligned;
-  const ready = score >= 64 && shapeReady && pressureReady && followThrough;
+  const ready = score >= 60 && shapeReady && pressureReady && followThrough;
 
   const reason = ready
     ? `Pressão ${direction === 'BUY' ? 'compradora' : 'vendedora'} confirma continuação da próxima vela (${Math.round(score)}/100).`
     : `Pressão para a próxima vela ainda insuficiente (${Math.round(score)}/100).`;
 
   return {
-    direction,
-    ready,
-    score,
-    pressure,
-    favorableClose,
-    bodyStrength,
-    opposingWick,
-    previousAlignment,
-    momentumAligned,
-    momentumScore,
-    followThrough,
-    reason
+    direction, ready, score, pressure, favorableClose, bodyStrength,
+    opposingWick, previousAlignment, momentumAligned, momentumScore,
+    followThrough, reason
   };
 }
 
