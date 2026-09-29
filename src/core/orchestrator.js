@@ -114,6 +114,8 @@ function targetStartOf(snapshot = {}, signal = {}) {
     target += Math.max(1, steps) * tfMs;
   }
   return Math.floor(target / tfMs) * tfMs;
+}
+
 function cycleKey(snapshot = {}, signal = {}) {
   const asset = clean(snapshot.asset || 'unknown');
   const timeframe = clean(snapshot.analysisTimeframe || snapshot.timeframe || signal.timeframe || 'M1').toUpperCase();
