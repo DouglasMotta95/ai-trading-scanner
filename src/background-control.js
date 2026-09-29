@@ -1,6 +1,6 @@
 import { activateLicense, validateLicense, clearLicense } from './services/license.js';
 import { readScannerState, updateScannerState } from './services/scanner-state-atomic.js';
-import { storageLocalGet, storageSessionGet, storageSessionSet, storageSessionRemove, tabsQuery, tabsGet, sidePanelSetBehavior, scriptingExecuteScript, windowsCreate, windowsGet, windowsUpdate, windowsRemove, windowsApiAvailable } from './services/chrome-compat.js';
+import { storageLocalGet, storageLocalSet, storageSessionGet, storageSessionSet, storageSessionRemove, tabsQuery, tabsGet, sidePanelSetBehavior, scriptingExecuteScript, windowsCreate, windowsGet, windowsUpdate, windowsRemove, windowsApiAvailable } from './services/chrome-compat.js';
 import { detectPlatform } from './platforms/registry.js';
 import { clearMarketAuthorityState, clearUserDeclaredExpirationState } from './background-market-session.js';
 import { getOperationMode } from './core/analysis.js';
@@ -1121,12 +1121,13 @@ async function connectActiveTab({ automatic = false, preferredTabId = null } = {
     // session while CasaTrade is still loading. Preserve the live session only
     // when the same tab is already proven live by a fresh focus/data sample AND
     // the current exact CasaTrade clock is available.
-    const exactLiveResume = handshakeReady(restartBase);
+    // Reopening the scanner must not erase a healthy same-tab session merely
+    // because the exact clock reader is between samples. The exact clock remains
+    // mandatory for a final manual entry, but not for preserving live market data.
     const preserveLive = sameTab && restartBase.connection === 'online'
       && focus?.reliable === true && focus?.trustedChartFrame === true
       && sessionStillOwned
-      && focusFresh && dataFresh
-      && exactLiveResume;
+      && focusFresh && dataFresh;
 
     const diagnostics = { ...(restartBase.diagnostics || {}) };
     delete diagnostics.connectionError;
@@ -1228,8 +1229,24 @@ async function connectActiveTab({ automatic = false, preferredTabId = null } = {
   return { ok: true, platform: { id: platform.id, name: platform.name }, tabId: tab.id, controls: probed || null, state: finalControlsState };
 }
 
+async function restoreCasaTradeDeviceAnchor(tabId = 0) {
+  const id = Number(tabId || 0);
+  if (!id || !chrome.tabs?.sendMessage) return false;
+  try {
+    const reply = await chrome.tabs.sendMessage(id, { type: 'ATS_GET_DEVICE_ANCHOR' }, { frameId: 0 });
+    const anchor = String(reply?.anchor || '').trim();
+    if (!/^ats-install-[0-9a-f-]{20,80}$/i.test(anchor)) return false;
+    await storageLocalSet({ atsInstallationId: anchor });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function activate(key = '') {
   const { settings = {} } = await storageLocalGet('settings').catch(() => ({}));
+  const tabInfo = await activePlatformTab().catch(() => ({ tab: null, platform: null }));
+  await restoreCasaTradeDeviceAnchor(tabInfo?.tab?.id);
   const response = await activateLicense(settings, clean(key));
   const license = response?.license || null;
   const ok = response?.ok === true && activeLicense(license);
