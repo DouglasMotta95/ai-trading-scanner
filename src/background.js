@@ -497,7 +497,11 @@ function consolidatedSnapshot(state = {}) {
     ? authoritativeCloseAt
     : currentCandleStart != null
       ? currentCandleStart + tfMs
-      : null;  return {
+      : null;
+  const secondsRemaining = exactClock
+    ? Math.max(0, Math.ceil(Number(clock.secondsRemaining || 0) - Math.max(0, (Date.now() - Number(clock.at || Date.now())) / 1000)))
+    : deriveCandleRemaining(candles, timeframe, Date.now());
+  return {
     platformId: state.platformId || 'casatrade',
     platformName: state.platformName || 'CasaTrade',
     connection: 'online',
