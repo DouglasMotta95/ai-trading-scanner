@@ -638,16 +638,8 @@ let liveClockRuntimeTarget = 0;
 let liveClockRuntimeState = {};
 
 function liveClockTarget(state = {}) {
-  const now = Date.now();
-  const clock = state.diagnostics?.marketClock || {};
-  const closeAt = num(clock.closeAt);
-  if (closeAt != null && closeAt > now + 250) return closeAt;
-  const at = Number(clock.at || 0);
-  const remaining = num(clock.secondsRemaining);
-  if (at > 0 && remaining != null) {
-    const target = at + Math.max(0, remaining) * 1000;
-    if (target > now + 250) return target;
-  }
+  const timing = usableClock(state);
+  if (timing?.closeAt != null && timing.closeAt > Date.now() + 250) return timing.closeAt;
   return null;
 }
 
