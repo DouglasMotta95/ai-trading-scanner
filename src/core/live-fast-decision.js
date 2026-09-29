@@ -286,7 +286,10 @@ export function fastLiveDecision(signal = {}, context = {}) {
   const direction = stabilized.direction;
   const q = quality(signal, direction, thresholds, confirmationMode, signalPolicy);
 
-  const minimumPossibleReady = score >= signalPolicy.possibleScore && q.power >= 45;
+  const minimumPossibleReady = score >= signalPolicy.possibleScore && q.power >= signalPolicy.possiblePower;
+  const minimumFinalReady = ['BUY', 'SELL'].includes(direction)
+    && score >= signalPolicy.finalScore
+    && q.power >= signalPolicy.finalPower;
   if (!minimumPossibleReady) {
     const heldHits = observe(key, direction, false, at, q, score);
     if (seconds <= finalWindowSeconds && heldHits > 0) {
@@ -300,8 +303,22 @@ export function fastLiveDecision(signal = {}, context = {}) {
     return possible(signal, direction, score, seconds, q);
   }
 
+  // v0.11.116: primary final promotion is immediate at the selected profile
+  // score/power floor. Next-candle quality remains diagnostic, never a veto.
+  if (minimumFinalReady) {
+    trackers.set(key, {
+      direction,
+      hits: 1,
+      at,
+      weakHits: 0,
+      lastScore: score,
+      quality: q
+    });
+    return enter(signal, direction, score, seconds, q);
+  }
+
   const strong = score >= signalPolicy.finalScore
-    && q.power >= 45
+    && q.power >= signalPolicy.finalPower
     && q.nextCandleReady === true
     && q.entryQualityReady === true;
   const hits = observe(key, direction, strong, at, q, score);

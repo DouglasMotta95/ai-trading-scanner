@@ -4,19 +4,22 @@ import fs from 'node:fs';
 
 const read = path => fs.readFileSync(new URL('../' + path, import.meta.url), 'utf8');
 
-test('v0.11.82: exact and derived timing paths are explicitly separated', () => {
+test('v0.11.116: exact and fallback timing paths stay explicitly separated', () => {
   const policy = read('src/background-decision-policy.js');
+  const background = read('src/background.js');
   assert.match(policy, /authoritative: true/);
   assert.match(policy, /authoritative: false/);
-  assert.match(policy, /derived-candle-boundary/);
-  assert.match(policy, /derived-snapshot-clock/);
+  assert.match(policy, /quality: exact \? 'exact' : 'fallback'/);
+  assert.match(background, /clockQuality: 'fallback'/);
+  assert.match(background, /derived-candle-boundary/);
 });
 
-test('v0.11.82: derived timing cannot authorize final entry', () => {
+test('v0.11.116: fallback timing keeps the live cycle running without claiming exact authority', () => {
   const policy = read('src/background-decision-policy.js');
-  assert.match(policy, /time\.authoritative !== true/);
-  assert.match(policy, /actionable: false/);
-  assert.match(policy, /countdown exato da CasaTrade/);
+  assert.match(policy, /function usableCasaTradeTime/);
+  assert.match(policy, /quality: 'fallback'/);
+  assert.match(policy, /projectedFromLastGood/);
+  assert.match(policy, /const time = usableCasaTradeTime\(state\)/);
 });
 
 test('v0.11.82: technical score is independent from exact timing presentation', () => {

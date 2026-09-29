@@ -177,7 +177,50 @@ function clockBoundToFocus(clock = {}, focus = {}) {
   return sameFrame || boundControlFrame;
 }
 
+function usableClock(state = {}) {
+  const focus = state.diagnostics?.focusedAsset || {};
+  if (!focusReady(state)) return null;
+  const operation = operationRequirement(state);
+  const tf = operation.timeframe;
+  const duration = operation.durationSeconds;
+  const now = Date.now();
+  const current = state.diagnostics?.marketClock || null;
+  const lastGood = state.diagnostics?.marketClockLastGood || null;
+  for (const clock of [current, lastGood].filter(Boolean)) {
+    if (clock.available === false) continue;
+    if (!sameMarket(clock.asset, state.asset)) continue;
+    if (!clockBoundToFocus(clock, focus)) continue;
+    if (normTf(clock.timeframe) !== tf) continue;
+    let closeAt = num(clock.closeAt);
+    const anchorAt = Number(clock.at || 0);
+    const rawRemaining = num(clock.secondsRemaining);
+    if (closeAt == null && anchorAt > 0 && rawRemaining != null) closeAt = anchorAt + Math.max(0, rawRemaining) * 1000;
+    if (closeAt == null) continue;
+    const tfMs = duration * 1000;
+    while (closeAt <= now + 250) closeAt += tfMs;
+    const remaining = Math.max(0, Math.min(duration, Math.ceil((closeAt - now) / 1000)));
+    if (remaining <= 0) continue;
+    const exact = clock === current
+      && clock.verified === true
+      && ['trader-dom-countdown', 'network-server-cycle'].includes(String(clock.source || ''))
+      && anchorAt > 0
+      && now - anchorAt < 4500;
+    return {
+      ...clock,
+      closeAt,
+      secondsRemaining: remaining,
+      verified: exact,
+      timingQuality: exact ? 'exact' : 'fallback'
+    };
+  }
+  return null;
+}
+
 function clockBaseReady(state = {}) {
+  return usableClock(state) != null;
+}
+
+function exactClockReady(state = {}) {
   const clock = state.diagnostics?.marketClock || {};
   const focus = state.diagnostics?.focusedAsset || {};
   return focusReady(state)
@@ -187,19 +230,13 @@ function clockBaseReady(state = {}) {
     && clockBoundToFocus(clock, focus)
     && Number(clock.at || 0) > 0
     && Date.now() - Number(clock.at) < 4500
-    && num(clock.secondsRemaining) != null;
-}
-
-function exactClockReady(state = {}) {
-  const clock = state.diagnostics?.marketClock || {};
-  if (!clockBaseReady(state)) return false;
-  return clock.verified === true && ['trader-dom-countdown', 'network-server-cycle'].includes(String(clock.source || ''));
+    && num(clock.secondsRemaining) != null
+    && clock.verified === true
+    && ['trader-dom-countdown', 'network-server-cycle'].includes(String(clock.source || ''));
 }
 
 function operationalClockReady(state = {}) {
-  // There is no operational fallback clock anymore. The bot may only use
-  // an exact CasaTrade countdown source as time authority.
-  return exactClockReady(state);
+  return usableClock(state) != null;
 }
 
 function sessionReady(state = {}) {
@@ -221,8 +258,8 @@ function expirationTimingCompatible(expiration = {}, operation = {}) {
 }
 
 function liveTimingReady(state = {}) {
-  if (!exactClockReady(state)) return false;
-  const clock = state.diagnostics?.marketClock || {};
+  const clock = usableClock(state);
+  if (!clock) return false;
   const expiration = expirationObservation(state);
   const operation = operationRequirement(state);
   return expirationTimingCompatible(expiration, operation)
@@ -230,8 +267,8 @@ function liveTimingReady(state = {}) {
 }
 
 function entryTimeReady(state = {}) {
-  if (!exactClockReady(state)) return false;
-  const clock = state.diagnostics?.marketClock || {};
+  const clock = usableClock(state);
+  if (!clock) return false;
   const expiration = expirationObservation(state);
   const operation = operationRequirement(state);
   if (!expirationTimingCompatible(expiration, operation)) return false;
@@ -242,7 +279,7 @@ function entryTimeReady(state = {}) {
   if (expiration.value !== operation.expiration) return false;
   if (stateTf && stateTf !== clockTf) return false;
   if (controlTf && controlTf !== clockTf) return false;
-  return state.professionalDecision?.timeReady === true && state.professionalDecision?.expirationReady === true;
+  return true;
 }
 
 function completeCandle(row = {}) {
@@ -253,14 +290,15 @@ function liveCycleKey(state = {}) {
   const tf = normTf(state.analysisTimeframe || state.timeframe);
   const seconds = timeframeSeconds(tf);
   if (!state.asset || !tf || !seconds) return '';
-  let targetStart = num(state.diagnostics?.marketClock?.closeAt) ?? num(state.signal?.targetStart);
+  const timing = usableClock(state);
+  let targetStart = num(timing?.closeAt) ?? num(state.diagnostics?.marketClock?.closeAt) ?? num(state.signal?.targetStart);
   if (targetStart != null) {
     if (targetStart <= Date.now() - 500) {
       targetStart += Math.ceil((Date.now() - targetStart + 500) / (seconds * 1000)) * seconds * 1000;
     }
     return `${marketId(state.asset)}|${tf}|${Math.round(targetStart / 1000) * 1000}`;
   }
-  const remaining = num(state.diagnostics?.marketClock?.secondsRemaining);
+  const remaining = num(timing?.secondsRemaining) ?? num(state.diagnostics?.marketClock?.secondsRemaining);
   if (remaining == null) return `${marketId(state.asset)}|${tf}|unknown`;
   const estimatedClose = Date.now() + remaining * 1000;
   return `${marketId(state.asset)}|${tf}|${Math.round(estimatedClose / Math.max(1000, seconds * 1000))}`;
@@ -308,7 +346,8 @@ function entryBlockReason(state = {}) {
   if (expiration.value !== operation.expiration) return `AJUSTE A EXPIRAÇÃO DA CASATRADE PARA ${expirationLabel}`;
 
   const clock = state.diagnostics?.marketClock || {};
-  if (!exactClockReady(state)) return 'COUNTDOWN REAL PENDENTE — AGUARDANDO TEMPO EXATO DA CASATRADE';
+  if (!usableClock(state)) return 'COUNTDOWN PENDENTE — nenhuma fonte de tempo utilizável da CasaTrade disponível';
+  if (!exactClockReady(state)) return 'COUNTDOWN EM CONTINUIDADE — usando a última leitura válida da CasaTrade';
 
   const clockTf = normTf(clock.timeframe);
   if (clockTf !== operation.timeframe) return `AJUSTE O TIMEFRAME DA CASATRADE PARA ${operation.timeframe}`;
@@ -321,7 +360,7 @@ function gateKind(state = {}) {
   if (!expiration.value) return 'waiting';
   if (expiration.verified !== true) return 'waiting';
   if (expiration.value !== operation.expiration) return 'rule';
-  if (!exactClockReady(state)) return 'waiting';
+  if (!usableClock(state)) return 'waiting';
   const clockTf = normTf(state.diagnostics?.marketClock?.timeframe);
   if (clockTf !== operation.timeframe) return 'rule';
   return 'waiting';
@@ -564,6 +603,94 @@ function renderLicense(state = {}) {
   return active;
 }
 
+function ensureLiveClockUi() {
+  const decisionCard = $('decisionCard');
+  if (!decisionCard) return;
+
+  let bar = $('liveClockBar');
+  if (!bar) {
+    bar = document.createElement('section');
+    bar.id = 'liveClockBar';
+    bar.className = 'live-clock-bar pending';
+    bar.setAttribute('aria-live', 'polite');
+    bar.innerHTML = '<div class="live-clock-main"><span>HORÁRIO ATUAL</span><b id="liveClockNow">--:--:--</b></div>' +
+      '<div class="live-clock-next"><span>PRÓXIMA VELA</span><b id="liveClockNext">--:--:--</b><small id="liveClockCountdown">AGUARDANDO CLOCK</small></div>';
+    const syncStrip = $('syncStrip');
+    if (syncStrip) syncStrip.insertAdjacentElement('afterend', bar);
+    else decisionCard.insertAdjacentElement('beforebegin', bar);
+  }
+
+  if ($('atsLiveClockStyle')) return;
+  const style = document.createElement('style');
+  style.id = 'atsLiveClockStyle';
+  style.textContent = `
+    .live-clock-bar{display:grid;grid-template-columns:1fr 1.15fr;gap:8px;margin:8px 0 10px;padding:10px 12px;border:1px solid #294862;border-radius:16px;background:linear-gradient(180deg,#0a1a29,#081521);box-shadow:0 10px 28px rgba(0,0,0,.18);text-align:center}
+    .live-clock-bar>div{display:grid;gap:2px;min-width:0}
+    .live-clock-bar span{font-size:9px;font-weight:900;letter-spacing:.11em;color:#7fa0b8}
+    .live-clock-bar b{font-size:23px;line-height:1.05;font-weight:900;color:#edf8ff;font-variant-numeric:tabular-nums}
+    .live-clock-bar small{font-size:10px;font-weight:900;color:#74dcb5;letter-spacing:.05em;min-height:12px}
+    .live-clock-bar.pending{border-color:#5f4f28}.live-clock-bar.pending small{color:#e0c56e}
+  `;
+  document.head.append(style);
+}
+
+let liveClockRuntimeTarget = 0;
+let liveClockRuntimeState = {};
+
+function liveClockTarget(state = {}) {
+  const timing = usableClock(state);
+  if (timing?.closeAt != null && timing.closeAt > Date.now() + 250) return timing.closeAt;
+  return null;
+}
+
+function syncLiveClockRuntime(state = {}) {
+  liveClockRuntimeState = state || {};
+  const nextTarget = liveClockTarget(liveClockRuntimeState);
+  if (nextTarget != null && nextTarget > Date.now() + 250) {
+    liveClockRuntimeTarget = nextTarget;
+  } else if (liveClockRuntimeTarget && liveClockRuntimeTarget <= Date.now() + 250) {
+    liveClockRuntimeTarget = 0;
+  }
+}
+
+function tickLiveClock() {
+  const bar = $('liveClockBar');
+  if (!bar) return;
+  const now = Date.now();
+  const nowEl = $('liveClockNow');
+  if (nowEl) nowEl.textContent = new Date(now).toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+
+  const target = liveClockRuntimeTarget;
+  const nextEl = $('liveClockNext');
+  const countEl = $('liveClockCountdown');
+
+  if (!target || target <= now + 50) {
+    bar.classList.add('pending');
+    if (nextEl) nextEl.textContent = '--:--:--';
+    if (countEl) countEl.textContent = 'AGUARDANDO NOVO CICLO';
+    return;
+  }
+
+  bar.classList.remove('pending');
+  const remaining = Math.max(0, Math.ceil((target - now) / 1000));
+  if (nextEl) nextEl.textContent = new Date(target).toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+  if (countEl) countEl.textContent = 'VIRA EM ' + remaining + 's';
+}
+
+function startLiveClockRuntime() {
+  if (globalThis.__ATS_LIVE_CLOCK_RUNTIME__) return;
+  globalThis.__ATS_LIVE_CLOCK_RUNTIME__ = true;
+  const pump = () => {
+    try {
+      ensureLiveClockUi();
+      tickLiveClock();
+      tickEntryScheduleClock();
+    } catch {}
+  };
+  pump();
+  setInterval(pump, 250);
+}
+
 function ensureEntryScheduleUi() {
   const card = $('decisionCard');
   if (!card) return;
@@ -728,23 +855,8 @@ let lastRenderedState = {};
 let countdownUi = { value: null, at: 0, cycle: '' };
 
 function projectedRemaining(state = {}) {
-  // Keep the real CasaTrade observation as the only clock authority, but project
-  // between two exact samples so the UI does not freeze at 0s during the DOM
-  // rollover. Projection is bounded to one candle and never invents a source.
-  if (!exactClockReady(state)) return null;
-  const clock = state.diagnostics?.marketClock || {};
-  const raw = num(clock.secondsRemaining);
-  const observedAt = Number(clock.at || 0);
-  if (raw == null) return null;
-  const elapsed = observedAt > 0 ? Math.max(0, (Date.now() - observedAt) / 1000) : 0;
-  const duration = timeframeSeconds(clock.timeframe || state.analysisTimeframe || state.timeframe);
-  const projected = raw - elapsed;
-  if (projected > 0) return projected;
-  if (duration && elapsed <= 4) {
-    const wrapped = duration + projected;
-    if (wrapped > 0 && wrapped <= duration) return wrapped;
-  }
-  return Math.max(0, projected);
+  const clock = usableClock(state);
+  return clock ? num(clock.secondsRemaining) : null;
 }
 
 function smoothedRemaining(state = {}) {
@@ -759,9 +871,13 @@ function smoothedRemaining(state = {}) {
 function render(state = {}) {
   const licensed = renderLicense(state);
   if (!licensed) return;
+  ensureLiveClockUi();
+  syncLiveClockRuntime(state);
+  tickLiveClock();
+  startLiveClockRuntime();
   const model = decisionModel(state);
   renderEntrySchedule(state, model);
-  const clock = state.diagnostics?.marketClock || {};
+  const clock = usableClock(state) || state.diagnostics?.marketClock || {};
   const exact = exactClockReady(state);
   const dataLive = sessionReady(state);
   const timeReady = entryTimeReady(state);
@@ -812,12 +928,14 @@ function render(state = {}) {
   const countdownText = remaining == null ? '—' : `${remaining}s`;
   setText('heroCountdown', countdownText);
   setText('secondsRemaining', remaining == null ? '—' : String(remaining));
+  const usableTiming = usableClock(state);
   if (exact) setSourceState('countdownSource', 'REAL', 'real', 'Countdown exato lido da CasaTrade.');
-  else setSourceState('countdownSource', 'PENDENTE', 'estimated', 'Aguardando countdown real da CasaTrade; nenhum tempo local é usado.');
+  else if (usableTiming) setSourceState('countdownSource', 'CONTINUIDADE', 'estimated', 'Mantendo a última leitura válida enquanto a CasaTrade atualiza o relógio.');
+  else setSourceState('countdownSource', 'PENDENTE', 'estimated', 'Nenhuma fonte de tempo utilizável disponível.');
 
-  setText('heroTimeStatus', timeReady ? 'OK' : 'AGUARDAR');
-  setText('sessionMode', timeReady ? 'LIVE' : exact ? 'LIVE • GATE' : 'LIVE • CLOCK PENDENTE');
-  setText('timeSyncStatus', exact ? 'EXATO • CASATRADE' : 'PENDENTE');
+  setText('heroTimeStatus', timeReady ? 'OK' : usableTiming ? 'CONTINUIDADE' : 'AGUARDAR');
+  setText('sessionMode', timeReady ? 'LIVE' : usableTiming ? 'LIVE • CONTINUIDADE' : 'LIVE • CLOCK PENDENTE');
+  setText('timeSyncStatus', exact ? 'EXATO • CASATRADE' : usableTiming ? 'ÚLTIMA LEITURA • CASATRADE' : 'PENDENTE');
 
   setText('signalTitle', model.title);
   setText('decisionText', model.text);
@@ -1069,6 +1187,7 @@ $('activateLicense')?.addEventListener('click', async () => {
 
 setInterval(() => {
   normalizeOperationalPulseLabels();
+  tickLiveClock();
   if (!lastRenderedState || !Object.keys(lastRenderedState).length) return;
   const remaining = smoothedRemaining(lastRenderedState);
   const exact = exactClockReady(lastRenderedState);

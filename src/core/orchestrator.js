@@ -123,6 +123,24 @@ function cycleKey(snapshot = {}, signal = {}) {
 function confirmationModeOf(state = {}) {
   return clean(state.analystPreferences?.confirmationMode).toUpperCase() === 'EXIGENTE' ? 'EXIGENTE' : 'SIMPLES';
 }
+function expirationCompatible(state = {}, snapshot = {}) {
+  const mode = clean(state.analystPreferences?.operationMode || snapshot.analysisTimeframe || snapshot.timeframe || 'M1').toUpperCase();
+  const required = mode === 'M5' ? '300s' : '60s';
+  const controls = state.platformControls || {};
+  const norm = value => {
+    const raw = clean(value).toLowerCase().replace(/\s+/g, '');
+    let m = raw.match(/^(\d{1,4})(?:m|min|minuto|minutos)$/);
+    if (m) return String(Number(m[1]) * 60) + 's';
+    m = raw.match(/^(\d{1,5})(?:s|seg|segundo|segundos)$/);
+    return m ? String(Number(m[1])) + 's' : null;
+  };
+  const value = norm(controls.realExpiration || controls.observed?.expiration || '')
+    || norm(controls.userDeclaredExpiration || '')
+    || norm(snapshot.expiration || '')
+    || null;
+  return value === required;
+}
+
 
 function highConfidenceEvidence(signal = {}, direction = null, thresholds = getThresholds()) {
   const analytics = signal.analytics || {};
@@ -739,39 +757,22 @@ export function processSnapshot(snapshot = {}, state = {}) {
     return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: nextSignal, decisionCycle: { ...cycle }, candidateBlockerTrace };
   }
 
-  if (timingVerified && technicalFinal && quality.qualifies) {
-    cycle.locked = 'ENTER';
-    cycle.direction = direction;
-    cycle.score = Math.max(score, Number(signal.score || 0));
-    cycle.setup = signal.setup || quality.setup || null;
-    cycle.reason = signal.reason;
-    cycle.decidedAt = at;
-    cycles.set(key, cycle);
-    const trace = appendTrace(state, { key, targetStart: cycle.targetStart, decision: 'ENTER', direction: cycle.direction, score: cycle.score, setup: cycle.setup, reason: cycle.reason, decidedAt: at });
-    return {
-      ...result,
-      lastConfirmed: rolledLastConfirmed || result.lastConfirmed,
-      signal: enterSignal(signal, cycle, direction, cycle.score, cycle.reason),
-      decisionCycle: { ...cycle },
-      decisionTrace: trace,
-      candidateBlockerTrace
-    };
-  }
-
-  const assertiveFinalReady = ['BUY', 'SELL'].includes(direction)
+  const operationTimeframe = clean(snapshot.analysisTimeframe || snapshot.timeframe || signal.timeframe || 'M1').toUpperCase();
+  const finalMinimumReady = ['BUY', 'SELL'].includes(direction)
     && score >= signalPolicy.finalScore
-    && power >= 45
-    && quality.nextCandleReady === true
-    && quality.entryQualityReady === true;
-  const stable = timingVerified
-    ? observeDecision(cycle, direction, assertiveFinalReady, at)
-    : false;
-  if (quality.qualifies) cycle.setup = quality.setup;
-  if (stable) {
+    && power >= signalPolicy.finalPower
+    && expirationCompatible(state, snapshot)
+    && snapshot.connection === 'online'
+    && secondsRemaining > windows.skip;
+
+  // v0.11.116: score + directional power + direction + compatible timing are
+  // enough for the primary final decision. Optional quality layers are trace-only.
+  if (finalMinimumReady) {
     cycle.locked = 'ENTER';
     cycle.direction = direction;
     cycle.score = score;
-    cycle.reason = `${direction === 'BUY' ? 'COMPRA' : 'VENDA'} — ALTA CONFIANÇA • ENTRAR NA PRÓXIMA VELA • score ${Math.round(score)}/100 • ${cycle.setup || 'confluência forte'}.`;
+    cycle.setup = signal.setup || quality.setup || null;
+    cycle.reason = (direction === 'BUY' ? 'COMPRA' : 'VENDA') + ' — ENTRADA LIBERADA • ' + operationTimeframe + ' • score ' + Math.round(score) + '/100 • poder ' + Math.round(power) + '%.';
     cycle.decidedAt = at;
     cycles.set(key, cycle);
     const trace = appendTrace(state, { key, targetStart: cycle.targetStart, decision: 'ENTER', direction, score, setup: cycle.setup, reason: cycle.reason, decidedAt: at });
@@ -785,12 +786,12 @@ export function processSnapshot(snapshot = {}, state = {}) {
     };
   }
 
-  if (timingVerified && secondsRemaining <= windows.skip) {
-    const blocker = clean(signal.waitingFor?.text || signal.reason || quality.commonReason || 'qualidade insuficiente para a próxima vela');
+  if (secondsRemaining <= windows.skip) {
+    const blocker = clean(signal.reason || quality.commonReason || 'qualidade insuficiente para a próxima vela');
     cycle.locked = 'WAIT';
     cycle.direction = null;
     cycle.score = score;
-    cycle.reason = `AGUARDAR — ${blocker}`;
+    cycle.reason = 'AGUARDAR — ' + blocker;
     cycle.decidedAt = at;
     cycles.set(key, cycle);
     candidateBlockerTrace = markCandidateWait(candidateBlockerTrace, key, secondsRemaining, cycle.reason);

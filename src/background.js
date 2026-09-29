@@ -426,14 +426,64 @@ function deriveCandleRemaining(candles = [], timeframe = '', now = Date.now()) {
   if (!latest) return null;
   const currentBucket = Math.floor(now / tfMs) * tfMs;
   const openAt = Math.floor(Number(latest.time) / tfMs) * tfMs;
-  // Only use a candle whose timestamp is on the active timeframe grid and
-  // belongs to the candle that is open right now. Historical candles are never
-  // rolled forward by guesswork.
   if (openAt !== currentBucket) return null;
   if (Math.abs(Number(latest.time) - currentBucket) > 1500) return null;
   const remainingMs = openAt + tfMs - now;
   if (remainingMs < -1500 || remainingMs > tfMs + 1500) return null;
   return Math.max(0, Math.min(Math.round(tfMs / 1000), Math.ceil(Math.max(0, remainingMs) / 1000)));
+}
+
+function projectedClockForAnalysis(state = {}, timeframe = '', now = Date.now()) {
+  const tfMs = performanceTimeframeMs(timeframe);
+  if (!tfMs) return null;
+  const focus = state.diagnostics?.focusedAsset || {};
+  const current = state.diagnostics?.marketClock || null;
+  const lastGood = state.diagnostics?.marketClockLastGood || null;
+  const candidates = [current, lastGood].filter(Boolean);
+  for (const clock of candidates) {
+    if (!sameMarket(clock.asset, state.asset)) continue;
+    if (normTf(clock.timeframe) !== normTf(timeframe)) continue;
+    if (clock.available === false) continue;
+    let closeAt = num(clock.closeAt);
+    const anchorAt = num(clock.at);
+    const remaining = num(clock.secondsRemaining);
+    if (closeAt == null && anchorAt != null && remaining != null) closeAt = anchorAt + Math.max(0, remaining) * 1000;
+    if (closeAt == null) continue;
+    while (closeAt <= now + 250) closeAt += tfMs;
+    const secondsRemaining = Math.max(0, Math.min(Math.round(tfMs / 1000), Math.ceil((closeAt - now) / 1000)));
+    if (secondsRemaining <= 0 || secondsRemaining > Math.round(tfMs / 1000) + 1) continue;
+    const exact = clock === current
+      && clock.verified === true
+      && EXACT_CLOCK_SOURCES.has(clean(clock.source))
+      && anchorAt != null
+      && now - anchorAt <= CLOCK_FRESH_MS;
+    return {
+      closeAt,
+      currentCandleStart: closeAt - tfMs,
+      nextCandleStart: closeAt,
+      secondsRemaining,
+      clockVerified: exact,
+      clockSource: clean(clock.source || ''),
+      clockQuality: exact ? 'exact' : 'fallback',
+      clockAuthoritative: exact,
+      focusFresh: Number(focus.at || 0) > 0 && now - Number(focus.at) < 12000
+    };
+  }
+  const derived = deriveCandleRemaining(state.candles || [], timeframe, now);
+  if (derived == null) return null;
+  const currentCandleStart = Math.floor(now / tfMs) * tfMs;
+  const closeAt = currentCandleStart + tfMs;
+  return {
+    closeAt,
+    currentCandleStart,
+    nextCandleStart: closeAt,
+    secondsRemaining: derived,
+    clockVerified: false,
+    clockSource: 'derived-candle-boundary',
+    clockQuality: 'fallback',
+    clockAuthoritative: false,
+    focusFresh: Number(focus.at || 0) > 0 && now - Number(focus.at) < 12000
+  };
 }
 
 function consolidatedSnapshot(state = {}) {
@@ -467,6 +517,8 @@ function consolidatedSnapshot(state = {}) {
     && Date.now() - Number(clock.at) <= CLOCK_FRESH_MS;
   const timeframe = normTf((exactClock ? clock.timeframe : null) || state.analysisTimeframe || state.timeframe || state.diagnostics?.marketSession?.timeframe);
   if (!timeframe) return null;
+  const projectedClock = projectedClockForAnalysis(state, timeframe, Date.now());
+  if (!projectedClock) return null;
   const candles = historyFor(state, asset).filter(row => {
     const rowTf = normTf(row?.timeframe);
     return !rowTf || rowTf === timeframe;
@@ -478,31 +530,13 @@ function consolidatedSnapshot(state = {}) {
   // analysis fallback. Only the candle boundary uses CasaTrade's exact clock
   // when that exact sample is fresh, preventing rollover from keeping the old
   // candle as "next".
-  const exactClockCloseAt = exactClock
-    ? num(clock.closeAt)
-      ?? ((num(clock.at) != null && num(clock.secondsRemaining) != null)
-        ? num(clock.at) + Math.max(0, num(clock.secondsRemaining)) * 1000
-        : null)
-    : null;
-  const authoritativeCloseAt = exactClockCloseAt != null
-    ? Math.round(exactClockCloseAt / tfMs) * tfMs
-    : null;
-  const currentCandleStart = authoritativeCloseAt != null
-    ? authoritativeCloseAt - tfMs
-    : latestCandleAt != null
-      ? Math.floor(latestCandleAt / tfMs) * tfMs
-      : null;
-  const nextCandleStart = authoritativeCloseAt != null
-    ? authoritativeCloseAt
-    : currentCandleStart != null
-      ? currentCandleStart + tfMs
-      : null;
-  const derivedSecondsRemaining = deriveCandleRemaining(candles, timeframe);
-  const secondsRemaining = exactClock
-    ? num(clock.secondsRemaining)
-    : derivedSecondsRemaining;
-  if (exactClock && (secondsRemaining == null || secondsRemaining < 0)) return null;
-  if (secondsRemaining == null) return null;
+  const exactClockCloseAt = projectedClock.clockVerified ? projectedClock.closeAt : null;
+  const currentCandleStart = projectedClock.currentCandleStart
+    ?? (latestCandleAt != null ? Math.floor(latestCandleAt / tfMs) * tfMs : null);
+  const nextCandleStart = projectedClock.nextCandleStart
+    ?? (currentCandleStart != null ? currentCandleStart + tfMs : null);
+  const secondsRemaining = projectedClock.secondsRemaining;
+  if (secondsRemaining == null || secondsRemaining < 0) return null;
 
   return {
     platformId: state.platformId || 'casatrade',
@@ -515,8 +549,10 @@ function consolidatedSnapshot(state = {}) {
     expiration: state.platformControls?.observed?.expiration || state.targetExpiration || state.expiration || clock?.expiration || null,
     targetExpiration: state.platformControls?.observed?.expiration || state.targetExpiration || state.expiration || clock?.expiration || null,
     secondsRemaining,
-    clockVerified: exactClock,
-    clockSource: clean(clock?.source || ''),
+    clockVerified: projectedClock.clockVerified,
+    clockSource: projectedClock.clockSource,
+    clockQuality: projectedClock.clockQuality,
+    clockAuthoritative: projectedClock.clockAuthoritative,
     candleOpenAt: currentCandleStart,
     candleCloseAt: nextCandleStart,
     nextCandleStart,
@@ -1098,10 +1134,17 @@ function acquisitionGaps(state = {}) {
     && Number.isFinite(Number(clock.secondsRemaining))
     && Number(clock.at || 0) > 0
     && Date.now() - Number(clock.at) < CLOCK_FRESH_MS;
-  if (!clockFresh) gaps.push('countdown exato');
-  const expirationAt = Number(controls.expirationCheckedAt || controls.observed?.observedAt?.expiration || 0);
-  const expirationFresh = expirationAt > 0 && Date.now() - expirationAt < 7000;
-  if (!expirationFresh || !clean(controls.observed?.expiration)) gaps.push('expiração');
+  const timeframeForHealth = normTf(clock.timeframe || state.analysisTimeframe || state.timeframe || state.diagnostics?.marketSession?.timeframe) || getOperationMode(state.analystPreferences?.operationMode || 'M1').timeframe;
+  const usableClockForHealth = projectedClockForAnalysis(state, timeframeForHealth, Date.now());
+  if (!usableClockForHealth) gaps.push('countdown');
+  const operationForHealth = getOperationMode(state.analystPreferences?.operationMode || 'M1');
+  const manualExpirationForHealth = normExp(controls.userDeclaredExpiration || '');
+  const observedExpirationForHealth = normExp(controls.realExpiration || controls.observed?.expiration || '');
+  const observedExpirationAt = Number(controls.realExpirationAt || controls.observed?.observedAt?.expiration || controls.expirationCheckedAt || 0);
+  const observedExpirationFresh = !!observedExpirationForHealth && observedExpirationAt > 0 && Date.now() - observedExpirationAt < 15000
+    && clean(controls.realExpirationSource || controls.expirationSource || controls.observed?.source || '') !== 'user-declared';
+  const expirationMatchesMode = (observedExpirationFresh ? observedExpirationForHealth : manualExpirationForHealth) === operationForHealth.expiration;
+  if (!expirationMatchesMode) gaps.push('expiração');
   return gaps;
 }
 

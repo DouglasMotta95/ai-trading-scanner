@@ -380,6 +380,7 @@ export function resetForSession(state = {}, { asset, timeframe = null, info, rea
     diagnostics: {
       ...(sessionBase.diagnostics || {}),
       marketClock: null,
+      marketClockLastGood: null,
       assetSwitchLog: switchLog,
       marketSession: {
         epoch,
@@ -403,7 +404,18 @@ export function resetForSession(state = {}, { asset, timeframe = null, info, rea
 function clockRecord(message = {}, info = {}, asset = '', timeframe = null, secondsRemaining = null, focus = null) {
   const verified = message.verified === true;
   const at = Date.now();
-  const closeAt = secondsRemaining == null ? null : Math.round((at + Number(secondsRemaining) * 1000) / 1000) * 1000;
+  const suppliedCloseAt = num(message.closeAt);
+  const durationMs = Math.max(1, timeframeSeconds(timeframe) || 60) * 1000;
+  // secondsRemaining is an integer snapshot. Reconstructing closeAt as
+  // "sample time + rounded seconds" introduced a one-second drift (20:45:01)
+  // and could make the runtime roll straight to 20:46 before processing the
+  // 20:45 boundary. Prefer an explicit closeAt; otherwise snap to the real
+  // timeframe boundary.
+  const closeAt = suppliedCloseAt != null
+    ? suppliedCloseAt
+    : secondsRemaining == null
+      ? null
+      : Math.ceil(at / durationMs) * durationMs;
   const crossFrameControl = message.crossFrameControl === true;
   return {
     asset, timeframe, secondsRemaining, closeAt, available: true, verified,
@@ -812,6 +824,34 @@ export async function applyClock(message = {}, sender = {}) {
       // CasaTrade re-renders controls. Do not erase a still-fresh authoritative
       // clock with that transient pending observation.
       if (previousClock) return state;
+      const lastGoodClock = state.diagnostics?.marketClockLastGood || null;
+      if (lastGoodClock
+        && sameMarket(lastGoodClock.asset, asset)
+        && normTf(lastGoodClock.timeframe) === timeframe
+        && Number(lastGoodClock.closeAt || 0) > Date.now() - timeframeSeconds(timeframe) * 1000
+        && Number(lastGoodClock.at || 0) > 0) {
+        return {
+          ...state,
+          diagnostics: {
+            ...(state.diagnostics || {}),
+            marketClock: {
+              ...lastGoodClock,
+              available: true,
+              operational: true,
+              quality: 'fallback',
+              mode: 'last-good',
+              at: Date.now()
+            },
+            acquisition: {
+              ...(state.diagnostics?.acquisition || {}),
+              stage: 'diagnosing_next_candle',
+              reason: 'Countdown temporariamente ausente; mantendo a última leitura válida da CasaTrade.',
+              clockQuality: 'fallback',
+              at: Date.now()
+            }
+          }
+        };
+      }
       return {
         ...state,
         diagnostics: {
@@ -833,9 +873,11 @@ export async function applyClock(message = {}, sender = {}) {
     const session = state.diagnostics?.marketSession || {};
     const frameChanged = Number(session.frameId) !== Number(focus.frameId)
       || clean(session.frameHost).toLowerCase() !== clean(focus.frameHost).toLowerCase();
+    // A frame re-mount is a transport/DOM event, not an asset change. Keep the
+    // live market session and its last-good clock unless the instrument or mode
+    // actually changes.
     const sessionChanged = !sameMarket(session.asset, asset)
-      || clean(session.timeframe).toUpperCase() !== clean(timeframe).toUpperCase()
-      || frameChanged;
+      || clean(session.timeframe).toUpperCase() !== clean(timeframe).toUpperCase();
     let next = state;
     if (sessionChanged) {
       const sessionInfo = crossFrameControl
@@ -847,6 +889,19 @@ export async function applyClock(message = {}, sender = {}) {
           ? `Sessão ${asset} • ${timeframe || '—'} sincronizada ao fechamento real da vela.`
           : `Sessão ${asset} • ${timeframe || '—'} em leitura ao vivo com clock temporário de contingência.`
       });
+    } else if (frameChanged) {
+      next = {
+        ...next,
+        diagnostics: {
+          ...(next.diagnostics || {}),
+          marketSession: {
+            ...(next.diagnostics?.marketSession || {}),
+            frameId: Number(focus.frameId),
+            frameHost: clean(focus.frameHost).toLowerCase(),
+            transitioning: false
+          }
+        }
+      };
     }
 
     const record = clockRecord(message, info, asset, timeframe, secondsRemaining, focus);
@@ -861,6 +916,7 @@ export async function applyClock(message = {}, sender = {}) {
       diagnostics: {
         ...(next.diagnostics || {}),
         marketClock: record,
+        marketClockLastGood: { ...record, lastGoodAt: Date.now() },
         marketSession: {
           ...(next.diagnostics?.marketSession || {}), asset, timeframe,
           frameId: Number(focus.frameId), frameHost: clean(focus.frameHost).toLowerCase(),
