@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { getSignalPolicy } from '../src/core/analysis.js';
 
 const read = path => fs.readFileSync(new URL('../' + path, import.meta.url), 'utf8');
 
@@ -10,12 +11,12 @@ test('v0.11.116 profile floors and power boundary are inclusive', () => {
   const policy = read('src/background-decision-policy.js');
   const fast = read('src/core/live-fast-decision.js');
 
-  assert.equal((await import('../src/core/analysis.js')).getSignalPolicy('RIGIDO').possibleScore, 58);
-  assert.equal((await import('../src/core/analysis.js')).getSignalPolicy('RIGIDO').finalScore, 62);
-  assert.equal((await import('../src/core/analysis.js')).getSignalPolicy('MEDIO').possibleScore, 52);
-  assert.equal((await import('../src/core/analysis.js')).getSignalPolicy('MEDIO').finalScore, 55);
-  assert.equal((await import('../src/core/analysis.js')).getSignalPolicy('SOLTO').possibleScore, 45);
-  assert.equal((await import('../src/core/analysis.js')).getSignalPolicy('SOLTO').finalScore, 50);
+  assert.equal(getSignalPolicy('RIGIDO').possibleScore, 58);
+  assert.equal(getSignalPolicy('RIGIDO').finalScore, 62);
+  assert.equal(getSignalPolicy('MEDIO').possibleScore, 52);
+  assert.equal(getSignalPolicy('MEDIO').finalScore, 55);
+  assert.equal(getSignalPolicy('SOLTO').possibleScore, 45);
+  assert.equal(getSignalPolicy('SOLTO').finalScore, 50);
 
   assert.match(analysis, /if \(power < 45\)/);
   assert.doesNotMatch(policy, /power\s*>\s*45/);
