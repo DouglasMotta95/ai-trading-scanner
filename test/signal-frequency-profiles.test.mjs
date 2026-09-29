@@ -180,3 +180,22 @@ test('next-candle entry-quality path uses scoped continuation evidence', () => {
   assert.match(analysis, /continuationScore: Number\(evidence\.continuationScore \|\| 0\)/);
   assert.match(analysis, /entryQuality\.ready === true/);
 });
+
+
+test('v0.11.104 keeps the operational ledger runtime-safe and ENTER-only', () => {
+  const background = read('src/background.js');
+  assert.match(background, /function performanceEmission\(state = \{\}\)/);
+  assert.match(background, /const professional = state\.professionalDecision \|\| \{\};/);
+  assert.doesNotMatch(background, /const professional = next\.professionalDecision/);
+  assert.match(background, /const type = 'ENTER'/);
+  assert.match(background, /\['ENTER_BUY','ENTER_SELL'\]\.includes\(professionalUi\)/);
+  assert.match(background, /filter\(row => clean\(row\?\.type\)\.toUpperCase\(\) !== 'POSSIBLE'\)/);
+});
+
+test('operation outcome uses the target candle open and resolves only after its close', () => {
+  const outcomes = read('src/core/signal-outcomes.js');
+  assert.match(outcomes, /entryPrice: open/);
+  assert.match(outcomes, /entryStatus: 'confirmed'/);
+  assert.match(outcomes, /outcomeBasis: 'target_candle_open_close'/);
+  assert.match(outcomes, /now < targetStart \+ timeframeMs\(record\.timeframe\)/);
+});
