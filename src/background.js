@@ -479,6 +479,7 @@ function consolidatedSnapshot(state = {}) {
   // the live candle boundary. The structured feed can lag during rollover, so
   // never let its previous candle timestamp keep an already-open candle marked
   // as the "next candle".
+  const now = Date.now();
   const exactClockCloseAt = exactClock
     ? num(clock.closeAt)
       ?? ((num(clock.at) != null && num(clock.secondsRemaining) != null)
@@ -488,19 +489,36 @@ function consolidatedSnapshot(state = {}) {
   const authoritativeCloseAt = exactClockCloseAt != null
     ? Math.round(exactClockCloseAt / tfMs) * tfMs
     : null;
+  const latestCandleStart = latestCandleAt != null ? Math.floor(latestCandleAt / tfMs) * tfMs : null;
+  const currentBucket = Math.floor(now / tfMs) * tfMs;
+
+  // Keep analysis alive when CasaTrade's exact countdown reader has a short gap.
+  // The local candle grid is analysis-only fallback; it never becomes entry
+  // authority because clockVerified remains false unless CasaTrade clock is exact.
+  const candleLagMs = latestCandleStart == null ? null : currentBucket - latestCandleStart;
+  const fallbackClockUsable = latestCandleStart != null
+    && candleLagMs >= -1500
+    && candleLagMs <= tfMs + 15_000;
+  const derivedSecondsRemaining = deriveCandleRemaining(candles, timeframe, now);
+  const fallbackSecondsRemaining = fallbackClockUsable
+    ? Math.max(0, Math.ceil((currentBucket + tfMs - now) / 1000))
+    : null;
+  const secondsRemaining = exactClock
+    ? Math.max(0, Math.ceil(Number(clock.secondsRemaining || 0) - Math.max(0, (now - Number(clock.at || now)) / 1000)))
+    : (derivedSecondsRemaining ?? fallbackSecondsRemaining);
+
   const currentCandleStart = authoritativeCloseAt != null
     ? authoritativeCloseAt - tfMs
-    : latestCandleAt != null
-      ? Math.floor(latestCandleAt / tfMs) * tfMs
-      : null;
+    : fallbackClockUsable
+      ? currentBucket
+      : latestCandleStart;
   const nextCandleStart = authoritativeCloseAt != null
     ? authoritativeCloseAt
     : currentCandleStart != null
       ? currentCandleStart + tfMs
       : null;
-  const secondsRemaining = exactClock
-    ? Math.max(0, Math.ceil(Number(clock.secondsRemaining || 0) - Math.max(0, (Date.now() - Number(clock.at || Date.now())) / 1000)))
-    : deriveCandleRemaining(candles, timeframe, Date.now());
+
+  if (secondsRemaining == null) return null;
   return {
     platformId: state.platformId || 'casatrade',
     platformName: state.platformName || 'CasaTrade',
