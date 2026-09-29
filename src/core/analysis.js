@@ -13,15 +13,344 @@ export const INDICATOR_SCORE_WEIGHTS = Object.freeze({
   bollinger: 0
 });
 
-export const ANALYST_THRESHOLDS = Object.freeze({
-  minimumClosedCandles: 2,
-  preferredClosedCandles: 3,
-  minimumPatternRows: 3,
-  possibleScore: 44,
-  confirmScore: 58,
-  candleStrength: 62,
-  rejectionStrength: 50
+const THRESHOLD_PROFILES = Object.freeze({
+  RIGIDO: Object.freeze({
+    profile: 'RIGIDO',
+    label: 'MAIS SELETIVO',
+    minimumClosedCandles: 2,
+    preferredClosedCandles: 3,
+    minimumPatternRows: 3,
+    possibleScore: 58,
+    confirmScore: 62,
+    finalScore: 62,
+    candleStrength: 62,
+    rejectionStrength: 50,
+    entryWindowSeconds: 10,
+    holdSeconds: 3
+  }),
+  MEDIO: Object.freeze({
+    profile: 'MEDIO',
+    label: 'EQUILIBRADO',
+    minimumClosedCandles: 2,
+    preferredClosedCandles: 3,
+    minimumPatternRows: 3,
+    possibleScore: 52,
+    confirmScore: 55,
+    finalScore: 55,
+    candleStrength: 55,
+    rejectionStrength: 45,
+    entryWindowSeconds: 12,
+    holdSeconds: 2
+  }),
+  SOLTO: Object.freeze({
+    profile: 'SOLTO',
+    label: 'MAIS SINAIS',
+    minimumClosedCandles: 2,
+    preferredClosedCandles: 3,
+    minimumPatternRows: 3,
+    possibleScore: 45,
+    confirmScore: 50,
+    finalScore: 50,
+    candleStrength: 50,
+    rejectionStrength: 40,
+    entryWindowSeconds: 15,
+    holdSeconds: 1
+  })
 });
+
+const SIGNAL_POLICIES = Object.freeze({
+  RIGIDO: Object.freeze({
+    possibleScore: 58,
+    finalScore: 62,
+    possiblePower: 45,
+    finalPower: 45,
+    minimumConfluence: 3,
+    minimumStructure: 13,
+    minimumLocation: 10,
+    minimumTrigger: 10
+  }),
+  MEDIO: Object.freeze({
+    possibleScore: 52,
+    finalScore: 55,
+    possiblePower: 45,
+    finalPower: 45,
+    minimumConfluence: 2,
+    minimumStructure: 10,
+    minimumLocation: 7,
+    minimumTrigger: 8
+  }),
+  SOLTO: Object.freeze({
+    possibleScore: 45,
+    finalScore: 50,
+    possiblePower: 45,
+    finalPower: 45,
+    minimumConfluence: 2,
+    minimumStructure: 8,
+    minimumLocation: 7,
+    minimumTrigger: 8
+  })
+});
+
+export function getThresholds(profile = 'MEDIO') {
+  const raw = String(profile ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toUpperCase();
+  return THRESHOLD_PROFILES[raw] || THRESHOLD_PROFILES.MEDIO;
+}
+
+export function getSignalPolicy(profile = 'MEDIO') {
+  const thresholds = getThresholds(profile);
+  const policy = SIGNAL_POLICIES[thresholds.profile] || SIGNAL_POLICIES.MEDIO;
+  return Object.freeze({
+    profile: thresholds.profile,
+    label: thresholds.label,
+    possibleScore: policy.possibleScore,
+    finalScore: policy.finalScore,
+    holdSeconds: thresholds.holdSeconds,
+    ...policy
+  });
+}
+
+export function getOperationMode(value = 'M1') {
+  const raw = String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toUpperCase();
+  const isM5 = raw === 'M5' || raw === '5M' || raw.includes('M5 +') || raw.includes('5 MIN');
+  return isM5
+    ? Object.freeze({ timeframe: 'M5', expiration: '300s', durationSeconds: 300 })
+    : Object.freeze({ timeframe: 'M1', expiration: '60s', durationSeconds: 60 });
+}
+
+// Compatibility export for older tests/imports. Runtime signal sensitivity uses
+// getThresholds(profile); RIGIDO remains the exact historical threshold set.
+export const ANALYST_THRESHOLDS = THRESHOLD_PROFILES.RIGIDO;
+
+export function calculateEntryQuality(input = {}, direction = null) {
+  const analytics = input?.analytics || input?.metrics || input || {};
+  const recent = input?.recent || input || {};
+  const next = input?.nextCandle || analytics?.nextCandle || recent?.nextCandle || input || {};
+  if (!['BUY', 'SELL'].includes(direction)) {
+    return {
+      score: 0, ready: false, borderline: false,
+      pressure: 0, opposingPressure: 0, directionalEdge: 0,
+      favorableClose: 0, bodyStrength: 0, opposingWick: 100,
+      followThrough: 0, triggerAligned: false, momentumAligned: false,
+      reason: 'Direção insuficiente para calcular qualidade de entrada.'
+    };
+  }
+
+  const pressure = clamp(Number(next.pressure ?? analytics[direction === 'BUY' ? 'buyPower' : 'sellPower'] ?? 0));
+  const oppositeKey = direction === 'BUY' ? 'sellPower' : 'buyPower';
+  const opposingPressure = clamp(Number(next.opposingPressure ?? analytics[oppositeKey] ?? 0));
+  const directionalEdge = pressure - opposingPressure;
+  const favorableClose = clamp(Number(next.favorableClose || 0));
+  const bodyStrength = clamp(Number(next.bodyStrength || 0));
+  const opposingWick = clamp(Number(next.opposingWick || 100));
+  const previousAlignment = clamp(Number(next.previousAlignment || 0), 0, 1);
+  const momentumScore = clamp(Number(next.momentumScore || analytics.momentumScore || 0));
+  const momentumAligned = next.momentumAligned === true || analytics.momentumDirection === direction;
+  const triggerAligned = recent.breakout === direction
+    || recent.rejection === direction
+    || (recent.continuationDirection === direction && Number(recent.continuationScore || 0) >= 60)
+    || input.breakout === direction
+    || input.rejection === direction
+    || (input.continuationDirection === direction && Number(input.continuationScore || 0) >= 60);
+
+  const followThrough = Math.max(
+    momentumAligned ? momentumScore : 0,
+    previousAlignment * 100,
+    triggerAligned ? 72 : 0
+  );
+  const edgeQuality = clamp(directionalEdge * 4);
+  const bodyQuality = bodyStrength < 18
+    ? clamp(bodyStrength * 3)
+    : clamp(55 + bodyStrength * .45);
+  const wickQuality = clamp(100 - opposingWick);
+
+  const score = clamp(
+    favorableClose * .28
+      + pressure * .24
+      + edgeQuality * .18
+      + wickQuality * .12
+      + bodyQuality * .08
+      + followThrough * .10
+  );
+
+  // Borderline protection filters the "almost tied" entries without requiring
+  // a large candle. A short candle is allowed when it closes well, has pressure
+  // and either a real trigger, momentum or three-candle follow-through.
+  const tinyNoisy = bodyStrength < 14 || (bodyStrength < 18 && opposingWick > 42);
+  const tie = directionalEdge < 8;
+  const weakPressure = pressure < 48;
+  const structureSupport = triggerAligned || momentumAligned || previousAlignment >= .67;
+  const edgeReady = directionalEdge >= 12
+    || (triggerAligned && directionalEdge >= 9 && pressure >= 56);
+  const coreReady = favorableClose >= 54
+    && opposingWick <= 52
+    && bodyStrength >= 14
+    && pressure >= 50;
+  const ready = coreReady
+    && score >= 57
+    && edgeReady
+    && structureSupport
+    && !tinyNoisy
+    && !tie
+    && !weakPressure;
+
+  const reasons = [];
+  if (tie) reasons.push('pressões quase empatadas');
+  if (weakPressure) reasons.push('pressão direcional fraca');
+  if (tinyNoisy) reasons.push('vela curta sem geometria limpa');
+  if (favorableClose < 54) reasons.push('fechamento pouco favorável');
+  if (opposingWick > 52) reasons.push('pavio contrário excessivo');
+  if (!edgeReady) reasons.push('vantagem direcional pequena');
+  if (!structureSupport) reasons.push('sem gatilho/momentum/continuidade suficiente');
+
+  return {
+    score,
+    ready,
+    borderline: !ready && (tie || weakPressure || tinyNoisy || score < 57 || !edgeReady),
+    pressure,
+    opposingPressure,
+    directionalEdge,
+    favorableClose,
+    bodyStrength,
+    opposingWick,
+    previousAlignment,
+    momentumAligned,
+    momentumScore,
+    followThrough,
+    triggerAligned,
+    structureSupport,
+    reason: ready
+      ? `Qualidade de entrada ${Math.round(score)}/100 com vantagem direcional de ${Math.round(directionalEdge)} pontos.`
+      : `Qualidade de entrada ${Math.round(score)}/100 — ${reasons.join(', ') || 'confirmação insuficiente'}.`
+  };
+}
+
+const formatLevel = value => {
+  const n = finite(value);
+  if (n == null) return '—';
+  const abs = Math.abs(n);
+  const digits = abs >= 1000 ? 2 : abs >= 100 ? 3 : abs >= 1 ? 5 : 8;
+  return n.toFixed(digits).replace(/0+$/, '').replace(/\.$/, '');
+};
+
+export function waitingFor(recent = {}, direction = null, score = 0, profile = 'MEDIO') {
+  const thresholds = getThresholds(profile);
+  if (!recent?.ready) {
+    return {
+      type: 'history', direction: null, label: 'Histórico recente', level: null,
+      current: Number(recent?.count || 0), required: thresholds.minimumPatternRows,
+      text: 'Aguardando histórico recente suficiente para formar o padrão.'
+    };
+  }
+
+  const metrics = recent.metrics || {};
+  const chosenDirection = ['BUY', 'SELL'].includes(direction) ? direction : null;
+  const lastClose = finite(recent.lastClose);
+  const avgRange = Math.max(1e-12, finite(recent.averageRange) || Math.abs(Number(recent.resistance || 0) - Number(recent.support || 0)) || 1);
+  const candidates = [];
+  const add = candidate => {
+    if (!candidate || !Number.isFinite(Number(candidate.gap))) return;
+    candidates.push(candidate);
+  };
+  const levelGap = (level, side) => {
+    const n = finite(level);
+    if (n == null || lastClose == null) return Infinity;
+    const distance = side === 'BUY' ? Math.max(0, n - lastClose) : Math.max(0, lastClose - n);
+    return distance / avgRange;
+  };
+
+  if (!chosenDirection || chosenDirection === 'BUY') {
+    const level = finite(recent.breakoutHigh);
+    if (recent.breakout !== 'BUY' && level != null) add({
+      type: 'breakout', direction: 'BUY', label: 'Rompimento da máxima', level,
+      current: lastClose, required: level, gap: levelGap(level, 'BUY'),
+      text: `Aguardando rompimento da máxima recente em ${formatLevel(level)}.`
+    });
+  }
+  if (!chosenDirection || chosenDirection === 'SELL') {
+    const level = finite(recent.breakoutLow);
+    if (recent.breakout !== 'SELL' && level != null) add({
+      type: 'breakout', direction: 'SELL', label: 'Rompimento da mínima', level,
+      current: lastClose, required: level, gap: levelGap(level, 'SELL'),
+      text: `Aguardando rompimento da mínima recente em ${formatLevel(level)}.`
+    });
+  }
+
+  if (chosenDirection) {
+    const buy = chosenDirection === 'BUY';
+    const rejectionNow = Number(buy ? metrics.rejectionBuy : metrics.rejectionSell) || 0;
+    if (recent.rejection !== chosenDirection) add({
+      type: 'rejection', direction: chosenDirection,
+      label: `Rejeição ${buy ? 'compradora' : 'vendedora'}`, level: null,
+      current: rejectionNow, required: thresholds.rejectionStrength,
+      gap: Math.max(0, thresholds.rejectionStrength - rejectionNow) / thresholds.rejectionStrength,
+      text: `Aguardando confirmação de rejeição ${buy ? 'compradora' : 'vendedora'} (${Math.round(rejectionNow)}%/${thresholds.rejectionStrength}%).`
+    });
+
+    const power = Number(buy ? metrics.buyPower : metrics.sellPower) || 0;
+    if (power < 45) add({
+      type: 'power', direction: chosenDirection,
+      label: `Poder ${buy ? 'comprador' : 'vendedor'}`, level: null,
+      current: power, required: 45, gap: (45 - power) / 45,
+      text: `Aguardando poder ${buy ? 'comprador' : 'vendedor'} atingir 45% (agora ${Math.round(power)}%).`
+    });
+
+    const strength = Number(metrics.currentStrength || 0);
+    if (strength < thresholds.candleStrength) add({
+      type: 'candle_strength', direction: chosenDirection,
+      label: 'Força da vela atual', level: null,
+      current: strength, required: thresholds.candleStrength,
+      gap: Math.max(0, thresholds.candleStrength - strength) / thresholds.candleStrength,
+      text: `Aguardando força da vela atingir ${thresholds.candleStrength}% (agora ${Math.round(strength)}%).`
+    });
+
+    const continuation = Number(recent.continuationScore || 0);
+    if (recent.continuationDirection !== chosenDirection || continuation < 60) add({
+      type: 'continuation', direction: chosenDirection,
+      label: 'Continuação do movimento', level: null,
+      current: continuation, required: 60,
+      gap: Math.max(0, 60 - continuation) / 60,
+      text: `Aguardando continuidade ${buy ? 'compradora' : 'vendedora'} ficar consistente (${Math.round(continuation)}%/60%).`
+    });
+
+    const nextCandle = recent.nextCandle || {};
+    if (!nextCandle.ready || nextCandle.direction !== chosenDirection) add({
+      type: 'next_candle_continuation', direction: chosenDirection,
+      label: 'Pressão para a próxima vela', level: null,
+      current: Number(nextCandle.score || 0), required: 60,
+      gap: Math.max(0, 60 - Number(nextCandle.score || 0)) / 60,
+      text: nextCandle.reason || `Aguardando pressão ${buy ? 'compradora' : 'vendedora'} confirmar a próxima vela.`
+    });
+  }
+
+  const targetScore = Number(score) < thresholds.possibleScore
+    ? thresholds.possibleScore
+    : Number(score) < thresholds.confirmScore
+      ? thresholds.confirmScore
+      : null;
+  if (targetScore != null) add({
+    type: targetScore === thresholds.possibleScore ? 'possible_score' : 'confirm_score',
+    direction: chosenDirection, label: 'Força do padrão', level: null,
+    current: Number(score) || 0, required: targetScore,
+    gap: Math.max(0, targetScore - Number(score || 0)) / targetScore,
+    text: `Aguardando força do padrão atingir ${targetScore}/100 (agora ${Math.round(Number(score) || 0)}/100).`
+  });
+
+  if ((recent.lateral || (recent.reasons || []).some(reason => /compressão/i.test(String(reason)))) && candidates.length) {
+    for (const candidate of candidates) if (candidate.type === 'breakout') candidate.gap *= .45;
+  }
+
+  candidates.sort((a, b) => a.gap - b.gap);
+  const best = candidates[0];
+  if (best) {
+    const { gap, ...publicCandidate } = best;
+    return publicCandidate;
+  }
+  return {
+    type: 'stability', direction: chosenDirection, label: 'Confirmação estável', level: null,
+    current: null, required: 2,
+    text: 'Aguardando nova confirmação estável do padrão.'
+  };
+}
 
 function shape(c) {
   const open = finite(c?.open), high = finite(c?.high), low = finite(c?.low), close = finite(c?.close);
@@ -93,7 +422,8 @@ function indicatorReinforcement(candles = [], direction = null) {
   };
 }
 
-function analystMetrics(rows = []) {
+function analystMetrics(rows = [], profile = 'MEDIO') {
+  const thresholds = getThresholds(profile);
   const window = rows.slice(-5);
   const last = window[window.length - 1] || null;
   const previous = window.slice(0, -1);
@@ -103,12 +433,20 @@ function analystMetrics(rows = []) {
   const currentStrength = clamp(last?.strength || 0);
   const rejectionBuy = clamp((last?.lowerRatio || 0) * 100);
   const rejectionSell = clamp((last?.upperRatio || 0) * 100);
-  const rejectionDirection = rejectionBuy >= ANALYST_THRESHOLDS.rejectionStrength && last?.close > last?.open
+  const rejectionDirection = rejectionBuy >= thresholds.rejectionStrength && last?.close > last?.open
     ? 'BUY'
-    : rejectionSell >= ANALYST_THRESHOLDS.rejectionStrength && last?.close < last?.open
+    : rejectionSell >= thresholds.rejectionStrength && last?.close < last?.open
       ? 'SELL'
       : null;
   const rejectionStrength = rejectionDirection === 'BUY' ? rejectionBuy : rejectionDirection === 'SELL' ? rejectionSell : Math.max(rejectionBuy, rejectionSell);
+  const rejectionGeometry = {
+    threshold: thresholds.rejectionStrength,
+    buyStrength: rejectionBuy,
+    sellStrength: rejectionSell,
+    bodyStrength: currentStrength,
+    strongBodyThreshold: thresholds.candleStrength,
+    simultaneousThresholdsFeasible: thresholds.rejectionStrength + thresholds.candleStrength <= 100
+  };
   const previousBody = avg(previous.map(row => row.bodyRatio));
   const bodyLoss = previousBody > 0 ? clamp(((previousBody - (last?.bodyRatio || 0)) / previousBody) * 100) : 0;
   const oppositeWick = last?.direction === 'BUY' ? rejectionSell : last?.direction === 'SELL' ? rejectionBuy : Math.max(rejectionBuy, rejectionSell);
@@ -122,18 +460,121 @@ function analystMetrics(rows = []) {
     rejectionStrength,
     rejectionBuy,
     rejectionSell,
+    rejectionGeometry,
     momentumDirection: momentumValue.direction,
     momentumScore: momentumValue.score,
     lossOfStrength
   };
 }
 
-export function recentPriceAction(candles = []) {
+export function nextCandleContinuation(rows = [], direction = null, metrics = {}, evidence = {}) {
+  const last = Array.isArray(rows) && rows.length ? rows[rows.length - 1] : null;
+  if (!last || !['BUY', 'SELL'].includes(direction)) {
+    return {
+      direction: direction || null, ready: false, score: 0, pressure: 0,
+      favorableClose: 0, bodyStrength: 0, opposingWick: 100,
+      previousAlignment: 0, momentumAligned: false, momentumScore: 0,
+      followThrough: false,
+      reason: 'Sem vela direcional válida para confirmar a próxima vela.'
+    };
+  }
+
+  // rows are raw OHLC candles here; derive the candle geometry locally.
+  const open = Number(last.open);
+  const high = Number(last.high);
+  const low = Number(last.low);
+  const close = Number(last.close);
+  const range = Math.max(1e-12, high - low);
+  const body = Math.abs(close - open);
+  const upper = Math.max(0, high - Math.max(open, close));
+  const lower = Math.max(0, Math.min(open, close) - low);
+  const bodyStrength = clamp((body / range) * 100);
+  const closeFromLow = clamp(((close - low) / range) * 100);
+  const closeFromHigh = clamp(((high - close) / range) * 100);
+  const favorableClose = direction === 'BUY' ? closeFromLow : closeFromHigh;
+  const opposingWick = clamp(((direction === 'BUY' ? upper : lower) / range) * 100);
+  const pressure = clamp(Number(direction === 'BUY' ? metrics.buyPower : metrics.sellPower) || 0);
+  const momentumScore = clamp(Number(metrics.momentumScore || 0));
+  const momentumAligned = metrics.momentumDirection === direction;
+
+  const previous = Array.isArray(rows) ? rows.slice(0, -1).slice(-3) : [];
+  const previousAlignment = previous.length
+    ? previous.filter(row => {
+        const ro = Number(row?.open), rc = Number(row?.close);
+        const rowDirection = rc > ro ? 'BUY' : rc < ro ? 'SELL' : null;
+        return rowDirection === direction;
+      }).length / previous.length
+    : 0;
+
+  const triggerAligned = evidence.breakout === direction
+    || evidence.rejection === direction
+    || (evidence.continuationDirection === direction && Number(evidence.continuationScore || 0) >= 60);
+
+  // Entry-only confirmation for the NEXT candle. This does not change the
+  // existing score, direction, POSSÍVEL signal or sensitivity profiles.
+  const score = clamp(
+    favorableClose * .30
+      + bodyStrength * .25
+      + pressure * .25
+      + (momentumAligned ? momentumScore : 0) * .12
+      + previousAlignment * 100 * .08
+      - opposingWick * .15
+  );
+
+  // Entry quality is deliberately stricter than POSSÍVEL, but it must not
+  // require a large candle body. On OTC/mobile charts the decisive candle can
+  // be short while still closing strongly in its direction. We therefore use
+  // three independent confirmations: close location, directional pressure and
+  // follow-through. A tiny/noisy candle without pressure still cannot enter.
+  const shapeReady = favorableClose >= 55 && bodyStrength >= 22 && opposingWick <= 50;
+  const pressureReady = pressure >= 50 && score >= 58;
+  const followThrough = (momentumAligned && momentumScore >= 40)
+    || previousAlignment >= .67
+    || triggerAligned;
+  const ready = score >= 58 && shapeReady && pressureReady && followThrough;
+
+  const entryQuality = calculateEntryQuality({
+    buyPower: metrics.buyPower,
+    sellPower: metrics.sellPower,
+    momentumDirection: metrics.momentumDirection,
+    momentumScore,
+    nextCandle: {
+      pressure,
+      opposingPressure: direction === 'BUY' ? metrics.sellPower : metrics.buyPower,
+      favorableClose,
+      bodyStrength,
+      opposingWick,
+      previousAlignment,
+      momentumAligned,
+      momentumScore
+    },
+    breakout: evidence.breakout,
+    rejection: evidence.rejection,
+    continuationDirection: evidence.continuationDirection,
+    continuationScore: Number(evidence.continuationScore || 0)
+  }, direction);
+
+  // Keep the next-candle gate entry-only, but use the quality engine to block
+  // borderline/tied setups while still admitting short, clean candles.
+  const readyWithQuality = entryQuality.ready === true;
+  const reason = readyWithQuality
+    ? `Pressão ${direction === 'BUY' ? 'compradora' : 'vendedora'} confirma continuação da próxima vela (${Math.round(entryQuality.score)}/100).`
+    : `Pressão para a próxima vela ainda insuficiente (${entryQuality.reason})`;
+
+  return {
+    direction, ready: readyWithQuality, score, pressure, favorableClose, bodyStrength,
+    opposingWick, previousAlignment, momentumAligned, momentumScore,
+    followThrough, entryQuality, reason
+  };
+}
+
+export function recentPriceAction(candles = [], profile = 'MEDIO') {
+  const thresholds = getThresholds(profile);
   const rows = (Array.isArray(candles) ? candles : []).map(shape).filter(Boolean).slice(-10);
-  if (rows.length < ANALYST_THRESHOLDS.minimumPatternRows) {
+  if (rows.length < thresholds.minimumPatternRows) {
     return {
       ready: false,
-      required: ANALYST_THRESHOLDS.minimumPatternRows,
+      required: thresholds.minimumPatternRows,
       count: rows.length,
       direction: null,
       score: 0,
@@ -143,7 +584,13 @@ export function recentPriceAction(candles = []) {
       doji: false,
       rejection: null,
       aligned: 0,
-      metrics: analystMetrics(rows)
+      metrics: analystMetrics(rows, profile),
+      breakoutHigh: null,
+      breakoutLow: null,
+      support: null,
+      resistance: null,
+      averageRange: null,
+      lastClose: rows[rows.length - 1]?.close ?? null
     };
   }
 
@@ -161,16 +608,17 @@ export function recentPriceAction(candles = []) {
   const tiny = rows.filter(x => x.bodyRatio < .2).length;
   const lateral = rangeSpan > 0 && Math.abs(last.close - rows[0].open) / rangeSpan < .2 && avgBody < .38;
   const doji = last.bodyRatio < .12 && last.upperRatio > .28 && last.lowerRatio > .28;
-  const force = last.bodyRatio >= ANALYST_THRESHOLDS.candleStrength / 100;
+  const force = last.bodyRatio >= thresholds.candleStrength / 100;
   const prevHigh = Math.max(...prev.slice(-4).map(x => x.high));
   const prevLow = Math.min(...prev.slice(-4).map(x => x.low));
+  const averageRange = avg(rows.map(x => x.range));
   const breakout = last.close > prevHigh ? 'BUY' : last.close < prevLow ? 'SELL' : null;
-  const rejection = last.lowerRatio >= ANALYST_THRESHOLDS.rejectionStrength / 100 && last.close > last.open
+  const rejection = last.lowerRatio >= thresholds.rejectionStrength / 100 && last.close > last.open
     ? 'BUY'
-    : last.upperRatio >= ANALYST_THRESHOLDS.rejectionStrength / 100 && last.close < last.open
+    : last.upperRatio >= thresholds.rejectionStrength / 100 && last.close < last.open
       ? 'SELL'
       : null;
-  const metrics = analystMetrics(rows);
+  const metrics = analystMetrics(rows, profile);
 
   let buy = 0, sell = 0;
   const reasons = [];
@@ -190,15 +638,29 @@ export function recentPriceAction(candles = []) {
   if (metrics.momentumDirection === 'BUY' && metrics.momentumScore >= 45) reasons.push('Momentum recente favorece alta');
   if (metrics.momentumDirection === 'SELL' && metrics.momentumScore >= 45) reasons.push('Momentum recente favorece baixa');
 
+  const localContinuationCandidate = last.direction && metrics.momentumDirection === last.direction
+    ? last.direction
+    : null;
+  const localContinuationScore = localContinuationCandidate
+    ? clamp(agreement * 45 + metrics.momentumScore * .3 + metrics.currentStrength * .25)
+    : 0;
+
   let direction = buy === sell ? majority : buy > sell ? 'BUY' : 'SELL';
+  // Lateralidade/doji/compressão fracos não anulam um gatilho local real.
+  if (!direction && breakout) direction = breakout;
+  if (!direction && rejection) direction = rejection;
+  if (!direction && localContinuationCandidate && localContinuationScore >= 60) {
+    direction = localContinuationCandidate;
+  }
+
   let score = Math.max(buy, sell);
   if (agreement >= .6) score += 10;
   if (avgBody >= .48) score += 8;
 
-  const continuationDirection = direction && last.direction === direction && metrics.momentumDirection === direction ? direction : null;
-  const continuationScore = continuationDirection
-    ? clamp(agreement * 45 + metrics.momentumScore * .3 + metrics.currentStrength * .25)
-    : 0;
+  const continuationDirection = direction && localContinuationCandidate === direction
+    ? direction
+    : null;
+  const continuationScore = continuationDirection ? localContinuationScore : 0;
   if (continuationDirection && continuationScore >= 60) {
     reasons.push(`Continuação ${direction === 'BUY' ? 'compradora' : 'vendedora'} consistente`);
   }
@@ -206,10 +668,19 @@ export function recentPriceAction(candles = []) {
   if (metrics.lossOfStrength >= 72 && !breakout && !rejection) {
     reasons.push('A vela atual perdeu força; confirmação exige continuidade');
   }
-  if (lateral) { score = Math.min(score, 54); direction = null; reasons.push('Mercado lateral nas últimas velas'); }
+  const decisiveLocalSetup = !!breakout || !!rejection || (continuationDirection && continuationScore >= 60);
+  if (lateral && !decisiveLocalSetup) { score = Math.min(score, 54); direction = null; reasons.push('Mercado lateral nas últimas velas'); }
   if (doji && !rejection) { score = Math.min(score, 48); direction = null; reasons.push('Doji sem confirmação'); }
-  if (tiny >= Math.ceil(rows.length * .6) && agreement < .75) { score = Math.min(score, 56); direction = null; reasons.push('Compressão: aguardando rompimento'); }
+  if (tiny >= Math.ceil(rows.length * .6) && agreement < .75 && !decisiveLocalSetup) { score = Math.min(score, 56); direction = null; reasons.push('Compressão: aguardando rompimento'); }
+  if (lateral && decisiveLocalSetup) reasons.push('Mercado lateral, mas com gatilho local confirmado');
   score = clamp(score);
+
+  const nextCandle = nextCandleContinuation(rows, direction, metrics, {
+    breakout,
+    rejection,
+    continuationDirection,
+    continuationScore
+  });
 
   const opinion = !direction
     ? (reasons[reasons.length - 1] || 'Sem direção clara no padrão atual.')
@@ -217,7 +688,7 @@ export function recentPriceAction(candles = []) {
 
   return {
     ready: true,
-    required: ANALYST_THRESHOLDS.minimumPatternRows,
+    required: thresholds.minimumPatternRows,
     count: rows.length,
     direction,
     score,
@@ -234,14 +705,152 @@ export function recentPriceAction(candles = []) {
     continuationDirection,
     continuationScore,
     metrics,
+    breakoutHigh: prevHigh,
+    breakoutLow: prevLow,
+    support,
+    resistance,
+    averageRange,
+    lastClose: last.close,
+    nextCandle,
+    entryQuality: nextCandle?.entryQuality || null,
     reasons
   };
 }
 
-export function analyzeCandles(candles = [], indicatorCandles = candles) {
+
+function professionalContextScore(recent = {}, indicators = {}, thresholds = getThresholds()) {
+  const policy = getSignalPolicy(thresholds.profile);
+  const direction = ['BUY', 'SELL'].includes(recent?.direction) ? recent.direction : null;
+  const metrics = recent?.metrics || {};
+  if (!direction) {
+    return {
+      score: clamp(Number(recent?.score || 0)),
+      legacyScore: clamp(Number(recent?.score || 0)),
+      direction: null,
+      contextReady: false,
+      positionReady: false,
+      triggerReady: false,
+      blocks: { structure: 0, location: 0, trigger: 0, momentum: 0, indicators: 0, quality: 0 },
+      reasons: ['Contexto profissional ainda sem direção definida.']
+    };
+  }
+
+  const buy = direction === 'BUY';
+  const agreement = Number(recent.agreement || 0);
+  const momentumScore = Number(metrics.momentumScore || 0);
+  const continuationScore = Number(recent.continuationScore || 0);
+  const directionalPower = Number(buy ? metrics.buyPower : metrics.sellPower) || 0;
+  const avgRange = Math.max(1e-12, Number(recent.averageRange || 0) || 1);
+  const lastClose = Number(recent.lastClose);
+  const keyLevel = buy ? Number(recent.support) : Number(recent.resistance);
+  const distanceToLevel = Number.isFinite(lastClose) && Number.isFinite(keyLevel)
+    ? Math.abs(lastClose - keyLevel) / avgRange
+    : Infinity;
+
+  const breakout = recent.breakout === direction;
+  const rejection = recent.rejection === direction
+    && Number(metrics.rejectionStrength || 0) >= thresholds.rejectionStrength;
+  const continuation = recent.continuationDirection === direction && continuationScore >= 60;
+  const momentumAligned = metrics.momentumDirection === direction && momentumScore >= 45;
+  const nearKeyLevel = distanceToLevel <= 0.75;
+  const strongCandle = Number(metrics.currentStrength || 0) >= thresholds.candleStrength;
+
+  let structure = 0;
+  if (agreement >= .7) structure += 12;
+  else if (agreement >= .6) structure += 9;
+  else if (agreement >= .55) structure += 6;
+  if (momentumAligned) structure += momentumScore >= 70 ? 8 : momentumScore >= 55 ? 6 : 4;
+  if (continuation) structure += 5;
+  structure = clamp(structure, 0, 25);
+
+  let location = 0;
+  if (nearKeyLevel) location += distanceToLevel <= .4 ? 10 : 7;
+  if (breakout) location += 10;
+  if (rejection) location += 8;
+  location = clamp(location, 0, 20);
+
+  let trigger = 0;
+  if (breakout) trigger += 10;
+  if (rejection) trigger += 10;
+  if (continuation) trigger += 8;
+  if (strongCandle) trigger += 5;
+  trigger = clamp(trigger, 0, 25);
+
+  let momentum = 0;
+  if (directionalPower >= 65) momentum += 7;
+  else if (directionalPower >= 58) momentum += 5;
+  else if (directionalPower >= 52) momentum += 3;
+  if (momentumAligned) momentum += momentumScore >= 65 ? 5 : 3;
+  if (continuation) momentum += 3;
+  momentum = clamp(momentum, 0, 15);
+
+  let indicatorScore = 0;
+  const rsiValue = Number(indicators?.rsi?.value);
+  const macdHistogram = Number(indicators?.macd?.histogram);
+  const rsiAligned = Number.isFinite(rsiValue) && (buy ? rsiValue > 50 : rsiValue < 50);
+  const macdAligned = Number.isFinite(macdHistogram) && macdHistogram !== 0 && (buy ? macdHistogram > 0 : macdHistogram < 0);
+  if (rsiAligned) indicatorScore += 4;
+  if (macdAligned) indicatorScore += 6;
+  indicatorScore = clamp(indicatorScore, 0, 10);
+
+  let quality = 0;
+  if (!recent.lateral) quality += 2;
+  if (!recent.doji) quality += 1;
+  if (Number(metrics.lossOfStrength || 0) < 55) quality += 2;
+  quality = clamp(quality, 0, 5);
+
+  const positionReady = (breakout || rejection || nearKeyLevel) && location >= policy.minimumLocation;
+  const triggerReady = (breakout || rejection || continuation) && trigger >= policy.minimumTrigger;
+  const contextReady = structure >= policy.minimumStructure && positionReady;
+  const score = clamp(structure + location + trigger + momentum + indicatorScore + quality);
+  const reasons = [
+    `Estrutura ${Math.round(structure)}/25`,
+    `Região ${Math.round(location)}/20`,
+    `Gatilho ${Math.round(trigger)}/25`,
+    `Momentum ${Math.round(momentum)}/15`,
+    `Indicadores ${Math.round(indicatorScore)}/10`,
+    `Qualidade ${Math.round(quality)}/5`
+  ];
+
+  return {
+    score,
+    legacyScore: clamp(Number(recent.score || 0) + Number(indicators?.adjustment || 0)),
+    direction,
+    contextReady,
+    positionReady,
+    triggerReady,
+    breakout,
+    rejection,
+    continuation,
+    momentumAligned,
+    nearKeyLevel,
+    distanceToLevel: Number.isFinite(distanceToLevel) ? distanceToLevel : null,
+    directionalPower,
+    profilePolicy: policy,
+    blocks: {
+      structure,
+      location,
+      trigger,
+      momentum,
+      indicators: indicatorScore,
+      quality
+    },
+    reasons
+  };
+}
+
+export function analyzeCandles(candles = [], indicatorCandles = candles, profile = 'MEDIO') {
+  const thresholds = getThresholds(profile);
   const rows = (Array.isArray(candles) ? candles : []).filter(c => [c?.open, c?.high, c?.low, c?.close].every(v => finite(v) != null));
   const indicatorRows = (Array.isArray(indicatorCandles) ? indicatorCandles : []).filter(c => finite(c?.close) != null);
-  const recent = recentPriceAction(rows);
+  const recent = recentPriceAction(rows, thresholds.profile);
+  const levelAnalytics = {
+    breakoutHigh: recent.breakoutHigh ?? null,
+    breakoutLow: recent.breakoutLow ?? null,
+    support: recent.support ?? null,
+    resistance: recent.resistance ?? null,
+    trendDirection: recent.direction || null
+  };
   if (!recent.ready) {
     return {
       state: 'WAIT',
@@ -251,7 +860,8 @@ export function analyzeCandles(candles = [], indicatorCandles = candles) {
       reasons: [recent.opinion],
       recent,
       indicators: indicatorReinforcement(indicatorRows, null),
-      analytics: recent.metrics || {}
+      analytics: { ...(recent.metrics || {}), ...levelAnalytics, nextCandle: recent.nextCandle || null, entryQuality: recent.entryQuality || null },
+      waitingFor: waitingFor(recent, null, 0, thresholds.profile)
     };
   }
   if (!recent.direction) {
@@ -263,26 +873,38 @@ export function analyzeCandles(candles = [], indicatorCandles = candles) {
       reasons: recent.reasons,
       recent,
       indicators: indicatorReinforcement(indicatorRows, null),
-      analytics: recent.metrics || {}
+      analytics: { ...(recent.metrics || {}), ...levelAnalytics, nextCandle: recent.nextCandle || null, entryQuality: recent.entryQuality || null },
+      waitingFor: waitingFor(recent, null, recent.score, thresholds.profile)
     };
   }
 
   const indicators = indicatorReinforcement(indicatorRows, recent.direction);
-  const score = clamp(recent.score + indicators.adjustment);
+  const professional = professionalContextScore(recent, indicators, thresholds);
+  const score = professional.score;
+  const candidateReady = professional.contextReady && professional.triggerReady;
+  const professionalReason = candidateReady
+    ? `Leitura profissional: contexto + região + gatilho confirmados (${Math.round(score)}/100).`
+    : `AGUARDAR — leitura profissional incompleta: ${!professional.contextReady ? 'contexto/região' : 'gatilho'} ainda não confirmado.`;
   return {
-    state: score >= ANALYST_THRESHOLDS.possibleScore ? 'WATCH' : 'WAIT',
+    state: candidateReady && score >= thresholds.possibleScore ? 'WATCH' : 'WAIT',
     score,
     baseScore: recent.score,
     direction: recent.direction,
-    reasons: [...recent.reasons, ...indicators.reasons],
+    reasons: [...recent.reasons, ...indicators.reasons, professionalReason],
     recent,
     indicators,
+    waitingFor: waitingFor(recent, recent.direction, score, thresholds.profile),
     analytics: {
       ...(recent.metrics || {}),
+      ...levelAnalytics,
       continuationDirection: recent.continuationDirection || null,
       continuationScore: Number(recent.continuationScore || 0),
+      nextCandle: recent.nextCandle || null,
+      entryQuality: recent.entryQuality || null,
       rsi: indicators.rsi?.value ?? null,
-      macdHistogram: indicators.macd?.histogram ?? null
+      macdHistogram: indicators.macd?.histogram ?? null,
+      legacyScore: professional.legacyScore,
+      professional
     }
   };
 }

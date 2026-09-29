@@ -57,7 +57,9 @@ test('RSI and MACD reinforce the score without changing the 10-candle price acti
   assert.equal(before.recent.count, 10);
   assert.equal(before.direction, 'BUY');
   assert.equal(before.baseScore, 44);
-  assert.equal(before.score, 44);
+  assert.equal(before.analytics.legacyScore, 44);
+  assert.ok(Number.isFinite(before.score));
+  assert.ok(before.analytics.professional?.blocks);
 
   assert.equal(after.recent.count, 10);
   assert.equal(after.direction, 'BUY');
@@ -67,7 +69,8 @@ test('RSI and MACD reinforce the score without changing the 10-candle price acti
   assert.equal(after.indicators.ema.effect, 0);
   assert.equal(after.indicators.bollinger.effect, 0);
   assert.equal(after.indicators.adjustment, 18);
-  assert.equal(after.score, 62);
+  assert.equal(after.analytics.legacyScore, 62);
+  assert.ok(Number.isFinite(after.score));
   assert.ok(Number.isFinite(after.analytics.buyPower));
   assert.ok(Number.isFinite(after.analytics.sellPower));
   assert.ok(Number.isFinite(after.analytics.currentStrength));
@@ -83,7 +86,8 @@ test('MACD against the price-action direction subtracts exactly 10', () => {
   assert.equal(result.indicators.rsi.effect, 8);
   assert.equal(result.indicators.macd.effect, -10);
   assert.equal(result.indicators.adjustment, -2);
-  assert.equal(result.score, 42);
+  assert.equal(result.analytics.legacyScore, 42);
+  assert.ok(Number.isFinite(result.score));
 });
 
 test('orchestrator uses extended history for indicators while price action remains the latest 10 candles', () => {
@@ -108,10 +112,11 @@ test('orchestrator uses extended history for indicators while price action remai
   assert.notEqual(first.signal.state, 'WATCH');
 
   const out = processSnapshot(snapshot(bucket + 36_000), { connection: 'online' });
-  assert.equal(out.signal.phase, 'POSSIBLE');
-  assert.equal(out.signal.state, 'WATCH');
-  assert.equal(out.signal.direction, 'BUY');
-  assert.equal(out.signal.score, 62);
+  assert.equal(out.signal.state, 'WAIT');
+  assert.equal(out.signal.direction, null);
+  assert.equal(out.signal.analysisDirection, 'BUY');
+  assert.equal(out.signal.analytics.legacyScore, 62);
   assert.equal(out.signal.secondsRemaining, 24);
   assert.equal(out.candles.length, 39);
+  assert.equal(out.signal.analytics.professional?.contextReady, false);
 });

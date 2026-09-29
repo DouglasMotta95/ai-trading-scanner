@@ -1,0 +1,28 @@
+/* AI Trading Bot identity layer: the side panel presents the product as an active robot. */
+.bot-identity{display:grid;grid-template-columns:44px minmax(0,1fr) auto;gap:10px;align-items:center;margin:8px 0 7px;padding:9px 10px;border:1px solid #1b4057;border-radius:14px;background:linear-gradient(110deg,#081824,#0a1a27);position:relative;overflow:hidden}
+.bot-identity:after{content:"";position:absolute;inset:0 auto 0 -45%;width:36%;background:linear-gradient(90deg,transparent,rgba(90,211,239,.10),transparent);transform:skewX(-18deg);animation:botScanSweep 2.8s linear infinite;pointer-events:none}
+.bot-identity-avatar{width:38px;height:40px;display:grid;place-items:center;position:relative;z-index:1}
+.robot-mini-head{width:29px;height:21px;margin-top:-4px;border-radius:8px 8px 7px 7px;background:linear-gradient(145deg,#70e9c7,#3c91dd);display:flex;align-items:center;justify-content:center;gap:5px;box-shadow:inset 0 -3px 0 #153247}
+.robot-mini-head i{width:4px;height:4px;border-radius:50%;background:#05131c;box-shadow:0 0 6px #c3fff2}
+.robot-mini-body{width:24px;height:12px;margin-top:-2px;border:1px solid #2e6883;border-radius:5px 5px 8px 8px;background:#0a2431;display:flex;align-items:center;justify-content:center;gap:2px}
+.robot-mini-body i{width:3px;height:3px;border-radius:50%;background:#69dfb0}
+.robot-mini-antenna{position:absolute;top:0;width:2px;height:8px;border-radius:99px;background:#74e8c5}
+.robot-mini-antenna:after{content:"";position:absolute;top:-3px;left:-2px;width:6px;height:6px;border-radius:50%;background:#69e2bc;box-shadow:0 0 8px #69e2bc}
+.bot-identity-copy{display:grid;gap:2px;min-width:0;position:relative;z-index:1}
+.bot-identity-copy small{font-size:7px;line-height:1;letter-spacing:.14em;color:#6f91a5;font-weight:950}
+.bot-identity-copy b{font-size:10px;line-height:1.2;color:#eaf7ff}
+.bot-identity-copy span{font-size:8px;line-height:1.35;color:#7f9eb1}
+.bot-identity-badge{position:relative;z-index:1;padding:5px 7px;border:1px solid #28516a;border-radius:999px;background:#071620;color:#87a7ba;font-size:7px;font-weight:950;letter-spacing:.06em;white-space:nowrap}
+.bot-identity.live,.bot-identity.monitoring,.bot-identity.ready{border-color:#245e50;background:linear-gradient(110deg,#09211b,#091b28)}
+.bot-identity.entry-buy{border-color:#2c8066;background:linear-gradient(110deg,#0d2b22,#0b1c28);box-shadow:0 0 22px rgba(79,220,174,.08)}
+.bot-identity.entry-sell{border-color:#8b4055;background:linear-gradient(110deg,#2a111b,#0b1b28);box-shadow:0 0 22px rgba(255,103,137,.08)}
+.bot-identity.possible{border-color:#7a672b;background:linear-gradient(110deg,#2b250f,#0b1b28)}
+.bot-identity.connecting,.bot-identity.switching{border-color:#4f6a7c}
+.bot-identity.locked{border-color:#5b4b31;background:linear-gradient(110deg,#211a0e,#0b1822)}
+.bot-identity.error{border-color:#7b3345;background:linear-gradient(110deg,#28111a,#0b1822)}
+.bot-identity.entry-buy .bot-identity-badge{color:#6ce2b8;border-color:#2f8067}
+.bot-identity.entry-sell .bot-identity-badge{color:#ff8ca8;border-color:#8b4055}
+.bot-identity.possible .bot-identity-badge{color:#e4c96f;border-color:#79662b}
+.bot-identity.error .bot-identity-badge{color:#ff8ca8;border-color:#7b3345}
+@keyframes botScanSweep{to{left:115%}}
+@media(max-width:390px){.bot-identity{grid-template-columns:36px minmax(0,1fr);padding:8px}.bot-identity-badge{grid-column:2;justify-self:start}.bot-identity-copy span{font-size:7px}}
