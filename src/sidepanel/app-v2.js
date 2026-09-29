@@ -861,8 +861,8 @@ function syncSettingsUi(state = null) {
   const payoutMap = prefs.payoutByMode && typeof prefs.payoutByMode === 'object' ? prefs.payoutByMode : { M1: 88, M5: 88 };
   if ($('operationMode')) $('operationMode').value = operationMode;
   if ($('signalPayout')) $('signalPayout').value = String(Number(payoutMap[operationMode] ?? 88));
-  setText('scannerModeTitle', `${operationMode} AO VIVO`);
-  setText('scannerModeHeading', `Scanner ${operationMode}`);
+  setText('scannerModeTitle', `${operationMode} • BOT ATIVO`);
+  setText('scannerModeHeading', `Bot ${operationMode}`);
   setText('operationTimeframeDisplay', operationMode);
   setText('operationExpirationDisplay', operationExpirationLabel);
   setText('operationModeNote', `Modo ${operationMode}: timeframe ${operationMode} + expiração de ${operationMode === 'M5' ? '5 minutos' : '1 minuto'}. A execução continua manual na CasaTrade.`);
