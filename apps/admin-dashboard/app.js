@@ -50,7 +50,7 @@ function pageMeta(name) {
     licenses:['Licenças','Busque, filtre e gerencie cada acesso em poucos toques.'],
     clients:['Clientes','Dispositivos conectados e presença em tempo real.'],
     messages:['Mensagens','Modelos automáticos para enviar ao cliente.'],
-    operations:['Operação ao vivo','Extensões online, scanners, heartbeat, sinais e resultados observados.'],
+    operations:['Operação ao vivo','Robôs online, extensões, heartbeat, sinais e resultados observados.'],
     system:['Sistema','Sessão administrativa, backend e versão ativa.']
   })[name] || ['Central de controle',''];
 }
@@ -296,7 +296,7 @@ function renderOperations() {
   const summaryRoot = $('#liveSummary');
   if (summaryRoot) summaryRoot.innerHTML = [
     ['●','CLIENTES ONLINE',summary.onlineClients ?? 0,'heartbeat nos últimos 20s','green'],
-    ['◉','SCANNERS ATIVOS',summary.scanningClients ?? 0,'leitura em execução','blue'],
+    ['◉','ROBÔS ATIVOS',summary.scanningClients ?? 0,'leitura em execução','blue'],
     ['↗','SINAIS CONFIRMADOS',summary.confirmedSignals ?? 0,`${summary.pendingSignals ?? 0} aguardando resultado`,'violet'],
     ['✓','ACERTO OBSERVADO',accuracy,`${summary.wins ?? 0} win • ${summary.losses ?? 0} loss`,'gold']
   ].map(([icon,label,value,hint,tone]) => `<article class="live-kpi ${tone}"><span>${icon}</span><small>${label}</small><strong>${esc(value)}</strong><em>${esc(hint)}</em></article>`).join('');
@@ -326,7 +326,7 @@ function renderOperations() {
   if ($('#liveEventCount')) $('#liveEventCount').textContent = events.length;
   if ($('#liveEvents')) $('#liveEvents').innerHTML = events.length ? events.slice(0,30).map(e => {
     const d = e.data || {};
-    const labels = {bot_started:'Robô iniciado',bot_stopped:'Robô pausado',platform_connected:'Plataforma conectada',signal_confirmed:'Entrada confirmada',signal_state:'Estado do sinal alterado',license_activated:'Licença ativada'};
+    const labels = {scanner_started:'Robô iniciado',scanner_stopped:'Robô pausado',platform_connected:'Plataforma conectada',signal_confirmed:'Entrada confirmada',signal_state:'Estado do sinal alterado',license_activated:'Licença ativada'};
     return `<div class="live-event"><i></i><div><b>${esc(labels[e.type] || e.type)}</b><small>${esc(e.customerName || 'Cliente')}${d.asset ? ` • ${esc(d.asset)}` : ''}${d.direction ? ` • ${esc(d.direction)}` : ''}</small></div><time>${fmtTime(e.at)}</time></div>`;
   }).join('') : '<div class="attention-empty">Os eventos da extensão aparecerão aqui.</div>';
   if ($('#liveSync')) $('#liveSync').textContent = `ATUALIZADO ${new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}`;
