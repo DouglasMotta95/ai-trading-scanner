@@ -418,12 +418,17 @@ export function nextCandleContinuation(rows = [], direction = null, metrics = {}
       - opposingWick * .15
   );
 
-  const shapeReady = favorableClose >= 58 && bodyStrength >= 30 && opposingWick <= 42;
-  const pressureReady = pressure >= 55 && score >= 60;
-  const followThrough = (momentumAligned && momentumScore >= 45)
+  // Entry quality is deliberately stricter than POSSÍVEL, but it must not
+  // require a large candle body. On OTC/mobile charts the decisive candle can
+  // be short while still closing strongly in its direction. We therefore use
+  // three independent confirmations: close location, directional pressure and
+  // follow-through. A tiny/noisy candle without pressure still cannot enter.
+  const shapeReady = favorableClose >= 55 && bodyStrength >= 22 && opposingWick <= 50;
+  const pressureReady = pressure >= 50 && score >= 58;
+  const followThrough = (momentumAligned && momentumScore >= 40)
     || previousAlignment >= .67
     || triggerAligned;
-  const ready = score >= 60 && shapeReady && pressureReady && followThrough;
+  const ready = score >= 58 && shapeReady && pressureReady && followThrough;
 
   const reason = ready
     ? `Pressão ${direction === 'BUY' ? 'compradora' : 'vendedora'} confirma continuação da próxima vela (${Math.round(score)}/100).`
