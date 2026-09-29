@@ -9,7 +9,7 @@ test('v0.11.116: exact and fallback timing paths stay explicitly separated', () 
   const background = read('src/background.js');
   assert.match(policy, /authoritative: true/);
   assert.match(policy, /authoritative: false/);
-  assert.match(policy, /quality: 'fallback'/);
+  assert.match(policy, /quality: exact \? 'exact' : 'fallback'/);
   assert.match(background, /clockQuality: 'fallback'/);
   assert.match(background, /derived-candle-boundary/);
 });
