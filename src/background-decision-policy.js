@@ -350,6 +350,19 @@ function baseDecision(state = {}) {
     return { ...common, uiState: 'BUILDING_PATTERN', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: 'Montando o padrão com as velas reais da CasaTrade.' };
   }
 
+  // Do not let a stale signal survive a real transport disconnect.
+  if (state.connection !== 'online') {
+    return {
+      ...common,
+      uiState: 'ANALYZING_MARKET',
+      direction: null,
+      actionable: false,
+      alert: 'silent',
+      possibleSince: null,
+      reason: 'CONECTANDO — aguardando conexão online antes de liberar qualquer entrada.'
+    };
+  }
+
   // Keep a bounded POSSÍVEL during short-lived clock/expiration regressions.
   // The candidate is already technical, belongs to the same cycle/direction,
   // and remains non-actionable until timing is authoritative again.
