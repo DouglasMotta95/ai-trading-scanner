@@ -550,8 +550,8 @@ export function nextCandleContinuation(rows = [], direction = null, metrics = {}
     },
     breakout: evidence.breakout,
     rejection: evidence.rejection,
-    continuationDirection,
-    continuationScore
+    continuationDirection: evidence.continuationDirection,
+    continuationScore: Number(evidence.continuationScore || 0)
   }, direction);
 
   // Keep the next-candle gate entry-only, but use the quality engine to block
