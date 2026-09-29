@@ -595,9 +595,12 @@ function ensureLiveClockUi() {
   document.head.append(style);
 }
 
+let liveClockRuntimeTarget = 0;
+let liveClockRuntimeState = {};
+
 function liveClockTarget(state = {}) {
-  const clock = state.diagnostics?.marketClock || {};
   const now = Date.now();
+  const clock = state.diagnostics?.marketClock || {};
   const closeAt = num(clock.closeAt);
   if (closeAt != null && closeAt > now + 250) return closeAt;
   const at = Number(clock.at || 0);
@@ -609,27 +612,51 @@ function liveClockTarget(state = {}) {
   return null;
 }
 
-function tickLiveClock(state = {}) {
+function syncLiveClockRuntime(state = {}) {
+  liveClockRuntimeState = state || {};
+  const nextTarget = liveClockTarget(liveClockRuntimeState);
+  if (nextTarget != null && nextTarget > Date.now() + 250) {
+    liveClockRuntimeTarget = nextTarget;
+  } else if (liveClockRuntimeTarget && liveClockRuntimeTarget <= Date.now() + 250) {
+    liveClockRuntimeTarget = 0;
+  }
+}
+
+function tickLiveClock() {
   const bar = $('liveClockBar');
   if (!bar) return;
   const now = Date.now();
   const nowEl = $('liveClockNow');
   if (nowEl) nowEl.textContent = new Date(now).toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
 
-  const target = liveClockTarget(state);
+  const target = liveClockRuntimeTarget;
   const nextEl = $('liveClockNext');
   const countEl = $('liveClockCountdown');
-  if (!target) {
+
+  if (!target || target <= now + 50) {
     bar.classList.add('pending');
     if (nextEl) nextEl.textContent = '--:--:--';
-    if (countEl) countEl.textContent = 'AGUARDANDO CLOCK DA CASATRADE';
+    if (countEl) countEl.textContent = 'AGUARDANDO NOVO CICLO';
     return;
   }
 
   bar.classList.remove('pending');
   const remaining = Math.max(0, Math.ceil((target - now) / 1000));
   if (nextEl) nextEl.textContent = new Date(target).toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
-  if (countEl) countEl.textContent = remaining > 0 ? 'VIRA EM ' + remaining + 's' : 'VIRANDO AGORA';
+  if (countEl) countEl.textContent = 'VIRA EM ' + remaining + 's';
+}
+
+function startLiveClockRuntime() {
+  if (globalThis.__ATS_LIVE_CLOCK_RUNTIME__) return;
+  globalThis.__ATS_LIVE_CLOCK_RUNTIME__ = true;
+  const pump = () => {
+    try {
+      ensureLiveClockUi();
+      tickLiveClock();
+    } catch {}
+  };
+  pump();
+  setInterval(pump, 250);
 }
 
 function ensureEntryScheduleUi() {
@@ -828,7 +855,9 @@ function render(state = {}) {
   const licensed = renderLicense(state);
   if (!licensed) return;
   ensureLiveClockUi();
-  tickLiveClock(state);
+  syncLiveClockRuntime(state);
+  tickLiveClock();
+  startLiveClockRuntime();
   const model = decisionModel(state);
   renderEntrySchedule(state, model);
   const clock = state.diagnostics?.marketClock || {};
@@ -1139,7 +1168,7 @@ $('activateLicense')?.addEventListener('click', async () => {
 
 setInterval(() => {
   normalizeOperationalPulseLabels();
-  tickLiveClock(lastRenderedState);
+  tickLiveClock();
   if (!lastRenderedState || !Object.keys(lastRenderedState).length) return;
   const remaining = smoothedRemaining(lastRenderedState);
   const exact = exactClockReady(lastRenderedState);
