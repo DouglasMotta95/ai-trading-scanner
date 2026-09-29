@@ -1117,10 +1117,16 @@ async function connectActiveTab({ automatic = false, preferredTabId = null } = {
       && liveSession.transitioning !== true;
     const briefReaderGap = Number(restartBase.lastSeen || 0) > 0
       && Date.now() - Number(restartBase.lastSeen) < 12000;
+    // A new Connect must never resurrect a POSSÍVEL/ENTER from a previous
+    // session while CasaTrade is still loading. Preserve the live session only
+    // when the same tab is already proven live by a fresh focus/data sample AND
+    // the current exact CasaTrade clock is available.
+    const exactLiveResume = handshakeReady(restartBase);
     const preserveLive = sameTab && restartBase.connection === 'online'
       && focus?.reliable === true && focus?.trustedChartFrame === true
       && sessionStillOwned
-      && ((focusFresh && dataFresh) || briefReaderGap);
+      && focusFresh && dataFresh
+      && exactLiveResume;
 
     const diagnostics = { ...(restartBase.diagnostics || {}) };
     delete diagnostics.connectionError;
