@@ -328,6 +328,19 @@ function decisionModel(state = {}) {
   const pending = transitionAsset(state);
   if (pending) return { uiState: 'ANALYZING_MARKET', title: 'ATUALIZANDO ATIVO', text: `ATUALIZANDO PARA ${pending}`, sub: 'Limpando dados anteriores e confirmando preço + velas do novo ativo.', tone: 'waiting', reason: 'Troca de ativo em validação.', score: 0, actionable: false };
   if (!marketDataReady(state) || !focusReady(state)) return { uiState: 'ANALYZING_MARKET', title: 'AGUARDAR', text: 'AGUARDAR', sub: 'Confirmando ativo, preço e velas reais.', tone: 'waiting', reason: 'Identificando o gráfico atual da CasaTrade.', score: 0, actionable: false };
+  // The sidepanel is a new observation surface. Never render a persisted
+  // POSSÍVEL/ENTER from before this panel was opened; wait for a fresh focus
+  // sample from the currently open CasaTrade tab.
+  if (!focusConfirmedThisPanel(state)) return {
+    uiState: 'ANALYZING_MARKET',
+    title: 'AGUARDAR',
+    text: 'AGUARDAR',
+    sub: 'Aguardando confirmação nova do gráfico da CasaTrade.',
+    tone: 'waiting',
+    reason: 'Leitura anterior descartada até o gráfico atual ser confirmado.',
+    score: 0,
+    actionable: false
+  };
 
   // A POSSÍVEL is a technical pre-signal and must remain visible even when
   // the final entry timing gate is still waiting for an exact clock/expiration.
