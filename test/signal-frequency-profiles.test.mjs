@@ -170,3 +170,10 @@ test('entry quality admits a short clean candle and blocks borderline/tiny noisy
   assert.equal(borderline.borderline, true);
   assert.ok(borderline.directionalEdge < 8);
 });
+
+test('next-candle entry-quality path uses scoped continuation evidence', () => {
+  const analysis = read('src/core/analysis.js');
+  assert.match(analysis, /continuationDirection: evidence\.continuationDirection/);
+  assert.match(analysis, /continuationScore: Number\(evidence\.continuationScore \|\| 0\)/);
+  assert.match(analysis, /entryQuality\.ready === true/);
+});
