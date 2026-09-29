@@ -1,0 +1,1 @@
+v0.11.112 is intentionally based on the stable v0.11.109 live-signal-handoff tree. No extension source changes are included in this build; this marker exists only to trigger CI packaging.
