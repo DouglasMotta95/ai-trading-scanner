@@ -1,1154 +1,1137 @@
-import { processSnapshot, resetOrchestrator, serializeCompletedDecisions, restoreCompletedDecisions } from './core/orchestrator.js';
-import { resolveMarketEvidence, marketHistoryFor, acquisitionStage } from './core/market-evidence.js';
-import { detectPlatform } from './platforms/registry.js';
-import { activateLicense, validateLicense, consumeSignal, clearLicense, licenseRequired, restoreCachedLicense } from './services/license.js';
-import { heartbeat, track } from './services/telemetry.js';
-import { readScannerState, updateScannerState, replaceScannerState } from './services/scanner-state-atomic.js';
+import { processSnapshot, resetOrchestrator } from './core/orchestrator.js';
+import { readScannerState, updateScannerState } from './services/scanner-state-atomic.js';
+import { resolveSignalHistory, signalPerformance, resolveSignalOutcome, diagnoseSignalOutcomePending } from './core/signal-outcomes.js';
+import { getThresholds, getOperationMode } from './core/analysis.js';
+import { storageLocalGet, storageLocalSet } from './services/chrome-compat.js';
+import { track as telemetryEvent, heartbeat as telemetryHeartbeat } from './services/telemetry.js';
+import { consumeSignal, validateLicense } from './services/license.js';
+import { probePlatformControlsDirect } from './background-control.js';
 
-const SESSION_HISTORY_KEY = 'atsSessionSignalHistory';
-const COMPLETED_DECISIONS_KEY = 'atsCompletedDecisions';
-const RUNTIME_SESSION_KEY = 'atsRuntimeSessionId';
-const NON_RESTORABLE_LICENSE_STATUSES = new Set(['limit', 'expired', 'device_locked']);
-const DEFAULT_LICENSE = {
-  status: 'unconfigured', plan: null, planLabel: null, dailyLimit: null, usedToday: 0,
-  remainingToday: null, totalLimit: null, usedTotal: 0, remainingTotal: null, error: null
+// Single owner of technical analysis.
+// All acquisition modules only update scannerState. This loop coalesces those
+// updates and is the only runtime path allowed to invoke the technical orchestrator.
+const ANALYSIS_CADENCE_MS = 650;
+const BURST_COALESCE_MS = 80;
+const CLOCK_FRESH_MS = 3200;
+const EXACT_CLOCK_SOURCES = new Set(['trader-dom-countdown', 'network-server-cycle']);
+
+const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
+const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
+const normTf = value => {
+  const raw = clean(value).toUpperCase().replace(/\s+/g, '');
+  let match = raw.match(/^([SMH])(\d{1,5})$/);
+  if (match && Number(match[2]) > 0) return `${match[1]}${Number(match[2])}`;
+  match = raw.match(/^(\d{1,4})(?:M|MIN)$/);
+  if (match && Number(match[1]) > 0) return `M${Number(match[1])}`;
+  return null;
 };
-const AUTHORITATIVE_BACKGROUND_LICENSE_ERRORS = new Set([
-  'license_not_found',
-  'license_inactive',
-  'license_expired',
-  'device_limit_reached'
-]);
-const EMPTY_MARKET = {
-  connection: 'offline', platformId: null, platformName: null, targetTabId: null,
-  asset: null, marketType: 'unknown', instrumentType: 'unknown', timeframe: null,
-  analysisTimeframe: null, expiration: null, targetExpiration: null, price: null,
-  serverTime: null, capabilities: { structuredQuotes: false, candles: false, expiration: false, multiAsset: false },
-  diagnostics: {}, marketCatalog: { assets: [], timeframes: [], expirations: [], lines: [] },
-  marketHistory: {}, platformControls: null, signal: null, tradeIntent: null, lastSeen: null,
-  candles: [], currentCandle: null, lastConfirmed: null,
-  telemetry: { feedQuality: 0, latency: null, lastSync: null }
+const marketId = value => {
+  const raw = clean(value).toUpperCase();
+  if (!raw) return '';
+  const otc = /(?:\(|\b|[_-])OTC(?:\)|\b)?/i.test(raw);
+  const pair = raw.match(/\b([A-Z0-9]{2,20})\s*[\/_-]\s*([A-Z0-9]{2,12})/i);
+  return pair ? `${pair[1]}/${pair[2]}${otc ? ' (OTC)' : ''}` : raw;
 };
-const DEFAULT_STATE = { ...EMPTY_MARKET, scanner: 'idle', license: DEFAULT_LICENSE };
-
-let lastLicenseCheck = 0;
-let lastHeartbeatAt = 0;
-let lastDirectScanAt = 0;
-let directScanPromise = null;
-let completedDecisionRestorePromise = null;
-let runtimeSessionPromise = null;
-
-const clean = v => String(v ?? '').trim();
-const num = v => v == null || v === '' ? null : Number.isFinite(Number(v)) ? Number(v) : null;
-const sameTarget = (s, sender) => !s?.targetTabId || !sender?.tab?.id || s.targetTabId === sender.tab.id;
-const platformFromUrl = u => { try { return detectPlatform(new URL(u).hostname); } catch { return null; } };
-
-const FOCUS_STABLE_MS = 2000;
-const licenseActive = license => ['active', 'valid'].includes(String(license?.status || '').toLowerCase());
-const normAsset = value => clean(value).toUpperCase()
-  .replace(/\s+/g, ' ')
-  .replace(/\s*\(\s*OTC\s*\)\s*$/, ' (OTC)')
-  .trim();
-const assetIdentity = value => normAsset(value).replace(/\s*\(OTC\)\s*$/, '');
-const sameAsset = (a, b) => {
-  const left = assetIdentity(a), right = assetIdentity(b);
-  return !!left && !!right && left === right;
-};
-const focusedAssetMeta = state => state?.diagnostics?.focusedAsset || null;
-const focusedAsset = state => normAsset(focusedAssetMeta(state)?.asset);
-const focusStableFor = (state, asset) => {
-  const meta = focusedAssetMeta(state);
-  const since = Number(meta?.stableSince || meta?.at || 0);
-  return sameAsset(meta?.asset, asset) && Number.isFinite(since) && since > 0 && Date.now() - since >= FOCUS_STABLE_MS;
+const sameMarket = (a, b) => !!marketId(a) && marketId(a) === marketId(b);
+const normExp = value => {
+  const raw = clean(value).toLowerCase().replace(/\s+/g, '');
+  let match = raw.match(/^(\d{1,5})(?:s|seg|segundo|segundos)$/);
+  if (match) return `${Number(match[1])}s`;
+  match = raw.match(/^(\d{1,4})(?:m|min|minuto|minutos)$/);
+  if (match) return `${Number(match[1]) * 60}s`;
+  return null;
 };
 
-const merge = (state = {}, patch = {}) => ({
-  ...DEFAULT_STATE, ...state, ...patch,
-  license: { ...DEFAULT_LICENSE, ...(state.license || {}), ...(patch.license || {}) },
-  capabilities: { ...DEFAULT_STATE.capabilities, ...(state.capabilities || {}), ...(patch.capabilities || {}) },
-  diagnostics: { ...(state.diagnostics || {}), ...(patch.diagnostics || {}) },
-  telemetry: { ...DEFAULT_STATE.telemetry, ...(state.telemetry || {}), ...(patch.telemetry || {}) }
-});
+const SIGNAL_PERFORMANCE_KEY = 'atsSignalPerformanceLedgerV1';
+const SIGNAL_PERFORMANCE_MAX = 2000;
+let signalPerformanceQueue = Promise.resolve();
+let lastSignalPerformanceSignature = '';
 
-const marketCleared = (state = {}, patch = {}) => ({
-  ...state, ...EMPTY_MARKET, scanner: 'idle', license: state.license || DEFAULT_LICENSE, ...patch
-});
+const candleTimestamp = row => {
+  let value = Number(row?.time ?? row?.timestamp);
+  if (Number.isFinite(value) && value > 0 && value < 1e12) value *= 1000;
+  return Number.isFinite(value) && value > 0 ? value : null;
+};
 
-async function runtimeSessionId() {
-  if (!runtimeSessionPromise) {
-    runtimeSessionPromise = (async () => {
-      const stored = await chrome.storage.session.get(RUNTIME_SESSION_KEY);
-      let sessionId = clean(stored[RUNTIME_SESSION_KEY]);
-      if (!sessionId) {
-        sessionId = crypto.randomUUID();
-        await chrome.storage.session.set({ [RUNTIME_SESSION_KEY]: sessionId });
-      }
-      return sessionId;
-    })();
+function performanceTimeframeMs(value = 'M1') {
+  const tf = normTf(value) || 'M1';
+  if (tf.startsWith('S')) return Math.max(1, Number(tf.slice(1))) * 1000;
+  if (tf.startsWith('M')) return Math.max(1, Number(tf.slice(1))) * 60_000;
+  if (tf.startsWith('H')) return Math.max(1, Number(tf.slice(1))) * 3_600_000;
+  return 60_000;
+}
+
+function performanceTargetBucket(targetStart, timeframe = 'M1') {
+  const value = num(targetStart);
+  if (value == null) return null;
+  const tfMs = performanceTimeframeMs(timeframe);
+  return Math.floor(value / tfMs) * tfMs;
+}
+
+function median(values = []) {
+  const rows = values.filter(Number.isFinite).sort((a, b) => a - b);
+  if (!rows.length) return null;
+  const middle = Math.floor(rows.length / 2);
+  return rows.length % 2 ? rows[middle] : (rows[middle - 1] + rows[middle]) / 2;
+}
+
+function closedM1ForShadow(state = {}, now = Date.now()) {
+  const rows = historyFor(state, state.asset)
+    .map(row => ({ ...row, __time: candleTimestamp(row) }))
+    .filter(row => row.__time != null)
+    .sort((a, b) => a.__time - b.__time);
+
+  const unique = [...new Map(rows.map(row => [row.__time, row])).values()];
+  const diffs = [];
+  for (let index = 1; index < unique.length; index += 1) {
+    const diff = unique[index].__time - unique[index - 1].__time;
+    if (diff >= 30_000 && diff <= 120_000) diffs.push(diff);
   }
-  return runtimeSessionPromise;
+  const cadence = median(diffs);
+  if (cadence == null || cadence < 45_000 || cadence > 90_000) return [];
+
+  return unique.filter(row => row.__time + 60_000 <= now);
 }
 
-async function restoreCompletedDecisionCache() {
-  const sessionId = await runtimeSessionId();
-  const stored = await chrome.storage.local.get(COMPLETED_DECISIONS_KEY);
-  const cached = stored[COMPLETED_DECISIONS_KEY];
-  if (cached?.sessionId === sessionId && Array.isArray(cached.rows)) {
-    restoreCompletedDecisions(cached.rows);
-    return;
+function aggregateClosedM5(m1Rows = [], now = Date.now()) {
+  const groups = new Map();
+  for (const row of m1Rows) {
+    const time = Number(row?.__time ?? candleTimestamp(row));
+    if (!Number.isFinite(time)) continue;
+    const bucket = Math.floor(time / 300_000) * 300_000;
+    if (bucket + 300_000 > now) continue;
+    const group = groups.get(bucket) || new Map();
+    group.set(Math.floor(time / 60_000) * 60_000, row);
+    groups.set(bucket, group);
   }
-  restoreCompletedDecisions([]);
-  if (cached) await chrome.storage.local.remove(COMPLETED_DECISIONS_KEY);
+
+  return [...groups.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .filter(([, group]) => group.size >= 5)
+    .map(([time, group]) => {
+      const rows = [...group.values()].sort((a, b) => Number(a.__time) - Number(b.__time)).slice(0, 5);
+      return {
+        time,
+        open: num(rows[0]?.open),
+        high: Math.max(...rows.map(row => Number(row.high))),
+        low: Math.min(...rows.map(row => Number(row.low))),
+        close: num(rows.at(-1)?.close)
+      };
+    })
+    .filter(row => [row.open, row.high, row.low, row.close].every(value => num(value) != null));
 }
 
-async function ensureCompletedDecisionCache() {
-  if (!completedDecisionRestorePromise) {
-    completedDecisionRestorePromise = restoreCompletedDecisionCache().catch(() => {
-      restoreCompletedDecisions([]);
-    });
-  }
-  await completedDecisionRestorePromise;
+function emaLast(values = [], period = 5) {
+  const rows = values.map(num).filter(value => value != null);
+  if (!rows.length) return null;
+  const alpha = 2 / (period + 1);
+  let value = rows[0];
+  for (let index = 1; index < rows.length; index += 1) value = rows[index] * alpha + value * (1 - alpha);
+  return value;
 }
 
-async function persistCompletedDecisionCache() {
-  const rows = serializeCompletedDecisions();
-  if (!rows.length) {
-    await chrome.storage.local.remove(COMPLETED_DECISIONS_KEY);
-    return;
-  }
-  const sessionId = await runtimeSessionId();
-  await chrome.storage.local.set({
-    [COMPLETED_DECISIONS_KEY]: { sessionId, rows, updatedAt: Date.now() }
-  });
+function kaufmanEfficiency(values = []) {
+  const rows = values.map(num).filter(value => value != null).slice(-20);
+  if (rows.length < 20) return null;
+  const change = Math.abs(rows.at(-1) - rows[0]);
+  let volatility = 0;
+  for (let index = 1; index < rows.length; index += 1) volatility += Math.abs(rows[index] - rows[index - 1]);
+  return volatility > 0 ? change / volatility : 0;
 }
 
-async function clearCompletedDecisionCache() {
-  resetOrchestrator();
-  await chrome.storage.local.remove(COMPLETED_DECISIONS_KEY);
-}
+function shadowMeasurements(state = {}, direction = '') {
+  const now = Date.now();
+  const m1 = closedM1ForShadow(state, now);
+  const m5 = aggregateClosedM5(m1, now);
+  const side = clean(direction).toUpperCase();
+  let fM5 = 'NEUTRO';
+  let fExtremo = 'NEUTRO';
 
-function licenseError(r, currentLicense = DEFAULT_LICENSE) {
-  const error = r?.error || 'license_required';
-  if (!AUTHORITATIVE_BACKGROUND_LICENSE_ERRORS.has(error)) {
-    return { ...currentLicense, error, syncPending: true };
-  }
-  const status = error === 'license_expired' ? 'expired'
-    : error === 'device_limit_reached' ? 'device_locked'
-      : 'inactive';
-  return { ...currentLicense, status, error, syncPending: false };
-}
-
-async function syncLicense(settings = {}, state = {}, force = false) {
-  if (!force && state.license?.status === 'active' && Date.now() - lastLicenseCheck < 30000) return state.license;
-  const r = await validateLicense(settings);
-  lastLicenseCheck = Date.now();
-  return r.ok ? { ...r.license, error: r.license?.error || null } : licenseError(r, state.license || DEFAULT_LICENSE);
-}
-
-function feedQuality(state = {}) {
-  if (state.connection !== 'online' || state.price == null) return 0;
-  const reported = Number(state.diagnostics?.network?.feedQuality);
-  if (Number.isFinite(reported) && reported > 0) return Math.max(0, Math.min(100, reported));
-  if (state.capabilities?.structuredQuotes) return 100;
-  return state.asset && state.price != null ? 65 : 0;
-}
-
-function latencyOf(state = {}) {
-  const t = Number(state.serverTime);
-  if (!Number.isFinite(t) || t <= 1e12) return null;
-  const delta = Math.abs(Date.now() - t);
-  return delta < 600000 ? delta : null;
-}
-
-async function telemetryHeartbeat(state, settings, force = false) {
-  if (!force && Date.now() - lastHeartbeatAt < 5000) return;
-  lastHeartbeatAt = Date.now();
-  await heartbeat(state, settings).catch(() => {});
-}
-const telemetryEvent = async (type, data, settings) => { await track(type, data, settings).catch(() => {}); };
-const telemetryState = state => merge(state, {
-  telemetry: { feedQuality: feedQuality(state), latency: latencyOf(state), lastSync: Date.now() }
-});
-
-function localSignalRecord(state) {
-  const s = state.signal || {};
-  return {
-    id: crypto.randomUUID(), at: Date.now(), asset: state.asset || '—', platform: 'CasaTrade', direction: s.direction,
-    timeframe: state.analysisTimeframe || s.timeframe || state.timeframe || null,
-    expiration: state.targetExpiration || s.targetExpiration || state.expiration || null,
-    entryPrice: num(state.price), status: 'confirmed'
-  };
-}
-
-async function appendSessionHistory(record) {
-  const stored = await chrome.storage.session.get(SESSION_HISTORY_KEY);
-  const rows = Array.isArray(stored[SESSION_HISTORY_KEY]) ? stored[SESSION_HISTORY_KEY] : [];
-  await chrome.storage.session.set({ [SESSION_HISTORY_KEY]: [record, ...rows].slice(0, 50) });
-}
-
-async function activeCasaTradeTab() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id || !tab.url) return { tab: null, platform: null };
-  return { tab, platform: platformFromUrl(tab.url) };
-}
-
-async function ensureSupportedActiveTab() {
-  const { tab, platform } = await activeCasaTradeTab();
-  if (tab?.id && platform) return { scannerState: await readScannerState(), tab, platform };
-  const unsupportedHost = (() => { try { return new URL(tab?.url || '').hostname || null; } catch { return null; } })();
-  const cleared = await updateScannerState(current => marketCleared(current, {
-    diagnostics: { unsupportedHost }
-  }));
-  return { scannerState: cleared, tab, platform: null };
-}
-
-async function injectReaders(tabId) {
-  const scripts = [
-    { file: 'src/content/focused-asset.js', world: 'ISOLATED', allFrames: false },
-    { file: 'src/content/worker-probe.js', world: 'MAIN', allFrames: true },
-    { file: 'src/content/canvas-probe.js', world: 'MAIN', allFrames: true },
-    { file: 'src/content/network-probe.js', world: 'MAIN', allFrames: true },
-    { file: 'src/content/network-bridge.js', world: 'ISOLATED', allFrames: true },
-    { file: 'src/content/embedded-feed-bridge.js', world: 'ISOLATED', allFrames: true },
-    { file: 'src/content/generic-adapter.js', world: 'ISOLATED', allFrames: true },
-    { file: 'src/content/platform-sync.js', world: 'ISOLATED', allFrames: true }
-  ];
-  for (const { file, world, allFrames } of scripts) {
-    await chrome.scripting.executeScript({
-      target: { tabId, allFrames },
-      files: [file],
-      world
-    }).catch(() => {});
-  }
-}
-
-async function connectActiveTab() {
-  const [{ settings = {} }, initialState] = await Promise.all([
-    chrome.storage.local.get('settings'),
-    readScannerState()
-  ]);
-  let scannerState = initialState;
-  const currentLicenseStatus = String(scannerState.license?.status || '').toLowerCase();
-  if (!licenseActive(scannerState.license) && !NON_RESTORABLE_LICENSE_STATUSES.has(currentLicenseStatus)) {
-    const restored = await restoreCachedLicense().catch(() => null);
-    let recoveredLicense = restored;
-    if (!licenseActive(recoveredLicense)) {
-      recoveredLicense = await syncLicense(settings, scannerState, true).catch(() => scannerState.license || DEFAULT_LICENSE);
-    }
-    if (licenseActive(recoveredLicense)) {
-      scannerState = await updateScannerState(current => merge(current, { license: recoveredLicense }));
+  if (m5.length >= 12) {
+    const closes = m5.map(row => Number(row.close));
+    const ema5 = emaLast(closes, 5);
+    const ema10 = emaLast(closes, 10);
+    if (ema5 != null && ema10 != null && ema5 !== ema10) {
+      const trend = ema5 > ema10 ? 'BUY' : 'SELL';
+      fM5 = trend === side ? 'PASSA' : 'FALHA';
     }
   }
 
-  if (!licenseActive(scannerState.license)) {
-    const locked = await updateScannerState(current => marketCleared(current, {
-      license: current.license || DEFAULT_LICENSE,
-      diagnostics: { ...(current.diagnostics || {}), access: { state: 'license_required', at: Date.now() } }
-    }));
-    return { ok: false, error: 'license_required', state: locked };
-  }
-
-  const { tab, platform } = await activeCasaTradeTab();
-  if (!tab?.id || !tab.url || !platform) {
-    const unsupportedHost = (() => { try { return new URL(tab?.url || '').hostname || null; } catch { return null; } })();
-    const next = await updateScannerState(current => marketCleared(current, {
-      diagnostics: { unsupportedHost }
-    }));
-    return { ok: false, error: 'platform_not_registered', state: next };
-  }
-
-  await injectReaders(tab.id);
-
-  const next = await updateScannerState(current => {
-    const sameTab = current.targetTabId === tab.id;
-    return merge(current, {
-      connection: sameTab && current.connection === 'online' ? 'online' : 'connecting',
-      platformId: platform.id,
-      platformName: platform.name,
-      targetTabId: tab.id,
-      scanner: 'scanning',
-      ...(sameTab ? {} : { asset: null, price: null, signal: null, platformControls: null }),
-      diagnostics: {
-        ...(current.diagnostics || {}),
-        target: { host: new URL(tab.url).hostname, tabId: tab.id, connectedAt: Date.now() },
-        acquisition: {
-          stage: 'confirming_asset',
-          reason: 'CasaTrade conectada. Confirmando o ativo aberto.',
-          at: Date.now()
-        }
-      }
-    });
-  });
-  telemetryEvent('platform_connected', { platformId: platform.id, platformName: platform.name }, settings);
-  return { ok: true, platform: { id: platform.id, name: platform.name }, tabId: tab.id, state: next };
-}
-
-function scanCasaTradeFrame() {
-  const host = String(location.hostname || '').toLowerCase().replace(/\.$/, '');
-  if (!(host === 'casatrade.com' || host.endsWith('.casatrade.com') || host === 'casatrade.io' || host.endsWith('.casatrade.io'))) return null;
-
-  const cleanText = v => String(v ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
-  const fold = v => cleanText(v).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-  const toNum = v => {
-    let s = cleanText(v).replace(/[^\d,.-]/g, '');
-    if (!s) return null;
-    if (s.includes(',') && s.includes('.')) s = s.lastIndexOf(',') > s.lastIndexOf('.') ? s.replace(/\./g, '').replace(',', '.') : s.replace(/,/g, '');
-    else s = s.replace(',', '.');
-    const n = Number(s);
-    return Number.isFinite(n) ? n : null;
-  };
-  const visible = el => {
-    if (!el || !(el instanceof Element)) return false;
-    const r = el.getBoundingClientRect();
-    const s = getComputedStyle(el);
-    return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden' && Number(s.opacity || 1) > 0;
-  };
-
-  const roots = [document];
-  const seenRoots = new Set(roots);
-  for (let i = 0; i < roots.length && i < 300; i++) {
-    let nodes = [];
-    try { nodes = roots[i].querySelectorAll('*'); } catch {}
-    for (const el of nodes) {
-      if (el.shadowRoot && !seenRoots.has(el.shadowRoot)) {
-        seenRoots.add(el.shadowRoot);
-        roots.push(el.shadowRoot);
-      }
+  let percentB = null;
+  if (m1.length >= 20) {
+    const closes = m1.slice(-20).map(row => Number(row.close));
+    const mean = closes.reduce((sum, value) => sum + value, 0) / closes.length;
+    const variance = closes.reduce((sum, value) => sum + (value - mean) ** 2, 0) / closes.length;
+    const deviation = Math.sqrt(variance);
+    const upper = mean + 2 * deviation;
+    const lower = mean - 2 * deviation;
+    const width = upper - lower;
+    const price = num(state.price);
+    if (price != null && width > 0) {
+      percentB = (price - lower) / width;
+      if (side === 'BUY') fExtremo = percentB < 0.85 ? 'PASSA' : 'FALHA';
+      else if (side === 'SELL') fExtremo = percentB > 0.15 ? 'PASSA' : 'FALHA';
     }
   }
 
-  const elements = [];
-  for (const root of roots) {
-    let nodes = [];
-    try { nodes = root.querySelectorAll('button,[role="button"],[role="tab"],[aria-selected],input,select,span,strong,b,p,div,li,svg text'); } catch {}
-    for (const el of nodes) if (visible(el)) elements.push(el);
-  }
-
-  const texts = elements.map(el => cleanText(
-    el instanceof HTMLInputElement || el instanceof HTMLSelectElement
-      ? (el.value || el.selectedOptions?.[0]?.textContent || '')
-      : (el.innerText || el.textContent || '')
-  )).filter(Boolean);
-  const pageText = cleanText([document.body?.innerText || '', ...texts.slice(0, 2500)].join(' '));
-
-  const pairRe = /\b([A-Z0-9]{2,16})\s*\/\s*(USDT|USDC|USD|EUR|GBP|JPY|AUD|CAD|CHF|NZD|BRL|BTC|ETH)(?:\s*\(OTC\))?/i;
-  const assetRows = [];
-  for (const el of elements) {
-    const text = cleanText(el.innerText || el.textContent || '');
-    if (!text || text.length > 100) continue;
-    const m = text.toUpperCase().match(pairRe);
-    if (!m) continue;
-    const assetMatch = m[0].replace(/\s+/g, ' ').trim().toUpperCase();
-    const r = el.getBoundingClientRect();
-    let score = 30;
-    if (/\(OTC\)/i.test(assetMatch)) score += 20;
-    if (el.getAttribute?.('aria-selected') === 'true' || /active|selected|current/i.test(String(el.className || ''))) score += 45;
-    if (r.top >= 0 && r.top < innerHeight * .38) score += 20;
-    if (r.left >= 0 && r.left < innerWidth * .60) score += 12;
-    if (/portfolio|historico|histórico|chat|suporte|ranking|leader/i.test(fold(text))) score -= 35;
-    assetRows.push({ asset: assetMatch, score });
-  }
-  if (!assetRows.length) {
-    const m = pageText.toUpperCase().match(pairRe);
-    if (m) assetRows.push({ asset: m[0].replace(/\s+/g, ' ').trim().toUpperCase(), score: 15 });
-  }
-  assetRows.sort((a, b) => b.score - a.score);
-  const asset = assetRows[0]?.asset || null;
-
-  const decimals = text => {
-    const out = [];
-    for (const m of String(text || '').matchAll(/\b\d{1,6}[.,]\d{3,8}\b/g)) {
-      const n = toNum(m[0]);
-      if (n != null && n > 0) out.push(n);
-    }
-    return out;
-  };
-
-  let buy = null, sell = null;
-  for (const el of elements) {
-    const text = cleanText(el.innerText || el.textContent || '');
-    if (!text || text.length > 120) continue;
-    const f = fold(text);
-    const values = decimals(text);
-    if (!values.length) continue;
-    if (buy == null && /\b(comprar|buy)\b/.test(f)) buy = values[values.length - 1];
-    if (sell == null && /\b(vender|sell)\b/.test(f)) sell = values[values.length - 1];
-  }
-  let price = buy != null && sell != null ? (buy + sell) / 2 : (buy ?? sell ?? null);
-  let priceSource = price != null ? 'buttons' : null;
-
-  if (price == null) {
-    const rows = [];
-    for (const el of elements) {
-      const text = cleanText(el.innerText || el.textContent || '');
-      if (!text || text.length > 35 || /%|\$|R\$/i.test(text)) continue;
-      const values = decimals(text);
-      if (!values.length) continue;
-      const r = el.getBoundingClientRect();
-      for (const value of values) {
-        let score = 0;
-        if (r.left > innerWidth * .55) score += 20;
-        if (r.top > innerHeight * .12 && r.top < innerHeight * .86) score += 15;
-        if (/price|quote|rate/i.test(String(el.className || ''))) score += 25;
-        rows.push({ value, score });
-      }
-    }
-    rows.sort((a, b) => b.score - a.score);
-    price = rows[0]?.value ?? null;
-    if (price != null) priceSource = 'chart';
-  }
-
-  const normalizeTf = value => {
-    const s = fold(value).replace(/\s+/g, '');
-    let m = s.match(/^m(1|2|5|15|30)$/); if (m) return `M${m[1]}`;
-    m = s.match(/^(1|2|5|15|30)(?:m|min|minuto|minutos)$/); if (m) return `M${m[1]}`;
-    m = s.match(/^s(5|15|30)$/); if (m) return `S${m[1]}`;
-    m = s.match(/^(5|15|30)(?:s|seg|segundo|segundos)$/); if (m) return `S${m[1]}`;
-    return /^(h1|1h|60m|60min)$/.test(s) ? 'H1' : null;
-  };
-
-  const tfRows = [];
-  for (const el of elements) {
-    const text = cleanText(el.innerText || el.textContent || '');
-    if (!text || text.length > 20) continue;
-    const tf = normalizeTf(text);
-    if (!tf) continue;
-    const r = el.getBoundingClientRect();
-    let score = 5;
-    if (el.getAttribute?.('aria-selected') === 'true' || /active|selected|current/i.test(String(el.className || ''))) score += 50;
-    if (r.left < innerWidth * .35) score += 15;
-    if (r.top > innerHeight * .20 && r.top < innerHeight * .90) score += 8;
-    tfRows.push({ tf, score });
-  }
-  tfRows.sort((a, b) => b.score - a.score);
-  const timeframe = tfRows[0]?.tf || 'M1';
-
-  const expMatch = pageText.match(/(?:expira(?:ção|cao)|expiry|duration)\s*[:\-]?\s*(\d{1,4})\s*(s|seg|segundo|segundos|m|min|minuto|minutos)/i);
-  let expiration = null;
-  if (expMatch) {
-    const n = Number(expMatch[1]);
-    expiration = /^m|min/i.test(expMatch[2]) ? (n === 1 ? '60s' : `${n}m`) : `${n}s`;
-  }
-
-  const amountMatch = pageText.match(/\bvalor\b\s*(?:R\$|\$)?\s*([\d.]+(?:,\d+)?)/i);
-  const amount = amountMatch ? toNum(amountMatch[1]) : null;
-
-  const instrumentType = /\bblitz\b/i.test(pageText) ? 'blitz'
-    : /\bbin[aá]ri[ao]\b|\bbinary\b/i.test(pageText) ? 'binary'
-      : /\bturbo\b/i.test(pageText) ? 'turbo' : 'unknown';
-
-  const marketType = /\(OTC\)/i.test(asset || '') ? 'otc' : 'regular';
-  const score = (asset ? 55 : 0) + (price != null ? 45 : 0) + (expiration ? 8 : 0) + (amount != null ? 6 : 0);
+  const erM1 = kaufmanEfficiency(m1.map(row => row.close));
+  const erM5 = kaufmanEfficiency(m5.map(row => row.close));
+  const suggestion = erM1 != null && erM5 != null && Math.abs(erM5 - erM1) >= 0.10
+    ? (erM5 > erM1 ? 'M5' : 'M1')
+    : 'SEM_DIFERENCA_CLARA';
 
   return {
-    asset, price, priceSource, buy, sell, timeframe, expiration, amount, instrumentType, marketType,
-    score, frameUrl: location.href
+    f_m5: fM5,
+    f_extremo: fExtremo,
+    f_extremo_percentB: percentB,
+    er_m1: erM1,
+    er_m5: erM5,
+    sugestao_timeframe: suggestion
   };
 }
 
-function historyForAsset(state = {}, asset = '') {
-  return marketHistoryFor(state, asset);
-}
+function performanceEmission(state = {}) {
+  const signal = state.signal || {};
+  const professional = state.professionalDecision || {};
+  const professionalUi = clean(professional.uiState).toUpperCase();
+  const technicalUi = clean(signal.uiState).toUpperCase();
+  const hasProfessionalDecision = !!professionalUi || Number(professional.updatedAt || 0) > 0;
+  // Only a real ENTRADA belongs in the operational/performance ledger.
+  // POSSÍVEL remains analysis-only and never becomes a trade record.
+  const ui = hasProfessionalDecision
+    ? (['ENTER_BUY','ENTER_SELL'].includes(professionalUi) ? professionalUi : '')
+    : (['ENTER_BUY','ENTER_SELL'].includes(technicalUi) ? technicalUi : '');
+  if (!ui) return null;
 
-function evidenceFocusGate(evidence = {}, snapshot = {}) {
-  const focused = evidence.assetSource?.startsWith('focused');
+  const type = 'ENTER';
+  const direction = ui.endsWith('_BUY') ? 'BUY' : ui.endsWith('_SELL') ? 'SELL' : '';
+  if (!direction) return null;
+
+  const focus = state.diagnostics?.focusedAsset || {};
+  const clock = state.diagnostics?.marketClock || {};
+  if (focus.reliable !== true || focus.chartScoped !== true || focus.trustedChartFrame !== true) return null;
+  if (clock.verified !== true || clock.available === false || clock.role !== 'candle-close') return null;
+
+  const operationMode = getOperationMode(state.analystPreferences?.operationMode || 'M1');
+  const timeframe = normTf(state.analysisTimeframe || state.timeframe || professional.timeframe || signal.timeframe || clock.timeframe);
+  const expiration = normExp(state.platformControls?.observed?.expiration || state.targetExpiration || state.expiration || professional.actualExpiration);
+  if (timeframe !== operationMode.timeframe || expiration !== operationMode.expiration) return null;
+
+  const complete = (Array.isArray(state.candles) ? state.candles : []).filter(row =>
+    [row?.open,row?.high,row?.low,row?.close].every(value => num(value) != null)
+  );
+  if (complete.length < 2) return null;
+
+  const analytics = signal.analytics || {};
+  const power = Number(direction === 'BUY' ? analytics.buyPower : analytics.sellPower) || 0;
+  if (power < 45) return null;
+
+  const rawTargetStart = num(signal.targetStart ?? state.decisionCycle?.targetStart);
+  if (rawTargetStart == null) return null;
+  const targetStart = performanceTargetBucket(rawTargetStart, operationMode.timeframe);
+  if (targetStart == null) return null;
+
+  const shadow = shadowMeasurements(state, direction);
+  const thresholds = getThresholds(state.analystPreferences?.sensitivityProfile || 'MEDIO');
+  const emittedAt = Date.now();
+  const score = num(professional.score ?? signal.analysisScore ?? signal.score) ?? 0;
+  const secondsRemaining = num(professional.secondsRemaining ?? signal.secondsRemaining ?? clock.secondsRemaining);
+  const referencePrice = num(state.price);
+  const id = [marketId(state.asset), operationMode.timeframe, Number(targetStart), direction].join('|');
+
   return {
-    state: evidence.asset ? (focused ? 'ready' : 'fallback') : 'blocked',
-    focusedAsset: evidence.focusAsset || null,
-    receivedAsset: normAsset(snapshot?.asset) || null,
-    resolvedAsset: evidence.asset || null,
-    assetSource: evidence.assetSource || null,
-    priceSource: evidence.priceSource || null,
-    stable: evidence.focusStable === true,
-    reliable: evidence.focusReliable === true,
-    corroborated: evidence.focusCorroborated === true,
-    reason: !evidence.asset
-      ? evidence.reason
-      : focused
-        ? (evidence.focusStable ? null : 'Foco liberado por evidência consistente do mesmo ativo; aguardando 2s não bloqueia a leitura.')
-        : `FocusGate em fallback seguro: usando ${evidence.assetSource || 'evidência alternativa'} sem inventar ativo.`,
-    at: Date.now()
-  };
-}
-
-async function applySnapshot(snapshot, _scannerState = {}, settings = {}, platform = { id: 'casatrade', name: 'CasaTrade' }) {
-  await ensureCompletedDecisionCache();
-  let becameConfirm = false;
-  let confirmedRecord = null;
-  let processedSnapshot = false;
-
-  const next = await updateScannerState(async scannerState => {
-    if (licenseRequired(settings) && !licenseActive(scannerState.license)) {
-      return marketCleared(scannerState, {
-        license: scannerState.license || DEFAULT_LICENSE,
-        diagnostics: { ...(scannerState.diagnostics || {}), access: { state: 'license_required', at: Date.now() } }
-      });
-    }
-
-    const license = await syncLicense(settings, scannerState);
-    if (licenseRequired(settings) && !licenseActive(license)) {
-      return marketCleared(scannerState, {
-        license,
-        diagnostics: { ...(scannerState.diagnostics || {}), access: { state: 'license_required', at: Date.now() } }
-      });
-    }
-
-    const evidence = resolveMarketEvidence(snapshot, scannerState, { focusStableMs: FOCUS_STABLE_MS });
-    const focusGate = evidenceFocusGate(evidence, snapshot);
-    const resolvedAsset = normAsset(evidence.asset);
-    const switchedAsset = !!scannerState.asset && !!resolvedAsset && !sameAsset(scannerState.asset, resolvedAsset);
-    if (switchedAsset) resetOrchestrator();
-
-    if (!resolvedAsset) {
-      return merge(scannerState, {
-        license,
-        scanner: 'scanning',
-        platformId: platform.id,
-        platformName: platform.name,
-        connection: 'connecting',
-        asset: null,
-        price: null,
-        candles: [],
-        currentCandle: null,
-        signal: null,
-        lastConfirmed: null,
-        tradeIntent: null,
-        lastSeen: Date.now(),
-        diagnostics: {
-          ...(scannerState.diagnostics || {}),
-          ...(snapshot?.diagnostics || {}),
-          focusGate,
-          acquisition: {
-            stage: 'confirming_asset',
-            reason: evidence.reason || 'Ativo não confirmado: aguardando foco, DOM ou feed de rede.',
-            assetSource: null,
-            priceSource: null,
-            candleCount: 0,
-            requiredCandles: 2,
-            at: Date.now()
-          }
-        }
-      });
-    }
-
-    const fallbackHistory = switchedAsset ? [] : historyForAsset(scannerState, resolvedAsset);
-    if (num(evidence.price) == null) {
-      return merge(scannerState, {
-        license,
-        scanner: 'scanning',
-        platformId: platform.id,
-        platformName: platform.name,
-        connection: 'connecting',
-        asset: resolvedAsset,
-        price: null,
-        candles: fallbackHistory,
-        currentCandle: null,
-        signal: null,
-        lastConfirmed: switchedAsset ? null : (scannerState.lastConfirmed || null),
-        tradeIntent: switchedAsset ? null : (scannerState.tradeIntent || null),
-        lastSeen: Date.now(),
-        diagnostics: {
-          ...(scannerState.diagnostics || {}),
-          ...(snapshot?.diagnostics || {}),
-          focusGate,
-          acquisition: {
-            stage: 'reading_price',
-            reason: evidence.reason || `Ativo ${resolvedAsset} confirmado. Aguardando preço real.`,
-            assetSource: evidence.assetSource,
-            priceSource: null,
-            candleCount: fallbackHistory.length,
-            requiredCandles: 2,
-            at: Date.now()
-          }
-        }
-      });
-    }
-
-    const analysisTimeframe = snapshot.timeframe || scannerState.analysisTimeframe || scannerState.timeframe || 'M1';
-    const targetExpiration = snapshot.expiration || scannerState.targetExpiration || scannerState.expiration || null;
-    const snapshotAsset = normAsset(snapshot?.asset);
-    const snapshotCandles = (!snapshotAsset || sameAsset(snapshotAsset, resolvedAsset)) && Array.isArray(snapshot.candles)
-      ? snapshot.candles
-      : [];
-    const candles = snapshotCandles.length ? snapshotCandles : fallbackHistory;
-    const enriched = {
-      ...snapshot,
-      asset: resolvedAsset,
-      price: Number(evidence.price),
-      platformId: platform.id,
-      platformName: platform.name,
-      analysisTimeframe,
-      targetExpiration,
-      candles
-    };
-
-    const activeScanner = settings.runtimePaused ? 'idle' : 'scanning';
-    if (activeScanner !== 'scanning') {
-      return merge(scannerState, {
-        license, scanner: 'idle', connection: 'offline', signal: null, price: null, lastSeen: null
-      });
-    }
-
-    processedSnapshot = true;
-    let candidate = merge(scannerState, {
-      ...enriched,
-      scanner: 'scanning',
-      license,
-      connection: 'online',
-      lastConfirmed: switchedAsset ? null : (scannerState.lastConfirmed || null),
-      tradeIntent: switchedAsset ? null : (scannerState.tradeIntent || null),
-      lastSeen: Date.now(),
-      diagnostics: {
-        ...(scannerState.diagnostics || {}),
-        ...(snapshot?.diagnostics || {}),
-        focusGate,
-        acquisition: {
-          stage: candles.length >= 2 ? 'analyzing_current' : 'reading_history',
-          reason: candles.length >= 2
-            ? 'Ativo e preço confirmados. Analisando a vela atual.'
-            : `Analisando mercado atual • ${candles.length}/2 velas fechadas.`,
-          assetSource: evidence.assetSource,
-          priceSource: evidence.priceSource,
-          candleCount: candles.length,
-          requiredCandles: 2,
-          at: Date.now()
-        }
-      }
-    });
-    candidate = merge(candidate, processSnapshot(enriched, candidate));
-    const confirmationFeedQuality = feedQuality(candidate);
-    if (candidate.signal?.state === 'CONFIRM' && confirmationFeedQuality < 80) {
-      const reason = `Confirmação bloqueada: qualidade do feed ${Math.round(confirmationFeedQuality)}% abaixo do piso de 80%.`;
-      candidate = merge(candidate, {
-        signal: { ...candidate.signal, state: 'NO_TRADE', direction: null, diagnosis: 'WAIT', uiState: 'WAIT', provisional: true, hint: reason, reason },
-        diagnostics: { ...(candidate.diagnostics || {}), confirmationFeedGate: { allowed: false, quality: confirmationFeedQuality, minimum: 80, at: Date.now() } }
-      });
-    } else {
-      candidate = merge(candidate, { diagnostics: { ...(candidate.diagnostics || {}), confirmationFeedGate: { allowed: true, quality: confirmationFeedQuality, minimum: 80, at: Date.now() } } });
-    }
-    const processedCount = Math.max(0, Number(candidate.signal?.candleCount ?? candidate.candles?.length ?? 0));
-    const stage = acquisitionStage(candidate.signal, processedCount);
-    candidate = merge(candidate, {
-      diagnostics: {
-        ...(candidate.diagnostics || {}),
-        focusGate,
-        acquisition: {
-          ...(candidate.diagnostics?.acquisition || {}),
-          stage,
-          reason: stage === 'reading_history'
-            ? `Analisando mercado atual • ${processedCount}/2 velas fechadas.`
-            : stage === 'analyzing_current'
-              ? 'Analisando mercado atual.'
-              : 'Montando padrão da próxima vela.',
-          assetSource: evidence.assetSource,
-          priceSource: evidence.priceSource,
-          candleCount: processedCount,
-          requiredCandles: 2,
-          at: Date.now()
-        }
-      }
-    });
-
-    const previousState = scannerState?.signal?.state || null;
-    const previousDirection = scannerState?.signal?.direction || null;
-    becameConfirm = candidate.signal?.state === 'CONFIRM'
-      && (previousState !== 'CONFIRM' || previousDirection !== candidate.signal?.direction);
-
-    if (becameConfirm) {
-      const usage = await consumeSignal(settings);
-      if (!usage.ok) {
-        const hint = usage.error === 'daily_limit_reached'
-          ? 'Limite diário do plano atingido.'
-          : usage.error === 'trial_limit_reached'
-            ? 'O teste já utilizou todas as previsões disponíveis.'
-            : 'Não foi possível registrar o uso desta previsão. O status da licença foi mantido.';
-        candidate = merge(candidate, {
-          license,
-          signal: { ...candidate.signal, state: 'NO_TRADE', direction: null, diagnosis: 'WAIT', hint, reason: hint, provisional: true }
-        });
-      } else {
-        candidate = merge(candidate, {
-          license: {
-            ...license,
-            ...(usage.license || {}),
-            ...(usage.usage || {}),
-            status: license.status,
-            error: license.error || null
-          }
-        });
-        confirmedRecord = localSignalRecord(candidate);
-      }
-    }
-
-    return telemetryState(candidate);
-  });
-
-  if (processedSnapshot) await persistCompletedDecisionCache().catch(() => {});
-  if (confirmedRecord) {
-    await appendSessionHistory(confirmedRecord);
-    await telemetryEvent('signal_confirmed', confirmedRecord, settings);
-  }
-  telemetryHeartbeat(next, settings, becameConfirm);
-  return next;
-}
-
-async function directScanActiveTab(force = false) {
-  if (!force && directScanPromise) return directScanPromise;
-  if (!force && Date.now() - lastDirectScanAt < 650) return readScannerState();
-
-  directScanPromise = (async () => {
-    lastDirectScanAt = Date.now();
-    const [{ settings = {} }, scannerState] = await Promise.all([chrome.storage.local.get('settings'), readScannerState()]);
-
-    if (!licenseActive(scannerState.license)) {
-      return updateScannerState(current => marketCleared(current, {
-        license: current.license || DEFAULT_LICENSE,
-        diagnostics: { ...(current.diagnostics || {}), access: { state: 'license_required', at: Date.now() } }
-      }));
-    }
-
-    const { tab, platform } = await activeCasaTradeTab();
-    if (!tab?.id || !platform) {
-      const supported = await ensureSupportedActiveTab();
-      return supported.scannerState;
-    }
-
-    if (scannerState.targetTabId !== tab.id || scannerState.platformId !== platform.id) {
-      const connected = await connectActiveTab();
-      if (!connected?.ok) return connected?.state || scannerState;
-    }
-
-    const results = await chrome.scripting.executeScript({
-      target: { tabId: tab.id, allFrames: true },
-      func: scanCasaTradeFrame,
-      world: 'ISOLATED'
-    }).catch(() => []);
-
-    const rows = (Array.isArray(results) ? results : [])
-      .map(x => x?.result)
-      .filter(Boolean)
-      .sort((a, b) => Number(b.score || 0) - Number(a.score || 0));
-
-    const latest = await readScannerState();
-    const focusMeta = focusedAssetMeta(latest);
-    const focusAt = Number(focusMeta?.at || 0);
-    const focus = focusAt > 0 && Date.now() - focusAt < 5000 ? normAsset(focusMeta?.asset) : '';
-    const focusRows = focus ? rows.filter(x => x.asset && sameAsset(x.asset, focus)) : [];
-    const bestFocused = focusRows.find(x => x.asset && num(x.price) != null) || null;
-    const bestFocusAssetOnly = focusRows.find(x => x.asset) || null;
-    const bestFallback = focus ? null : (rows.find(x => x.asset && num(x.price) != null) || rows.find(x => x.asset) || null);
-    const priceOnly = focus ? null : (rows.find(x => num(x.price) != null) || null);
-    const best = focus ? (bestFocused || bestFocusAssetOnly) : (bestFallback || priceOnly);
-    const observedAsset = focus || normAsset(best?.asset || '');
-    const observedPrice = focus ? num(bestFocused?.price) : num(best?.price);
-    const history = historyForAsset(latest, observedAsset || focus);
-
-    if (!observedAsset && observedPrice == null) {
-      return applySnapshot({
-        platformId: platform.id,
-        platformName: platform.name,
-        connection: 'connecting',
-        asset: null,
-        price: null,
-        diagnostics: { directScan: { framesSeen: rows.length, at: Date.now() } }
-      }, latest, settings, platform);
-    }
-
-    const observed = {
-      amount: best?.amount ?? null,
-      timeframe: best?.timeframe || null,
-      expiration: best?.expiration || null,
-      detected: {
-        amount: best?.amount != null,
-        timeframe: !!best?.timeframe,
-        expiration: !!best?.expiration
-      },
-      sources: { amount: 'direct', timeframe: 'direct', expiration: 'direct' },
-      at: Date.now()
-    };
-
-    const assetSource = bestFocused ? 'focused-dom' : focus ? 'focused-screen' : best?.asset ? 'dom-fallback' : null;
-    const priceSource = best?.priceSource || (best?.buy != null || best?.sell != null ? 'buttons' : observedPrice != null ? 'chart' : null);
-    const snapshot = {
-      platformId: platform.id,
-      platformName: platform.name,
-      connection: observedAsset && observedPrice != null ? 'online' : 'connecting',
-      asset: observedAsset || null,
-      price: observedPrice,
-      timeframe: best?.timeframe || 'M1',
-      expiration: best?.expiration || null,
-      instrumentType: best?.instrumentType || 'unknown',
-      marketType: /\(OTC\)$/i.test(observedAsset) ? 'otc' : (best?.marketType || 'regular'),
-      serverTime: null,
-      candles: history,
-      capabilities: {
-        structuredQuotes: false,
-        candles: history.length >= 2,
-        expiration: !!best?.expiration,
-        multiAsset: false
-      },
-      diagnostics: {
-        assetSource,
-        priceSource,
-        directScan: {
-          frameUrl: best?.frameUrl || null,
-          score: Number(best?.score || 0),
-          buy: best?.buy ?? null,
-          sell: best?.sell ?? null,
-          framesSeen: rows.length,
-          filteredTo: observedAsset || focus || null,
-          usedFocusFallback: !!focus && !bestFocused,
-          at: Date.now()
-        }
-      },
-      platformControls: { aligned: false, observed, checkedAt: Date.now() }
-    };
-
-    return applySnapshot(snapshot, latest, settings, platform);
-  })();
-
-  try {
-    return await directScanPromise;
-  } finally {
-    directScanPromise = null;
-  }
-}
-
-async function readPlatformControls() {
-  const state = await directScanActiveTab(true);
-  const observed = state?.platformControls?.observed || {};
-  return { ok: !!(observed.amount != null || observed.timeframe || observed.expiration), observed };
-}
-
-async function refreshPlatformControls() {
-  const state = await directScanActiveTab(true);
-  const observed = state?.platformControls?.observed || {};
-  return { ok: true, aligned: !!state?.platformControls?.aligned, observed };
-}
-
-async function syncPlatformPreferences() {
-  return refreshPlatformControls();
-}
-
-async function prepareTrade(direction) {
-  if (!['BUY', 'SELL'].includes(direction)) return { ok: false, error: 'invalid_direction' };
-  const [{ settings = {} }, scannerState] = await Promise.all([chrome.storage.local.get('settings'), readScannerState()]);
-  if (!licenseActive(scannerState.license)) return { ok: false, error: 'license_required' };
-  const supported = await ensureSupportedActiveTab();
-  if (!supported.platform || !supported.tab?.id || supported.tab.id !== scannerState.targetTabId) return { ok: false, error: 'platform_tab_not_connected' };
-
-  const sig = scannerState.signal || {};
-  if (sig.state !== 'CONFIRM' || sig.direction !== direction || sig.provisional) return { ok: false, error: 'signal_not_confirmed' };
-
-  if (!scannerState.platformControls?.observed) return { ok: false, error: 'platform_not_aligned' };
-
-  const intent = {
+    id,
+    asset: marketId(state.asset),
     direction,
-    asset: scannerState.asset || null,
-    timeframe: scannerState.analysisTimeframe || scannerState.timeframe || null,
-    expiration: scannerState.targetExpiration || scannerState.expiration || null,
-    stake: num(scannerState.platformControls?.observed?.amount) ?? num(settings.scanPreferences?.tradeAmount ?? settings.scanPreferences?.stake),
-    createdAt: Date.now(),
-    status: 'prepared'
+    type,
+    score,
+    candleStrength: num(analytics.currentStrength),
+    secondsRemaining,
+    emittedAt,
+    referencePrice,
+    timeframe: operationMode.timeframe,
+    expiration: operationMode.expiration,
+    mode: operationMode.timeframe,
+    profile: thresholds.label,
+    profileKey: thresholds.profile,
+    confirmation: clean(state.analystPreferences?.confirmationMode).toUpperCase() === 'EXIGENTE' ? 'EXIGENTE' : 'SIMPLES',
+    targetStart: Number(targetStart),
+    f_m5: shadow.f_m5,
+    f_extremo: shadow.f_extremo,
+    f_extremo_percentB: shadow.f_extremo_percentB,
+    er_m1: shadow.er_m1,
+    er_m5: shadow.er_m5,
+    sugestao_timeframe: shadow.sugestao_timeframe,
+    entryPrice: null,
+    exitPrice: null,
+    result: null,
+    status: 'pending'
   };
-
-  await chrome.tabs.update(supported.tab.id, { active: true }).catch(() => {});
-  await chrome.scripting.executeScript({
-    target: { tabId: supported.tab.id, allFrames: true },
-    files: ['src/content/trade-handoff.js'],
-    world: 'ISOLATED'
-  }).catch(() => {});
-
-  const handoff = await chrome.tabs.sendMessage(supported.tab.id, {
-    type: 'ATS_HIGHLIGHT_TRADE', ...intent
-  }).catch(() => ({ found: false }));
-
-  const nextIntent = { ...intent, handoff: { found: !!handoff?.found, label: handoff?.label || null } };
-  await updateScannerState(current => merge(current, { tradeIntent: nextIntent }));
-  telemetryEvent('trade_handoff_prepared', { ...intent, found: !!handoff?.found }, settings);
-  return { ok: true, intent: nextIntent };
 }
 
-chrome.runtime.onInstalled.addListener(async () => {
-  const { settings = {} } = await chrome.storage.local.get('settings');
-  await updateScannerState(current => {
-    if (!Object.keys(current || {}).length) return DEFAULT_STATE;
-    if (!licenseActive(current.license)) return marketCleared(current, {
-      license: current.license || DEFAULT_LICENSE,
-      diagnostics: {}
-    });
-    return;
+function performanceFeedAdvancedPastTarget(candles = [], targetStart = 0, durationMs = 60_000) {
+  const end = Number(targetStart || 0) + Number(durationMs || 60_000);
+  return (Array.isArray(candles) ? candles : []).some(row => Number(candleTimestamp(row) || 0) >= end);
+}
+
+async function updateSignalPerformanceLedger(state = {}) {
+  const emission = performanceEmission(state);
+  const candles = Array.isArray(state.candles) ? state.candles : [];
+  const stored = await storageLocalGet(SIGNAL_PERFORMANCE_KEY).catch(() => ({}));
+  const current = stored?.[SIGNAL_PERFORMANCE_KEY];
+  let rows = Array.isArray(current?.rows)
+    ? current.rows.filter(row => clean(row?.type).toUpperCase() !== 'POSSIBLE').slice(-SIGNAL_PERFORMANCE_MAX)
+    : [];
+  let changed = false;
+
+  if (emission) {
+    const index = rows.findIndex(row => row?.id === emission.id);
+    if (index < 0) {
+      rows.push(emission);
+      changed = true;
+    } else if (rows[index]?.type === 'POSSIBLE' && emission.type === 'ENTER' && rows[index]?.status !== 'resolved') {
+      rows[index] = { ...rows[index], ...emission };
+      changed = true;
+    }
+  }
+
+  const now = Date.now();
+  rows = rows.map(row => {
+    if (!row || row.status === 'resolved' || row.result) return row;
+    if (!sameMarket(row.asset, state.asset)) return row;
+
+    const outcome = resolveSignalOutcome(row, candles, { now });
+    if (outcome) {
+      changed = true;
+      return {
+        ...row,
+        entryPrice: outcome.entryPrice,
+        exitPrice: outcome.exitPrice,
+        result: outcome.result === 'DRAW' ? 'EMPATE' : outcome.result,
+        status: 'resolved',
+        resolvedAt: outcome.resolvedAt,
+        outcomeBasis: outcome.outcomeBasis
+      };
+    }
+
+    const rowMode = getOperationMode(row.mode || row.timeframe || 'M1');
+    const durationMs = rowMode.durationSeconds * 1000;
+    const target = performanceTargetBucket(row.targetStart, row.timeframe || row.mode || 'M1') ?? Number(row.targetStart || 0);
+    const threeCandlesLater = target + durationMs * 3;
+    const feedAdvancedThree = performanceFeedAdvancedPastTarget(candles, target, durationMs * 3);
+    if (now >= threeCandlesLater && feedAdvancedThree) {
+      const reason = diagnoseSignalOutcomePending(row, candles);
+      if (row.resultPendingAfter3 !== true || row.resultPendingReason !== reason) {
+        changed = true;
+        return {
+          ...row,
+          resultPendingAfter3: true,
+          resultPendingReason: reason,
+          resultPendingCheckedAt: now
+        };
+      }
+    }
+    return row;
   });
-  await chrome.storage.local.set({
-    settings: {
-      ...settings,
-      scanPreferences: { tradeAmount: null, stake: null, timeframe: 'AUTO', expiration: 'AUTO', ...(settings.scanPreferences || {}) }
+
+  if (!changed) return;
+  rows = rows.slice(-SIGNAL_PERFORMANCE_MAX);
+  await storageLocalSet({
+    [SIGNAL_PERFORMANCE_KEY]: {
+      rows,
+      updatedAt: Date.now()
     }
   });
-  await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
-});
+}
 
-chrome.tabs?.onActivated?.addListener(async () => {
-  const scannerState = await readScannerState();
-  if (!licenseActive(scannerState.license)) return;
-  const { tab, platform } = await activeCasaTradeTab();
-  if (tab?.id && platform) {
-    await connectActiveTab().catch(() => {});
-    await directScanActiveTab(true).catch(() => {});
+function observeSignalPerformance(state = {}) {
+  const emission = performanceEmission(state);
+  const lastCandle = (Array.isArray(state.candles) ? state.candles : []).at(-1) || null;
+  const signature = JSON.stringify([
+    emission?.id || null,
+    emission?.type || null,
+    candleTimestamp(lastCandle),
+    state.asset || null,
+    state.diagnostics?.marketSession?.epoch || 0
+  ]);
+  if (signature === lastSignalPerformanceSignature) return;
+  lastSignalPerformanceSignature = signature;
+  signalPerformanceQueue = signalPerformanceQueue
+    .then(() => updateSignalPerformanceLedger(state))
+    .catch(() => {});
+}
+const clockBoundToFocus = (clock = {}, focus = {}) => {
+  const sameFrame = Number(clock.frameId) === Number(focus.frameId)
+    && clean(clock.frameHost).toLowerCase() === clean(focus.frameHost).toLowerCase();
+  const boundControlFrame = clock.crossFrameControl === true
+    && Number(clock.boundFocusFrameId) === Number(focus.frameId)
+    && clean(clock.boundFocusFrameHost).toLowerCase() === clean(focus.frameHost).toLowerCase();
+  return sameFrame || boundControlFrame;
+};
+const activeAccess = state => {
+  const status = clean(state?.license?.status).toLowerCase();
+  return ['active', 'valid'].includes(status);
+};
+
+const utcDay = () => new Date().toISOString().slice(0, 10);
+const USAGE_RETRY_MS = 15_000;
+const USAGE_IN_FLIGHT_TIMEOUT_MS = 30_000;
+const RETRYABLE_USAGE_ERRORS = new Set(['backend_unreachable', 'telemetry_unreachable', 'client_token_missing', 'request_timeout']);
+const AUTHORITATIVE_LICENSE_ERRORS = new Set(['license_not_found', 'license_inactive', 'license_expired', 'device_limit_reached', 'device_locked']);
+
+function signalAllowance(state = {}) {
+  const license = state.license || {};
+  const remainingTotal = license.remainingTotal;
+  const remainingToday = license.remainingToday;
+  if (remainingTotal != null && Number(remainingTotal) <= 0) return { allowed: false, reason: 'limite total de sinais do plano atingido' };
+  // A cached zero only belongs to the server UTC usage day that produced it.
+  // After rollover, allow the candidate to reach consumeSignal(), where the
+  // backend refreshes/enforces the new day's allowance authoritatively.
+  if (remainingToday != null && Number(remainingToday) <= 0 && clean(license.usageDay) === utcDay()) {
+    return { allowed: false, reason: 'limite diário de sinais do plano atingido' };
+  }
+  return { allowed: true, reason: '' };
+}
+
+function blockEntrySignal(signal = {}, reason = 'limite de sinais atingido') {
+  const text = `AGUARDAR — ${reason}. Renove ou ajuste seu plano para liberar novas entradas.`;
+  return {
+    ...signal,
+    state: 'NO_TRADE',
+    direction: null,
+    diagnosis: 'WAIT',
+    uiState: 'WAIT',
+    provisional: false,
+    phase: 'FINAL',
+    reason: text,
+    hint: text
+  };
+}
+
+function historyFor(state = {}, asset = '') {
+  const history = state.marketHistory || {};
+  const key = Object.keys(history).find(value => sameMarket(value, asset));
+  const rows = key && Array.isArray(history[key]) ? history[key] : Array.isArray(state.candles) ? state.candles : [];
+  return rows.filter(row => [row?.open, row?.high, row?.low, row?.close].every(value => num(value) != null)).slice(-180);
+}
+
+function deriveCandleRemaining(candles = [], timeframe = '', now = Date.now()) {
+  const tfMs = performanceTimeframeMs(timeframe);
+  if (!tfMs || !Array.isArray(candles) || !candles.length) return null;
+  const rows = candles
+    .map(row => ({ row, time: candleTimestamp(row) }))
+    .filter(item => item.time != null)
+    .sort((a, b) => a.time - b.time);
+  const latest = rows.at(-1);
+  if (!latest) return null;
+  const currentBucket = Math.floor(now / tfMs) * tfMs;
+  const openAt = Math.floor(Number(latest.time) / tfMs) * tfMs;
+  // Only use a candle whose timestamp is on the active timeframe grid and
+  // belongs to the candle that is open right now. Historical candles are never
+  // rolled forward by guesswork.
+  if (openAt !== currentBucket) return null;
+  if (Math.abs(Number(latest.time) - currentBucket) > 1500) return null;
+  const remainingMs = openAt + tfMs - now;
+  if (remainingMs < -1500 || remainingMs > tfMs + 1500) return null;
+  return Math.max(0, Math.min(Math.round(tfMs / 1000), Math.ceil(Math.max(0, remainingMs) / 1000)));
+}
+
+function consolidatedSnapshot(state = {}) {
+  if (!activeAccess(state) || state.scanner !== 'scanning' || state.connection !== 'online') return null;
+  const asset = marketId(state.asset);
+  const price = num(state.price);
+  const focus = state.diagnostics?.focusedAsset || null;
+  const clock = state.diagnostics?.marketClock || null;
+  if (!asset || price == null || !focus?.asset || !sameMarket(focus.asset, asset)) return null;
+  if (focus.reliable !== true || focus.chartScoped !== true || focus.trustedChartFrame !== true) return null;
+  // Never analyze from a stale persisted session while CasaTrade is opening.
+  // Both the focused chart and the market feed must have produced a fresh
+  // observation for the current live session before the technical engine runs.
+  const focusAge = Date.now() - Number(focus.at || 0);
+  const dataAge = Date.now() - Number(state.lastSeen || 0);
+  if (Number(focus.at || 0) <= 0 || focusAge > 12000 || Number(state.lastSeen || 0) <= 0 || dataAge > 12000) return null;
+
+  // Market analysis must continue through short clock-reader gaps. The clock is
+  // an entry-authority gate, not the sole source of market data. When exact clock
+  // data is available and fresh, use it; otherwise let the analyst derive the
+  // candle boundary from the real candle history. The resulting snapshot is
+  // explicitly marked unverified so the orchestrator cannot publish a final entry.
+  const clockMatches = !!clock
+    && clock.available !== false
+    && sameMarket(clock.asset, asset)
+    && clockBoundToFocus(clock, focus);
+  const exactClock = clockMatches
+    && clock.verified === true
+    && EXACT_CLOCK_SOURCES.has(clean(clock.source))
+    && Number(clock.at || 0) > 0
+    && Date.now() - Number(clock.at) <= CLOCK_FRESH_MS;
+  const timeframe = normTf((exactClock ? clock.timeframe : null) || state.analysisTimeframe || state.timeframe || state.diagnostics?.marketSession?.timeframe);
+  if (!timeframe) return null;
+  const candles = historyFor(state, asset).filter(row => {
+    const rowTf = normTf(row?.timeframe);
+    return !rowTf || rowTf === timeframe;
+  });
+  if (candles.length < 2) return null;
+  const tfMs = performanceTimeframeMs(timeframe);
+  const latestCandleAt = candleTimestamp(candles.at(-1));
+  const currentCandleStart = latestCandleAt != null ? Math.floor(latestCandleAt / tfMs) * tfMs : null;
+  const nextCandleStart = currentCandleStart != null ? currentCandleStart + tfMs : null;
+  const derivedSecondsRemaining = deriveCandleRemaining(candles, timeframe);
+  const secondsRemaining = exactClock
+    ? num(clock.secondsRemaining)
+    : derivedSecondsRemaining;
+  if (exactClock && (secondsRemaining == null || secondsRemaining < 0)) return null;
+  if (secondsRemaining == null) return null;
+
+  return {
+    platformId: state.platformId || 'casatrade',
+    platformName: state.platformName || 'CasaTrade',
+    connection: 'online',
+    asset,
+    price,
+    timeframe,
+    analysisTimeframe: timeframe,
+    expiration: state.platformControls?.observed?.expiration || state.targetExpiration || state.expiration || clock?.expiration || null,
+    targetExpiration: state.platformControls?.observed?.expiration || state.targetExpiration || state.expiration || clock?.expiration || null,
+    secondsRemaining,
+    clockVerified: exactClock,
+    clockSource: clean(clock?.source || ''),
+    candleOpenAt: currentCandleStart,
+    candleCloseAt: nextCandleStart,
+    nextCandleStart,
+    serverTime: Date.now(),
+    candles,
+    capabilities: {
+      ...(state.capabilities || {}),
+      structuredQuotes: true,
+      candles: true,
+      exactClock: exactClock
+    },
+    diagnostics: {
+      capture: 'central-consolidated-state',
+      clockQuality: exactClock ? 'exact' : 'analysis-only',
+      feedQuality: Number(state.diagnostics?.acquisition?.feedQuality || 0)
+    }
+  };
+}
+
+function signalRecordId(asset, timeframe, targetStart, direction) {
+  return [marketId(asset), clean(timeframe).toUpperCase(), Number(targetStart || 0), clean(direction).toUpperCase()].join('|');
+}
+
+function reconcileSignalHistory(state = {}, next = {}, snapshot = {}) {
+  let rows = Array.isArray(state.signalHistory) ? state.signalHistory.slice(-99) : [];
+  const created = [];
+  const signal = next.signal || {};
+  const direction = clean(signal.direction || next.decisionCycle?.direction).toUpperCase();
+  const targetStart = num(signal.targetStart ?? next.decisionCycle?.targetStart);
+  const timeframe = normTf(snapshot.analysisTimeframe || snapshot.timeframe || signal.timeframe);
+  const outcomeTargetStart = targetStart == null || !timeframe ? targetStart : performanceTargetBucket(targetStart, timeframe);
+  const technicalConfirmed = signal.state === 'CONFIRM'
+    || ['ENTER_BUY', 'ENTER_SELL'].includes(clean(signal.uiState).toUpperCase());
+  const professional = next.professionalDecision || state.professionalDecision || {};
+  const professionalUi = clean(professional.uiState).toUpperCase();
+  const professionalConfirmed = professional.actionable === true
+    && ['ENTER_BUY', 'ENTER_SELL'].includes(professionalUi)
+    && clean(professional.direction).toUpperCase() === direction;
+  const confirmed = technicalConfirmed && professionalConfirmed;
+
+  if (confirmed && ['BUY', 'SELL'].includes(direction) && outcomeTargetStart != null && timeframe) {
+    const id = signalRecordId(snapshot.asset, timeframe, outcomeTargetStart, direction);
+    if (!rows.some(row => row?.id === id)) {
+      const record = {
+        id,
+        signalId: id,
+        platformId: snapshot.platformId || next.platformId || state.platformId || 'casatrade',
+        platformName: snapshot.platformName || next.platformName || state.platformName || 'CasaTrade',
+        asset: snapshot.asset,
+        timeframe,
+        expiration: snapshot.expiration || snapshot.targetExpiration || null,
+        direction,
+        targetStart: outcomeTargetStart,
+        targetCandleStart: outcomeTargetStart,
+        targetCandleId: [marketId(snapshot.asset), timeframe, Number(outcomeTargetStart)].join('|'),
+        signalAt: Date.now(),
+        signalPrice: num(state.price ?? next.price ?? snapshot.price),
+        score: num(signal.analysisScore ?? signal.score),
+        setup: signal.setup || null,
+        createdAt: Date.now(),
+        entryTime: null,
+        entryPrice: null,
+        entryStatus: 'waiting_candle_open',
+        entryCapturedAt: null,
+        exitPrice: null,
+        result: null,
+        status: 'pending',
+        usageStatus: 'pending',
+        usageAttempts: 0,
+        usageRetryAt: 0,
+        usageError: null,
+        telemetryConfirmedAt: null
+      };
+      rows.push(record);
+      created.push(record);
+    }
+  }
+
+  const outcome = resolveSignalHistory(rows, {
+    asset: snapshot.asset,
+    candles: snapshot.candles,
+    serverTime: snapshot.serverTime
+  });
+  rows = outcome.rows.slice(-100);
+  return {
+    rows,
+    created,
+    resolved: outcome.resolved,
+    captured: outcome.captured,
+    performance: signalPerformance(rows)
+  };
+}
+
+function rawInputSignature(state = {}, snapshot = null) {
+  if (!snapshot) return '';
+  const clock = state.diagnostics?.marketClock || {};
+  const rows = snapshot.candles || [];
+  const tail = rows.slice(-3).map(row => [
+    Number(row?.time ?? row?.timestamp ?? 0),
+    Number(row?.open ?? 0), Number(row?.high ?? 0), Number(row?.low ?? 0), Number(row?.close ?? 0)
+  ]);
+  return JSON.stringify([
+    snapshot.asset, snapshot.price, snapshot.timeframe, snapshot.expiration,
+    snapshot.secondsRemaining, Number(clock.at || 0), clean(clock.source),
+    getThresholds(state.analystPreferences?.sensitivityProfile || 'MEDIO').profile,
+    getOperationMode(state.analystPreferences?.operationMode || 'M1').timeframe,
+    clean(state.analystPreferences?.confirmationMode).toUpperCase() === 'EXIGENTE' ? 'EXIGENTE' : 'SIMPLES',
+    Number(state.lastSeen || 0), tail
+  ]);
+}
+
+let analysisTimer = null;
+let analysisRunning = false;
+let pendingForce = false;
+let pendingAfterRun = false;
+let lastRunAt = 0;
+let lastInputSignature = '';
+let lastMarketKey = '';
+let revision = 0;
+
+function scheduleAnalysis(force = false) {
+  pendingForce ||= force;
+  if (analysisRunning) {
+    pendingAfterRun = true;
     return;
   }
-  await ensureSupportedActiveTab();
-});
+  if (analysisTimer) return;
+  const sinceLast = Date.now() - lastRunAt;
+  const cadenceDelay = Math.max(0, ANALYSIS_CADENCE_MS - sinceLast);
+  const delay = Math.max(BURST_COALESCE_MS, cadenceDelay);
+  analysisTimer = setTimeout(() => {
+    analysisTimer = null;
+    const runForced = pendingForce;
+    pendingForce = false;
+    runCentralAnalysis(runForced).catch(() => {});
+  }, delay);
+}
 
-chrome.tabs?.onUpdated?.addListener(async (tabId, changeInfo, tab) => {
-  if (!changeInfo.url && changeInfo.status !== 'complete') return;
-  const scannerState = await readScannerState();
-  if (!licenseActive(scannerState.license)) return;
-  const platform = tab?.url ? platformFromUrl(tab.url) : null;
-  if (tab?.active && platform && tabId) {
-    await connectActiveTab().catch(() => {});
-    await directScanActiveTab(true).catch(() => {});
-    return;
-  }
-  if (scannerState.targetTabId === tabId || tab?.active) await ensureSupportedActiveTab();
-});
-
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message?.type === 'ATS_CONNECT_ACTIVE_TAB') {
-    (async () => {
-      const connected = await connectActiveTab();
-      if (!connected.ok) return connected;
-      const state = await directScanActiveTab(true);
-      return { ...connected, state };
-    })().then(sendResponse).catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
-    return true;
-  }
-
-  if (message?.type === 'ATS_READ_SCANNER_STATE') {
-    readScannerState()
-      .then(state => sendResponse({ ok: true, state }))
-      .catch(e => sendResponse({ ok: false, error: String(e?.message || e), state: {} }));
-    return true;
-  }
-
-  if (message?.type === 'ATS_REFRESH_MARKET') {
-    readScannerState().then(async scannerState => {
-      if (!licenseActive(scannerState.license)) return sendResponse({ ok: false, error: 'license_required' });
-      const supported = await ensureSupportedActiveTab();
-      if (!supported.platform) return sendResponse({ ok: false, error: 'platform_not_registered', state: supported.scannerState });
-      const state = await directScanActiveTab(true);
-      sendResponse({ ok: true, state });
-    }).catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
-    return true;
-  }
-
-  if (message?.type === 'ATS_ACTIVATE_LICENSE') {
-    Promise.all([readScannerState(), chrome.storage.local.get('settings')]).then(async ([scannerState, { settings = {} }]) => {
-      const r = await activateLicense(settings, message.key);
-      lastLicenseCheck = 0;
-      const activated = !!r?.ok && licenseActive(r.license);
-      const activationError = activated ? null : (r?.error || 'license_inactive');
-      const license = activated
-        ? { ...r.license, status: 'active', error: null, syncPending: false }
-        : licenseError({ ...r, error: activationError }, scannerState?.license || DEFAULT_LICENSE);
-
-      await clearCompletedDecisionCache();
-      let next = await updateScannerState(current => marketCleared(current, {
-        license,
-        diagnostics: { access: { state: activated ? 'licensed' : 'license_required', at: Date.now() } }
-      }));
-
-      if (activated) {
-        await telemetryEvent('license_activated', { plan: license.plan, planLabel: license.planLabel }, settings);
-        await telemetryHeartbeat(telemetryState(next), settings, true);
-        const connected = await connectActiveTab().catch(() => ({ ok: false }));
-        if (connected?.ok) next = await directScanActiveTab(true).catch(() => next);
-      }
-
-      sendResponse({ ...r, ok: activated, error: activationError, license, state: next });
-    }).catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
-    return true;
-  }
-
-  if (message?.type === 'ATS_VALIDATE_LICENSE') {
-    Promise.all([readScannerState(), chrome.storage.local.get('settings')]).then(async ([scannerState, { settings = {} }]) => {
-      const license = await syncLicense(settings, scannerState, true);
-      const next = await updateScannerState(current => merge(current, { license }));
-      if (license.status === 'active') telemetryHeartbeat(telemetryState(next), settings, true);
-      sendResponse({ ok: license.status === 'active', license });
-    }).catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
-    return true;
-  }
-
-  if (message?.type === 'ATS_CLEAR_LICENSE') {
-  (async () => {
-    await clearLicense();
-    await clearCompletedDecisionCache();
-    await updateScannerState(current => marketCleared(current, { license: DEFAULT_LICENSE, diagnostics: {} }));
-    sendResponse({ ok: true });
-  })().catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
+async function sendConfirmedSignalTelemetry(row = {}) {
+  if (!row?.id || num(row.entryPrice) == null || row.telemetryConfirmedAt) return false;
+  const sent = await telemetryEvent('signal_confirmed', {
+    signalId: row.signalId || row.id,
+    asset: row.asset,
+    platformId: row.platformId || 'casatrade',
+    platformName: row.platformName || 'CasaTrade',
+    timeframe: row.timeframe,
+    expiration: row.expiration || null,
+    direction: row.direction,
+    targetStart: row.targetStart,
+    entryTime: row.entryTime ?? row.targetStart,
+    entryPrice: row.entryPrice,
+    score: row.score,
+    setup: row.setup || null
+  }).catch(() => ({ ok: false, error: 'telemetry_unreachable' }));
+  if (!sent?.ok) return false;
+  await updateScannerState(current => ({
+    ...current,
+    signalHistory: (Array.isArray(current.signalHistory) ? current.signalHistory : []).map(item =>
+      item?.id === row.id ? { ...item, telemetryConfirmedAt: Date.now(), telemetryError: null } : item
+    )
+  })).catch(() => {});
   return true;
 }
 
-  if (message?.type === 'ATS_GET_PLATFORM_CONFIG') {
-    let host = message.host || '';
-    if (!host && sender?.url) try { host = new URL(sender.url).hostname; } catch {}
-    const platform = detectPlatform(host);
-    sendResponse({ ok: !!platform, platform: platform ? { ...platform } : null });
+async function runCentralAnalysis(force = false) {
+  if (analysisRunning) {
+    scheduleAnalysis(force);
     return;
   }
-
-  if (message?.type === 'ATS_READ_PLATFORM_CONTROLS') {
-    refreshPlatformControls().then(sendResponse).catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
-    return true;
-  }
-
-  if (message?.type === 'ATS_SYNC_PLATFORM_PREFERENCES') {
-    syncPlatformPreferences().then(sendResponse).catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
-    return true;
-  }
-
-  if (message?.type === 'ATS_PREPARE_TRADE') {
-    prepareTrade(String(message.direction || '').toUpperCase()).then(sendResponse).catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
-    return true;
-  }
-
-  if (message?.type === 'ATS_GET_SESSION_HISTORY') {
-    chrome.storage.session.get(SESSION_HISTORY_KEY).then(x => sendResponse({
-      ok: true,
-      rows: Array.isArray(x[SESSION_HISTORY_KEY]) ? x[SESSION_HISTORY_KEY] : []
-    }));
-    return true;
-  }
-
-  if (message?.type === 'ATS_DOM_CATALOG') {
-  const p = message.payload || {};
-  (async () => {
-    let host = '';
-    try { host = new URL(sender?.url || '').hostname; } catch {}
-    const platform = detectPlatform(host);
-    let response = { ok: true, ignored: true };
+  analysisRunning = true;
+  let needsConfirmationFollowup = false;
+  let resolvedForTelemetry = [];
+  let confirmedForUsage = [];
+  let confirmedForTelemetry = [];
+  try {
     await updateScannerState(current => {
-      if (!licenseActive(current.license)) {
-        response = { ok: true, ignored: true, reason: 'license_required' };
-        return;
+      const snapshot = consolidatedSnapshot(current);
+      if (!snapshot) return current;
+
+      const inputSignature = rawInputSignature(current, snapshot);
+      if (!force && inputSignature === lastInputSignature) return current;
+
+      const session = current.diagnostics?.marketSession || {};
+      const focus = current.diagnostics?.focusedAsset || {};
+      const confirmationMode = clean(current.analystPreferences?.confirmationMode).toUpperCase() === 'EXIGENTE' ? 'EXIGENTE' : 'SIMPLES';
+      const marketKey = [
+        snapshot.asset,
+        snapshot.analysisTimeframe,
+        Number(session.epoch || 0),
+        getThresholds(current.analystPreferences?.sensitivityProfile || 'MEDIO').profile,
+        getOperationMode(current.analystPreferences?.operationMode || 'M1').timeframe,
+        confirmationMode,
+        Number(focus.frameId ?? -1),
+        clean(focus.frameHost).toLowerCase()
+      ].join('|');
+      const analysisContextChanged = !!lastMarketKey && lastMarketKey !== marketKey;
+      if (analysisContextChanged) resetOrchestrator();
+      lastMarketKey = marketKey;
+
+      // A profile/mode/focus change must not reuse confirmation hits or a
+      // user-facing decision from the previous context. Market/history data is
+      // preserved; only the current decision cycle is restarted.
+      const analysisState = analysisContextChanged
+        ? { ...current, decisionCycle: null, professionalDecision: null, aiAudit: null }
+        : current;
+
+      let processed = processSnapshot(snapshot, analysisState);
+      const processedUiBeforeGate = clean(processed?.signal?.uiState).toUpperCase();
+      const processedConfirmedBeforeGate = processed?.signal?.state === 'CONFIRM' || processedUiBeforeGate === 'ENTER_BUY' || processedUiBeforeGate === 'ENTER_SELL';
+      const activeOperationRows = (Array.isArray(current.signalHistory) ? current.signalHistory : [])
+        .filter(row => row && !row.result && clean(row.status).toLowerCase() !== 'resolved');
+      if (processedConfirmedBeforeGate && activeOperationRows.length) {
+        const currentTarget = Number(processed?.signal?.targetStart ?? processed?.decisionCycle?.targetStart ?? 0);
+        const sameActiveOperation = activeOperationRows.some(row =>
+          sameMarket(row.asset, snapshot.asset)
+          && clean(row.timeframe).toUpperCase() === clean(snapshot.analysisTimeframe || snapshot.timeframe).toUpperCase()
+          && Number(row.targetStart || 0) === currentTarget
+          && clean(row.direction).toUpperCase() === clean(processed?.signal?.direction).toUpperCase()
+        );
+        if (!sameActiveOperation) {
+          processed = {
+            ...processed,
+            signal: blockEntrySignal(processed.signal, 'operação anterior ainda não foi resolvida; aguardando resultado antes de liberar outra entrada'),
+            decisionCycle: {
+              ...(processed.decisionCycle || {}),
+              locked: 'WAIT',
+              reason: 'operação anterior ainda não foi resolvida; aguardando resultado antes de liberar outra entrada'
+            }
+          };
+        }
       }
-      if (!platform || !sameTarget(current, sender)) return;
-      const candidate = Array.isArray(p.candidates) ? p.candidates.find(x => x?.asset && num(x?.price) != null) : null;
-      const marketCatalog = candidate ? {
-        assets: [candidate.asset],
-        timeframes: p.timeframe ? [p.timeframe] : [],
-        expirations: p.expiration ? [p.expiration] : [],
-        lines: [candidate]
-      } : current.marketCatalog || { assets: [], timeframes: [], expirations: [], lines: [] };
-      response = { ok: true, catalog: marketCatalog };
-      return merge(current, {
-        marketCatalog,
+      const allowance = signalAllowance(analysisState);
+      const processedUi = clean(processed?.signal?.uiState).toUpperCase();
+      const processedConfirmed = processed?.signal?.state === 'CONFIRM' || processedUi === 'ENTER_BUY' || processedUi === 'ENTER_SELL';
+      if (processedConfirmed && !allowance.allowed) {
+        processed = {
+          ...processed,
+          signal: blockEntrySignal(processed.signal, allowance.reason),
+          decisionCycle: {
+            ...(processed.decisionCycle || {}),
+            locked: 'WAIT',
+            reason: allowance.reason
+          }
+        };
+      }
+      lastInputSignature = inputSignature;
+      lastRunAt = Date.now();
+      revision += 1;
+
+      const next = {
+        ...analysisState,
+        ...processed,
+        signal: processed?.signal ? { ...processed.signal, confirmationMode } : processed?.signal,
+        // Raw acquisition state remains authoritative.
+        asset: current.asset,
+        price: current.price,
+        timeframe: current.timeframe || snapshot.timeframe,
+        analysisTimeframe: current.analysisTimeframe || snapshot.analysisTimeframe,
+        expiration: current.expiration,
+        targetExpiration: current.targetExpiration,
+        candles: current.candles,
+        currentCandle: current.currentCandle || processed?.currentCandle || null,
+        marketHistory: current.marketHistory,
+        lastSeen: current.lastSeen,
+        connection: current.connection,
+        platformControls: current.platformControls,
         diagnostics: {
           ...(current.diagnostics || {}),
-          domCatalog: { ...p, lastSeen: Date.now() }
+          ...(processed?.diagnostics || {}),
+          focusedAsset: current.diagnostics?.focusedAsset || null,
+          marketClock: current.diagnostics?.marketClock || null,
+          marketSession: current.diagnostics?.marketSession || null,
+          analysisLoop: {
+            owner: 'background.js',
+            revision,
+            cadenceMs: ANALYSIS_CADENCE_MS,
+            inputSignature,
+            at: lastRunAt
+          }
         }
-      });
-    });
-    sendResponse(response);
-  })().catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
-  return true;
-}
-
-  if (message?.type === 'ATS_NETWORK_DIAGNOSTIC') {
-  const p = message.payload || {};
-  (async () => {
-    let host = '';
-    try { host = new URL(sender?.url || '').hostname; } catch {}
-    const platform = detectPlatform(host);
-    let response = { ok: true, ignored: true };
-    await updateScannerState(current => {
-      if (!licenseActive(current.license)) {
-        response = { ok: true, ignored: true, reason: 'license_required' };
-        return;
-      }
-      if (!platform || !sameTarget(current, sender)) return;
-      const network = {
-        messages: p.messages || {},
-        connections: p.connections || {},
-        endpoints: Array.isArray(p.endpoints) ? p.endpoints.slice(-30) : [],
-        keys: Array.isArray(p.keys) ? p.keys.slice(0, 180) : [],
-        candidates: Array.isArray(p.candidates) ? p.candidates.slice(0, 180).map(x => ({ ...x, source: 'network' })) : [],
-        candidateCount: Number(p.candidateCount) || 0,
-        recentCandles: p.recentCandles || {},
-        feedQuality: Number(p.feedQuality || 0),
-        parser: p.parser || {},
-        primaryTransport: p.primaryTransport || null,
-        lastSeen: Date.now()
       };
-      response = { ok: true };
-      return merge(current, {
-        platformId: platform.id,
-        platformName: platform.name,
-        diagnostics: { ...(current.diagnostics || {}), network }
-      });
-    });
-    sendResponse(response);
-  })().catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
-  return true;
-}
 
-  if (message?.type === 'ATS_PLATFORM_SNAPSHOT') {
-    const snapshot = message.payload || {};
-    Promise.all([readScannerState(), chrome.storage.local.get('settings')]).then(async ([scannerState, { settings = {} }]) => {
-      let host = '';
-      try { host = new URL(sender?.url || '').hostname; } catch {}
-      const platform = detectPlatform(host);
-      if (!platform || !sameTarget(scannerState, sender)) return sendResponse({ ok: true, ignored: true });
-      const next = await applySnapshot(snapshot, scannerState, settings, platform);
-      sendResponse({ ok: true, signal: next.signal, license: next.license });
-    }).catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
-    return true;
+      const history = reconcileSignalHistory(analysisState, next, snapshot);
+      const usageNow = Date.now();
+      confirmedForUsage = history.rows.filter(row => {
+        const status = clean(row?.usageStatus).toLowerCase();
+        const retryReady = ['pending', 'retry'].includes(status) && usageNow >= Number(row?.usageRetryAt || 0);
+        const staleInFlight = status === 'in_flight' && usageNow - Number(row?.usageStartedAt || 0) >= USAGE_IN_FLIGHT_TIMEOUT_MS;
+        return retryReady || staleInFlight;
+      });
+      confirmedForTelemetry = history.rows.filter(row =>
+        clean(row?.usageStatus).toLowerCase() === 'consumed'
+        && num(row?.entryPrice) != null
+        && !row?.telemetryConfirmedAt
+      );
+      resolvedForTelemetry = history.resolved;
+      const nextWithHistory = {
+        ...next,
+        signalHistory: history.rows,
+        performance: history.performance,
+        diagnostics: {
+          ...(next.diagnostics || {}),
+          outcomes: {
+            pending: history.performance.pending,
+            resolved: history.performance.resolved,
+            lastCapturedAt: history.captured.at(-1)?.entryCapturedAt || null,
+            lastResolvedAt: history.resolved.at(-1)?.resolvedAt || null
+          }
+        }
+      };
+
+      const seconds = num(snapshot.secondsRemaining);
+      const activeOperation = getOperationMode(current.analystPreferences?.operationMode || 'M1');
+      const confirmationWindowSeconds = activeOperation.timeframe === 'M5' ? 8 : 5;
+      const locked = clean(nextWithHistory.decisionCycle?.locked).toUpperCase();
+      const confirmed = nextWithHistory.signal?.state === 'CONFIRM' || ['ENTER_BUY', 'ENTER_SELL'].includes(clean(nextWithHistory.signal?.uiState).toUpperCase());
+      // Forced follow-up exists only for the real final-decision window. Keeping
+      // it open for the old 10-15s sensitivity window caused unnecessary churn
+      // on Android/Quetta and could contribute to UI lag.
+      needsConfirmationFollowup = seconds != null && seconds > 0 && seconds <= confirmationWindowSeconds && !confirmed && locked !== 'WAIT';
+      return nextWithHistory;
+    });
+  } finally {
+    analysisRunning = false;
   }
 
-  if (message?.type === 'ATS_GET_STATE') {
-  readScannerState().then(async scannerState => {
-    if (!licenseActive(scannerState.license)) {
-      const locked = await updateScannerState(current => marketCleared(current, {
-        license: current.license || DEFAULT_LICENSE,
-        diagnostics: { ...(current.diagnostics || {}), access: { state: 'license_required', at: Date.now() } }
-      }));
-      return sendResponse(merge(locked));
+  for (const row of confirmedForUsage) {
+    let claimed = false;
+    await updateScannerState(current => {
+      const now = Date.now();
+      const rows = (Array.isArray(current.signalHistory) ? current.signalHistory : []).map(item => {
+        if (item?.id !== row.id) return item;
+        const status = clean(item?.usageStatus).toLowerCase();
+        const retryReady = ['pending', 'retry'].includes(status) && now >= Number(item?.usageRetryAt || 0);
+        const staleInFlight = status === 'in_flight' && now - Number(item?.usageStartedAt || 0) >= USAGE_IN_FLIGHT_TIMEOUT_MS;
+        if (!retryReady && !staleInFlight) return item;
+        claimed = true;
+        return {
+          ...item,
+          usageStatus: 'in_flight',
+          usageStartedAt: now,
+          usageRetryAt: 0,
+          usageError: null,
+          usageAttempts: Number(item.usageAttempts || 0) + 1
+        };
+      });
+      return claimed ? { ...current, signalHistory: rows, performance: signalPerformance(rows) } : current;
+    }).catch(() => {});
+    if (!claimed) continue;
+
+    const { settings = {} } = await storageLocalGet('settings').catch(() => ({}));
+    const usage = await consumeSignal(settings, row.signalId || row.id).catch(() => ({ ok: false, error: 'backend_unreachable' }));
+    let consumedRow = null;
+    if (usage?.license || usage?.ok) {
+      await updateScannerState(current => {
+        const rows = (Array.isArray(current.signalHistory) ? current.signalHistory : []).map(item => {
+          if (item?.id !== row.id) return item;
+          const nextRow = usage?.ok
+            ? { ...item, usageStatus: 'consumed', usageStartedAt: 0, usageRetryAt: 0, usageError: null, usageConsumedAt: Date.now(), usageDuplicate: usage?.duplicate === true }
+            : item;
+          if (usage?.ok) consumedRow = nextRow;
+          return nextRow;
+        });
+        return {
+          ...current,
+          signalHistory: rows,
+          performance: signalPerformance(rows),
+          license: usage?.license ? {
+            ...(current.license || {}),
+            ...usage.license,
+            error: usage.ok ? null : (usage.error || current.license?.error || null),
+            syncPending: usage.ok ? false : RETRYABLE_USAGE_ERRORS.has(clean(usage.error).toLowerCase())
+          } : current.license
+        };
+      }).catch(() => {});
     }
-    try {
-      const state = await directScanActiveTab();
-      sendResponse(merge(state));
-    } catch {
-      const supported = await ensureSupportedActiveTab();
-      sendResponse(merge(supported.scannerState));
+
+    if (usage?.ok) {
+      if (consumedRow && num(consumedRow.entryPrice) != null) await sendConfirmedSignalTelemetry(consumedRow);
+    } else if (usage?.error === 'daily_limit_reached' || usage?.error === 'trial_limit_reached') {
+      await updateScannerState(current => {
+        const currentSignal = current.signal || {};
+        const sameSignal = sameMarket(current.asset, row.asset)
+          && clean(currentSignal.direction).toUpperCase() === clean(row.direction).toUpperCase()
+          && Number(currentSignal.targetStart || current.decisionCycle?.targetStart || 0) === Number(row.targetStart || 0);
+        const rows = (Array.isArray(current.signalHistory) ? current.signalHistory : []).filter(item => item?.id !== row.id);
+        return {
+          ...current,
+          signal: sameSignal ? blockEntrySignal(currentSignal, 'limite de sinais do plano atingido') : currentSignal,
+          signalHistory: rows,
+          performance: signalPerformance(rows),
+          diagnostics: {
+            ...(current.diagnostics || {}),
+            usageGate: { blocked: true, error: usage.error, at: Date.now() }
+          }
+        };
+      }).catch(() => {});
+    } else if (RETRYABLE_USAGE_ERRORS.has(clean(usage?.error).toLowerCase())) {
+      const retryAt = Date.now() + USAGE_RETRY_MS;
+      await updateScannerState(current => ({
+        ...current,
+        signalHistory: (Array.isArray(current.signalHistory) ? current.signalHistory : []).map(item =>
+          item?.id === row.id ? {
+            ...item,
+            usageStatus: 'retry',
+            usageStartedAt: 0,
+            usageRetryAt: retryAt,
+            usageError: usage?.error || 'backend_unreachable'
+          } : item
+        ),
+        diagnostics: {
+          ...(current.diagnostics || {}),
+          usageGate: { blocked: false, retryPending: true, error: usage?.error || 'backend_unreachable', retryAt, at: Date.now() }
+        }
+      })).catch(() => {});
+      setTimeout(() => scheduleAnalysis(true), USAGE_RETRY_MS + 250);
+    } else {
+      await updateScannerState(current => ({
+        ...current,
+        signalHistory: (Array.isArray(current.signalHistory) ? current.signalHistory : []).map(item =>
+          item?.id === row.id ? {
+            ...item,
+            usageStatus: 'failed',
+            usageStartedAt: 0,
+            usageRetryAt: 0,
+            usageError: usage?.error || 'usage_failed'
+          } : item
+        ),
+        diagnostics: {
+          ...(current.diagnostics || {}),
+          usageGate: { blocked: true, error: usage?.error || 'usage_failed', at: Date.now() }
+        }
+      })).catch(() => {});
     }
-  });
-  return true;
+  }
+
+  for (const row of confirmedForTelemetry) await sendConfirmedSignalTelemetry(row);
+
+  for (const row of resolvedForTelemetry) {
+    telemetryEvent('signal_resolved', {
+      id: row.id,
+      asset: row.asset,
+      timeframe: row.timeframe,
+      direction: row.direction,
+      targetStart: row.targetStart,
+      entryPrice: row.entryPrice,
+      exitPrice: row.exitPrice,
+      result: row.result
+    }).catch(() => {});
+  }
+
+  if (pendingAfterRun) {
+    pendingAfterRun = false;
+    scheduleAnalysis(pendingForce);
+  }
+  if (needsConfirmationFollowup) scheduleAnalysis(true);
 }
 
-  if (message?.type === 'ATS_SET_SCANNER') {
-  Promise.all([readScannerState(), chrome.storage.local.get('settings')]).then(async ([scannerState, { settings = {} }]) => {
-    const scanning = !!message.enabled;
-    if (scanning && licenseRequired(settings) && !licenseActive(scannerState.license)) {
-      return sendResponse({ ok: false, error: 'license_required', state: marketCleared(scannerState, { license: scannerState.license || DEFAULT_LICENSE }) });
+async function blockRuntimeForLicense(error = 'license_required', serverLicense = null) {
+  resetOrchestrator();
+  await updateScannerState(current => ({
+    ...current,
+    scanner: 'idle',
+    connection: 'offline',
+    signal: null,
+    professionalDecision: null,
+    tradeIntent: null,
+    decisionCycle: null,
+    asset: null,
+    price: null,
+    candles: [],
+    currentCandle: null,
+    marketHistory: {},
+    expiration: null,
+    targetExpiration: null,
+    license: {
+      ...(current.license || {}),
+      ...(serverLicense || {}),
+      status: error === 'license_expired' ? 'expired' : error === 'device_locked' || error === 'device_limit_reached' ? 'device_locked' : 'unconfigured',
+      error,
+      syncPending: false
+    },
+    diagnostics: {
+      ...(current.diagnostics || {}),
+      access: { state: 'license_required', ownerDev: false, error, at: Date.now() },
+      acquisition: { stage: 'license_blocked', reason: `Acesso bloqueado: ${error}`, at: Date.now() }
     }
-    const supported = await ensureSupportedActiveTab();
-    if (!supported.platform) return sendResponse({ ok: false, error: 'platform_not_registered', state: supported.scannerState });
-    const license = scanning ? await syncLicense(settings, supported.scannerState, true) : supported.scannerState.license;
-    if (scanning && licenseRequired(settings) && !licenseActive(license)) return sendResponse({ ok: false, error: 'license_required' });
-    const next = await updateScannerState(current => merge(current, { scanner: scanning ? 'scanning' : 'idle', license }));
-    sendResponse({ ok: true, state: next });
-  }).catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
-  return true;
+  })).catch(() => {});
 }
 
-  if (message?.type === 'ATS_RESET_STATE') {
-  Promise.all([
-    clearCompletedDecisionCache(),
-    replaceScannerState(DEFAULT_STATE),
-    chrome.storage.session.remove(SESSION_HISTORY_KEY)
-  ]).then(() => sendResponse({ ok: true }));
-  return true;
+const HEARTBEAT_INTERVAL_MS = 5000;
+let heartbeatBusy = false;
+let lastHeartbeatAt = 0;
+
+async function pushLiveHeartbeat(state = {}) {
+  if (heartbeatBusy || !activeAccess(state) || state.connection !== 'online') return;
+  const now = Date.now();
+  if (now - lastHeartbeatAt < HEARTBEAT_INTERVAL_MS) return;
+  lastHeartbeatAt = now;
+  heartbeatBusy = true;
+  try {
+    const { settings = {} } = await storageLocalGet('settings').catch(() => ({}));
+    let result = await telemetryHeartbeat(state, settings).catch(() => ({ ok: false, error: 'telemetry_unreachable' }));
+    if (!result?.ok && (result?.error === 'client_token_missing' || result?.error === 'client_token_invalid' || result?.status === 401)) {
+      const refreshed = await validateLicense(settings, { forceServer: true }).catch(() => null);
+      if (refreshed?.ok && refreshed?.license) {
+        const refreshedState = await updateScannerState(current => ({
+          ...current,
+          license: {
+            ...(current.license || {}),
+            ...refreshed.license,
+            status: 'active',
+            error: null,
+            syncPending: false
+          }
+        })).catch(() => state);
+        result = await telemetryHeartbeat(refreshedState || state, settings).catch(() => result);
+      } else {
+        const error = clean(refreshed?.error).toLowerCase();
+        if (AUTHORITATIVE_LICENSE_ERRORS.has(error)) {
+          await blockRuntimeForLicense(error, refreshed?.license || null);
+          return;
+        }
+      }
+    }
+  } finally {
+    heartbeatBusy = false;
+  }
 }
 
+function observeState(state = {}) {
+  pushLiveHeartbeat(state).catch(() => {});
+  const snapshot = consolidatedSnapshot(state);
+  if (!snapshot) return;
+  const signature = rawInputSignature(state, snapshot);
+  if (signature !== lastInputSignature) scheduleAnalysis(false);
+}
+
+globalThis.__ATS_RUN_CENTRAL_ANALYSIS__ = runCentralAnalysis;
+globalThis.__ATS_SCHEDULE_CENTRAL_ANALYSIS__ = scheduleAnalysis;
+
+chrome.storage?.onChanged?.addListener?.((changes, area) => {
+  if (area !== 'local' || !changes.scannerState?.newValue) return;
+  observeState(changes.scannerState.newValue);
+  observeSignalPerformance(changes.scannerState.newValue);
 });
+
+readScannerState().then(state => {
+  observeState(state);
+  observeSignalPerformance(state);
+}).catch(() => {});
+
+setInterval(() => {
+  readScannerState().then(state => pushLiveHeartbeat(state)).catch(() => {});
+}, HEARTBEAT_INTERVAL_MS);
+
+const HEALTH_CHECK_MS = 1000;
+const RECOVERY_AFTER_MS = 4500;
+const RECOVERY_COOLDOWN_MS = 10000;
+let lastRecoveryAt = 0;
+let lastExpirationProbeAt = 0;
+const EXPIRATION_PROBE_INTERVAL_MS = 2500;
+
+function acquisitionGaps(state = {}) {
+  const gaps = [];
+  const focus = state.diagnostics?.focusedAsset || {};
+  const clock = state.diagnostics?.marketClock || {};
+  const controls = state.platformControls || {};
+  const rows = historyFor(state, state.asset || '');
+  if (!state.asset || focus.reliable !== true || !sameMarket(focus.asset, state.asset)) gaps.push('ativo');
+  if (num(state.price) == null) gaps.push('preço');
+  if (rows.length < 10) gaps.push('histórico 10 velas');
+  const clockFresh = clock.available !== false
+    && clock.verified === true
+    && clock.role === 'candle-close'
+    && EXACT_CLOCK_SOURCES.has(clean(clock.source))
+    && sameMarket(clock.asset, state.asset)
+    && clockBoundToFocus(clock, focus)
+    && Number.isFinite(Number(clock.secondsRemaining))
+    && Number(clock.at || 0) > 0
+    && Date.now() - Number(clock.at) < CLOCK_FRESH_MS;
+  if (!clockFresh) gaps.push('countdown exato');
+  const expirationAt = Number(controls.expirationCheckedAt || controls.observed?.observedAt?.expiration || 0);
+  const expirationFresh = expirationAt > 0 && Date.now() - expirationAt < 7000;
+  if (!expirationFresh || !clean(controls.observed?.expiration)) gaps.push('expiração');
+  return gaps;
+}
+
+async function recoverAcquisition() {
+  const state = await readScannerState().catch(() => null);
+  if (!state || !activeAccess(state) || !state.targetTabId) return;
+  if (!['scanning','idle'].includes(clean(state.scanner))) return;
+
+  const startedAt = Number(state.diagnostics?.target?.connectedAt || state.diagnostics?.marketSession?.startedAt || 0);
+  if (!startedAt || Date.now() - startedAt < RECOVERY_AFTER_MS) return;
+
+  const gaps = acquisitionGaps(state);
+  if (!gaps.length) return;
+
+  // CasaTrade can keep the expiration control stable while its live readers
+  // are re-mounted. Probe the actual tab DOM before reinjecting the whole
+  // pipeline so a visible "Expiração 5 min/1 min" is promoted to real
+  // platform authority without waiting for a reconnect.
+  if (gaps.includes('expiração') && Date.now() - lastExpirationProbeAt >= EXPIRATION_PROBE_INTERVAL_MS) {
+    lastExpirationProbeAt = Date.now();
+    const probed = await probePlatformControlsDirect(Number(state.targetTabId)).catch(() => null);
+    if (probed?.ok === true) {
+      const refreshed = probed.state || await readScannerState().catch(() => null);
+      if (refreshed && !acquisitionGaps(refreshed).includes('expiração')) return;
+    }
+  }
+
+  await updateScannerState(current => ({
+    ...current,
+    diagnostics: {
+      ...(current.diagnostics || {}),
+      health: {
+        state: 'recovering',
+        missing: gaps,
+        at: Date.now()
+      },
+      acquisition: {
+        ...(current.diagnostics?.acquisition || {}),
+        stage: 'recovering_live_readers',
+        reason: `Recuperando leitura real: ${gaps.join(', ')}.`,
+        at: Date.now()
+      }
+    }
+  })).catch(() => {});
+
+  if (Date.now() - lastRecoveryAt < RECOVERY_COOLDOWN_MS) return;
+  const inject = globalThis.__ATS_INJECT_MODERN_PIPELINE__;
+  if (typeof inject !== 'function') return;
+  lastRecoveryAt = Date.now();
+  await inject(Number(state.targetTabId)).catch(() => false);
+}
+
+setInterval(() => recoverAcquisition().catch(() => {}), HEALTH_CHECK_MS);
+

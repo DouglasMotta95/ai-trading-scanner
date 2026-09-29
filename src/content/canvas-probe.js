@@ -1,10 +1,13 @@
 (() => {
-  if (window.__ATS_RENDERED_MARKET_PROBE_V4__) return;
-  window.__ATS_RENDERED_MARKET_PROBE_V4__ = true;
+  // V5 intentionally uses a new guard. MAIN-world code from an older unpacked
+  // extension can survive while the CasaTrade tab stays open; the new probe
+  // must start alongside it so fixes take effect without requiring a page reload.
+  if (window.__ATS_RENDERED_MARKET_PROBE_V5__) return;
+  window.__ATS_RENDERED_MARKET_PROBE_V5__ = true;
 
   const isCasaTradeHost = host => {
     const h = String(host || '').toLowerCase().replace(/\.$/, '');
-    return h === 'casatrade.com' || h.endsWith('.casatrade.com') || h === 'casatrade.io' || h.endsWith('.casatrade.io');
+    return h === 'casatrade.com' || h.endsWith('.casatrade.com') || h === 'casatrade.io' || h.endsWith('.casatrade.io') || h === 'casatraders.online' || h.endsWith('.casatraders.online') || h === 'ivcasatraders.online' || h.endsWith('.ivcasatraders.online');
   };
   const refHost = (() => {
     try { return new URL(document.referrer || '').hostname.toLowerCase().replace(/\.$/, ''); }
@@ -17,7 +20,7 @@
   // CasaTrade hostname or referrer of its own.
   if (!isCasaTradeHost(location.hostname) && !isCasaTradeHost(refHost) && !fallbackFrame) return;
 
-  const FRAME_SOURCE = 'ATS_CT_RENDER_OBSERVATION_V4';
+  const FRAME_SOURCE = 'ATS_CT_RENDER_OBSERVATION_V5';
   const frameId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
   const isTop = window === window.top;
   const frameRows = new Map();
@@ -36,6 +39,21 @@
   let lastAppScanAt = 0;
   let appCandidates = [];
 
+  // Diagnostic-only counters. They do not participate in market detection,
+  // publishing decisions, throttles, or any reader behavior.
+  const canvasDiagnostic = {
+    startedAt: Date.now(),
+    hookInstalled: false,
+    hookedContexts: [],
+    interceptedTotal: 0,
+    fillTextTotal: 0,
+    strokeTextTotal: 0,
+    recentCallTimes: [],
+    expirationPublishes: 0,
+    lastExpirationPayload: null,
+    lastExpirationPublishedAt: 0
+  };
+
   const clean = v => String(v ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
   const num = v => {
     if (typeof v === 'number' && Number.isFinite(v)) return v;
@@ -46,6 +64,16 @@
     const n = Number(s);
     return Number.isFinite(n) ? n : null;
   };
+  const isVisibleElement = el => {
+    if (!el || !(el instanceof Element)) return false;
+    if (el.id === '__ats_rendered_market__' || el.closest?.('#__ats_rendered_market__')) return false;
+    try {
+      const r = el.getBoundingClientRect();
+      const st = getComputedStyle(el);
+      return r.width > 0 && r.height > 0 && st.display !== 'none' && st.visibility !== 'hidden' && Number(st.opacity || 1) > 0.01;
+    } catch { return false; }
+  };
+
   const pick = (o, keys) => {
     if (!o || typeof o !== 'object') return null;
     for (const k of keys) if (Object.prototype.hasOwnProperty.call(o, k) && o[k] != null) return o[k];
@@ -78,11 +106,18 @@
       else if (/^[A-Z]{6}$/.test(s)) s = `${s.slice(0, 3)}/${s.slice(3)}`;
     }
     const m = s.match(/^([A-Z0-9]{2,16})\/([A-Z0-9]{2,12})$/);
-    if (!m || !QUOTES.includes(m[2])) return '';
+    if (m && QUOTES.includes(m[2])) return `${m[1]}/${m[2]}${otc ? ' (OTC)' : ''}`;
+    let named = raw.replace(/\(\s*OTC\s*\)/gi, ' ').replace(/\bOTC\b/gi, ' ').trim();
+    named = named.replace(/(?:^|[\s|•·_-])(BLITZ|OPTION|OPTIONS|BINARY|BINARIA|BINARIO|DIGITAL|TURBO|CALL|PUT)\s*$/i, '').trim();
+    if (named.length >= 2 && named.length <= 64 && /[A-Z]/.test(named) && !/^[\d\s.,:+_/-]+$/.test(named)) {
+      const blocked = new Set(['BLITZ','OPTION','OPTIONS','BINARY','BINARIA','BINARIO','DIGITAL','TURBO','CALL','PUT','BUY','SELL','COMPRA','VENDA','TRADE','TRADING','INFO','ATIVO','ASSET','INSTRUMENT','MARKET','PRICE','PRECO','EXPIRACAO','EXPIRATION','VALOR','SALDO','PAYOUT','LUCRO','LIVE']);
+      if (!blocked.has(named)) return `${named}${otc ? ' (OTC)' : ''}`;
+    }
+    return '';
     return `${m[1]}/${m[2]}${otc ? ' (OTC)' : ''}`;
   };
 
-  const assetRegex = /\b(?:[A-Z0-9]{2,16}\s*[\/_-]\s*(?:USDT|USDC|USD|EUR|GBP|JPY|AUD|CAD|CHF|NZD|BRL|BTC|ETH)|[A-Z]{6})(?:\s*\(\s*OTC\s*\)|\s+OTC)?/gi;
+  const assetRegex = /\b(?:[A-Z0-9]{2,16}\s*[\/_-]\s*(?:USDT|USDC|USD|EUR|GBP|JPY|AUD|CAD|CHF|NZD|BRL|HKD|SGD|NOK|SEK|DKK|PLN|CZK|HUF|TRY|MXN|ZAR|INR|CNY|CNH|KRW|THB|MYR|PHP|IDR|VND|TWD|ILS|AED|SAR|QAR|KWD|BHD|OMR|ARS|CLP|COP|PEN|UYU|BOB|PYG|BTC|ETH)|[A-Z]{6})(?:\s*\(\s*OTC\s*\)|\s+OTC)?/gi;
   const assetsIn = text => {
     const out = [];
     for (const m of String(text || '').matchAll(assetRegex)) {
@@ -104,7 +139,7 @@
   const normalizeExp = value => {
     const s = clean(value).toLowerCase().replace(/\s+/g, '');
     let m = s.match(/^(\d{1,4})(?:s|seg|segundo|segundos)$/); if (m) return `${Number(m[1])}s`;
-    m = s.match(/^(\d{1,3})(?:m|min|minuto|minutos)$/); if (m) return Number(m[1]) === 1 ? '60s' : `${Number(m[1])}m`;
+    m = s.match(/^(\d{1,3})(?:m|min|minuto|minutos)$/); if (m) return `${Number(m[1]) * 60}s`;
     return null;
   };
 
@@ -115,21 +150,33 @@
     while (recentCanvasText.length > 800) recentCanvasText.shift();
   }
 
-  function hookCanvas(proto) {
-    if (!proto || proto.__atsMarketTextHooked) return;
-    try { Object.defineProperty(proto, '__atsMarketTextHooked', { value: true }); } catch { return; }
+  function hookCanvas(proto, label = 'unknown') {
+    if (!proto || proto.__atsMarketTextHookedV5) return;
+    try { Object.defineProperty(proto, '__atsMarketTextHookedV5', { value: true }); } catch { return; }
+    canvasDiagnostic.hookInstalled = true;
+    if (!canvasDiagnostic.hookedContexts.includes(label)) canvasDiagnostic.hookedContexts.push(label);
     for (const name of ['fillText', 'strokeText']) {
       const native = proto[name];
       if (typeof native !== 'function') continue;
       proto[name] = function(text, ...args) {
+        try {
+          const at = Date.now();
+          canvasDiagnostic.interceptedTotal += 1;
+          if (name === 'fillText') canvasDiagnostic.fillTextTotal += 1;
+          if (name === 'strokeText') canvasDiagnostic.strokeTextTotal += 1;
+          canvasDiagnostic.recentCallTimes.push(at);
+          while (canvasDiagnostic.recentCallTimes.length && canvasDiagnostic.recentCallTimes[0] < at - 6000) {
+            canvasDiagnostic.recentCallTimes.shift();
+          }
+        } catch {}
         try { rememberCanvasText(text); } catch {}
         return native.call(this, text, ...args);
       };
     }
   }
 
-  try { hookCanvas(window.CanvasRenderingContext2D?.prototype); } catch {}
-  try { hookCanvas(window.OffscreenCanvasRenderingContext2D?.prototype); } catch {}
+  try { hookCanvas(window.CanvasRenderingContext2D?.prototype, 'CanvasRenderingContext2D'); } catch {}
+  try { hookCanvas(window.OffscreenCanvasRenderingContext2D?.prototype, 'OffscreenCanvasRenderingContext2D'); } catch {}
 
   function domParts() {
     const parts = [];
@@ -145,6 +192,7 @@
 
     for (let i = 0; i < nodes.length && i < 4500; i++) {
       const el = nodes[i];
+      if (el.id === '__ats_rendered_market__' || el.closest?.('#__ats_rendered_market__')) continue;
       for (const v of [
         el.innerText,
         el.textContent,
@@ -164,30 +212,41 @@
 
   function bestAsset(text) {
     const counts = new Map();
+    const selected = new Map();
     for (const asset of assetsIn(text)) counts.set(asset, (counts.get(asset) || 0) + 1);
 
     let nodes = [];
     try { nodes = document.querySelectorAll('*'); } catch {}
     for (let i = 0; i < nodes.length && i < 7000; i++) {
       const el = nodes[i];
+      if (!isVisibleElement(el)) continue;
       const t = clean(el.innerText || el.textContent || '');
       if (!t || t.length > 100) continue;
-      const found = assetsIn(t);
-      if (!found.length) continue;
+      let found = [...new Set(assetsIn(t))];
+      const cls = `${el.className || ''} ${el.getAttribute?.('aria-selected') || ''} ${el.getAttribute?.('aria-current') || ''} ${el.getAttribute?.('data-state') || ''}`;
+      const isSelected = /true|active|selected|current|checked/i.test(cls);
+      if (found.length === 0 && (isSelected || /chart|header|instrument|symbol|asset|market|watchlist|option|digital|blitz|binary/i.test(cls) || /tab|button|option/i.test(String(el.getAttribute?.('role') || '')))) {
+        const named = canonicalAsset(t);
+        if (named) found = [named];
+      }
+      if (found.length !== 1) continue;
       let extra = 0;
-      const cls = `${el.className || ''} ${el.getAttribute?.('aria-selected') || ''} ${el.getAttribute?.('data-state') || ''}`;
-      if (/true|active|selected|current|checked/i.test(cls)) extra += 8;
+      if (isSelected) extra += 12;
       try {
         const r = el.getBoundingClientRect();
-        if (r.top >= 0 && r.top < innerHeight * .4) extra += 3;
+        if (r.top >= 0 && r.top < innerHeight * .5) extra += 3;
       } catch {}
-      for (const asset of found) counts.set(asset, (counts.get(asset) || 0) + extra + 1);
+      for (const asset of found) {
+        counts.set(asset, (counts.get(asset) || 0) + extra + 1);
+        if (isSelected) selected.set(asset, (selected.get(asset) || 0) + 1);
+      }
     }
 
     const rows = [...counts.entries()].map(([asset, count]) => ({
       asset,
-      score: count * 10 + (/\(OTC\)$/i.test(asset) ? 14 : 0)
-    })).sort((a, b) => b.score - a.score);
+      selected: (selected.get(asset) || 0) > 0,
+      score: count * 10 + (selected.get(asset) || 0) * 120 + (/\(OTC\)$/i.test(asset) ? 14 : 0)
+    })).sort((a, b) => Number(b.selected) - Number(a.selected) || b.score - a.score);
     return rows[0] || null;
   }
 
@@ -224,8 +283,14 @@
   }
 
   function expirationFrom(text) {
-    const m = String(text || '').match(/(?:EXPIRA(?:ÇÃO|CAO)|EXPIRY|DURATION)[^0-9]{0,45}(\d{1,4})\s*(s|seg|segundo|segundos|m|min|minuto|minutos)/i);
-    return m ? normalizeExp(`${m[1]}${m[2]}`) : null;
+    const raw = String(text || '');
+    const labeled = raw.match(/(?:EXPIRA(?:ÇÃO|CAO)|EXPIRY|EXPIRATION|DURA(?:ÇÃO|CAO)|DURATION|TEMPO DE EXPIRA(?:ÇÃO|CAO)|TEMPO DA OPERA(?:ÇÃO|CAO))[^0-9]{0,80}(\d{1,4})\s*(s|seg|segundo|segundos|m|min|minuto|minutos)/i);
+    if (labeled) return normalizeExp(`${labeled[1]}${labeled[2]}`);
+    // Canvas/custom controls can be painted value-first even when they look
+    // label-first on screen. Accept the reverse order only next to an explicit
+    // expiration semantic so unrelated durations cannot become authority.
+    const reversed = raw.match(/(\d{1,4})\s*(s|seg|segundo|segundos|m|min|minuto|minutos)[^0-9]{0,80}(?:EXPIRA(?:ÇÃO|CAO)|EXPIRY|EXPIRATION|DURA(?:ÇÃO|CAO)|DURATION|TEMPO DE EXPIRA(?:ÇÃO|CAO)|TEMPO DA OPERA(?:ÇÃO|CAO))/i);
+    return reversed ? normalizeExp(`${reversed[1]}${reversed[2]}`) : null;
   }
 
   function candidateFromObject(o) {
@@ -327,7 +392,8 @@
       at: Date.now(),
       href: location.href,
       asset,
-      assetScore: Number(app?.selected ? 160 : app?.score || assetRow?.score || 0),
+      assetSelected: app?.selected === true || assetRow?.selected === true,
+      assetScore: Number(app?.selected ? 220 : app?.score || assetRow?.score || 0),
       price: num(quote?.price),
       buy: num(quote?.buy),
       sell: num(quote?.sell),
@@ -373,12 +439,71 @@
     return marker;
   }
 
+  let lastControlPublishKey = '';
+  let lastControlPublishAt = 0;
+
+  function publishRenderedControls(rows = [], now = Date.now()) {
+    const expirationRow = rows.filter(r => r.expiration)
+      .sort((a, b) => Number(b.at || 0) - Number(a.at || 0))[0] || null;
+    const timeframeRow = rows.filter(r => r.timeframe)
+      .sort((a, b) => Number(b.at || 0) - Number(a.at || 0))[0] || null;
+    const expiration = expirationRow?.expiration || null;
+    const timeframe = timeframeRow?.timeframe || null;
+    if (!expiration && !timeframe) return;
+
+    const key = `${expiration || ''}|${timeframe || ''}`;
+    if (key === lastControlPublishKey && now - lastControlPublishAt < 500) return;
+    lastControlPublishKey = key;
+    lastControlPublishAt = now;
+
+    if (expiration) {
+      canvasDiagnostic.expirationPublishes += 1;
+      canvasDiagnostic.lastExpirationPublishedAt = now;
+      canvasDiagnostic.lastExpirationPayload = {
+        expiration,
+        confidence: 98,
+        sourceKey: 'rendered-controls-independent'
+      };
+    }
+
+    window.postMessage({
+      source: 'ATS_NETWORK_PROBE',
+      type: 'summary',
+      payload: {
+        messages: { ws: 0, fetch: 0, xhr: 0 },
+        connections: { ws: 0 },
+        endpoints: [],
+        keys: [],
+        candidates: [],
+        candidateCount: 0,
+        recentCandles: {},
+        controls: {
+          expiration,
+          timeframe,
+          confidence: expiration ? 98 : 0,
+          timeframeConfidence: timeframe ? 90 : 0,
+          observedAt: now,
+          sourceKey: 'rendered-controls-independent'
+        },
+        feedQuality: 0,
+        parser: { renderedControls: true, frames: rows.length },
+        primaryTransport: 'rendered-controls',
+        privacy: 'Leitura local apenas dos controles renderizados de tempo da CasaTrade.'
+      }
+    }, '*');
+  }
+
   function aggregateAndPublish() {
     if (!isTop) return;
     const now = Date.now();
     for (const [id, row] of frameRows) if (!row || now - Number(row.at || 0) > 5000) frameRows.delete(id);
     const rows = [...frameRows.values()];
     if (!rows.length) return;
+
+    // Controls are independent from market-data acquisition. Never discard a
+    // visible "Expiração 5 seg / 1 min" just because asset/price came from a
+    // different network/iframe pipeline.
+    publishRenderedControls(rows, now);
 
     const assetRow = rows.filter(r => r.asset).sort((a, b) => b.assetScore - a.assetScore || b.at - a.at)[0] || null;
     const priceRow = rows.filter(r => r.price != null).sort((a, b) => b.priceScore - a.priceScore || b.at - a.at)[0] || null;
@@ -417,12 +542,18 @@
           ask: buy,
           timeframe,
           expiration,
-          selected: true,
-          confidence: 96,
+          selected: assetRow?.assetSelected === true,
+          confidence: assetRow?.assetSelected === true ? 96 : 82,
           observedAt: Date.now(),
           transport: 'rendered'
         }],
         candidateCount: 1,
+        controls: expiration ? {
+          expiration,
+          confidence: 96,
+          observedAt: Date.now(),
+          sourceKey: 'rendered-expiration-control'
+        } : null,
         recentCandles,
         feedQuality: 80,
         parser: {
@@ -455,6 +586,71 @@
       aggregateAndPublish();
     });
   }
+
+  function canvasDiagnosticSnapshot() {
+    const now = Date.now();
+    const cutoff = now - 6000;
+    const recentCalls = canvasDiagnostic.recentCallTimes.filter(at => at >= cutoff);
+
+    const distinct = [];
+    const seen = new Set();
+    for (let i = recentCanvasText.length - 1; i >= 0 && distinct.length < 40; i--) {
+      const row = recentCanvasText[i];
+      const text = clean(row?.text);
+      if (!text || seen.has(text)) continue;
+      seen.add(text);
+      distinct.push({ text, ageMs: Math.max(0, now - Number(row?.at || now)) });
+    }
+    distinct.reverse();
+
+    const concatenated = recentCanvasText.map(row => clean(row?.text)).filter(Boolean).join(' ');
+    const lastPayload = canvasDiagnostic.lastExpirationPayload
+      ? {
+          ...canvasDiagnostic.lastExpirationPayload,
+          ageMs: Math.max(0, now - Number(canvasDiagnostic.lastExpirationPublishedAt || now))
+        }
+      : null;
+
+    return {
+      hookInstalled: canvasDiagnostic.hookInstalled === true,
+      frame: {
+        frameId,
+        href: String(location.href || ''),
+        isTop,
+        host: String(location.hostname || '').toLowerCase()
+      },
+      hookedContexts: canvasDiagnostic.hookedContexts.slice(),
+      intercepted: {
+        total: Number(canvasDiagnostic.interceptedTotal || 0),
+        fillText: Number(canvasDiagnostic.fillTextTotal || 0),
+        strokeText: Number(canvasDiagnostic.strokeTextTotal || 0),
+        last6s: recentCalls.length
+      },
+      recentCanvasText: distinct,
+      concatenatedTextLength: concatenated.length,
+      expirationFrom: expirationFrom(concatenated),
+      timeframeFrom: timeframeFrom(concatenated),
+      publishRenderedControls: {
+        expirationSendCount: Number(canvasDiagnostic.expirationPublishes || 0),
+        lastPayload
+      },
+      startedAt: canvasDiagnostic.startedAt,
+      observedAt: now
+    };
+  }
+
+  const diagnosticMessageHandler = event => {
+    const data = event.data;
+    if (!data || data.source !== 'ATS_EXPIRATION_DIAGNOSTIC_REQUEST' || !data.requestId) return;
+    try {
+      window.postMessage({
+        source: 'ATS_CANVAS_DIAGNOSTIC_SNAPSHOT',
+        requestId: data.requestId,
+        payload: canvasDiagnosticSnapshot()
+      }, '*');
+    } catch {}
+  };
+  window.addEventListener('message', diagnosticMessageHandler);
 
   const start = () => {
     ensureMarker();

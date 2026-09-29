@@ -1,13 +1,16 @@
-# AI Trading Scanner
+# AI Trading Bot
 
-Extensão Chrome/Edge Manifest V3 + backend Node para leitura e análise de mercado. A CasaTrade é a primeira integração real; captura, normalização, análise, risco e interface permanecem desacoplados por adapters para suportar outras plataformas.
+AI Trading Bot para Chrome/Edge (Manifest V3) + backend Node para monitoramento e análise de mercado. A CasaTrade é a primeira integração real; captura, normalização, análise, risco e interface permanecem desacoplados por adapters para suportar outras plataformas.
 
-## Versão atual — 0.10.2
+## Versão atual — 0.11.105
 
-Fluxo principal do produto:
+A versão 0.11.47 endurece o produto integrado: o fast path passa a ser somente promocional (não derruba candidato válido), o heartbeat e o consumo de sinais voltam ao fluxo real, o histórico segue apenas ENTRAR liberado pela camada profissional, e builds ZIP de cliente não recebem OWNER_DEV automaticamente.
+
+Fluxo principal do robô:
 
 ```text
 Site público
+  → conhecer o robô
   → criar conta
   → confirmar e-mail
   → Trial/plano liberado
@@ -29,7 +32,7 @@ O cadastro por e-mail depende de duas variáveis no serviço do Railway:
 
 ```text
 RESEND_API_KEY=re_...
-EMAIL_FROM=AI Trading Scanner <contato@seudominio.com>
+EMAIL_FROM=AI Trading Bot <contato@seudominio.com>
 ```
 
 Também mantenha:
