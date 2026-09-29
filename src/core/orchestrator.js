@@ -440,7 +440,7 @@ function entryScheduleLabel(targetStart, direction) {
   const side = direction === 'BUY' ? 'COMPRA' : direction === 'SELL' ? 'VENDA' : 'ENTRADA';
   if (value == null) return side + ' • PRÓXIMA VELA';
   try {
-    return side + ' • PRÓXIMA VELA • ' + new Date(value).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    return side + ' • PRÓXIMA VELA • ' + new Date(value).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
   } catch {
     return side + ' • PRÓXIMA VELA';
   }
