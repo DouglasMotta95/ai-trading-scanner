@@ -1134,10 +1134,17 @@ function acquisitionGaps(state = {}) {
     && Number.isFinite(Number(clock.secondsRemaining))
     && Number(clock.at || 0) > 0
     && Date.now() - Number(clock.at) < CLOCK_FRESH_MS;
-  if (!clockFresh) gaps.push('countdown exato');
-  const expirationAt = Number(controls.expirationCheckedAt || controls.observed?.observedAt?.expiration || 0);
-  const expirationFresh = expirationAt > 0 && Date.now() - expirationAt < 7000;
-  if (!expirationFresh || !clean(controls.observed?.expiration)) gaps.push('expiração');
+  const timeframeForHealth = normTf(clock.timeframe || state.analysisTimeframe || state.timeframe || state.diagnostics?.marketSession?.timeframe) || getOperationMode(state.analystPreferences?.operationMode || 'M1').timeframe;
+  const usableClockForHealth = projectedClockForAnalysis(state, timeframeForHealth, Date.now());
+  if (!usableClockForHealth) gaps.push('countdown');
+  const operationForHealth = getOperationMode(state.analystPreferences?.operationMode || 'M1');
+  const manualExpirationForHealth = normExp(controls.userDeclaredExpiration || '');
+  const observedExpirationForHealth = normExp(controls.realExpiration || controls.observed?.expiration || '');
+  const observedExpirationAt = Number(controls.realExpirationAt || controls.observed?.observedAt?.expiration || controls.expirationCheckedAt || 0);
+  const observedExpirationFresh = !!observedExpirationForHealth && observedExpirationAt > 0 && Date.now() - observedExpirationAt < 15000
+    && clean(controls.realExpirationSource || controls.expirationSource || controls.observed?.source || '') !== 'user-declared';
+  const expirationMatchesMode = (observedExpirationFresh ? observedExpirationForHealth : manualExpirationForHealth) === operationForHealth.expiration;
+  if (!expirationMatchesMode) gaps.push('expiração');
   return gaps;
 }
 
