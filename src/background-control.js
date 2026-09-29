@@ -41,15 +41,30 @@ const sameAsset = (a, b) => !!marketId(a) && marketId(a) === marketId(b);
 
 function marketDataConnected(state = {}) {
   const focus = state.diagnostics?.focusedAsset || {};
-  return state.connection === 'online'
+  const basicLive = state.connection === 'online'
     && !!state.asset
     && Number.isFinite(Number(state.price))
-    && focus.reliable === true
-    && focus.chartScoped === true
-    && focus.trustedChartFrame === true
-    && sameAsset(focus.asset, state.asset)
     && Number(state.lastSeen || 0) > 0
     && Date.now() - Number(state.lastSeen) < 30000;
+  if (!basicLive) return false;
+
+  const focusLive = focus.reliable === true
+    && focus.chartScoped === true
+    && focus.trustedChartFrame === true
+    && sameAsset(focus.asset, state.asset);
+  if (focusLive) return true;
+
+  // A transient focus-reader blink must not turn a proven live CasaTrade
+  // session into DESCONECTADO while the same asset/history is still owned.
+  const session = state.diagnostics?.marketSession || {};
+  const sessionAsset = session.asset || session.confirmedAsset || session.pendingAsset || '';
+  const candlesReady = Array.isArray(state.candles)
+    && state.candles.filter(row => [row?.open, row?.high, row?.low, row?.close]
+      .every(value => Number.isFinite(Number(value)))).length >= 2;
+  return session.transitioning !== true
+    && !!sessionAsset
+    && sameAsset(sessionAsset, state.asset)
+    && candlesReady;
 }
 
 function handshakeReady(state = {}) {
