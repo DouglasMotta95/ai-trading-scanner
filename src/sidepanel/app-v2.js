@@ -600,6 +600,31 @@ function ensureEntryScheduleUi() {
   }
 }
 
+function tickEntryScheduleClock() {
+  const box = $('entrySchedule');
+  if (!box || box.hidden) return;
+  const target = Number(box.dataset.entryTarget || 0);
+  if (!Number.isFinite(target) || target <= 0) return;
+
+  const now = Date.now();
+  const remaining = Math.max(0, Math.ceil((target - now) / 1000));
+  const nowText = new Date(now).toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+  const targetText = new Date(target).toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+
+  setText('entryScheduleTime', targetText);
+  setText('entrySchedulePrice', remaining > 0 ? 'VIRA EM ' + remaining + 's' : 'VIRANDO AGORA');
+
+  const nowEl = $('entryScheduleNow');
+  if (nowEl) nowEl.innerHTML = 'AGORA <strong>' + nowText + '</strong>';
+
+  const actionEl = $('entryScheduleAction');
+  if (actionEl && remaining > 0) {
+    const action = box.dataset.entryAction || 'NÃO ENTRAR';
+    const side = box.dataset.entryDirection || '';
+    actionEl.textContent = action + (side ? ' • ' + side : '');
+  }
+}
+
 function renderEntrySchedule(state = {}, model = {}) {
   ensureEntryScheduleUi();
   const box = $('entrySchedule');
@@ -656,6 +681,10 @@ function renderEntrySchedule(state = {}, model = {}) {
   }
 
   box.hidden = false;
+  box.dataset.entryTarget = String(Number(target));
+  box.dataset.entryDirection = side || '';
+  box.dataset.entryUiState = ui;
+  box.dataset.entryAction = action;
   box.className = 'entry-schedule ' + (side === 'COMPRA' ? 'buy' : side === 'VENDA' ? 'sell' : 'waiting');
   setText('entryScheduleLabel', status);
   setText('entryScheduleTime', targetText);
@@ -1046,9 +1075,9 @@ setInterval(() => {
   const actualTf = normTf(lastRenderedState.diagnostics?.marketClock?.timeframe || lastRenderedState.analysisTimeframe || lastRenderedState.timeframe);
   setText('heroCountdown', remaining == null ? '—' : exact ? `${Math.ceil(remaining)}s` : `~${Math.ceil(remaining)}s`);
   setText('secondsRemaining', remaining == null ? '—' : exact ? String(Math.max(0, Math.ceil(remaining))) : `~${Math.max(0, Math.ceil(remaining))}`);
-  // Refresh the schedule continuously: current time keeps its seconds and the
-  // VIRA EM counter remains live instead of freezing on a single timestamp.
-  renderEntrySchedule(lastRenderedState, decisionModel(lastRenderedState));
+  // The entry card has its own 250ms clock. It must not depend on a new
+  // background snapshot to advance the visible seconds.
+  tickEntryScheduleClock();
   const duration = timeframeSeconds(actualTf);
   const progress = $('candleProgress');
   if (progress) {
