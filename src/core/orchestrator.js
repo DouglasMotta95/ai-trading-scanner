@@ -79,20 +79,39 @@ function decisionWindows(snapshot = {}, signal = {}, thresholds = getThresholds(
   return { pre, decision, skip, duration, timeframe };
 }
 
-function cycleKey(snapshot = {}, signal = {}) {
-  const asset = clean(snapshot.asset || 'unknown');
-  const timeframe = clean(snapshot.analysisTimeframe || snapshot.timeframe || signal.timeframe || 'M1').toUpperCase();
-  const sampleAt = epochMs(snapshot.serverTime) ?? Date.now();
-  const seconds = num(signal.secondsRemaining) ?? num(snapshot.secondsRemaining) ?? 0;
-  const rawTarget = num(signal.targetStart) ?? (sampleAt + Math.max(0, seconds) * 1000);
-  const targetKey = Math.round(rawTarget / 5000) * 5000;
-  return `${asset}|${timeframe}|${targetKey}`;
+function latestCandleStart(snapshot = {}, timeframe = 'M1') {
+  const tfMs = timeframeMs(timeframe);
+  const rows = Array.isArray(snapshot?.candles) ? snapshot.candles : [];
+  for (let index = rows.length - 1; index >= 0; index -= 1) {
+    const raw = num(rows[index]?.time ?? rows[index]?.timestamp);
+    const time = raw != null && raw > 0 && raw < 1e12 ? raw * 1000 : raw;
+    if (time == null || !Number.isFinite(time)) continue;
+    return Math.floor(time / tfMs) * tfMs;
+  }
+  return null;
 }
 
 function targetStartOf(snapshot = {}, signal = {}) {
+  const timeframe = clean(snapshot.analysisTimeframe || snapshot.timeframe || signal.timeframe || 'M1').toUpperCase();
+  const tfMs = timeframeMs(timeframe);
+  // Always prefer the real start of the next candle supplied by acquisition.
+  const explicitNext = num(snapshot.nextCandleStart);
+  if (explicitNext != null && explicitNext > 0) return explicitNext;
+  const exactClose = num(snapshot.candleCloseAt);
+  if (exactClose != null && exactClose > 0) return exactClose;
+  const currentStart = latestCandleStart(snapshot, timeframe);
+  if (currentStart != null) return currentStart + tfMs;
+  const explicitSignalTarget = num(signal.targetStart);
+  if (explicitSignalTarget != null && explicitSignalTarget > 0) return Math.floor(explicitSignalTarget / tfMs) * tfMs;
   const sampleAt = epochMs(snapshot.serverTime) ?? Date.now();
-  const seconds = num(signal.secondsRemaining) ?? num(snapshot.secondsRemaining) ?? 0;
-  return num(signal.targetStart) ?? (sampleAt + Math.max(0, seconds) * 1000);
+  return Math.floor(sampleAt / tfMs) * tfMs + tfMs;
+}
+
+function cycleKey(snapshot = {}, signal = {}) {
+  const asset = clean(snapshot.asset || 'unknown');
+  const timeframe = clean(snapshot.analysisTimeframe || snapshot.timeframe || signal.timeframe || 'M1').toUpperCase();
+  const rawTarget = targetStartOf(snapshot, signal);
+  return asset + '|' + timeframe + '|' + (rawTarget || 0);
 }
 
 function confirmationModeOf(state = {}) {
@@ -416,14 +435,31 @@ function markCandidateWait(rows = [], key = '', secondsRemaining = null, message
     : row);
 }
 
+function entryScheduleLabel(targetStart, direction) {
+  const value = num(targetStart);
+  const side = direction === 'BUY' ? 'COMPRA' : direction === 'SELL' ? 'VENDA' : 'ENTRADA';
+  if (value == null) return side + ' • PRÓXIMA VELA';
+  try {
+    return side + ' • PRÓXIMA VELA • ' + new Date(value).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  } catch {
+    return side + ' • PRÓXIMA VELA';
+  }
+}
+
 function enterSignal(signal, cycle, direction, score, reason = null) {
+  const schedule = entryScheduleLabel(cycle.targetStart, direction);
   return {
     ...signal, state: 'CONFIRM', direction, diagnosis: direction,
     uiState: direction === 'BUY' ? 'ENTER_BUY' : 'ENTER_SELL', provisional: false, phase: 'FINAL',
     score, analysisScore: score, setup: cycle.setup || signal.setup || null,
-    reason: reason || `${direction === 'BUY' ? 'COMPRA' : 'VENDA'} — ALTA CONFIANÇA • ENTRAR NA PRÓXIMA VELA.`,
-    hint: reason || `${direction === 'BUY' ? 'COMPRA' : 'VENDA'} — ALTA CONFIANÇA • ENTRAR NA PRÓXIMA VELA.`,
-    targetStart: cycle.targetStart
+    reason: reason || schedule + ' • ALTA CONFIANÇA.',
+    hint: reason || schedule + ' • ALTA CONFIANÇA.',
+    targetStart: cycle.targetStart,
+    entryAt: cycle.targetStart,
+    targetCandleStart: cycle.targetStart,
+    entryPrice: null,
+    entryStatus: 'waiting_candle_open',
+    operationStatus: 'scheduled'
   };
 }
 
@@ -437,13 +473,17 @@ function waitSignal(signal, reason) {
 function possibleSignal(signal, windows, direction, score) {
   const seconds = Math.max(0, Math.ceil(Number(signal.secondsRemaining || 0)));
   const side = direction === 'BUY' ? 'COMPRA' : 'VENDA';
-  const reason = `${side} — ALTA CONFIANÇA • PRÉ-SINAL • ${seconds}s — aguardando a janela final.`;
+  const schedule = entryScheduleLabel(signal.targetStart, direction);
+  const reason = 'POSSÍVEL ' + side + ' • ' + schedule + ' • ' + seconds + 's restantes para confirmação.';
   return {
     ...signal,
     state: 'WATCH', direction, diagnosis: direction,
     uiState: direction === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL',
     provisional: true, phase: 'POSSIBLE', score, analysisScore: score,
-    reason, hint: reason, decisionWindow: windows
+    reason, hint: reason, decisionWindow: windows,
+    targetStart: signal.targetStart,
+    entryAt: signal.targetStart,
+    operationStatus: 'pre_signal'
   };
 }
 
@@ -523,6 +563,14 @@ function newerDecision(a, b) {
   return Number(b.targetStart || b.time || 0) > Number(a.targetStart || a.time || 0) ? b : a;
 }
 
+function activeOperation(state = {}) {
+  const rows = Array.isArray(state?.signalHistory) ? state.signalHistory : [];
+  return rows
+    .filter(row => row && !row.result && clean(row.status).toLowerCase() !== 'resolved')
+    .sort((a, b) => Number(a.targetStart || 0) - Number(b.targetStart || 0))
+    .at(-1) || null;
+}
+
 function resolveWrapperDecision(snapshot = {}, result = {}, currentKey = '', state = {}) {
   const now = epochMs(snapshot.serverTime) ?? Date.now();
   const asset = clean(snapshot.asset || '');
@@ -560,9 +608,44 @@ export function processSnapshot(snapshot = {}, state = {}) {
   const timingVerified = snapshot?.clockVerified === true;
 
   const windows = decisionWindows(snapshot, signal, thresholds);
+  const targetStart = targetStartOf(snapshot, signal);
+  signal = { ...signal, targetStart, entryAt: targetStart, targetCandleStart: targetStart };
+  result.signal = signal;
   const key = cycleKey(snapshot, signal);
   const cycle = seedCycle(key, snapshot, signal, state);
+  cycle.targetStart = targetStart;
   const at = num(snapshot.serverTime) ?? Date.now();
+
+  const active = activeOperation(state);
+  if (active) {
+    const activeSide = clean(active.direction).toUpperCase() === 'BUY' ? 'COMPRA' : 'VENDA';
+    const scheduled = Number(active.targetStart || 0);
+    let schedule = 'horário não confirmado';
+    try { if (scheduled > 0) schedule = new Date(scheduled).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }); } catch {}
+    const entryPrice = num(active.entryPrice);
+    const activeSignal = {
+      ...signal, state: 'NO_TRADE', direction: null, diagnosis: 'WAIT',
+      uiState: 'OPERATION_ACTIVE', provisional: false, phase: 'OPERATION',
+      score: Number(active.score || signal.analysisScore || signal.score || 0),
+      analysisScore: Number(active.score || signal.analysisScore || signal.score || 0),
+      targetStart: scheduled || targetStart,
+      entryAt: Number(active.entryTime || scheduled || targetStart),
+      targetCandleStart: scheduled || targetStart,
+      entryPrice,
+      entryStatus: active.entryStatus || 'waiting_candle_open',
+      operationStatus: entryPrice != null ? 'open' : 'waiting_candle_open',
+      operationId: active.id,
+      reason: entryPrice != null
+        ? 'OPERAÇÃO EM ANDAMENTO • ' + activeSide + ' • ' + schedule + ' • preço ' + entryPrice + ' • aguardando resultado.'
+        : 'OPERAÇÃO EM ANDAMENTO • ' + activeSide + ' • PRÓXIMA VELA ' + schedule + ' • aguardando abertura/preço.',
+      hint: 'Nenhuma nova entrada será liberada até esta operação ser resolvida.'
+    };
+    return {
+      ...result, signal: activeSignal,
+      decisionCycle: { ...cycle, locked: 'WAIT', direction: null, reason: activeSignal.reason },
+      candidateBlockerTrace: Array.isArray(state.candidateBlockerTrace) ? state.candidateBlockerTrace : []
+    };
+  }
   const score = Number(signal.analysisScore ?? signal.score ?? 0);
   const rawDirection = directionOf(signal);
   const rawPossible = possibleQuality(signal, rawDirection, score, thresholds);
@@ -606,6 +689,9 @@ export function processSnapshot(snapshot = {}, state = {}) {
   });
   const possibleDirection = directionalPossible && direction ? direction : null;
   const canShowPossible = !!possibleDirection;
+  signal.targetStart = cycle.targetStart;
+  signal.entryAt = cycle.targetStart;
+  signal.targetCandleStart = cycle.targetStart;
   const recovered = resolveWrapperDecision(snapshot, result, key, state);
   const rolledLastConfirmed = newerDecision(newerDecision(result.lastConfirmed, latestWrapperCompleted(snapshot)), recovered);
 
