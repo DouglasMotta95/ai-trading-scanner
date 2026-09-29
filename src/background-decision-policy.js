@@ -115,7 +115,16 @@ export function exactCasaTradeTime(state = {}) {
   // once projected time reaches zero the entry gate closes until a new exact sample.
   const elapsedSeconds = Math.max(0, clockAgeMs / 1000);
   const projectedRemaining = Math.max(0, Number(rawRemaining) - elapsedSeconds);
-  return { ready: true, timeframe: liveTf, secondsRemaining: projectedRemaining, source: clock.source, operationMode: operationMode.timeframe, projectedFromExact: clockAgeMs > 250 };
+  return {
+    ready: true,
+    timeframe: liveTf,
+    secondsRemaining: projectedRemaining,
+    source: clock.source,
+    operationMode: operationMode.timeframe,
+    projectedFromExact: clockAgeMs > 250,
+    candleOpenAt: num(clock.openAt),
+    candleCloseAt: num(clock.closeAt)
+  };
 }
 
 export function CasaTradeExpiration(state = {}, timeframe = null) {
