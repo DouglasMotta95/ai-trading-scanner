@@ -357,6 +357,36 @@ function decisionModel(state = {}) {
     : (earlyProfessionalUi || earlyTechnicalUi);
   const earlyDirection = earlyUi.endsWith('_BUY') ? 'BUY' : earlyUi.endsWith('_SELL') ? 'SELL' : null;
   const earlyPossible = ['POSSIBLE_BUY','POSSIBLE_SELL'].includes(earlyUi) && earlyDirection;
+  if (earlyTechnicalUi === 'OPERATION_ACTIVE') {
+    const activeRow = (Array.isArray(state.signalHistory) ? state.signalHistory : [])
+      .filter(row => row && !row.result && String(row.status || '').toLowerCase() !== 'resolved')
+      .at(-1);
+    const activeDirection = String(activeRow?.direction || '').toUpperCase();
+    const side = activeDirection === 'BUY' ? 'COMPRA' : activeDirection === 'SELL' ? 'VENDA' : '';
+    const activePrice = num(activeRow?.entryPrice ?? earlyTechnical.entryPrice);
+    const activeTarget = num(activeRow?.entryTime ?? activeRow?.targetStart ?? earlyTechnical.targetStart);
+    let schedule = '';
+    try { if (activeTarget != null) schedule = new Date(activeTarget).toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit'}); } catch {}
+    const priceText = activePrice != null ? ` Preço de entrada: ${fmtPrice(activePrice)}.` : '';
+    return {
+      uiState: 'OPERATION_ACTIVE',
+      title: 'OPERAÇÃO EM ANDAMENTO',
+      text: side ? `OPERAÇÃO ${side}` : 'OPERAÇÃO EM ANDAMENTO',
+      sub: activePrice != null
+        ? `Entrada oficial ${schedule ? 'às ' + schedule + ' • ' : ''}${fmtPrice(activePrice)} • aguardando resultado.`
+        : `Próxima vela ${schedule || '—'} • aguardando captura do preço de abertura.`,
+      tone: 'waiting',
+      reason: clean(earlyTechnical.reason || 'Operação aberta. Nenhuma nova entrada será liberada até a resolução.'),
+      score: Number(earlyTechnical.analysisScore ?? earlyTechnical.score ?? 0) || 0,
+      actionable: false,
+      direction: activeDirection || null,
+      operationId: earlyTechnical.operationId || activeRow?.id || null,
+      targetStart: activeTarget,
+      entryPrice: activePrice,
+      operationStatus: activePrice != null ? 'open' : 'waiting_candle_open'
+    };
+  }
+
   if (earlyPossible) {
     const earlyScore = Number(earlyProfessional.score ?? earlyTechnical.analysisScore ?? earlyTechnical.score ?? 0) || 0;
     const earlyReason = clean(earlyProfessional.reason || earlyTechnical.reason || 'Alta confiança técnica detectada.');
@@ -553,7 +583,7 @@ function ensureEntryScheduleUi() {
     box.id = 'entrySchedule';
     box.className = 'entry-schedule waiting';
     box.hidden = true;
-    box.innerHTML = '<span id="entryScheduleLabel">PRÓXIMA VELA</span><b id="entryScheduleTime">—</b><small id="entryScheduleDirection">AGUARDAR</small>';
+    box.innerHTML = '<span id="entryScheduleLabel">PRÓXIMA VELA</span><b id="entryScheduleTime">—</b><small id="entryScheduleDirection">AGUARDAR</small><em id="entrySchedulePrice"></em>';
     head?.insertAdjacentElement('afterend', box);
   }
 }
@@ -572,7 +602,7 @@ function renderEntrySchedule(state = {}, model = {}) {
   box.hidden = !visible || target == null;
   if (box.hidden) return;
   let timeText = '—';
-  try { timeText = new Date(Number(target)).toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit', second:'2-digit' }); } catch {}
+  try { timeText = new Date(Number(target)).toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit' }); } catch {}
   const direction = activeRow?.direction || model.direction || signal.direction || '';
   const side = direction === 'BUY' ? 'COMPRA' : direction === 'SELL' ? 'VENDA' : '';
   const status = ui === 'OPERATION_ACTIVE' || activeRow ? 'OPERAÇÃO EM ANDAMENTO' : model.actionable ? 'ENTRAR NA PRÓXIMA VELA' : 'PRÓXIMA VELA';
@@ -580,6 +610,10 @@ function renderEntrySchedule(state = {}, model = {}) {
   setText('entryScheduleLabel', status);
   setText('entryScheduleTime', timeText);
   setText('entryScheduleDirection', side || 'AGUARDAR');
+  const price = num(activeRow?.entryPrice ?? model.entryPrice ?? signal.entryPrice);
+  setText('entrySchedulePrice', price != null ? 'PREÇO DE ENTRADA: ' + fmtPrice(price) : '');
+  const priceEl = $('entrySchedulePrice');
+  if (priceEl) priceEl.hidden = price == null; 
 }
 
 function normalizeOperationalPulseLabels() {
@@ -724,7 +758,7 @@ function render(state = {}) {
     if (model.actionable && timeReady) {
       const target = num(state.signal?.targetStart ?? state.decisionCycle?.targetStart);
       let schedule = 'PRÓXIMA VELA';
-      try { if (target != null) schedule = 'PRÓXIMA VELA • ' + new Date(target).toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit',second:'2-digit'}); } catch {}
+      try { if (target != null) schedule = 'PRÓXIMA VELA • ' + new Date(target).toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit'}); } catch {}
       actionStatus.textContent = 'ENTRADA CONFIRMADA: ' + (model.direction === 'BUY' ? 'COMPRA' : 'VENDA') + ' • ' + schedule + '.';
     } else if (model.uiState === 'OPERATION_ACTIVE') {
       actionStatus.textContent = 'OPERAÇÃO EM ANDAMENTO • aguarde a resolução antes de uma nova entrada.';
@@ -742,7 +776,7 @@ function render(state = {}) {
     } else if (model.uiState.startsWith('POSSIBLE_')) {
       const target = num(state.signal?.targetStart ?? state.decisionCycle?.targetStart);
       let schedule = 'PRÓXIMA VELA';
-      try { if (target != null) schedule = 'PRÓXIMA VELA • ' + new Date(target).toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit',second:'2-digit'}); } catch {}
+      try { if (target != null) schedule = 'PRÓXIMA VELA • ' + new Date(target).toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit'}); } catch {}
       actionStatus.textContent = 'PRÉ-SINAL: ' + (model.direction === 'BUY' ? 'COMPRA' : 'VENDA') + ' • ' + schedule + '.';
     } else {
       actionStatus.textContent = 'Aguardando nova entrada confirmada.';
