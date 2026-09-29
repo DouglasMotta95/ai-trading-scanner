@@ -474,16 +474,30 @@ function consolidatedSnapshot(state = {}) {
   if (candles.length < 2) return null;
   const tfMs = performanceTimeframeMs(timeframe);
   const latestCandleAt = candleTimestamp(candles.at(-1));
-  const currentCandleStart = latestCandleAt != null ? Math.floor(latestCandleAt / tfMs) * tfMs : null;
-  const nextCandleStart = currentCandleStart != null ? currentCandleStart + tfMs : null;
-  const derivedSecondsRemaining = deriveCandleRemaining(candles, timeframe);
-  const secondsRemaining = exactClock
-    ? num(clock.secondsRemaining)
-    : derivedSecondsRemaining;
-  if (exactClock && (secondsRemaining == null || secondsRemaining < 0)) return null;
-  if (secondsRemaining == null) return null;
 
-  return {
+  // When CasaTrade's exact candle-close clock is fresh, it is authoritative for
+  // the live candle boundary. The structured feed can lag during rollover, so
+  // never let its previous candle timestamp keep an already-open candle marked
+  // as the "next candle".
+  const exactClockCloseAt = exactClock
+    ? num(clock.closeAt)
+      ?? ((num(clock.at) != null && num(clock.secondsRemaining) != null)
+        ? num(clock.at) + Math.max(0, num(clock.secondsRemaining)) * 1000
+        : null)
+    : null;
+  const authoritativeCloseAt = exactClockCloseAt != null
+    ? Math.round(exactClockCloseAt / tfMs) * tfMs
+    : null;
+  const currentCandleStart = authoritativeCloseAt != null
+    ? authoritativeCloseAt - tfMs
+    : latestCandleAt != null
+      ? Math.floor(latestCandleAt / tfMs) * tfMs
+      : null;
+  const nextCandleStart = authoritativeCloseAt != null
+    ? authoritativeCloseAt
+    : currentCandleStart != null
+      ? currentCandleStart + tfMs
+      : null;  return {
     platformId: state.platformId || 'casatrade',
     platformName: state.platformName || 'CasaTrade',
     connection: 'online',
