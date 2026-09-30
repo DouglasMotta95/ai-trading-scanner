@@ -63,12 +63,22 @@ async function resolveAgainstState(state = {}) {
   if (!result.resolved.length) return;
   await persist(result.rows);
   const lastResolved = result.resolved.at(-1);
-  await updateScannerState(current => ({
-    ...current,
-    tradeIntent: null,
-    diagnostics: {
-      ...(current.diagnostics || {}),
-      manualTradeResult: {
+  await updateScannerState(current => {
+    const currentTarget = Number(current.signal?.targetStart || current.decisionCycle?.targetStart || 0);
+    const resolvedTarget = Number(lastResolved?.targetStart || 0);
+    const sameCycle = resolvedTarget > 0 && currentTarget > 0 && currentTarget === resolvedTarget;
+    return {
+      ...current,
+      ...(sameCycle ? {
+        signal: null,
+        professionalDecision: null,
+        decisionCycle: null,
+        lastConfirmed: null
+      } : {}),
+      tradeIntent: null,
+      diagnostics: {
+        ...(current.diagnostics || {}),
+        manualTradeResult: {
         id: lastResolved?.id || null,
         result: lastResolved?.result || null,
         asset: lastResolved?.asset || null,
@@ -81,7 +91,7 @@ async function resolveAgainstState(state = {}) {
         source: lastResolved?.resultSource || null
       }
     }
-  })).catch(() => {});
+  }; }).catch(() => {});
 }
 
 async function resolveAgainstFeed(payload = {}) {
