@@ -645,6 +645,17 @@ export async function applyClock(message = {}, sender = {}) {
 
     const record = clockRecord(message, info, asset, timeframe, secondsRemaining, focus);
     const keepPlatformOnline = clean(next.connection).toLowerCase() === 'online';
+    const refreshedFocus = {
+      ...(next.diagnostics?.focusedAsset || focus),
+      asset,
+      at: Date.now(),
+      reliable: true,
+      chartScoped: true,
+      trustedChartFrame: true,
+      visualAuthority: true,
+      frameId: Number(focus.frameId ?? info.frameId),
+      frameHost: clean(focus.frameHost || info.frameHost).toLowerCase()
+    };
     let clockState = {
       ...next,
       connection: next.price != null || keepPlatformOnline ? 'online' : 'connecting',
@@ -655,6 +666,7 @@ export async function applyClock(message = {}, sender = {}) {
       diagnostics: {
         ...(next.diagnostics || {}),
         marketClock: record,
+        focusedAsset: refreshedFocus,
         marketSession: {
           ...(next.diagnostics?.marketSession || {}), asset, timeframe,
           frameId: Number(focus.frameId), frameHost: clean(focus.frameHost).toLowerCase(),
