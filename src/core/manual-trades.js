@@ -102,6 +102,13 @@ export function mergeManualTrade(rows = [], trade = null, limit = 500) {
   return list.sort((a,b) => Number(a.clickedAt || 0) - Number(b.clickedAt || 0)).slice(-limit);
 }
 
+function grade(entryPrice, exitPrice, direction) {
+  if (entryPrice == null || exitPrice == null) return null;
+  return exitPrice === entryPrice ? 'DRAW'
+    : direction === 'BUY' ? (exitPrice > entryPrice ? 'WIN' : 'LOSS')
+      : (exitPrice < entryPrice ? 'WIN' : 'LOSS');
+}
+
 function resolveWithCandles(row, candles = [], now = Date.now()) {
   if (!row || row.status !== 'PENDING' || row.result || num(row.entryPrice) == null || num(row.targetStart) == null) return row;
   const tfMs = timeframeMs(row.timeframe);
@@ -113,14 +120,30 @@ function resolveWithCandles(row, candles = [], now = Date.now()) {
   if (!candle) return row;
   const exitPrice = num(candle.close);
   if (exitPrice == null) return row;
-  const entryPrice = Number(row.entryPrice);
-  const result = exitPrice === entryPrice ? 'DRAW'
-    : row.direction === 'BUY' ? (exitPrice > entryPrice ? 'WIN' : 'LOSS')
-      : (exitPrice < entryPrice ? 'WIN' : 'LOSS');
+  const result = grade(Number(row.entryPrice), exitPrice, row.direction);
+  if (!result) return row;
   return {
     ...row, status: 'RESOLVED', result, exitPrice,
     exitAt: targetBucket + tfMs, resolvedAt: now,
-    resultSource: 'target_candle_close'
+    resultSource: 'target_candle_close', outcomeBasis: 'target_candle_open_close'
+  };
+}
+
+function resolveWithExpiryQuote(row, state = {}, now = Date.now()) {
+  if (!row || row.status !== 'PENDING' || row.result || num(row.entryPrice) == null || num(row.targetStart) == null) return row;
+  const tfMs = timeframeMs(row.timeframe);
+  const expiryAt = Math.round(Number(row.targetStart) / tfMs) * tfMs + tfMs;
+  if (now < expiryAt) return row;
+  const price = num(state.price);
+  const lastSeen = num(state.lastSeen);
+  if (price == null || price <= 0) return row;
+  if (lastSeen != null && now - lastSeen > 8000) return row;
+  const result = grade(Number(row.entryPrice), price, row.direction);
+  if (!result) return row;
+  return {
+    ...row, status: 'RESOLVED', result, exitPrice: price,
+    exitAt: expiryAt, resolvedAt: now,
+    resultSource: 'expiry_quote_fallback', outcomeBasis: 'expiry_quote'
   };
 }
 
@@ -131,7 +154,8 @@ export function resolveManualTrades(rows = [], state = {}, now = Date.now()) {
   const resolved = [];
   const next = (Array.isArray(rows) ? rows : []).map(row => {
     if (!row || !sameMarket(row.asset, stateAsset) || clean(row.timeframe).toUpperCase() !== stateTf) return row;
-    const out = resolveWithCandles(row, candles, now);
+    const candleOut = resolveWithCandles(row, candles, now);
+    const out = candleOut !== row ? candleOut : resolveWithExpiryQuote(row, state, now);
     if (out !== row && out.result) resolved.push(out);
     return out;
   });
