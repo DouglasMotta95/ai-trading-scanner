@@ -469,6 +469,7 @@ function baseDecision(state = {}) {
         actionable: false,
         alert: 'silent',
         possibleSince: previousPossibleSince,
+        finalCandidateHits: Number(previous.finalCandidateHits || 0),
         holdRemainingMs: Math.max(0, holdMs - Math.max(0, now - previousPossibleSince)),
         reason: (direction === 'BUY' ? 'COMPRA' : 'VENDA') + ' — ALTA CONFIANÇA • candidato preservado durante uma leitura técnica transitória.'
       };
@@ -527,6 +528,7 @@ function baseDecision(state = {}) {
       actionable: false,
       alert: 'discrete',
       possibleSince,
+      finalCandidateHits: candidateFinalHits,
       holdRemainingMs: Math.max(0, holdMs - heldFor),
       reason: `${side} — ALTA CONFIANÇA • PRÉ-SINAL • ${reason}`
     };
