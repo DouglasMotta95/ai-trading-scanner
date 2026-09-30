@@ -1126,6 +1126,67 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
 
+  if (type === 'ATS_SET_USER_DECLARED_EXPIRATION') {
+    const raw = clean(message.expiration || '');
+    const match = raw.match(/^([0-9]+)s$/i);
+    const expiration = match && [5,15,30,60,300].includes(Number(match[1])) ? `${Number(match[1])}s` : '';
+    if (!expiration) {
+      readScannerState().then(state => sendResponse({ ok: false, error: 'invalid_expiration', state }))
+        .catch(error => sendResponse({ ok: false, error: String(error?.message || error) }));
+      return true;
+    }
+    readScannerState().then(state => updateScannerState(current => {
+      if (!activeLicense(current.license)) return current;
+      const operationMode = getOperationMode(current.analystPreferences?.operationMode || 'M1');
+      const now = Date.now();
+      const controls = { ...(current.platformControls || {}) };
+      const observed = {
+        ...(controls.observed || {}),
+        expiration,
+        source: 'user-declared',
+        observedAt: { ...(controls.observed?.observedAt || {}), expiration: now },
+        confidence: { ...(controls.observed?.confidence || {}), expiration: 100 }
+      };
+      const diagnostics = { ...(current.diagnostics || {}) };
+      diagnostics.expirationGuard = {
+        ...(diagnostics.expirationGuard || {}),
+        required: operationMode.expiration,
+        actual: expiration,
+        real: controls.realExpiration || null,
+        ready: expiration === operationMode.expiration,
+        verified: false,
+        validForM1: operationMode.timeframe === 'M1' && expiration === '60s',
+        validForMode: expiration === operationMode.expiration,
+        operationMode: operationMode.timeframe,
+        source: 'user-declared',
+        reason: expiration === operationMode.expiration
+          ? `Expiração de ${operationMode.expiration === '300s' ? '5 minutos' : '1 minuto'} informada pelo usuário; usada como fallback enquanto a CasaTrade não expõe a duração no DOM.`
+          : `Ajuste a expiração informada para ${operationMode.expiration === '300s' ? '5 minutos' : '1 minuto'}.`,
+        at: now
+      };
+      return {
+        ...current,
+        expiration,
+        targetExpiration: expiration,
+        platformControls: {
+          ...controls,
+          observed,
+          userDeclaredExpiration: expiration,
+          userDeclaredAt: now,
+          checkedAt: now,
+          expirationCheckedAt: now,
+          expirationSource: 'user-declared',
+          expirationVerified: false,
+          aligned: expiration === operationMode.expiration,
+          liveAuthority: false
+        },
+        diagnostics
+      };
+    })).then(state => sendResponse({ ok: true, state }))
+      .catch(error => sendResponse({ ok: false, error: String(error?.message || error) }));
+    return true;
+  }
+
   if (type === 'ATS_READ_PLATFORM_CONTROLS' || type === 'ATS_SYNC_PLATFORM_PREFERENCES') {
     readScannerState().then(state => {
       const observed = state.platformControls?.observed || {};
