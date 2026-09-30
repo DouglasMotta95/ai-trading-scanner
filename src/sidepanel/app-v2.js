@@ -189,7 +189,15 @@ function clockBaseReady(state = {}) {
 function exactClockReady(state = {}) {
   const clock = state.diagnostics?.marketClock || {};
   if (!clockBaseReady(state)) return false;
-  return clock.verified === true && ['trader-dom-countdown', 'network-server-cycle'].includes(String(clock.source || ''));
+  if (!(clock.verified === true && ['trader-dom-countdown', 'network-server-cycle'].includes(String(clock.source || '')))) return false;
+  const fresh = Number(clock.at || 0) > 0 && Date.now() - Number(clock.at) < 4500;
+  const closeAt = num(clock.closeAt) ?? num(clock.candleCloseAt);
+  const openAt = num(clock.openAt) ?? num(clock.candleOpenAt);
+  const tfMs = timeframeSeconds(clock.timeframe || state.analysisTimeframe || state.timeframe) * 1000;
+  const boundaryCurrent = closeAt != null && openAt != null && tfMs
+    && Date.now() >= openAt - 2000 && Date.now() <= closeAt + 1500
+    && closeAt - Date.now() <= tfMs + 1500;
+  return (fresh || boundaryCurrent) && (num(clock.secondsRemaining) != null || boundaryCurrent);
 }
 
 function operationalClockReady(state = {}) {
