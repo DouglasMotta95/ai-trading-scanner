@@ -6,11 +6,11 @@ export const read = path => fs.readFileSync(new URL('../' + path, import.meta.ur
 const manifest = () => JSON.parse(read('manifest.json'));
 
 export function registerBuildContracts(label='build') {
-  test(label + ': current extension package is the v0.11.59 signal-frequency build', () => {
+  test(label + ': current extension package is the v0.11.69 operation-results build', () => {
     const m = manifest();
     assert.equal(m.manifest_version, 3);
-    assert.equal(m.version, '0.11.59');
-    assert.equal(m.version_name, '0.11.59-signal-frequency-profiles');
+    assert.equal(m.version, '0.11.69');
+    assert.equal(m.version_name, '0.11.69-operation-results-clock-recovery');
     assert.equal(m.background?.service_worker, 'src/background-entry.js');
     assert.equal(m.side_panel?.default_path, 'src/sidepanel/index.html');
   });
@@ -156,6 +156,32 @@ export function registerManualContracts(label='manual') {
   });
 }
 
+export function registerOperationResultContracts(label='operation-result') {
+  test(label + ': manual operations store entry and exit prices and classify WIN/LOSS/DRAW', () => {
+    const manual = read('src/core/manual-trades.js');
+    const ledger = read('src/background-manual-trades.js');
+    const html = read('src/sidepanel/index.html');
+    const shell = read('src/sidepanel/ui-shell-v2.js');
+    assert.match(manual, /entryPrice/);
+    assert.match(manual, /exitPrice/);
+    assert.match(manual, /'WIN'/);
+    assert.match(manual, /'LOSS'/);
+    assert.match(manual, /'DRAW'/);
+    assert.match(manual, /resolveWithExpiryQuote/);
+    assert.match(ledger, /manualTradeResult/);
+    assert.match(html, /id="operationResultCard"/);
+    assert.match(shell, /ATS_GET_MANUAL_TRADE_LEDGER/);
+    assert.match(shell, /lastTradeResultBadge/);
+  });
+
+  test(label + ': active account collapses to a compact account status', () => {
+    const account = read('src/sidepanel/account-login.js');
+    assert.match(account, /function syncCompactAccount/);
+    assert.match(account, /account-live/);
+    assert.match(account, /CONTA ATIVA/);
+  });
+}
+
 export function registerRadarContracts(label='radar') {
   test(label + ': market radar is presentation-only and cannot execute signals', () => {
     const html = read('src/sidepanel/index.html');
@@ -195,10 +221,10 @@ export function registerVideo15290Contracts(label='video-15290') {
     assert.match(controls, /now - realExpirationAt < 15000/);
     assert.match(panel, /Date\.now\(\) - realAt < 15000/);
   });
-  test(label + ': exact countdown UI rolls over without freezing at zero', () => {
+  test(label + ': exact countdown UI rolls over from an immutable candle boundary', () => {
     const panel = read('src/sidepanel/app-v2.js');
-    assert.match(panel, /duration \+ projected/);
-    assert.match(panel, /elapsed <= 4/);
+    assert.match(panel, /const closeAt = num\(clock\.closeAt\) \?\? num\(clock\.candleCloseAt\)/);
+    assert.match(panel, /boundaryCurrent/);
     assert.match(panel, /if \(!exactClockReady\(state\)\) return null/);
   });
   test(label + ': automatic refresh preserves an owned live session through a brief reader gap', () => {
@@ -223,18 +249,18 @@ export function registerVideo15292Contracts(label='video-15292') {
     assert.match(policy, /marketIdentity\(state, signal\)/);
   });
 
-  test(label + ': manual expiration can never unlock an actionable signal', () => {
+  test(label + ': matching manual expiration is a timing fallback and never masquerades as real verification', () => {
     const controls = read('src/background-platform-controls.js');
     const policy = read('src/background-decision-policy.js');
     const panel = read('src/sidepanel/app-v2.js');
-    const shell = read('src/sidepanel/ui-shell-v2.js');
+    const controlHandler = read('src/background-control.js');
     assert.match(controls, /ready = authority\.realFresh === true/);
-    assert.match(policy, /Only a fresh, real CasaTrade observation may unlock execution/);
-    assert.match(policy, /source !== 'user-declared'/);
-    assert.match(panel, /expiration\.verified !== true/);
-    assert.match(shell, /realExpirationAt/);
-    assert.match(shell, /realExpirationSource/);
-    assert.match(shell, /O campo manual não libera entrada/);
+    assert.match(policy, /source: 'user-declared'/);
+    assert.match(policy, /ready: true/);
+    assert.match(policy, /verified: false/);
+    assert.match(panel, /expirationTimingCompatible/);
+    assert.match(panel, /expiration\.verified === true \|\| expiration\.source === 'user-declared'/);
+    assert.match(controlHandler, /ATS_SET_USER_DECLARED_EXPIRATION/);
   });
 
   test(label + ': direct DOM probe publishes real expiration authority instead of promoting fallback', () => {
