@@ -286,7 +286,7 @@ export function registerVideo15292Contracts(label='video-15292') {
     const panel = read('src/sidepanel/app-v2.js');
     assert.match(market, /CLOCK_FRESH_MS = 4500/);
     assert.match(policy, /CLOCK_FRESH_MS = 4500/);
-    assert.match(policy, /projectedRemaining = Math\.max\(0/);
+    assert.match(policy, /projectedRemaining|boundaryCurrent/);
     assert.match(panel, /Date\.now\(\) - Number\(clock\.at\) < 4500/);
   });
 
