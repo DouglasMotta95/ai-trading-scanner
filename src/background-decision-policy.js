@@ -7,6 +7,7 @@ import { getThresholds, getOperationMode, getSignalPolicy } from './core/analysi
 const EXACT_CLOCK_SOURCES = new Set(['trader-dom-countdown', 'network-server-cycle']);
 const CLOCK_FRESH_MS = 4500;
 const FOCUS_FRESH_MS = 5500;
+const ROLLOVER_ENTRY_GRACE_MS = 6500;
 const DEFAULT_PREFS = Object.freeze({ mode: 'NORMAL', geminiEnabled: true, sensitivityProfile: 'MEDIO', confirmationMode: 'SIMPLES', operationMode: 'M1', preferredExpiration: null });
 
 
@@ -89,7 +90,34 @@ function focusReady(state = {}) {
 export function exactCasaTradeTime(state = {}) {
   const focus = state.diagnostics?.focusedAsset || null;
   const clock = state.diagnostics?.marketClock || null;
-  if (!focusReady(state) || !clock) return { ready: false, reason: 'Ativo/gráfico ainda não confirmado.' };
+  if (!focusReady(state)) return { ready: false, reason: 'Ativo/gráfico ainda não confirmado.' };
+
+  const operationMode = getOperationMode(state.analystPreferences?.operationMode || 'M1');
+  const persistedCycle = state.decisionCycle || {};
+  const persistedTarget = num(persistedCycle.targetStart);
+  const persistedDirection = text(persistedCycle.direction).toUpperCase();
+  const persistedAsset = text(persistedCycle.key).split('|')[0] || '';
+  const rolloverGrace = persistedCycle.locked === 'ENTER'
+    && ['BUY','SELL'].includes(persistedDirection)
+    && sameMarket(persistedAsset, state.asset)
+    && persistedTarget != null
+    && Date.now() >= persistedTarget - 1500
+    && Date.now() <= persistedTarget + ROLLOVER_ENTRY_GRACE_MS
+    && (!persistedCycle.key || text(persistedCycle.key).split('|')[1]?.toUpperCase() === operationMode.timeframe);
+  if (!clock && rolloverGrace) {
+    return {
+      ready: true,
+      timeframe: operationMode.timeframe,
+      secondsRemaining: Math.max(0, (persistedTarget + operationMode.durationSeconds * 1000 - Date.now()) / 1000),
+      source: 'rollover-grace',
+      operationMode: operationMode.timeframe,
+      projectedFromExact: true,
+      rolloverGrace: true,
+      candleOpenAt: persistedTarget,
+      candleCloseAt: persistedTarget + operationMode.durationSeconds * 1000
+    };
+  }
+  if (!clock) return { ready: false, reason: 'Relógio exato da vela ainda não foi confirmado.' };
   if (clock.available === false || clock.verified !== true || clock.role !== 'candle-close') {
     return { ready: false, reason: 'Relógio exato da vela ainda não foi confirmado.' };
   }
@@ -106,10 +134,9 @@ export function exactCasaTradeTime(state = {}) {
   const boundaryCurrent = closeAt != null && openAt != null
     && nowMs >= openAt - 2000 && nowMs <= closeAt + 1500
     && closeAt - nowMs <= tfMs + 1500;
-  if (clockAgeMs >= CLOCK_FRESH_MS && !boundaryCurrent) return { ready: false, reason: 'Relógio da CasaTrade ficou desatualizado.' };
-  if (rawRemaining == null && !boundaryCurrent) return { ready: false, reason: 'Countdown da CasaTrade indisponível.' };
+  if (clockAgeMs >= CLOCK_FRESH_MS && !boundaryCurrent && !rolloverGrace) return { ready: false, reason: 'Relógio da CasaTrade ficou desatualizado.' };
+  if (rawRemaining == null && !boundaryCurrent && !rolloverGrace) return { ready: false, reason: 'Countdown da CasaTrade indisponível.' };
 
-  const operationMode = getOperationMode(state.analystPreferences?.operationMode || 'M1');
   const liveTf = normTf(clock.timeframe);
   const stateTf = normTf(state.analysisTimeframe || state.timeframe);
   const controlTf = normTf(state.platformControls?.observed?.timeframe);
@@ -129,7 +156,8 @@ export function exactCasaTradeTime(state = {}) {
     secondsRemaining: projectedRemaining,
     source: clock.source,
     operationMode: operationMode.timeframe,
-    projectedFromExact: clockAgeMs > 250,
+    projectedFromExact: rolloverGrace ? true : clockAgeMs > 250,
+    rolloverGrace,
     candleOpenAt: num(clock.openAt),
     candleCloseAt: num(clock.closeAt)
   };
@@ -343,6 +371,28 @@ function baseDecision(state = {}) {
     marketIdentityReason: identity.reason || null,
     updatedAt: now
   };
+
+  const rolloverEntryActive = persistedCycle.locked === 'ENTER'
+    && ['BUY','SELL'].includes(persistedDirection)
+    && sameMarket(persistedAsset, state.asset)
+    && persistedTarget != null
+    && now >= persistedTarget - 1500
+    && now <= persistedTarget + ROLLOVER_ENTRY_GRACE_MS
+    && (!persistedCycle.key || text(persistedCycle.key).split('|')[1]?.toUpperCase() === pref.operationMode);
+  if (rolloverEntryActive && expiration.ready) {
+    return {
+      ...common,
+      uiState: persistedDirection === 'BUY' ? 'ENTER_BUY' : 'ENTER_SELL',
+      direction: persistedDirection,
+      actionable: true,
+      alert: 'strong',
+      possibleSince: Number(state.professionalDecision?.possibleSince || now),
+      holdRemainingMs: 0,
+      reason: persistedDirection === 'BUY'
+        ? 'COMPRA — ALTA CONFIANÇA • ENTRAR NA VELA QUE ACABOU DE ABRIR.'
+        : 'VENDA — ALTA CONFIANÇA • ENTRAR NA VELA QUE ACABOU DE ABRIR.'
+    };
+  }
 
   if (!identity.ready) {
     return { ...common, uiState: 'ANALYZING_MARKET', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: identity.reason };
