@@ -161,6 +161,18 @@ export function CasaTradeExpiration(state = {}, timeframe = null) {
   }
   if (!realFresh) {
     const manual = normExp(controls.userDeclaredExpiration || guardActual || '');
+    const manualMatches = !!manual && manual === operationMode.expiration
+      && (!liveTf || liveTf === operationMode.timeframe);
+    if (manualMatches) {
+      return {
+        ready: true,
+        actual: manual,
+        required: operationMode.expiration,
+        source: 'user-declared',
+        verified: false,
+        reason: `Expiração de ${expirationLabel} informada pelo usuário; usando fallback enquanto a CasaTrade não expõe a duração no DOM.`
+      };
+    }
     return {
       ready: false,
       actual: manual || null,
@@ -168,7 +180,7 @@ export function CasaTradeExpiration(state = {}, timeframe = null) {
       source: manual ? 'user-declared' : null,
       verified: false,
       reason: manual
-        ? `Expiração de ${expirationLabel} informada, aguardando verificação real da CasaTrade`
+        ? `Expiração de ${expirationLabel} informada, mas não coincide com o modo ativo`
         : 'Expiração real da CasaTrade ainda não confirmada'
     };
   }
