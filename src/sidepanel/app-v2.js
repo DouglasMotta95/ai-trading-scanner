@@ -176,14 +176,22 @@ function clockBoundToFocus(clock = {}, focus = {}) {
 function clockBaseReady(state = {}) {
   const clock = state.diagnostics?.marketClock || {};
   const focus = state.diagnostics?.focusedAsset || {};
-  return focusReady(state)
+  if (!(focusReady(state)
     && clock.available !== false
     && clock.role === 'candle-close'
     && sameMarket(clock.asset, state.asset)
     && clockBoundToFocus(clock, focus)
-    && Number(clock.at || 0) > 0
-    && Date.now() - Number(clock.at) < 4500
-    && num(clock.secondsRemaining) != null;
+    && Number(clock.at || 0) > 0)) return false;
+
+  const now = Date.now();
+  const fresh = now - Number(clock.at) < 4500;
+  const closeAt = num(clock.closeAt) ?? num(clock.candleCloseAt);
+  const openAt = num(clock.openAt) ?? num(clock.candleOpenAt);
+  const tfMs = timeframeSeconds(clock.timeframe || state.analysisTimeframe || state.timeframe) * 1000;
+  const boundaryCurrent = closeAt != null && openAt != null && tfMs
+    && now >= openAt - 2000 && now <= closeAt + 1500
+    && closeAt - now <= tfMs + 1500;
+  return (fresh || boundaryCurrent) && (num(clock.secondsRemaining) != null || boundaryCurrent);
 }
 
 function exactClockReady(state = {}) {
