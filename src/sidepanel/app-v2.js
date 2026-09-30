@@ -546,17 +546,23 @@ function syncTopLiveClock(state = {}) {
   const closeAt = num(clock.closeAt) ?? num(clock.candleCloseAt);
   const tfMs = timeframeSeconds(clock.timeframe || state.analysisTimeframe || state.timeframe) * 1000;
   setText('liveClockNow', formatPanelTime(now));
+  const rolloverDisplay = !exact
+    && closeAt != null
+    && tfMs > 0
+    && now >= closeAt
+    && now - closeAt <= Math.min(tfMs, 90000);
   let nextAt = closeAt != null && closeAt > now ? closeAt : null;
-  if (!nextAt && closeAt != null && tfMs > 0 && now >= closeAt && now - closeAt <= Math.min(tfMs * 1.5, 90000)) {
-    nextAt = closeAt + tfMs;
-  }
+  if (!nextAt && rolloverDisplay) nextAt = closeAt + tfMs;
   if (!nextAt && exact && remaining != null) nextAt = now + remaining * 1000;
   setText('liveClockNext', formatPanelTime(nextAt));
   const bar = $('liveClockBar');
-  if (bar) bar.classList.toggle('pending', !(nextAt && exact));
+  if (bar) bar.classList.toggle('pending', !(nextAt && (exact || rolloverDisplay)));
+  const tfLabel = normTf(clock.timeframe || state.analysisTimeframe || state.timeframe) || 'VELA';
   setText('liveClockCountdown', exact && remaining != null
-    ? `Faltam ${Math.max(0, Math.ceil(remaining))}s • ${normTf(clock.timeframe || state.analysisTimeframe || state.timeframe) || 'VELA'}`
-    : 'AGUARDANDO CLOCK REAL DA CASATRADE');
+    ? `Faltam ${Math.max(0, Math.ceil(remaining))}s • ${tfLabel}`
+    : rolloverDisplay && nextAt
+      ? `Faltam ${Math.max(0, Math.ceil((nextAt - now) / 1000))}s • ${tfLabel} • sincronizando nova vela`
+      : 'SINCRONIZANDO CLOCK DA CASATRADE');
 }
 
 function render(state = {}) {
