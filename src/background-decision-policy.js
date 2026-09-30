@@ -9,6 +9,7 @@ const CLOCK_FRESH_MS = 4500;
 const FOCUS_FRESH_MS = 5500;
 const ROLLOVER_ENTRY_GRACE_MS = 6500;
 const CANDIDATE_JITTER_GRACE_MS = 5000;
+const FINAL_CANDIDATE_HITS = 2;
 const DEFAULT_PREFS = Object.freeze({ mode: 'NORMAL', geminiEnabled: true, sensitivityProfile: 'MEDIO', confirmationMode: 'SIMPLES', operationMode: 'M1', preferredExpiration: null });
 
 
@@ -447,6 +448,7 @@ function baseDecision(state = {}) {
         actionable: false,
         alert: 'silent',
         possibleSince: previousPossibleSince,
+        finalCandidateHits: Number(previous.finalCandidateHits || 0),
         holdRemainingMs: Math.max(0, holdMs - Math.max(0, now - previousPossibleSince)),
         reason: (direction === 'BUY' ? 'COMPRA' : 'VENDA') + ' — ALTA CONFIANÇA • candidato preservado durante oscilação momentânea do contexto/gatilho.'
       };
@@ -483,8 +485,20 @@ function baseDecision(state = {}) {
     ? Number(previous.possibleSince)
     : technicalSinceValid ? technicalPossibleSince : now;
   const heldFor = Math.max(0, now - possibleSince);
-  const finalQuality = technicalFinal && score >= finalScore && finalPowerReady && additionalConfluenceReady
-    && professionalContextReady && professionalTriggerReady;
+  const candidateFinalReady = !!direction
+    && score >= finalScore
+    && finalPowerReady
+    && additionalConfluenceReady
+    && professionalContextReady
+    && professionalTriggerReady;
+  const priorFinalHits = sameCandidate && previous.direction === direction
+    ? Number(previous.finalCandidateHits || 0)
+    : 0;
+  const candidateFinalHits = candidateFinalReady
+    ? Math.min(FINAL_CANDIDATE_HITS, priorFinalHits + 1)
+    : 0;
+  const finalQuality = (technicalFinal || candidateFinalHits >= FINAL_CANDIDATE_HITS)
+    && candidateFinalReady;
   const reason = shortReason(direction, factors.factors, signal.reason);
   const side = direction === 'BUY' ? 'COMPRA' : 'VENDA';
 
@@ -499,6 +513,7 @@ function baseDecision(state = {}) {
       actionable: false,
       alert: 'silent',
       possibleSince,
+      finalCandidateHits: candidateFinalHits,
       holdRemainingMs: Math.max(0, holdMs - heldFor),
       reason: `${side} — ALTA CONFIANÇA • PRÉ-SINAL • BLOQUEADO — ${expiration.reason}.`
     };
@@ -579,6 +594,7 @@ function signature(value = {}) {
     marketIdentityReason: value.marketIdentityReason || null,
     possibleSince: value.possibleSince || null,
     holdRemainingBucket: value.holdRemainingMs == null ? null : Math.ceil(Number(value.holdRemainingMs) / 250),
+    finalCandidateHits: value.finalCandidateHits || 0,
     reason: value.reason || ''
   });
 }
