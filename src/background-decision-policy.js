@@ -98,9 +98,16 @@ export function exactCasaTradeTime(state = {}) {
   if (!clockBoundToFocus(clock, focus)) return { ready: false, reason: 'Relógio ainda não foi vinculado ao gráfico ativo.' };
   const clockAt = Number(clock.at || 0);
   const clockAgeMs = Date.now() - clockAt;
-  if (clockAgeMs >= CLOCK_FRESH_MS) return { ready: false, reason: 'Relógio da CasaTrade ficou desatualizado.' };
+  const nowMs = Date.now();
   const rawRemaining = num(clock.secondsRemaining);
-  if (rawRemaining == null) return { ready: false, reason: 'Countdown da CasaTrade indisponível.' };
+  const closeAt = num(clock.closeAt) ?? num(clock.candleCloseAt);
+  const openAt = num(clock.openAt) ?? num(clock.candleOpenAt);
+  const tfMs = getOperationMode(clock.timeframe || state.analysisTimeframe || state.timeframe).timeframe === 'M5' ? 300000 : 60000;
+  const boundaryCurrent = closeAt != null && openAt != null
+    && nowMs >= openAt - 2000 && nowMs <= closeAt + 1500
+    && closeAt - nowMs <= tfMs + 1500;
+  if (clockAgeMs >= CLOCK_FRESH_MS && !boundaryCurrent) return { ready: false, reason: 'Relógio da CasaTrade ficou desatualizado.' };
+  if (rawRemaining == null && !boundaryCurrent) return { ready: false, reason: 'Countdown da CasaTrade indisponível.' };
 
   const operationMode = getOperationMode(state.analystPreferences?.operationMode || 'M1');
   const liveTf = normTf(clock.timeframe);
@@ -113,8 +120,9 @@ export function exactCasaTradeTime(state = {}) {
   // Bridge one missed DOM/feed observation with a bounded projection from the
   // latest exact CasaTrade sample. We never roll a decision into the next candle:
   // once projected time reaches zero the entry gate closes until a new exact sample.
-  const elapsedSeconds = Math.max(0, clockAgeMs / 1000);
-  const projectedRemaining = Math.max(0, Number(rawRemaining) - elapsedSeconds);
+  const projectedRemaining = boundaryCurrent
+    ? Math.max(0, (closeAt - nowMs) / 1000)
+    : Math.max(0, Number(rawRemaining) - Math.max(0, clockAgeMs / 1000));
   return {
     ready: true,
     timeframe: liveTf,
