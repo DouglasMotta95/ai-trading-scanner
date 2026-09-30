@@ -6,11 +6,11 @@ export const read = path => fs.readFileSync(new URL('../' + path, import.meta.ur
 const manifest = () => JSON.parse(read('manifest.json'));
 
 export function registerBuildContracts(label='build') {
-  test(label + ': current extension package is the v0.11.71 candidate-jitter-clock-stability build', () => {
+  test(label + ': current extension package is the v0.11.72 stable-entry-clock build', () => {
     const m = manifest();
     assert.equal(m.manifest_version, 3);
-    assert.equal(m.version, '0.11.71');
-    assert.equal(m.version_name, '0.11.71-candidate-jitter-clock-stability');
+    assert.equal(m.version, '0.11.72');
+    assert.equal(m.version_name, '0.11.72-stable-entry-clock');
     assert.equal(m.background?.service_worker, 'src/background-entry.js');
     assert.equal(m.side_panel?.default_path, 'src/sidepanel/index.html');
   });
@@ -153,6 +153,23 @@ export function registerManualContracts(label='manual') {
     assert.doesNotMatch(handoff, /dispatchEvent\s*\(\s*new\s+MouseEvent/);
     assert.match(panel, /model\.actionable && model\.direction === 'BUY' && timeReady/);
     assert.match(panel, /model\.actionable && model\.direction === 'SELL' && timeReady/);
+  });
+}
+
+export function registerStableEntryClockContracts(label='stable-entry-clock') {
+  test(label + ': valid exact clock refreshes focused asset heartbeat without changing market identity', () => {
+    const market = read('src/background-market-session.js');
+    assert.match(market, /const refreshedFocus =/);
+    assert.match(market, /focusedAsset: refreshedFocus/);
+    assert.match(market, /previousBoundaryReusable/);
+  });
+
+  test(label + ': professional policy can promote a stable high-confidence candidate', () => {
+    const policy = read('src/background-decision-policy.js');
+    assert.match(policy, /FINAL_CANDIDATE_HITS = 2/);
+    assert.match(policy, /candidateFinalReady/);
+    assert.match(policy, /candidateFinalHits/);
+    assert.match(policy, /finalQuality = \(technicalFinal \|\| candidateFinalHits >= FINAL_CANDIDATE_HITS\)/);
   });
 }
 
