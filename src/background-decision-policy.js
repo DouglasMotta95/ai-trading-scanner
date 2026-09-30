@@ -7,6 +7,8 @@ import { getThresholds, getOperationMode, getSignalPolicy } from './core/analysi
 const EXACT_CLOCK_SOURCES = new Set(['trader-dom-countdown', 'network-server-cycle']);
 const CLOCK_FRESH_MS = 4500;
 const FOCUS_FRESH_MS = 5500;
+const ROLLOVER_ENTRY_GRACE_MS = 6500;
+const CANDIDATE_JITTER_GRACE_MS = 5000;
 const DEFAULT_PREFS = Object.freeze({ mode: 'NORMAL', geminiEnabled: true, sensitivityProfile: 'MEDIO', confirmationMode: 'SIMPLES', operationMode: 'M1', preferredExpiration: null });
 
 
@@ -89,7 +91,34 @@ function focusReady(state = {}) {
 export function exactCasaTradeTime(state = {}) {
   const focus = state.diagnostics?.focusedAsset || null;
   const clock = state.diagnostics?.marketClock || null;
-  if (!focusReady(state) || !clock) return { ready: false, reason: 'Ativo/gráfico ainda não confirmado.' };
+  if (!focusReady(state)) return { ready: false, reason: 'Ativo/gráfico ainda não confirmado.' };
+
+  const operationMode = getOperationMode(state.analystPreferences?.operationMode || 'M1');
+  const persistedCycle = state.decisionCycle || {};
+  const persistedTarget = num(persistedCycle.targetStart);
+  const persistedDirection = text(persistedCycle.direction).toUpperCase();
+  const persistedAsset = text(persistedCycle.key).split('|')[0] || '';
+  const rolloverGrace = persistedCycle.locked === 'ENTER'
+    && ['BUY','SELL'].includes(persistedDirection)
+    && sameMarket(persistedAsset, state.asset)
+    && persistedTarget != null
+    && Date.now() >= persistedTarget - 1500
+    && Date.now() <= persistedTarget + ROLLOVER_ENTRY_GRACE_MS
+    && (!persistedCycle.key || text(persistedCycle.key).split('|')[1]?.toUpperCase() === operationMode.timeframe);
+  if (rolloverGrace) {
+    return {
+      ready: true,
+      timeframe: operationMode.timeframe,
+      secondsRemaining: Math.max(0, (persistedTarget + operationMode.durationSeconds * 1000 - Date.now()) / 1000),
+      source: 'rollover-grace',
+      operationMode: operationMode.timeframe,
+      projectedFromExact: true,
+      rolloverGrace: true,
+      candleOpenAt: persistedTarget,
+      candleCloseAt: persistedTarget + operationMode.durationSeconds * 1000
+    };
+  }
+  if (!clock) return { ready: false, reason: 'Relógio exato da vela ainda não foi confirmado.' };
   if (clock.available === false || clock.verified !== true || clock.role !== 'candle-close') {
     return { ready: false, reason: 'Relógio exato da vela ainda não foi confirmado.' };
   }
@@ -106,10 +135,9 @@ export function exactCasaTradeTime(state = {}) {
   const boundaryCurrent = closeAt != null && openAt != null
     && nowMs >= openAt - 2000 && nowMs <= closeAt + 1500
     && closeAt - nowMs <= tfMs + 1500;
-  if (clockAgeMs >= CLOCK_FRESH_MS && !boundaryCurrent) return { ready: false, reason: 'Relógio da CasaTrade ficou desatualizado.' };
-  if (rawRemaining == null && !boundaryCurrent) return { ready: false, reason: 'Countdown da CasaTrade indisponível.' };
+  if (clockAgeMs >= CLOCK_FRESH_MS && !boundaryCurrent && !rolloverGrace) return { ready: false, reason: 'Relógio da CasaTrade ficou desatualizado.' };
+  if (rawRemaining == null && !boundaryCurrent && !rolloverGrace) return { ready: false, reason: 'Countdown da CasaTrade indisponível.' };
 
-  const operationMode = getOperationMode(state.analystPreferences?.operationMode || 'M1');
   const liveTf = normTf(clock.timeframe);
   const stateTf = normTf(state.analysisTimeframe || state.timeframe);
   const controlTf = normTf(state.platformControls?.observed?.timeframe);
@@ -129,7 +157,8 @@ export function exactCasaTradeTime(state = {}) {
     secondsRemaining: projectedRemaining,
     source: clock.source,
     operationMode: operationMode.timeframe,
-    projectedFromExact: clockAgeMs > 250,
+    projectedFromExact: rolloverGrace ? true : clockAgeMs > 250,
+    rolloverGrace,
     candleOpenAt: num(clock.openAt),
     candleCloseAt: num(clock.closeAt)
   };
@@ -304,9 +333,9 @@ function baseDecision(state = {}) {
   const possibleScore = signalPolicy.possibleScore;
   const finalScore = signalPolicy.finalScore;
   const entryWindowSeconds = pref.operationMode === 'M1'
-    ? 5
+    ? 15
     : pref.operationMode === 'M5'
-      ? 8
+      ? 20
       : pref.thresholds.entryWindowSeconds;
   const preSignalWindowSeconds = 30;
   const directionalPower = Number(direction === 'BUY' ? signal.analytics?.buyPower : signal.analytics?.sellPower) || 0;
@@ -318,6 +347,10 @@ function baseDecision(state = {}) {
   const professionalContextReady = professional.contextReady === true;
   const professionalTriggerReady = professional.triggerReady === true;
 
+  const persistedCycle = state.decisionCycle || {};
+  const persistedTarget = num(persistedCycle.targetStart);
+  const persistedDirection = text(persistedCycle.direction).toUpperCase();
+  const persistedAsset = text(persistedCycle.key).split('|')[0] || '';
   const common = {
     profile: pref.mode,
     operationMode: pref.operationMode,
@@ -344,6 +377,28 @@ function baseDecision(state = {}) {
     updatedAt: now
   };
 
+  const rolloverEntryActive = persistedCycle.locked === 'ENTER'
+    && ['BUY','SELL'].includes(persistedDirection)
+    && sameMarket(persistedAsset, state.asset)
+    && persistedTarget != null
+    && now >= persistedTarget - 1500
+    && now <= persistedTarget + ROLLOVER_ENTRY_GRACE_MS
+    && (!persistedCycle.key || text(persistedCycle.key).split('|')[1]?.toUpperCase() === pref.operationMode);
+  if (rolloverEntryActive && expiration.ready) {
+    return {
+      ...common,
+      uiState: persistedDirection === 'BUY' ? 'ENTER_BUY' : 'ENTER_SELL',
+      direction: persistedDirection,
+      actionable: true,
+      alert: 'strong',
+      possibleSince: Number(state.professionalDecision?.possibleSince || now),
+      holdRemainingMs: 0,
+      reason: persistedDirection === 'BUY'
+        ? 'COMPRA — ALTA CONFIANÇA • ENTRAR NA VELA QUE ACABOU DE ABRIR.'
+        : 'VENDA — ALTA CONFIANÇA • ENTRAR NA VELA QUE ACABOU DE ABRIR.'
+    };
+  }
+
   if (!identity.ready) {
     return { ...common, uiState: 'ANALYZING_MARKET', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: identity.reason };
   }
@@ -365,16 +420,61 @@ function baseDecision(state = {}) {
     return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: 'AGUARDAR — fechamento da vela em andamento.' };
   }
 
+  const previous = state.professionalDecision || {};
+  const previousUi = text(previous.uiState).toUpperCase();
+  const previousDirection = text(previous.direction).toUpperCase();
+  const previousAt = Number(previous.updatedAt || 0);
+  const previousPossibleSince = Number(previous.possibleSince || 0);
+  const previousCandidateSameCycle = previous.cycleKey === cycle
+    && ['POSSIBLE_BUY','POSSIBLE_SELL','ENTER_BUY','ENTER_SELL'].includes(previousUi)
+    && previousDirection === direction
+    && previousAt > 0
+    && now - previousAt <= CANDIDATE_JITTER_GRACE_MS
+    && previousPossibleSince > 0;
+  const holdMs = pref.holdSeconds * 1000;
+
   if (!professionalContextReady || !professionalTriggerReady) {
-    return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: 'AGUARDAR — tendência/contexto, região e gatilho ainda não estão confirmados juntos.' };
+    if (previousCandidateSameCycle
+      && technicalCandidate
+      && direction
+      && score >= possibleScore
+      && mandatoryPowerReady
+      && seconds > 0) {
+      return {
+        ...common,
+        uiState: direction === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL',
+        direction,
+        actionable: false,
+        alert: 'silent',
+        possibleSince: previousPossibleSince,
+        holdRemainingMs: Math.max(0, holdMs - Math.max(0, now - previousPossibleSince)),
+        reason: (direction === 'BUY' ? 'COMPRA' : 'VENDA') + ' — ALTA CONFIANÇA • candidato preservado durante oscilação momentânea do contexto/gatilho.'
+      };
+    }
+    return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, holdRemainingMs: 0, reason: 'AGUARDAR — tendência/contexto, região e gatilho ainda não estão confirmados juntos.' };
   }
 
   if (!technicalCandidate || !direction || score < possibleScore || !mandatoryPowerReady || !additionalConfluenceReady) {
-    return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: 'AGUARDAR — motor técnico ainda não liberou um candidato.' };
+    if (previousCandidateSameCycle
+      && direction === previousDirection
+      && score >= Math.max(58, thresholds.possibleScore)
+      && Number(signal.analytics?.[direction === 'BUY' ? 'buyPower' : 'sellPower'] || 0) >= 50
+      && seconds > 0) {
+      return {
+        ...common,
+        uiState: direction === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL',
+        direction,
+        actionable: false,
+        alert: 'silent',
+        possibleSince: previousPossibleSince,
+        holdRemainingMs: Math.max(0, holdMs - Math.max(0, now - previousPossibleSince)),
+        reason: (direction === 'BUY' ? 'COMPRA' : 'VENDA') + ' — ALTA CONFIANÇA • candidato preservado durante uma leitura técnica transitória.'
+      };
+    }
+    return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, holdRemainingMs: 0, reason: 'AGUARDAR — motor técnico ainda não liberou um candidato.' };
   }
 
-  const previous = state.professionalDecision || {};
-  const sameCandidate = previous.cycleKey === cycle && previous.direction === direction && ['POSSIBLE_BUY','POSSIBLE_SELL','ENTER_BUY','ENTER_SELL'].includes(text(previous.uiState).toUpperCase());
+  const sameCandidate = previous.cycleKey === cycle && previous.direction === direction && ['POSSIBLE_BUY','POSSIBLE_SELL','ENTER_BUY','ENTER_SELL'].includes(previousUi);
   const technicalPossibleSince = Number(signal.stability?.possibleSince || 0);
   const technicalSinceValid = technicalPossibleSince > 0 && technicalPossibleSince <= now && now - technicalPossibleSince < 45000;
   // Seed the presentation hold from the technical candidate's stable lifetime.
@@ -382,7 +482,6 @@ function baseDecision(state = {}) {
   const possibleSince = sameCandidate && Number(previous.possibleSince || 0) > 0
     ? Number(previous.possibleSince)
     : technicalSinceValid ? technicalPossibleSince : now;
-  const holdMs = pref.holdSeconds * 1000;
   const heldFor = Math.max(0, now - possibleSince);
   const finalQuality = technicalFinal && score >= finalScore && finalPowerReady && additionalConfluenceReady
     && professionalContextReady && professionalTriggerReady;

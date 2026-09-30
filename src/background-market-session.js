@@ -589,10 +589,23 @@ export async function applyClock(message = {}, sender = {}) {
 
     if ((!exact && !fallback) || !validRemaining) {
       const previousClock = exactClock(state, info);
-      // A probe can briefly miss the countdown node at candle rollover or while
-      // CasaTrade re-renders controls. Do not erase a still-fresh authoritative
-      // clock with that transient pending observation.
-      if (previousClock) return state;
+      const previous = state.diagnostics?.marketClock || {};
+      const previousCloseAt = num(previous.closeAt) ?? num(previous.candleCloseAt);
+      const previousOpenAt = num(previous.openAt) ?? num(previous.candleOpenAt);
+      const previousTfMs = timeframeSeconds(previous.timeframe || state.analysisTimeframe || state.timeframe) * 1000;
+      const nowForPrevious = Date.now();
+      const previousBoundaryReusable = previous.verified === true
+        && previous.available !== false
+        && sameMarket(previous.asset, asset)
+        && previousCloseAt != null
+        && previousOpenAt != null
+        && previousTfMs > 0
+        && nowForPrevious >= previousOpenAt - 2000
+        && nowForPrevious <= previousCloseAt + previousTfMs + 1500;
+      // At a candle rollover CasaTrade can remove/recreate the countdown node.
+      // Preserve the last exact boundary until the new candle clock arrives,
+      // preventing a fake disconnect and preserving the next-candle schedule.
+      if (previousClock || previousBoundaryReusable) return state;
       return {
         ...state,
         diagnostics: {

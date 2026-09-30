@@ -16,6 +16,7 @@ const DEFAULT_PREFS = Object.freeze({
 });
 
 const PANEL_OPENED_AT = Date.now();
+const ROLLOVER_ENTRY_GRACE_MS = 6500;
 let prefs = { ...DEFAULT_PREFS };
 let liveOhlc = null;
 let audioContext = null;
@@ -222,16 +223,41 @@ function sessionReady(state = {}) {
     && operationalClockReady(state);
 }
 
+function rolloverEntryGrace(state = {}) {
+  const cycle = state.decisionCycle || {};
+  const target = num(cycle.targetStart);
+  const direction = String(cycle.direction || '').toUpperCase();
+  const key = String(cycle.key || '').split('|');
+  const operation = operationRequirement(state);
+  return cycle.locked === 'ENTER'
+    && ['BUY','SELL'].includes(direction)
+    && sameMarket(key[0] || '', state.asset)
+    && target != null
+    && Date.now() >= target - 1500
+    && Date.now() <= target + ROLLOVER_ENTRY_GRACE_MS
+    && (!key[1] || key[1].toUpperCase() === operation.timeframe);
+}
 function liveTimingReady(state = {}) {
-  if (!exactClockReady(state)) return false;
-  const clock = state.diagnostics?.marketClock || {};
   const expiration = expirationObservation(state);
   const operation = operationRequirement(state);
+  const clock = state.diagnostics?.marketClock || {};
+  if (rolloverEntryGrace(state)) {
+    return expirationTimingCompatible(expiration, operation)
+      && (!clock.timeframe || normTf(clock.timeframe) === operation.timeframe);
+  }
+  if (!exactClockReady(state)) return false;
   return expirationTimingCompatible(expiration, operation)
     && normTf(clock.timeframe) === operation.timeframe;
 }
 
 function entryTimeReady(state = {}) {
+  if (rolloverEntryGrace(state)) {
+    const expiration = expirationObservation(state);
+    const operation = operationRequirement(state);
+    const clock = state.diagnostics?.marketClock || {};
+    if (expirationTimingCompatible(expiration, operation)
+      && (!clock.timeframe || normTf(clock.timeframe) === operation.timeframe)) return true;
+  }
   if (!exactClockReady(state)) return false;
   const clock = state.diagnostics?.marketClock || {};
   const expiration = expirationObservation(state);
@@ -490,11 +516,21 @@ function projectedRemaining(state = {}) {
 
 function smoothedRemaining(state = {}) {
   const raw = projectedRemaining(state);
-  if (raw == null) {
-    countdownUi = { value: null, at: 0, cycle: '' };
-    return null;
+  if (raw != null) return Math.max(0, Math.round(raw));
+
+  const clock = state.diagnostics?.marketClock || {};
+  const closeAt = num(clock.closeAt) ?? num(clock.candleCloseAt);
+  const tfMs = timeframeSeconds(clock.timeframe || state.analysisTimeframe || state.timeframe) * 1000;
+  const now = Date.now();
+  // At the exact candle boundary CasaTrade can briefly remove and recreate its
+  // countdown element. Keep the next candle's clock visible instead of blanking
+  // the panel; this is display continuity only and does not authorize a new entry.
+  if (closeAt != null && tfMs > 0 && now >= closeAt && now - closeAt <= Math.min(tfMs * 1.5, 90000)) {
+    return Math.max(0, Math.round((closeAt + tfMs - now) / 1000));
   }
-  return Math.max(0, Math.round(raw));
+
+  countdownUi = { value: null, at: 0, cycle: '' };
+  return null;
 }
 
 function formatPanelTime(ms) {
@@ -508,16 +544,25 @@ function syncTopLiveClock(state = {}) {
   const exact = exactClockReady(state);
   const remaining = smoothedRemaining(state);
   const closeAt = num(clock.closeAt) ?? num(clock.candleCloseAt);
+  const tfMs = timeframeSeconds(clock.timeframe || state.analysisTimeframe || state.timeframe) * 1000;
   setText('liveClockNow', formatPanelTime(now));
-  const nextAt = closeAt != null && closeAt > now
-    ? closeAt
-    : exact && remaining != null ? now + remaining * 1000 : null;
+  const rolloverDisplay = !exact
+    && closeAt != null
+    && tfMs > 0
+    && now >= closeAt
+    && now - closeAt <= Math.min(tfMs, 90000);
+  let nextAt = closeAt != null && closeAt > now ? closeAt : null;
+  if (!nextAt && rolloverDisplay) nextAt = closeAt + tfMs;
+  if (!nextAt && exact && remaining != null) nextAt = now + remaining * 1000;
   setText('liveClockNext', formatPanelTime(nextAt));
   const bar = $('liveClockBar');
-  if (bar) bar.classList.toggle('pending', !(nextAt && exact));
+  if (bar) bar.classList.toggle('pending', !(nextAt && (exact || rolloverDisplay)));
+  const tfLabel = normTf(clock.timeframe || state.analysisTimeframe || state.timeframe) || 'VELA';
   setText('liveClockCountdown', exact && remaining != null
-    ? `Faltam ${Math.max(0, Math.ceil(remaining))}s • ${normTf(clock.timeframe || state.analysisTimeframe || state.timeframe) || 'VELA'}`
-    : 'AGUARDANDO CLOCK REAL DA CASATRADE');
+    ? `Faltam ${Math.max(0, Math.ceil(remaining))}s • ${tfLabel}`
+    : rolloverDisplay && nextAt
+      ? `Faltam ${Math.max(0, Math.ceil((nextAt - now) / 1000))}s • ${tfLabel} • sincronizando nova vela`
+      : 'SINCRONIZANDO CLOCK DA CASATRADE');
 }
 
 function render(state = {}) {
