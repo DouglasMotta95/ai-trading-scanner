@@ -8,6 +8,7 @@ const EXACT_CLOCK_SOURCES = new Set(['trader-dom-countdown', 'network-server-cyc
 const CLOCK_FRESH_MS = 4500;
 const FOCUS_FRESH_MS = 5500;
 const ROLLOVER_ENTRY_GRACE_MS = 6500;
+const CANDIDATE_JITTER_GRACE_MS = 5000;
 const DEFAULT_PREFS = Object.freeze({ mode: 'NORMAL', geminiEnabled: true, sensitivityProfile: 'MEDIO', confirmationMode: 'SIMPLES', operationMode: 'M1', preferredExpiration: null });
 
 
@@ -332,9 +333,9 @@ function baseDecision(state = {}) {
   const possibleScore = signalPolicy.possibleScore;
   const finalScore = signalPolicy.finalScore;
   const entryWindowSeconds = pref.operationMode === 'M1'
-    ? 5
+    ? 15
     : pref.operationMode === 'M5'
-      ? 8
+      ? 20
       : pref.thresholds.entryWindowSeconds;
   const preSignalWindowSeconds = 30;
   const directionalPower = Number(direction === 'BUY' ? signal.analytics?.buyPower : signal.analytics?.sellPower) || 0;
@@ -346,6 +347,10 @@ function baseDecision(state = {}) {
   const professionalContextReady = professional.contextReady === true;
   const professionalTriggerReady = professional.triggerReady === true;
 
+  const persistedCycle = state.decisionCycle || {};
+  const persistedTarget = num(persistedCycle.targetStart);
+  const persistedDirection = text(persistedCycle.direction).toUpperCase();
+  const persistedAsset = text(persistedCycle.key).split('|')[0] || '';
   const common = {
     profile: pref.mode,
     operationMode: pref.operationMode,
@@ -415,16 +420,61 @@ function baseDecision(state = {}) {
     return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: 'AGUARDAR — fechamento da vela em andamento.' };
   }
 
+  const previous = state.professionalDecision || {};
+  const previousUi = text(previous.uiState).toUpperCase();
+  const previousDirection = text(previous.direction).toUpperCase();
+  const previousAt = Number(previous.updatedAt || 0);
+  const previousPossibleSince = Number(previous.possibleSince || 0);
+  const previousCandidateSameCycle = previous.cycleKey === cycle
+    && ['POSSIBLE_BUY','POSSIBLE_SELL','ENTER_BUY','ENTER_SELL'].includes(previousUi)
+    && previousDirection === direction
+    && previousAt > 0
+    && now - previousAt <= CANDIDATE_JITTER_GRACE_MS
+    && previousPossibleSince > 0;
+  const holdMs = pref.holdSeconds * 1000;
+
   if (!professionalContextReady || !professionalTriggerReady) {
-    return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: 'AGUARDAR — tendência/contexto, região e gatilho ainda não estão confirmados juntos.' };
+    if (previousCandidateSameCycle
+      && technicalCandidate
+      && direction
+      && score >= possibleScore
+      && mandatoryPowerReady
+      && seconds > 0) {
+      return {
+        ...common,
+        uiState: direction === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL',
+        direction,
+        actionable: false,
+        alert: 'silent',
+        possibleSince: previousPossibleSince,
+        holdRemainingMs: Math.max(0, holdMs - Math.max(0, now - previousPossibleSince)),
+        reason: (direction === 'BUY' ? 'COMPRA' : 'VENDA') + ' — ALTA CONFIANÇA • candidato preservado durante oscilação momentânea do contexto/gatilho.'
+      };
+    }
+    return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, holdRemainingMs: 0, reason: 'AGUARDAR — tendência/contexto, região e gatilho ainda não estão confirmados juntos.' };
   }
 
   if (!technicalCandidate || !direction || score < possibleScore || !mandatoryPowerReady || !additionalConfluenceReady) {
-    return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: 'AGUARDAR — motor técnico ainda não liberou um candidato.' };
+    if (previousCandidateSameCycle
+      && direction === previousDirection
+      && score >= Math.max(58, thresholds.possibleScore)
+      && Number(signal.analytics?.[direction === 'BUY' ? 'buyPower' : 'sellPower'] || 0) >= 50
+      && seconds > 0) {
+      return {
+        ...common,
+        uiState: direction === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL',
+        direction,
+        actionable: false,
+        alert: 'silent',
+        possibleSince: previousPossibleSince,
+        holdRemainingMs: Math.max(0, holdMs - Math.max(0, now - previousPossibleSince)),
+        reason: (direction === 'BUY' ? 'COMPRA' : 'VENDA') + ' — ALTA CONFIANÇA • candidato preservado durante uma leitura técnica transitória.'
+      };
+    }
+    return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, holdRemainingMs: 0, reason: 'AGUARDAR — motor técnico ainda não liberou um candidato.' };
   }
 
-  const previous = state.professionalDecision || {};
-  const sameCandidate = previous.cycleKey === cycle && previous.direction === direction && ['POSSIBLE_BUY','POSSIBLE_SELL','ENTER_BUY','ENTER_SELL'].includes(text(previous.uiState).toUpperCase());
+  const sameCandidate = previous.cycleKey === cycle && previous.direction === direction && ['POSSIBLE_BUY','POSSIBLE_SELL','ENTER_BUY','ENTER_SELL'].includes(previousUi);
   const technicalPossibleSince = Number(signal.stability?.possibleSince || 0);
   const technicalSinceValid = technicalPossibleSince > 0 && technicalPossibleSince <= now && now - technicalPossibleSince < 45000;
   // Seed the presentation hold from the technical candidate's stable lifetime.
@@ -432,7 +482,6 @@ function baseDecision(state = {}) {
   const possibleSince = sameCandidate && Number(previous.possibleSince || 0) > 0
     ? Number(previous.possibleSince)
     : technicalSinceValid ? technicalPossibleSince : now;
-  const holdMs = pref.holdSeconds * 1000;
   const heldFor = Math.max(0, now - possibleSince);
   const finalQuality = technicalFinal && score >= finalScore && finalPowerReady && additionalConfluenceReady
     && professionalContextReady && professionalTriggerReady;
