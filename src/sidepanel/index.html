@@ -4,7 +4,27 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>AI Trading Scanner</title>
-  <style>html,body{margin:0;min-height:100%;background:#06101a;color:#eaf4ff;color-scheme:dark}</style>
+  <style>html,body{margin:0;min-height:100%;background:#06101a;color:#eaf4ff;color-scheme:dark}
+    .top-license-card{display:block;margin:10px 0 8px;padding:12px 14px}
+    .top-license-card .section-head{margin-bottom:6px}
+    .top-license-card .muted{margin:4px 0 8px}
+    .top-license-card .activation-box{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center}
+    .top-license-card .activation-box input{min-width:0}
+    .license-tools{margin-top:7px;display:flex;gap:7px;justify-content:flex-end}
+    .live-clock-bar{display:grid;grid-template-columns:1fr 1.25fr;gap:8px;margin:8px 0 10px;padding:10px 12px;border:1px solid #294862;border-radius:16px;background:linear-gradient(180deg,#0a1a29,#081521);box-shadow:0 8px 24px rgba(0,0,0,.18);text-align:center}
+    .live-clock-bar>div{display:grid;gap:2px;min-width:0}
+    .live-clock-bar span{font-size:9px;font-weight:900;letter-spacing:.1em;color:#7fa0b8}
+    .live-clock-bar b{font-size:24px;line-height:1.05;font-weight:900;color:#edf8ff;font-variant-numeric:tabular-nums}
+    .live-clock-bar small{font-size:10px;font-weight:900;color:#74dcb5;letter-spacing:.04em;min-height:12px}
+    .live-clock-bar.pending{border-color:#5f4f28}
+    .live-clock-bar.pending small{color:#e0c56e}
+    @media (max-width:560px){
+      .top-license-card .activation-box{grid-template-columns:1fr}
+      .top-license-card .activation-box button{width:100%}
+      .live-clock-bar{grid-template-columns:1fr 1fr}
+      .live-clock-bar b{font-size:20px}
+    }
+  </style>
   <link rel="stylesheet" href="styles.css">
   <link rel="stylesheet" href="asset-quality.css">
   <link rel="stylesheet" href="premium-v2.css">
@@ -30,6 +50,21 @@
         <span id="extensionVersion" class="version">v—</span>
       </div>
     </header>
+
+    <section id="licenseCard" class="card license-card top-license-card">
+      <div class="section-head">
+        <div><span class="eyebrow">ACESSO DO ROBÔ</span><h2 id="licenseTitle">Verificando acesso…</h2></div>
+        <span id="licenseHealth" class="badge">—</span>
+      </div>
+      <p id="licenseText" class="muted">Digite sua chave de acesso para ativar este aparelho.</p>
+      <div id="activationBox" class="activation-box">
+        <input id="licenseKey" autocomplete="off" placeholder="Digite sua chave de acesso" aria-label="Chave de acesso">
+        <button id="activateLicense" class="primary" type="button">ATIVAR ACESSO</button>
+      </div>
+      <div class="license-tools">
+        <button id="copyScannerDiagnostics" class="secondary" type="button">COPIAR DIAGNÓSTICO</button>
+      </div>
+    </section>
 
     <section id="syncStrip" class="sync-strip syncing compact-sync" aria-live="polite">
       <span class="scan-pulse" aria-hidden="true"></span>
@@ -64,6 +99,18 @@
         <div><span class="eyebrow">PRÓXIMA VELA</span><h2 id="signalTitle">AGUARDAR</h2></div>
         <span id="signalBadge" class="badge warn">AGUARDAR</span>
       </div>
+
+      <section id="liveClockBar" class="live-clock-bar" aria-live="polite">
+        <div class="live-clock-now">
+          <span>HORÁRIO ATUAL</span>
+          <b id="liveClockNow">--:--:--</b>
+        </div>
+        <div class="live-clock-next">
+          <span>ABERTURA DA PRÓXIMA VELA</span>
+          <b id="liveClockNext">--:--:--</b>
+          <small id="liveClockCountdown">AGUARDANDO CLOCK</small>
+        </div>
+      </section>
 
       <div id="decisionBanner" class="decision-banner waiting" aria-live="assertive">
         <span class="decision-icon" aria-hidden="true"></span>
@@ -154,15 +201,6 @@
           <label class="setting-row expected-asset-setting" for="expectedAsset"><span><b>Ativo esperado</b><small>Opcional. Avisa quando você muda para outro instrumento.</small></span><input id="expectedAsset" type="text" placeholder="Ex.: AUD/CAD (OTC)" autocomplete="off"></label>
           <div class="asset-switch-history"><b>Trocas de ativo detectadas</b><div id="assetSwitchLog" class="asset-switch-log"><span>Nenhuma troca registrada.</span></div></div>
           <p id="operationModeNote" class="fixed-strategy-note">Modo M1: timeframe M1 + expiração de 1 minuto. A execução continua manual na CasaTrade.</p>
-        </section>
-
-        <section id="licenseCard" class="card license-card">
-          <div class="section-head"><div><span class="eyebrow">ACESSO E DIAGNÓSTICO</span><h2 id="licenseTitle">Verificando acesso…</h2></div><span id="licenseHealth" class="badge">—</span></div>
-          <p id="licenseText" class="muted">Aguardando status do acesso.</p>
-          <div id="activationBox" class="activation-box" hidden><input id="licenseKey" autocomplete="off" placeholder="Cole sua chave ATS"><button id="activateLicense" class="primary">ATIVAR</button></div>
-          <button id="copyScannerDiagnostics" class="secondary" type="button">COPIAR DIAGNÓSTICO</button>
-          <button id="copySignalPerformance" class="secondary" type="button">COPIAR RELATÓRIO DE DESEMPENHO</button>
-          <button id="clearSignalPerformance" class="secondary" type="button">LIMPAR REGISTRO</button>
         </section>
       </div>
     </details>
