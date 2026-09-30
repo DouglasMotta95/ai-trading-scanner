@@ -24,6 +24,24 @@
       .live-clock-bar{grid-template-columns:1fr 1fr}
       .live-clock-bar b{font-size:20px}
     }
+      .operation-result-card{margin:10px 0;padding:12px 14px;border-color:#234660}
+    .operation-result-card.result-win{border-color:#2a7059;background:linear-gradient(180deg,#0b211b,#07151d)}
+    .operation-result-card.result-loss{border-color:#713548;background:linear-gradient(180deg,#261019,#07151d)}
+    .operation-result-card.result-draw{border-color:#6b5d2a;background:linear-gradient(180deg,#211d0c,#07151d)}
+    .operation-result-main{display:grid;grid-template-columns:1.35fr 1fr 1fr;gap:7px}
+    .operation-result-main>div{padding:8px 9px;border-radius:11px;background:#091a28;border:1px solid #17364c;min-width:0}
+    .operation-result-main span,.operation-result-price span{display:block;font-size:8px;font-weight:900;letter-spacing:.08em;color:#6f8da2}
+    .operation-result-main b{display:block;margin-top:3px;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .operation-result-price b{font-size:13px}
+    .operation-result-meta{display:flex;justify-content:space-between;gap:8px;margin-top:7px;color:#7893a8;font-size:9px}
+    .operation-result-text{margin:8px 0 0;color:#a7bbca;font-size:10px;line-height:1.4}
+    .recent-trade-rows{display:grid;gap:5px;margin-top:8px}
+    .recent-trade-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:7px;align-items:center;padding:6px 7px;border-radius:9px;background:#081622;border:1px solid #173148;font-size:9px}
+    .recent-trade-row .trade-status{font-weight:950;min-width:45px;text-align:center}
+    .recent-trade-row .trade-main{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#adc0cf}
+    .recent-trade-row .trade-time{font-variant-numeric:tabular-nums;color:#7190a5}
+    .recent-trade-row.win .trade-status{color:#70ddb6}.recent-trade-row.loss .trade-status{color:#f1849c}.recent-trade-row.draw .trade-status{color:#e2ca78}.recent-trade-row.pending .trade-status{color:#8cc4ee}
+    @media(max-width:560px){.operation-result-main{grid-template-columns:1.2fr 1fr 1fr}.operation-result-main b{font-size:12px}.operation-result-meta{font-size:8px}}
   </style>
   <link rel="stylesheet" href="styles.css">
   <link rel="stylesheet" href="asset-quality.css">
@@ -151,6 +169,20 @@
       <p id="signalReason" class="signal-reason compact-signal-reason">Aguardando dados reais da CasaTrade.</p>
     </section>
 
+    <section id="operationResultCard" class="card operation-result-card" aria-live="polite">
+      <div class="section-head">
+        <div><span class="eyebrow">OPERAÇÕES</span><h2>Última operação</h2></div>
+        <span id="lastTradeResultBadge" class="badge warn">AGUARDANDO</span>
+      </div>
+      <div class="operation-result-main">
+        <div><span id="lastTradeDirectionLabel">—</span><b id="lastTradeAssetLabel">—</b></div>
+        <div class="operation-result-price"><span>ENTRADA</span><b id="lastTradeEntryPrice">—</b></div>
+        <div class="operation-result-price"><span>SAÍDA</span><b id="lastTradeExitPrice">—</b></div>
+      </div>
+      <div class="operation-result-meta"><span id="lastTradeEntryTime">Entrada —</span><span id="lastTradeExitTime">Expiração —</span></div>
+      <p id="lastTradeResultText" class="operation-result-text">Nenhuma operação registrada ainda.</p>
+      <div id="recentTradeRows" class="recent-trade-rows" aria-label="Operações recentes"></div>
+    </section>
     <section class="card live-card compact-live-card">
       <div class="section-head">
         <div><span class="eyebrow">GRÁFICO ATUAL</span><h2>Preço + OHLC + últimas 10 velas</h2></div>
