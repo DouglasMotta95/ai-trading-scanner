@@ -155,10 +155,15 @@ function exactLiveTime(state = {}) {
   const realSource = clean(controls.realExpirationSource || controls.expirationSource || '');
   const realExpiration = clean(controls.realExpiration || '');
   const realFresh = !!realExpiration && realAt > 0 && Date.now() - realAt < 15000 && realSource !== 'user-declared';
-  return clean(clock.timeframe || state.analysisTimeframe || state.timeframe).toUpperCase() === operation.timeframe
-    && realFresh
+  const declaredExpiration = clean(controls.userDeclaredExpiration || state.diagnostics?.expirationGuard?.userDeclared || '');
+  const manualAccepted = !!declaredExpiration
+    && declaredExpiration.replace(/\s+/g, '') === operation.expiration
+    && state.diagnostics?.expirationGuard?.divergence !== true;
+  const realAccepted = realFresh
     && realExpiration === operation.expiration
     && state.diagnostics?.expirationGuard?.verified === true;
+  return clean(clock.timeframe || state.analysisTimeframe || state.timeframe).toUpperCase() === operation.timeframe
+    && (realAccepted || manualAccepted);
 }
 
 function connectionFailure(state = {}) {
@@ -328,20 +333,26 @@ function renderShell(state = {}) {
   const operation = operationRequirement(state);
 
   const expirationGuard = state.diagnostics?.expirationGuard || {};
-  const declaredExpiration = clean(state.platformControls?.userDeclaredExpiration || expirationGuard.userDeclared || '');
+  let rememberedUserExpiration = '';
+  try { rememberedUserExpiration = clean(localStorage.getItem('atsUserDeclaredExpiration') || ''); } catch {}
+  const declaredExpiration = clean(state.platformControls?.userDeclaredExpiration || expirationGuard.userDeclared || rememberedUserExpiration || '');
   const realExpirationAt = Number(state.platformControls?.realExpirationAt || 0);
   const realExpirationSource = clean(state.platformControls?.realExpirationSource || '');
   const realExpirationFresh = realExpirationAt > 0 && Date.now() - realExpirationAt < 15000 && realExpirationSource !== 'user-declared';
-  const expirationSource = realExpirationFresh ? realExpirationSource : clean(expirationGuard.source || state.platformControls?.expirationSource || '');
+  const expirationSource = realExpirationFresh ? realExpirationSource : (declaredExpiration ? 'user-declared' : clean(expirationGuard.source || state.platformControls?.expirationSource || ''));
   const expirationDivergence = expirationGuard.divergence === true;
   const expiration = realExpirationFresh ? clean(state.platformControls?.realExpiration || '') : clean(declaredExpiration || expirationGuard.actual || '');
   const expirationVerified = realExpirationFresh && expirationGuard.verified === true;
-  const expirationWrong = dataConnected && expirationVerified && !!expiration && expiration !== operation.expiration;
+  const manualExpirationAccepted = !!declaredExpiration
+    && normExp(declaredExpiration) === operation.expiration
+    && !expirationDivergence;
+  const expirationWrong = dataConnected && ((expirationVerified && !!expiration && expiration !== operation.expiration)
+    || (!expirationVerified && !!declaredExpiration && !manualExpirationAccepted));
   const sessionStartedAt = Number(session.startedAt || state.diagnostics?.target?.connectedAt || 0);
   const sessionAge = sessionStartedAt > 0 ? Date.now() - sessionStartedAt : 0;
   const panelAge = Math.max(0, Date.now() - PANEL_OPENED_AT);
   const expirationWaitAge = sessionAge > 0 ? Math.min(sessionAge, panelAge) : panelAge;
-  const expirationPending = dataConnected && !expirationVerified && !expirationDivergence && expirationWaitAge >= 1500;
+  const expirationPending = dataConnected && !expirationVerified && !manualExpirationAccepted && !expirationDivergence && expirationWaitAge >= 1500;
   const marketPending = !dataConnected
     && !switching
     && activeLicense(state)
@@ -846,6 +857,7 @@ $('copyExpirationDiagnostic')?.addEventListener('click', () => copyExpirationDia
 $('userDeclaredExpiration')?.addEventListener('change', async event => {
   const expiration = clean(event.currentTarget?.value || '');
   if (!expiration) return;
+  try { localStorage.setItem('atsUserDeclaredExpiration', expiration); } catch {}
   const response = await chrome.runtime.sendMessage({
     type: 'ATS_SET_USER_DECLARED_EXPIRATION',
     expiration
@@ -898,6 +910,13 @@ import(chrome.runtime.getURL('src/sidepanel/trial-ui.js')).catch(() => {});
   checkLatestVersion().catch(() => {});
   const response = await chrome.runtime.sendMessage({ type: 'ATS_READ_SCANNER_STATE' }).catch(() => null);
   lastState = response?.state || {};
+  try {
+    const remembered = clean(localStorage.getItem('atsUserDeclaredExpiration') || '');
+    if (remembered && !lastState.platformControls?.userDeclaredExpiration) {
+      const restored = await chrome.runtime.sendMessage({ type: 'ATS_SET_USER_DECLARED_EXPIRATION', expiration: remembered }).catch(() => null);
+      if (restored?.state) lastState = restored.state;
+    }
+  } catch {}
   renderShell(lastState);
   const targetHost = clean(lastState.diagnostics?.target?.host).toLowerCase();
   const looksLikeCasaTrade = lastState.platformId === 'casatrade'
