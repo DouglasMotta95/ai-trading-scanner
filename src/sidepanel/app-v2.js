@@ -425,10 +425,19 @@ function renderLicense(state = {}) {
   const active = activeLicense(state);
   const card = $('licenseCard');
   if (card) card.classList.toggle('active', active);
-  setText('licenseTitle', active ? `Licença ${license.planLabel || license.plan || 'ATIVA'}` : 'Licença necessária');
+  setText('licenseTitle', active ? `Licença ${license.planLabel || license.plan || 'ATIVA'}` : 'Ativação necessária');
   setBadge('licenseHealth', active ? 'ATIVA' : 'INATIVA', active ? 'ok' : 'warn');
-  setText('licenseText', active ? 'Acesso validado. O scanner pode ler o mercado aberto.' : (license.error ? `Acesso: ${license.error}` : 'Insira sua chave para ativar.'));
-  const box = $('activationBox'); if (box) box.hidden = active;
+  setText('licenseText', active
+    ? 'Acesso validado. Digite uma nova chave apenas para trocar/revalidar o acesso deste aparelho.'
+    : (license.error ? `Acesso: ${license.error}` : 'Digite sua chave para iniciar.'));
+  const box = $('activationBox');
+  if (box) {
+    box.hidden = false;
+    const input = $('licenseKey');
+    const button = $('activateLicense');
+    if (input && active && input.value === '') input.placeholder = 'Digite uma nova chave para trocar';
+    if (button) button.textContent = active ? 'TROCAR / ATIVAR' : 'ATIVAR ACESSO';
+  }
 }
 
 let lastRenderedState = {};
@@ -464,6 +473,29 @@ function smoothedRemaining(state = {}) {
     return null;
   }
   return Math.max(0, Math.round(raw));
+}
+
+function formatPanelTime(ms) {
+  const at = Number(ms);
+  if (!(at > 0)) return '--:--:--';
+  return new Date(at).toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false });
+}
+function syncTopLiveClock(state = {}) {
+  const now = Date.now();
+  const clock = state.diagnostics?.marketClock || {};
+  const exact = exactClockReady(state);
+  const remaining = smoothedRemaining(state);
+  const closeAt = num(clock.closeAt) ?? num(clock.candleCloseAt);
+  setText('liveClockNow', formatPanelTime(now));
+  const nextAt = closeAt != null && closeAt > now
+    ? closeAt
+    : exact && remaining != null ? now + remaining * 1000 : null;
+  setText('liveClockNext', formatPanelTime(nextAt));
+  const bar = $('liveClockBar');
+  if (bar) bar.classList.toggle('pending', !(nextAt && exact));
+  setText('liveClockCountdown', exact && remaining != null
+    ? `Faltam ${Math.max(0, Math.ceil(remaining))}s • ${normTf(clock.timeframe || state.analysisTimeframe || state.timeframe) || 'VELA'}`
+    : 'AGUARDANDO CLOCK REAL DA CASATRADE');
 }
 
 function render(state = {}) {
@@ -525,6 +557,7 @@ function render(state = {}) {
   setText('heroTimeStatus', timeReady ? 'OK' : 'AGUARDAR');
   setText('sessionMode', timeReady ? 'LIVE' : exact ? 'LIVE • GATE' : 'LIVE • CLOCK PENDENTE');
   setText('timeSyncStatus', exact ? 'EXATO • CASATRADE' : 'PENDENTE');
+  syncTopLiveClock(state);
 
   setText('signalTitle', model.title);
   setText('decisionText', model.text);
@@ -768,6 +801,7 @@ setInterval(() => {
   if (!lastRenderedState || !Object.keys(lastRenderedState).length) return;
   const remaining = smoothedRemaining(lastRenderedState);
   const exact = exactClockReady(lastRenderedState);
+  syncTopLiveClock(lastRenderedState);
   const actualTf = normTf(lastRenderedState.diagnostics?.marketClock?.timeframe || lastRenderedState.analysisTimeframe || lastRenderedState.timeframe);
   setText('heroCountdown', remaining == null ? '—' : exact ? `${Math.ceil(remaining)}s` : `~${Math.ceil(remaining)}s`);
   setText('secondsRemaining', remaining == null ? '—' : exact ? String(Math.max(0, Math.ceil(remaining))) : `~${Math.max(0, Math.ceil(remaining))}`);
