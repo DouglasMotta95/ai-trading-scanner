@@ -840,6 +840,85 @@ async function probePlatformControls() {
   }
 }
 
+
+let manualTradeLedgerKey = '';
+let manualTradePollBusy = false;
+function tradeTime(value) {
+  const n = Number(value || 0);
+  return n > 0 ? new Date(n).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'}) : '—';
+}
+function tradePrice(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n.toFixed(Math.abs(n) >= 100 ? 3 : 5).replace(/0+$/,'').replace(/\.$/,'') : '—';
+}
+function renderManualTradeLedger(data = {}) {
+  const rows = Array.isArray(data.rows) ? data.rows.slice(-8).reverse() : [];
+  const latest = rows[0] || null;
+  const card = $('operationResultCard');
+  if (!card) return;
+  card.classList.remove('result-win','result-loss','result-draw');
+  const badge = $('lastTradeResultBadge'), direction = $('lastTradeDirectionLabel'), asset = $('lastTradeAssetLabel');
+  const entry = $('lastTradeEntryPrice'), exit = $('lastTradeExitPrice'), entryTime = $('lastTradeEntryTime');
+  const exitTime = $('lastTradeExitTime'), text = $('lastTradeResultText'), list = $('recentTradeRows');
+  if (!latest) {
+    if (badge) { badge.textContent='AGUARDANDO'; badge.className='badge warn'; }
+    if (direction) direction.textContent='—';
+    if (asset) asset.textContent='—';
+    if (entry) entry.textContent='—';
+    if (exit) exit.textContent='—';
+    if (entryTime) entryTime.textContent='Entrada —';
+    if (exitTime) exitTime.textContent='Expiração —';
+    if (text) text.textContent='Nenhuma operação registrada ainda.';
+    if (list) list.replaceChildren();
+    return;
+  }
+  const result = String(latest.result || '').toUpperCase();
+  const tone = result === 'WIN' ? 'ok' : result === 'LOSS' ? 'bad' : 'warn';
+  if (badge) { badge.textContent = result === 'WIN' ? 'WIN' : result === 'LOSS' ? 'LOSS' : result === 'DRAW' ? 'EMPATE' : 'EM ABERTO'; badge.className='badge '+tone; }
+  if (result === 'WIN') card.classList.add('result-win');
+  if (result === 'LOSS') card.classList.add('result-loss');
+  if (result === 'DRAW') card.classList.add('result-draw');
+  if (direction) direction.textContent = latest.direction === 'BUY' ? '🟢 COMPRA' : latest.direction === 'SELL' ? '🔴 VENDA' : 'OPERAÇÃO';
+  if (asset) asset.textContent = latest.asset || '—';
+  if (entry) entry.textContent = tradePrice(latest.entryPrice);
+  if (exit) exit.textContent = tradePrice(latest.exitPrice);
+  if (entryTime) entryTime.textContent = 'Entrada '+tradeTime(latest.clickedAt);
+  if (exitTime) exitTime.textContent = result ? 'Expiração '+tradeTime(latest.exitAt || latest.resolvedAt) : 'Expira '+tradeTime(latest.targetEnd);
+  if (text) {
+    text.textContent = result === 'WIN'
+      ? 'WIN — entrada '+tradePrice(latest.entryPrice)+' → saída '+tradePrice(latest.exitPrice)+'.'
+      : result === 'LOSS'
+        ? 'LOSS — entrada '+tradePrice(latest.entryPrice)+' → saída '+tradePrice(latest.exitPrice)+'.'
+        : result === 'DRAW'
+          ? 'EMPATE — entrada '+tradePrice(latest.entryPrice)+' → saída '+tradePrice(latest.exitPrice)+'.'
+          : 'Operação aberta — aguardando a cotação da expiração para registrar WIN/LOSS.';
+  }
+  if (list) {
+    list.replaceChildren();
+    for (const row of rows.slice(0,5)) {
+      const rr=String(row.result||'').toUpperCase();
+      const cls=rr==='WIN'?'win':rr==='LOSS'?'loss':rr==='DRAW'?'draw':'pending';
+      const item=document.createElement('div');
+      item.className='recent-trade-row '+cls;
+      const st=document.createElement('b'); st.className='trade-status'; st.textContent=rr==='WIN'?'WIN':rr==='LOSS'?'LOSS':rr==='DRAW'?'EMPATE':'ABERTO';
+      const main=document.createElement('span'); main.className='trade-main';
+      main.textContent=(row.direction==='BUY'?'COMPRA':'VENDA')+' • '+(row.asset||'—')+' • '+tradePrice(row.entryPrice)+(row.exitPrice!=null?' → '+tradePrice(row.exitPrice):'');
+      const tm=document.createElement('span'); tm.className='trade-time'; tm.textContent=tradeTime(row.clickedAt);
+      item.append(st,main,tm); list.append(item);
+    }
+  }
+}
+async function refreshManualTradeLedger() {
+  if (manualTradePollBusy) return;
+  manualTradePollBusy = true;
+  try {
+    const response = await chrome.runtime.sendMessage({type:'ATS_GET_MANUAL_TRADE_LEDGER'}).catch(()=>null);
+    if (!response?.rows) return;
+    const key = JSON.stringify(response.rows.map(row=>[row.id,row.status,row.result,row.entryPrice,row.exitPrice,row.exitAt]));
+    if (key !== manualTradeLedgerKey) { manualTradeLedgerKey=key; renderManualTradeLedger(response); }
+  } finally { manualTradePollBusy=false; }
+}
+
 function syncToggleClasses(prefs = {}) {
   const mapping = [['geminiToggle','geminiEnabled']];
   for (const [id, key] of mapping) {
@@ -911,6 +990,7 @@ setInterval(() => {
   renderShell(lastState);
   probePlatformControls().catch(() => {});
 }, 500);
+setInterval(() => { refreshManualTradeLedger().catch(() => {}); }, 1000);
 
 import(chrome.runtime.getURL('src/sidepanel/trial-ui.js')).catch(() => {});
 
