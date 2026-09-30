@@ -424,9 +424,18 @@ function consolidatedSnapshot(state = {}) {
   if (!EXACT_CLOCK_SOURCES.has(clean(clock.source))) return null;
   if (!sameMarket(clock.asset, asset)) return null;
   if (!clockBoundToFocus(clock, focus)) return null;
-  if (Number(clock.at || 0) <= 0 || Date.now() - Number(clock.at) > CLOCK_FRESH_MS) return null;
+  const nowForClock = Date.now();
+  const clockAge = nowForClock - Number(clock.at || 0);
+  const closeAt = num(clock.closeAt) ?? num(clock.candleCloseAt);
+  const openAt = num(clock.openAt) ?? num(clock.candleOpenAt);
+  const tf = normTf(clock.timeframe || state.analysisTimeframe || state.timeframe) || 'M1';
+  const tfMs = performanceTimeframeMs(tf);
+  const boundaryCurrent = closeAt != null && openAt != null
+    && nowForClock >= openAt - 2000 && nowForClock <= closeAt + 1500
+    && closeAt - nowForClock <= tfMs + 1500;
+  if (Number(clock.at || 0) <= 0 || (clockAge > CLOCK_FRESH_MS && !boundaryCurrent)) return null;
 
-  const secondsRemaining = num(clock.secondsRemaining);
+  const secondsRemaining = num(clock.secondsRemaining) ?? (boundaryCurrent ? Math.max(0, (closeAt - nowForClock) / 1000) : null);
   if (secondsRemaining == null || secondsRemaining < 0) return null;
   const timeframe = normTf(clock.timeframe || state.analysisTimeframe || state.timeframe);
   if (!timeframe) return null;

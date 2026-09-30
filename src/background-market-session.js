@@ -131,7 +131,15 @@ function clockMatchesFocus(state = {}, info = null) {
   if (focus.reliable !== true || focus.chartScoped !== true || focus.trustedChartFrame !== true) return null;
   if (Date.now() - Number(focus.at || 0) > FOCUS_FRESH_MS) return null;
   if (clean(clock.role) !== 'candle-close' || clock.available === false) return null;
-  if (Date.now() - Number(clock.at || 0) > CLOCK_FRESH_MS) return null;
+  const now = Date.now();
+  const clockAge = now - Number(clock.at || 0);
+  const tf = String(clock.timeframe || state.analysisTimeframe || state.timeframe || 'M1').toUpperCase();
+  const n = Number(tf.slice(1));
+  const tfMs = Number.isFinite(n) && n > 0 ? (tf.startsWith('M') ? n*60000 : tf.startsWith('S') ? n*1000 : tf.startsWith('H') ? n*3600000 : 60000) : 60000;
+  const closeAt = num(clock.closeAt) ?? num(clock.candleCloseAt);
+  const openAt = num(clock.openAt) ?? num(clock.candleOpenAt);
+  const boundaryCurrent = closeAt != null && openAt != null && now >= openAt - 2000 && now <= closeAt + 1500 && closeAt - now <= tfMs + 1500;
+  if (clockAge > CLOCK_FRESH_MS && !boundaryCurrent) return null;
   if (!sameMarket(clock.asset, focus.asset)) return null;
 
   const sameFocusFrame = Number(clock.frameId) === Number(focus.frameId)

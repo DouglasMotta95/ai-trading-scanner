@@ -121,6 +121,33 @@ import { storageLocalGet, storageLocalSet, storageLocalRemove, runtimeSendMessag
     }
   }
 
+
+  function activeLicenseState(state = {}) {
+    const status = String(state?.license?.status || '').toLowerCase();
+    return ['active','valid'].includes(status)
+      || state?.license?.devMode === true
+      || String(state?.license?.plan || '').toUpperCase() === 'OWNER_DEV';
+  }
+
+  function syncCompactAccount(state = {}) {
+    const active = activeLicenseState(state);
+    const card = $('#licenseCard');
+    const box = $('#accountAccessBox');
+    const activation = $('#activationBox');
+    if (card) card.classList.toggle('account-live', active);
+    if (box) box.hidden = active;
+    if (activation && activation.dataset.accountManaged === '1') activation.hidden = active ? true : (activation.dataset.manualOpen !== '1');
+    const title = $('#licenseTitle');
+    const text = $('#licenseText');
+    const health = $('#licenseHealth');
+    if (active) {
+      const plan = String(state.license?.planLabel || state.license?.plan || 'ACESSO ATIVO').trim();
+      if (title) title.textContent = 'CONTA ATIVA';
+      if (health) { health.textContent = 'ATIVA'; health.className = 'badge ok'; }
+      if (text) text.textContent = plan + ' • acesso sincronizado neste aparelho.';
+    }
+  }
+
   function inject() {
     const card = $('#licenseCard');
     if (!card || $('#accountAccessBox')) return;
@@ -139,6 +166,12 @@ import { storageLocalGet, storageLocalSet, storageLocalRemove, runtimeSendMessag
       .account-links button{background:none;color:#77d8bd;padding:5px;font-size:11px}
       .account-status{display:block;color:#8fa8bf;font-size:11px;margin-top:9px;min-height:15px}
       .account-connected{border-color:#2b7963;background:#0c2924}
+      .license-card.account-live{padding:11px 14px}
+      .license-card.account-live #accountAccessBox,
+      .license-card.account-live #activationBox,
+      .license-card.account-live .license-tools{display:none!important}
+      .license-card.account-live .section-head{margin-bottom:3px}
+      .license-card.account-live #licenseText{margin:2px 0 0;color:#7fd9bb}
     `;
     document.head.appendChild(style);
 
@@ -209,6 +242,7 @@ import { storageLocalGet, storageLocalSet, storageLocalRemove, runtimeSendMessag
         box.classList.add('account-connected');
         status.textContent = `Conta conectada • ${r.license?.planLabel || r.license?.plan || 'acesso ativo'}`;
         $('#licenseText').textContent = 'Conta vinculada e acesso sincronizado.';
+        syncCompactAccount({ license: { status: 'active', planLabel: r.license?.planLabel || r.license?.plan || 'Acesso ativo' } });
         codeInput.value = '';
         if (activation) {
           activation.dataset.manualOpen = '0';
@@ -234,10 +268,15 @@ import { storageLocalGet, storageLocalSet, storageLocalRemove, runtimeSendMessag
   }
 
   inject();
+  chrome.storage.onChanged.addListener(changes => {
+    if (changes.scannerState?.newValue) syncCompactAccount(changes.scannerState.newValue || {});
+  });
+  runtimeSendMessage({ type: 'ATS_READ_SCANNER_STATE' }).then(r => syncCompactAccount(r?.state || {})).catch(() => {});
   refresh().then(ok => {
     if (ok && $('#accountAccessBox')) {
       $('#accountAccessBox').classList.add('account-connected');
       $('#accountConnectStatus').textContent = 'Conta conectada • sincronização automática ativa.';
+      syncCompactAccount({ license: { status: 'active', planLabel: 'Acesso ativo' } });
       const activation = $('#activationBox');
       if (activation) {
         activation.dataset.manualOpen = '0';
