@@ -156,6 +156,23 @@ export function registerManualContracts(label='manual') {
   });
 }
 
+export function registerStableEntryClockContracts(label='stable-entry-clock') {
+  test(label + ': valid exact clock refreshes focused asset heartbeat without changing market identity', () => {
+    const market = read('src/background-market-session.js');
+    assert.match(market, /const refreshedFocus =/);
+    assert.match(market, /focusedAsset: refreshedFocus/);
+    assert.match(market, /previousBoundaryReusable/);
+  });
+
+  test(label + ': professional policy can promote a stable high-confidence candidate', () => {
+    const policy = read('src/background-decision-policy.js');
+    assert.match(policy, /FINAL_CANDIDATE_HITS = 2/);
+    assert.match(policy, /candidateFinalReady/);
+    assert.match(policy, /candidateFinalHits/);
+    assert.match(policy, /finalQuality = \(technicalFinal \|\| candidateFinalHits >= FINAL_CANDIDATE_HITS\)/);
+  });
+}
+
 export function registerEntryRolloverContracts(label='entry-rollover') {
   test(label + ': entry window is aligned across decision layers', () => {
     const policy = read('src/background-decision-policy.js');
