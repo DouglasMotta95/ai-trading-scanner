@@ -1,0 +1,21 @@
+name: package-extension
+
+on:
+  pull_request:
+  push:
+    branches:
+      - fix/v01160-candle-rollover-clock
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Package extension source
+        run: |
+          rm -rf .git .github
+          zip -r ai-trading-scanner-v0.11.60.zip . -x "backend/node_modules/*" "*.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ai-trading-scanner-v0.11.60
+          path: ai-trading-scanner-v0.11.60.zip

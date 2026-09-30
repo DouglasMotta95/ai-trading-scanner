@@ -234,7 +234,10 @@ function liveCycleKey(state = {}) {
   const tf = normTf(state.analysisTimeframe || state.timeframe);
   const seconds = timeframeSeconds(tf);
   if (!state.asset || !tf || !seconds) return '';
-  const targetStart = num(state.signal?.targetStart) ?? num(state.diagnostics?.marketClock?.closeAt);
+  const clock = state.diagnostics?.marketClock || {};
+  const candleOpenAt = num(clock.openAt) ?? num(clock.candleOpenAt);
+  if (candleOpenAt != null) return `${marketId(state.asset)}|${tf}|${Math.round(candleOpenAt / 1000) * 1000}`;
+  const targetStart = num(state.signal?.targetStart) ?? num(clock.closeAt);
   if (targetStart != null) return `${marketId(state.asset)}|${tf}|${Math.round(targetStart / 1000) * 1000}`;
   const remaining = num(state.diagnostics?.marketClock?.secondsRemaining);
   if (remaining == null) return `${marketId(state.asset)}|${tf}|unknown`;
@@ -439,16 +442,19 @@ function projectedRemaining(state = {}) {
   const clock = state.diagnostics?.marketClock || {};
   const raw = num(clock.secondsRemaining);
   const observedAt = Number(clock.at || 0);
-  if (raw == null) return null;
-  const elapsed = observedAt > 0 ? Math.max(0, (Date.now() - observedAt) / 1000) : 0;
   const duration = timeframeSeconds(clock.timeframe || state.analysisTimeframe || state.timeframe);
-  const projected = raw - elapsed;
-  if (projected > 0) return projected;
-  if (duration && elapsed <= 4) {
-    const wrapped = duration + projected;
-    if (wrapped > 0 && wrapped <= duration) return wrapped;
+  if (raw == null) return null;
+
+  // Prefer the immutable candle close boundary. Never wrap a stale countdown
+  // into the next candle; stay at zero until the next candle is observed.
+  const closeAt = num(clock.closeAt) ?? num(clock.candleCloseAt);
+  if (closeAt != null) {
+    const remaining = (closeAt - Date.now()) / 1000;
+    return Math.max(0, Math.min(duration || Number.MAX_SAFE_INTEGER, remaining));
   }
-  return Math.max(0, projected);
+
+  const elapsed = observedAt > 0 ? Math.max(0, (Date.now() - observedAt) / 1000) : 0;
+  return Math.max(0, duration ? Math.min(duration, raw - elapsed) : raw - elapsed);
 }
 
 function smoothedRemaining(state = {}) {

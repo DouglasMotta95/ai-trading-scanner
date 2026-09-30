@@ -115,7 +115,16 @@ export function exactCasaTradeTime(state = {}) {
   // once projected time reaches zero the entry gate closes until a new exact sample.
   const elapsedSeconds = Math.max(0, clockAgeMs / 1000);
   const projectedRemaining = Math.max(0, Number(rawRemaining) - elapsedSeconds);
-  return { ready: true, timeframe: liveTf, secondsRemaining: projectedRemaining, source: clock.source, operationMode: operationMode.timeframe, projectedFromExact: clockAgeMs > 250 };
+  return {
+    ready: true,
+    timeframe: liveTf,
+    secondsRemaining: projectedRemaining,
+    source: clock.source,
+    operationMode: operationMode.timeframe,
+    projectedFromExact: clockAgeMs > 250,
+    candleOpenAt: num(clock.openAt),
+    candleCloseAt: num(clock.closeAt)
+  };
 }
 
 export function CasaTradeExpiration(state = {}, timeframe = null) {
@@ -246,8 +255,14 @@ function shortReason(direction, factors = [], fallback = '') {
 function cycleKey(state = {}, signal = {}) {
   const asset = marketId(state.asset || '');
   const timeframe = normTf(state.analysisTimeframe || state.timeframe || signal.timeframe) || 'UNCONFIRMED';
-  const target = num(signal.targetStart) ?? num(state.decisionCycle?.targetStart) ?? num(state.diagnostics?.marketClock?.closeAt);
-  return `${asset}|${timeframe}|${target == null ? 'pending' : Math.round(target / 1000) * 1000}`;
+  const clock = state.diagnostics?.marketClock || {};
+  // The active candle opening timestamp is immutable for the full cycle.
+  // Never use closeAt/secondsRemaining as the decision-cycle identity.
+  const target = num(clock.openAt)
+    ?? num(clock.candleOpenAt)
+    ?? num(signal.targetStart)
+    ?? num(state.decisionCycle?.targetStart);
+  return asset + '|' + timeframe + '|' + (target == null ? 'pending' : Math.round(target / 1000) * 1000);
 }
 
 function baseDecision(state = {}) {

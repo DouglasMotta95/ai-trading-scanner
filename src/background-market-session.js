@@ -373,10 +373,20 @@ export function resetForSession(state = {}, { asset, timeframe = null, info, rea
 function clockRecord(message = {}, info = {}, asset = '', timeframe = null, secondsRemaining = null, focus = null) {
   const verified = message.verified === true;
   const at = Date.now();
-  const closeAt = secondsRemaining == null ? null : Math.round((at + Number(secondsRemaining) * 1000) / 1000) * 1000;
+  const durationSeconds = timeframeSeconds(timeframe);
+  const durationMs = durationSeconds ? durationSeconds * 1000 : null;
+  const hintedOpenAt = normalizeTime(message.candleOpenAt ?? message.openAt);
+  const hintedCloseAt = normalizeTime(message.candleCloseAt ?? message.closeAt);
+  const openAt = hintedOpenAt ?? (hintedCloseAt != null && durationMs ? hintedCloseAt - durationMs : null);
+  const closeAt = hintedCloseAt
+    ?? (openAt != null && durationMs ? openAt + durationMs : secondsRemaining == null ? null : at + Number(secondsRemaining) * 1000);
+  const normalizedRemaining = closeAt != null
+    ? Math.max(0, Math.min(durationSeconds ?? Number.MAX_SAFE_INTEGER, Math.ceil((closeAt - at) / 1000)))
+    : secondsRemaining;
   const crossFrameControl = message.crossFrameControl === true;
+  const stableCycleKey = message.cycleKey || (openAt != null ? asset + '|' + timeframe + '|' + openAt : null);
   return {
-    asset, timeframe, secondsRemaining, closeAt, available: true, verified,
+    asset, timeframe, secondsRemaining: normalizedRemaining, openAt, closeAt, cycleKey: stableCycleKey, available: true, verified,
     operational: verified || message.operational === true,
     quality: verified ? 'exact' : 'fallback', role: 'candle-close',
     source: clean(message.clockSource), mode: clean(message.clockMode || (verified ? 'exact' : 'fallback')),
@@ -757,8 +767,9 @@ function observedCurrentCandle(state = {}, price, clock = null) {
   const remaining = num(clock?.secondsRemaining);
   const anchorAt = num(clock?.at);
   const closeAt = num(clock?.closeAt) ?? (remaining != null && anchorAt != null ? anchorAt + remaining * 1000 : null);
-  if (closeAt == null) return state.currentCandle || null;
-  const cycleKey = `${normAsset(state.asset)}|${timeframe}|${Math.round(closeAt / 5000) * 5000}`;
+  const openAt = num(clock?.openAt) ?? (closeAt != null ? closeAt - duration * 1000 : null);
+  if (closeAt == null || openAt == null) return state.currentCandle || null;
+  const cycleKey = `${normAsset(state.asset)}|${timeframe}|${Math.round(openAt / 1000) * 1000}`;
   const previous = state.currentCandle;
   const same = previous?.source === 'live-price-observed' && previous?.cycleKey === cycleKey;
   const open = same ? num(previous.open) : Number(price);
