@@ -79,11 +79,18 @@ function expirationObservation(state = {}) {
   // fallback is visible to the user but never counts as verified timing.
   const realFresh = !!realValue && realAt > 0 && Date.now() - realAt < 15000 && realSource !== 'user-declared';
   const at = realFresh ? realAt : observedAt;
-  const manualFresh = observedAt > 0 && Date.now() - observedAt < 7000;
-  const manualValue = manualFresh ? normExp(controls.observed?.expiration || controls.userDeclaredExpiration || '') : null;
+  const declaredValue = normExp(controls.userDeclaredExpiration || '');
+  const observedManualValue = normExp(controls.observed?.expiration || '');
+  const manualValue = declaredValue || observedManualValue || null;
+  const manualFresh = !!manualValue;
   const value = realFresh ? realValue : manualValue;
   const source = realFresh ? (realSource || 'casatrade-observed') : manualValue ? 'user-declared' : '';
   return { value, fresh: realFresh || manualFresh, verified: realFresh, source, at, ageMs: at > 0 ? Date.now() - at : Infinity };
+}
+function expirationTimingCompatible(expiration, operation) {
+  return !!expiration?.value
+    && expiration.value === operation.expiration
+    && (expiration.verified === true || expiration.source === 'user-declared');
 }
 function sessionAgeMs(state = {}) {
   const at = Number(sessionInfo(state).startedAt || state.diagnostics?.target?.connectedAt || 0);
@@ -204,8 +211,7 @@ function liveTimingReady(state = {}) {
   const clock = state.diagnostics?.marketClock || {};
   const expiration = expirationObservation(state);
   const operation = operationRequirement(state);
-  return expiration.verified === true
-    && expiration.value === operation.expiration
+  return expirationTimingCompatible(expiration, operation)
     && normTf(clock.timeframe) === operation.timeframe;
 }
 
@@ -214,8 +220,8 @@ function entryTimeReady(state = {}) {
   const clock = state.diagnostics?.marketClock || {};
   const expiration = expirationObservation(state);
   const actualExpiration = expiration.value;
-  if (!actualExpiration || expiration.verified !== true) return false;
   const operation = operationRequirement(state);
+  if (!actualExpiration || !expirationTimingCompatible(expiration, operation)) return false;
   const clockTf = normTf(clock.timeframe);
   const stateTf = normTf(state.analysisTimeframe || state.timeframe);
   const controlTf = normTf(state.platformControls?.observed?.timeframe);
@@ -283,7 +289,7 @@ function entryBlockReason(state = {}) {
   const expirationLabel = operation.expiration === '300s' ? '5 MINUTOS' : '1 MINUTO';
   const expiration = expirationObservation(state);
   if (!expiration.value) return 'EXPIRAÇÃO REAL PENDENTE — AGUARDANDO LEITURA DA CASATRADE';
-  if (expiration.verified !== true) return 'EXPIRAÇÃO INFORMADA, MAS NÃO VERIFICADA — AGUARDANDO A CASATRADE';
+  if (!expirationTimingCompatible(expiration, operation)) return 'EXPIRAÇÃO INFORMADA, MAS A DURAÇÃO NÃO COINCIDE COM O MODO ATIVO';
   if (expiration.value !== operation.expiration) return `AJUSTE A EXPIRAÇÃO DA CASATRADE PARA ${expirationLabel}`;
 
   const clock = state.diagnostics?.marketClock || {};
@@ -298,7 +304,7 @@ function gateKind(state = {}) {
   const operation = operationRequirement(state);
   const expiration = expirationObservation(state);
   if (!expiration.value) return 'waiting';
-  if (expiration.verified !== true) return 'waiting';
+  if (!expirationTimingCompatible(expiration, operation)) return 'waiting';
   if (expiration.value !== operation.expiration) return 'rule';
   if (!exactClockReady(state)) return 'waiting';
   const clockTf = normTf(state.diagnostics?.marketClock?.timeframe);
