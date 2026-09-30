@@ -242,6 +242,7 @@ import { storageLocalGet, storageLocalSet, storageLocalRemove, runtimeSendMessag
         box.classList.add('account-connected');
         status.textContent = `Conta conectada • ${r.license?.planLabel || r.license?.plan || 'acesso ativo'}`;
         $('#licenseText').textContent = 'Conta vinculada e acesso sincronizado.';
+        syncCompactAccount({ license: { status: 'active', planLabel: r.license?.planLabel || r.license?.plan || 'Acesso ativo' } });
         codeInput.value = '';
         if (activation) {
           activation.dataset.manualOpen = '0';
