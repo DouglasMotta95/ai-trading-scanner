@@ -104,7 +104,7 @@ export function exactCasaTradeTime(state = {}) {
     && Date.now() >= persistedTarget - 1500
     && Date.now() <= persistedTarget + ROLLOVER_ENTRY_GRACE_MS
     && (!persistedCycle.key || text(persistedCycle.key).split('|')[1]?.toUpperCase() === operationMode.timeframe);
-  if (!clock && rolloverGrace) {
+  if (rolloverGrace) {
     return {
       ready: true,
       timeframe: operationMode.timeframe,
