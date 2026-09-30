@@ -605,7 +605,25 @@ export async function applyClock(message = {}, sender = {}) {
       // At a candle rollover CasaTrade can remove/recreate the countdown node.
       // Preserve the last exact boundary until the new candle clock arrives,
       // preventing a fake disconnect and preserving the next-candle schedule.
-      if (previousClock || previousBoundaryReusable) return state;
+      if (previousClock || previousBoundaryReusable) {
+        return {
+          ...state,
+          diagnostics: {
+            ...(state.diagnostics || {}),
+            focusedAsset: {
+              ...(focus || state.diagnostics?.focusedAsset || {}),
+              asset,
+              at: Date.now(),
+              reliable: true,
+              chartScoped: true,
+              trustedChartFrame: true,
+              visualAuthority: true,
+              frameId: Number(focus?.frameId ?? info.frameId),
+              frameHost: clean(focus?.frameHost || info.frameHost).toLowerCase()
+            }
+          }
+        };
+      }
       return {
         ...state,
         diagnostics: {
