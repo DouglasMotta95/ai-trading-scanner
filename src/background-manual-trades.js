@@ -1,4 +1,4 @@
-import { readScannerState } from './services/scanner-state-atomic.js';
+import { readScannerState, updateScannerState } from './services/scanner-state-atomic.js';
 import { storageLocalGet, storageLocalSet } from './services/chrome-compat.js';
 import { createManualTrade, mergeManualTrade, resolveManualTrades, resolveManualTradesFromFeed, manualTradeMetrics } from './core/manual-trades.js';
 
@@ -62,6 +62,26 @@ async function resolveAgainstState(state = {}) {
   const result = resolveManualTrades(previous.rows, state, Date.now());
   if (!result.resolved.length) return;
   await persist(result.rows);
+  const lastResolved = result.resolved.at(-1);
+  await updateScannerState(current => ({
+    ...current,
+    tradeIntent: null,
+    diagnostics: {
+      ...(current.diagnostics || {}),
+      manualTradeResult: {
+        id: lastResolved?.id || null,
+        result: lastResolved?.result || null,
+        asset: lastResolved?.asset || null,
+        direction: lastResolved?.direction || null,
+        entryPrice: lastResolved?.entryPrice ?? null,
+        exitPrice: lastResolved?.exitPrice ?? null,
+        entryAt: lastResolved?.clickedAt || null,
+        exitAt: lastResolved?.exitAt || null,
+        resolvedAt: lastResolved?.resolvedAt || Date.now(),
+        source: lastResolved?.resultSource || null
+      }
+    }
+  })).catch(() => {});
 }
 
 async function resolveAgainstFeed(payload = {}) {
