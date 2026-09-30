@@ -121,19 +121,29 @@ function clockBoundToFocus(clock = {}, focus = {}) {
   return sameFrame || boundControlFrame;
 }
 
+function clockBoundaryCurrent(clock = {}, now = Date.now(), timeframe = 'M1') {
+  const closeAt = Number(clock?.closeAt ?? clock?.candleCloseAt);
+  const openAt = Number(clock?.openAt ?? clock?.candleOpenAt);
+  const tf = String(timeframe || '').toUpperCase();
+  const n = Number(tf.slice(1));
+  const ms = Number.isFinite(n) && n > 0
+    ? (tf.startsWith('S') ? n * 1000 : tf.startsWith('H') ? n * 3600000 : n * 60000)
+    : 60000;
+  return Number.isFinite(closeAt) && closeAt > 0 && Number.isFinite(openAt) && openAt > 0
+    && now >= openAt - 2000 && now <= closeAt + 1500
+    && closeAt - now <= ms + 1500 && closeAt - now >= -1500;
+}
 function exactClockReady(state = {}) {
   if (!baseHandshake(state)) return false;
   const focus = state.diagnostics?.focusedAsset || null;
   const clock = state.diagnostics?.marketClock || null;
-  return clock?.verified === true
-    && clock?.available !== false
-    && clock?.role === 'candle-close'
-    && EXACT_CLOCK_SOURCES.has(clean(clock?.source))
-    && sameMarket(clock?.asset, state.asset)
-    && clockBoundToFocus(clock, focus)
-    && Number(clock?.at || 0) > 0
-    && Date.now() - Number(clock.at) < CLOCK_FRESH_MS
-    && Number.isFinite(Number(clock?.secondsRemaining));
+  if (!(clock?.verified === true && clock?.available !== false && clock?.role === 'candle-close')) return false;
+  if (!EXACT_CLOCK_SOURCES.has(clean(clock?.source))) return false;
+  if (!sameMarket(clock?.asset, state.asset) || !clockBoundToFocus(clock, focus)) return false;
+  const timeframe = clean(clock?.timeframe || state.analysisTimeframe || state.timeframe).toUpperCase();
+  const freshSample = Number(clock?.at || 0) > 0 && Date.now() - Number(clock.at) < CLOCK_FRESH_MS;
+  const boundary = clockBoundaryCurrent(clock, Date.now(), timeframe);
+  return (freshSample || boundary) && (Number.isFinite(Number(clock?.secondsRemaining)) || boundary);
 }
 
 function operationRequirement(state = {}) {
