@@ -48,10 +48,10 @@ function decisionWindows(snapshot = {}, signal = {}, thresholds = getThresholds(
   // latest CasaTrade price action. Leave a small late cutoff so the 2-hit
   // confirmation still has time to complete without publishing at the turn.
   if (timeframe === 'M1') {
-    return { pre: 30, decision: 5, skip: 1, duration, timeframe };
+    return { pre: 30, decision: 15, skip: 1, duration, timeframe };
   }
   if (timeframe === 'M5') {
-    return { pre: 30, decision: 8, skip: 2, duration, timeframe };
+    return { pre: 30, decision: 20, skip: 2, duration, timeframe };
   }
 
   // Longer/shorter candles keep proportional windows.
