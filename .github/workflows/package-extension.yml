@@ -14,8 +14,8 @@ jobs:
       - name: Package extension source
         run: |
           rm -rf .git .github
-          zip -r ai-trading-scanner-v0.11.68.zip . -x "backend/node_modules/*" "*.zip"
+          zip -r ai-trading-scanner-v0.11.69.zip . -x "backend/node_modules/*" "*.zip"
       - uses: actions/upload-artifact@v4
         with:
-          name: ai-trading-scanner-v0.11.68
-          path: ai-trading-scanner-v0.11.68.zip
+          name: ai-trading-scanner-v0.11.69
+          path: ai-trading-scanner-v0.11.69.zip
