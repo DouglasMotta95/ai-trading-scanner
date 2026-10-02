@@ -128,8 +128,11 @@ function normExp(value = '') {
 }
 function operationRequirement(state = {}) {
   const timeframe = String(state.analystPreferences?.operationMode || prefs.operationMode || 'M1').toUpperCase() === 'M5' ? 'M5' : 'M1';
-  const durationSeconds = Number(state.analystPreferences?.operationDurationSeconds || timeframeSeconds(timeframe) || (timeframe === 'M5' ? 300 : 60));
-  const expiration = normExp(state.analystPreferences?.operationExpiration || `${durationSeconds}s`) || (timeframe === 'M5' ? '300s' : '60s');
+  // Canonical operation contract: M1 is always 60s and M5 is always 300s.
+  // Never let an older persisted operationExpiration or duration override the
+  // selected mode; those stale fields were causing false mode conflicts.
+  const durationSeconds = timeframe === 'M5' ? 300 : 60;
+  const expiration = timeframe === 'M5' ? '300s' : '60s';
   return { timeframe, expiration, durationSeconds };
 }
 
@@ -329,8 +332,12 @@ function currentOhlc(state = {}) {
 function modeAlignment(state = {}) {
   const operation = operationRequirement(state);
   const clock = state.diagnostics?.marketClock || {};
-  const liveTf = normTf(clock.timeframe || state.platformControls?.observed?.timeframe || state.analysisTimeframe || state.timeframe);
-  const liveExp = expirationObservation(state).value;
+  const clockSource = clean(clock.source);
+  const clockAuthoritative = clock.verified === true
+    && ['trader-dom-countdown', 'network-server-cycle'].includes(clockSource);
+  const liveTf = clockAuthoritative ? normTf(clock.timeframe) : null;
+  const expiration = expirationObservation(state);
+  const liveExp = expiration.verified === true ? expiration.value : null;
   const tfMatches = !liveTf || liveTf === operation.timeframe;
   const expMatches = !liveExp || liveExp === operation.expiration;
   return {
@@ -377,6 +384,24 @@ function decisionModel(state = {}) {
   const pending = transitionAsset(state);
   if (pending) return { uiState: 'ANALYZING_MARKET', title: 'ATUALIZANDO ATIVO', text: `ATUALIZANDO PARA ${pending}`, sub: 'Limpando dados anteriores e confirmando preço + velas do novo ativo.', tone: 'waiting', reason: 'Troca de ativo em validação.', score: 0, actionable: false };
   if (!marketDataReady(state) || !focusReady(state)) return { uiState: 'ANALYZING_MARKET', title: 'AGUARDAR', text: 'AGUARDAR', sub: 'Confirmando ativo, preço e velas reais.', tone: 'waiting', reason: 'Identificando o gráfico atual da CasaTrade.', score: 0, actionable: false };
+
+  // A panel refresh starts a new observation session. Never flash an ENTER
+  // decision that predates this panel opening while the background rehydrates.
+  const staleActionable = state.professionalDecision?.actionable === true
+    && Number(state.professionalDecision?.updatedAt || 0) > 0
+    && Number(state.professionalDecision.updatedAt) < PANEL_OPENED_AT;
+  if (staleActionable) {
+    return {
+      uiState: 'WAIT',
+      title: 'AGUARDAR',
+      text: 'AGUARDAR',
+      sub: 'Validando a nova sessão antes de liberar qualquer entrada.',
+      tone: 'waiting',
+      reason: 'Entrada anterior à abertura desta sessão foi descartada; reconstruindo o padrão atual.',
+      score: 0,
+      actionable: false
+    };
+  }
 
   const alignment = modeAlignment(state);
   if (alignment.conflict) {
@@ -643,11 +668,14 @@ function render(state = {}) {
 
   if (actualExp) {
     const expirationGuardSource = expirationObs.source || clean(state.diagnostics?.expirationGuard?.source || '');
-    if (expirationObs.ready === true && expirationObs.verified !== true) {
+    const operationalFallback = actualExp === operation.expiration
+      && expirationObs.verified !== true
+      && ['user-declared', 'user-declared-match'].includes(expirationObs.source);
+    if (expirationObs.ready === true && expirationObs.verified !== true || operationalFallback) {
       const operationalLabel = `${expLabel(actualExp)} • operacional`;
       setText('heroExpiration', operationalLabel);
       setText('expiration', operationalLabel);
-      setSourceState('expirationSource', 'OPERACIONAL', 'estimated', 'Expiração coincide com o modo ativo; leitura direta da CasaTrade não está verificável.');
+      setSourceState('expirationSource', 'OPERACIONAL', 'estimated', 'Expiração coincide com o modo ativo; usando confirmação operacional enquanto a CasaTrade não expõe a leitura direta.');
     } else if (expirationObs.verified !== true || expirationGuardSource === 'user-declared') {
       const informedLabel = `${expLabel(actualExp)} (informada)`;
       setText('heroExpiration', informedLabel);

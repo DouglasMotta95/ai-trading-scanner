@@ -64,11 +64,15 @@ function decisionWindows(snapshot = {}, signal = {}, thresholds = getThresholds(
 function cycleKey(snapshot = {}, signal = {}) {
   const asset = clean(snapshot.asset || 'unknown');
   const timeframe = clean(snapshot.analysisTimeframe || snapshot.timeframe || signal.timeframe || 'M1').toUpperCase();
+  const clock = snapshot.diagnostics?.marketClock || {};
+  const openAt = num(clock.openAt) ?? num(clock.candleOpenAt);
+  const tfMs = timeframeMs(timeframe);
+  if (openAt != null && tfMs > 0) {
+    return `${asset}|${timeframe}|${Math.round(openAt / 1000) * 1000}`;
+  }
   const sampleAt = num(snapshot.serverTime) ?? Date.now();
-  const seconds = num(signal.secondsRemaining) ?? num(snapshot.secondsRemaining) ?? 0;
-  const rawTarget = num(signal.targetStart) ?? (sampleAt + Math.max(0, seconds) * 1000);
-  const targetKey = Math.round(rawTarget / 5000) * 5000;
-  return `${asset}|${timeframe}|${targetKey}`;
+  const currentBucket = tfMs > 0 ? Math.floor(sampleAt / tfMs) * tfMs : sampleAt;
+  return `${asset}|${timeframe}|${currentBucket}`;
 }
 
 function targetStartOf(snapshot = {}, signal = {}) {

@@ -4,6 +4,7 @@ import { storageLocalGet, storageSessionGet, tabsQuery, sidePanelSetBehavior, sc
 import { detectPlatform } from './platforms/registry.js';
 import { clearMarketAuthorityState, clearUserDeclaredExpirationState } from './background-market-session.js';
 import { getOperationMode } from './core/analysis.js';
+import { resetOrchestrator } from './core/orchestrator.js';
 
 const DEFAULT_LICENSE = Object.freeze({
   status: 'unconfigured', plan: null, planLabel: null, dailyLimit: null, usedToday: 0,
@@ -857,6 +858,9 @@ async function connectActiveTab({ automatic = false } = {}) {
     return { ok: false, error: 'platform_not_registered', state: next };
   }
 
+  // Opening/refreshing the side panel is a new observation session. Never
+  // surface an ENTER decision that was created before this refresh.
+  if (automatic) resetOrchestrator();
   const next = await updateScannerState(current => {
     const currentFocus = current.diagnostics?.focusedAsset || null;
     const currentConfirmedAsset = current.asset || current.diagnostics?.marketSession?.asset || '';
@@ -885,10 +889,21 @@ async function connectActiveTab({ automatic = false } = {}) {
       && sessionStillOwned
       && ((focusFresh && dataFresh) || briefReaderGap);
 
-    const diagnostics = { ...(restartBase.diagnostics || {}) };
+    const sessionReset = automatic
+      ? {
+          ...restartBase,
+          signal: null,
+          professionalDecision: null,
+          tradeIntent: null,
+          decisionCycle: null,
+          candidateBlockerTrace: [],
+          decisionTrace: []
+        }
+      : restartBase;
+    const diagnostics = { ...(sessionReset.diagnostics || {}) };
     delete diagnostics.connectionError;
     const base = {
-      ...restartBase,
+      ...sessionReset,
       license,
       platformId: platform.id,
       platformName: platform.name,
