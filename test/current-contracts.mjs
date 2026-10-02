@@ -10,7 +10,7 @@ export function registerBuildContracts(label='build') {
     const m = manifest();
     assert.equal(m.manifest_version, 3);
     assert.equal(m.version, '0.11.76');
-    assert.equal(m.version_name, '0.11.76-entry-gate-stale-metadata');
+    assert.equal(m.version_name, '0.11.76-entry-sync-fallback');
     assert.equal(m.background?.service_worker, 'src/background-entry.js');
     assert.equal(m.side_panel?.default_path, 'src/sidepanel/index.html');
   });
