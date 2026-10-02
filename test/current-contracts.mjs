@@ -401,3 +401,23 @@ export function registerVideo15319Contracts(label='video-15319') {
     assert.match(radar, /O Radar não troca o modo automaticamente/);
   });
 }
+
+export function registerEntryGateStabilityContracts(label='entry-gate-stability') {
+  test(label + ': authoritative clock wins over stale timeframe metadata', () => {
+    const policy = read('src/background-decision-policy.js');
+    const panel = read('src/sidepanel/app-v2.js');
+    assert.match(policy, /liveTf !== operationMode\.timeframe/);
+    assert.doesNotMatch(policy, /if \(stateTf && liveTf !== stateTf\) return/);
+    assert.doesNotMatch(policy, /if \(controlTf && liveTf !== controlTf\) return/);
+    assert.match(panel, /clockAuthoritative/);
+    assert.doesNotMatch(panel, /if \(stateTf && stateTf !== clockTf\) return false/);
+    assert.doesNotMatch(panel, /if \(controlTf && controlTf !== clockTf\) return false/);
+  });
+
+  test(label + ': decision cycle uses immutable candle opening time', () => {
+    const orchestrator = read('src/core/orchestrator.js');
+    assert.match(orchestrator, /const openAt = num\(clock\.openAt\) \?\? num\(clock\.candleOpenAt\)/);
+    assert.match(orchestrator, /Math\.round\(openAt \/ 1000\) \* 1000/);
+    assert.doesNotMatch(orchestrator, /Math\.round\(rawTarget \/ 5000\) \* 5000/);
+  });
+}
