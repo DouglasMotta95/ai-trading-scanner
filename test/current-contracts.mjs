@@ -6,11 +6,11 @@ export const read = path => fs.readFileSync(new URL('../' + path, import.meta.ur
 const manifest = () => JSON.parse(read('manifest.json'));
 
 export function registerBuildContracts(label='build') {
-  test(label + ': current extension package is the v0.11.72 stable-entry-clock build', () => {
+  test(label + ': current extension package is the v0.11.73 expiration-operational-fallback build', () => {
     const m = manifest();
     assert.equal(m.manifest_version, 3);
-    assert.equal(m.version, '0.11.72');
-    assert.equal(m.version_name, '0.11.72-stable-entry-clock');
+    assert.equal(m.version, '0.11.73');
+    assert.equal(m.version_name, '0.11.73-expiration-operational-fallback');
     assert.equal(m.background?.service_worker, 'src/background-entry.js');
     assert.equal(m.side_panel?.default_path, 'src/sidepanel/index.html');
   });
@@ -153,6 +153,16 @@ export function registerManualContracts(label='manual') {
     assert.doesNotMatch(handoff, /dispatchEvent\s*\(\s*new\s+MouseEvent/);
     assert.match(panel, /model\.actionable && model\.direction === 'BUY' && timeReady/);
     assert.match(panel, /model\.actionable && model\.direction === 'SELL' && timeReady/);
+  });
+}
+
+export function registerExpirationOperationalContracts(label='expiration-operational') {
+  test(label + ': matching declared expiration remains operational when direct reader is unverified', () => {
+    const policy = read('src/background-decision-policy.js');
+    const panel = read('src/sidepanel/app-v2.js');
+    assert.match(policy, /const operationalFallback = observedMatches && declaredMatches/);
+    assert.match(policy, /ready: \(verified \|\| operationalFallback\) && observedMatches/);
+    assert.match(panel, /OPERACIONAL/);
   });
 }
 
