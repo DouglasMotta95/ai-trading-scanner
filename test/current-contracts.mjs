@@ -6,11 +6,11 @@ export const read = path => fs.readFileSync(new URL('../' + path, import.meta.ur
 const manifest = () => JSON.parse(read('manifest.json'));
 
 export function registerBuildContracts(label='build') {
-  test(label + ': current extension package is the v0.11.76 single-operation-mode build', () => {
+  test(label + ': current extension package is the v0.11.77 single-operation-mode build', () => {
     const m = manifest();
     assert.equal(m.manifest_version, 3);
-    assert.equal(m.version, '0.11.76');
-    assert.equal(m.version_name, '0.11.76-entry-sync-fallback');
+    assert.equal(m.version, '0.11.77');
+    assert.equal(m.version_name, '0.11.77-entry-sync-fallback');
     assert.equal(m.background?.service_worker, 'src/background-entry.js');
     assert.equal(m.side_panel?.default_path, 'src/sidepanel/index.html');
   });
@@ -435,5 +435,17 @@ export function registerEntrySyncFallbackContracts(label='entry-sync-fallback') 
     assert.match(controls, /const operationalFallback = !authority\.realFresh/);
     assert.match(controls, /authority\.source === 'user-declared'/);
     assert.match(controls, /const ready = !!authority\.actual/);
+  });
+}
+
+export function registerStaleEntryGuardContracts(label='stale-entry-guard') {
+  test(label + ': stale ENTER decisions are discarded when a new panel session starts', () => {
+    const control = read('src/background-control.js');
+    const panel = read('src/sidepanel/app-v2.js');
+    assert.match(control, /if \(automatic\) resetOrchestrator\(\)/);
+    assert.match(control, /professionalDecision: null/);
+    assert.match(control, /decisionCycle: null/);
+    assert.match(panel, /const staleActionable/);
+    assert.match(panel, /updatedAt.*PANEL_OPENED_AT/);
   });
 }
