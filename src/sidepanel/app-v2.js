@@ -385,6 +385,24 @@ function decisionModel(state = {}) {
   if (pending) return { uiState: 'ANALYZING_MARKET', title: 'ATUALIZANDO ATIVO', text: `ATUALIZANDO PARA ${pending}`, sub: 'Limpando dados anteriores e confirmando preço + velas do novo ativo.', tone: 'waiting', reason: 'Troca de ativo em validação.', score: 0, actionable: false };
   if (!marketDataReady(state) || !focusReady(state)) return { uiState: 'ANALYZING_MARKET', title: 'AGUARDAR', text: 'AGUARDAR', sub: 'Confirmando ativo, preço e velas reais.', tone: 'waiting', reason: 'Identificando o gráfico atual da CasaTrade.', score: 0, actionable: false };
 
+  // A panel refresh starts a new observation session. Never flash an ENTER
+  // decision that predates this panel opening while the background rehydrates.
+  const staleActionable = state.professionalDecision?.actionable === true
+    && Number(state.professionalDecision?.updatedAt || 0) > 0
+    && Number(state.professionalDecision.updatedAt) < PANEL_OPENED_AT;
+  if (staleActionable) {
+    return {
+      uiState: 'WAIT',
+      title: 'AGUARDAR',
+      text: 'AGUARDAR',
+      sub: 'Validando a nova sessão antes de liberar qualquer entrada.',
+      tone: 'waiting',
+      reason: 'Entrada anterior à abertura desta sessão foi descartada; reconstruindo o padrão atual.',
+      score: 0,
+      actionable: false
+    };
+  }
+
   const alignment = modeAlignment(state);
   if (alignment.conflict) {
     const tf = alignment.liveTf && alignment.liveTf !== alignment.operation.timeframe
