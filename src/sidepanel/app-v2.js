@@ -671,6 +671,14 @@ function render(state = {}) {
   else setSourceState('countdownSource', 'PENDENTE', 'estimated', 'Aguardando countdown real da CasaTrade; nenhum tempo local é usado.');
 
   const alignment = modeAlignment(state);
+  const conflictBanner = $('modeConflictBanner');
+  const conflictText = $('modeConflictText');
+  if (conflictBanner) conflictBanner.hidden = !alignment.conflict;
+  if (conflictText && alignment.conflict) {
+    const scannerMode = alignment.operation.timeframe + ' + ' + expLabel(alignment.operation.expiration);
+    const casaMode = (alignment.liveTf || '—') + ' + ' + (alignment.liveExp ? expLabel(alignment.liveExp) : 'expiração não lida');
+    conflictText.textContent = 'Scanner: ' + scannerMode + ' • CasaTrade: ' + casaMode + '. Ajuste os dois para o mesmo modo.';
+  }
   setText('heroTimeStatus', alignment.conflict ? 'CONFLITO' : timeReady ? 'OK' : 'AGUARDAR');
   setText('sessionMode', alignment.conflict ? 'LIVE • MODO CONFLITANTE' : timeReady ? 'LIVE' : exact ? 'LIVE • GATE' : 'LIVE • CLOCK PENDENTE');
   setText('timeSyncStatus', exact ? 'EXATO • CASATRADE' : 'PENDENTE');
