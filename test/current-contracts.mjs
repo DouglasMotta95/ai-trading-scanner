@@ -10,7 +10,7 @@ export function registerBuildContracts(label='build') {
     const m = manifest();
     assert.equal(m.manifest_version, 3);
     assert.equal(m.version, '0.11.75');
-    assert.equal(m.version_name, '0.11.75-single-operation-mode');
+    assert.equal(m.version_name, '0.11.75-entry-gate-stale-metadata');
     assert.equal(m.background?.service_worker, 'src/background-entry.js');
     assert.equal(m.side_panel?.default_path, 'src/sidepanel/index.html');
   });
