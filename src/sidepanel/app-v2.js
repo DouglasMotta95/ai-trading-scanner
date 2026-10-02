@@ -326,6 +326,23 @@ function currentOhlc(state = {}) {
   return { ...liveOhlc, approximate: true, source: 'live-price-observed' };
 }
 
+function modeAlignment(state = {}) {
+  const operation = operationRequirement(state);
+  const clock = state.diagnostics?.marketClock || {};
+  const liveTf = normTf(clock.timeframe || state.platformControls?.observed?.timeframe || state.analysisTimeframe || state.timeframe);
+  const liveExp = expirationObservation(state).value;
+  const tfMatches = !liveTf || liveTf === operation.timeframe;
+  const expMatches = !liveExp || liveExp === operation.expiration;
+  return {
+    operation,
+    liveTf,
+    liveExp,
+    tfMatches,
+    expMatches,
+    aligned: tfMatches && expMatches,
+    conflict: !tfMatches || !expMatches
+  };
+}
 function entryBlockReason(state = {}) {
   const operation = operationRequirement(state);
   const expirationLabel = operation.expiration === '300s' ? '5 MINUTOS' : '1 MINUTO';
@@ -361,6 +378,27 @@ function decisionModel(state = {}) {
   if (pending) return { uiState: 'ANALYZING_MARKET', title: 'ATUALIZANDO ATIVO', text: `ATUALIZANDO PARA ${pending}`, sub: 'Limpando dados anteriores e confirmando preço + velas do novo ativo.', tone: 'waiting', reason: 'Troca de ativo em validação.', score: 0, actionable: false };
   if (!marketDataReady(state) || !focusReady(state)) return { uiState: 'ANALYZING_MARKET', title: 'AGUARDAR', text: 'AGUARDAR', sub: 'Confirmando ativo, preço e velas reais.', tone: 'waiting', reason: 'Identificando o gráfico atual da CasaTrade.', score: 0, actionable: false };
 
+  const alignment = modeAlignment(state);
+  if (alignment.conflict) {
+    const tf = alignment.liveTf && alignment.liveTf !== alignment.operation.timeframe
+      ? `timeframe CasaTrade ${alignment.liveTf} ≠ scanner ${alignment.operation.timeframe}`
+      : '';
+    const exp = alignment.liveExp && alignment.liveExp !== alignment.operation.expiration
+      ? `expiração CasaTrade ${expLabel(alignment.liveExp)} ≠ scanner ${expLabel(alignment.operation.expiration)}`
+      : '';
+    const conflict = [tf, exp].filter(Boolean).join(' • ');
+    return {
+      uiState: 'MODE_CONFLICT',
+      title: 'CONFLITO DE MODO',
+      text: 'AJUSTAR CASA TRADE',
+      sub: conflict || 'Scanner e CasaTrade estão usando configurações diferentes.',
+      tone: 'waiting',
+      reason: conflict,
+      score: 0,
+      actionable: false
+    };
+  }
+
   const timingReady = liveTimingReady(state);
   if (!timingReady) {
     const blocked = entryBlockReason(state);
@@ -382,7 +420,13 @@ function decisionModel(state = {}) {
   const technicalUi = String(technical.uiState || '').toUpperCase();
   const direction = String(p.direction || technical.direction || technical.analysisDirection || '').toUpperCase();
   const score = Number(p.score ?? technical.analysisScore ?? technical.score ?? 0) || 0;
-  const reason = clean(p.reason || technical.reason || 'Aguardando confluência técnica.');
+  const rawReason = clean(p.reason || technical.reason || 'Aguardando confluência técnica.');
+  const reason = rawReason
+    .replace(/Sugest[aã]o\s*:\s*M5\s*\(n[aã]o\s*validada\)/ig, '')
+    .replace(/Sugest[aã]o\s*:\s*M1\s*\(n[aã]o\s*validada\)/ig, '')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/^\s*[•·-]\s*/, '')
+    .trim() || 'Aguardando confluência técnica.';
   const timeReady = entryTimeReady(state);
   const blocked = timeReady ? '' : entryBlockReason(state);
 
@@ -626,8 +670,17 @@ function render(state = {}) {
   if (exact) setSourceState('countdownSource', 'REAL', 'real', 'Countdown exato lido da CasaTrade.');
   else setSourceState('countdownSource', 'PENDENTE', 'estimated', 'Aguardando countdown real da CasaTrade; nenhum tempo local é usado.');
 
-  setText('heroTimeStatus', timeReady ? 'OK' : 'AGUARDAR');
-  setText('sessionMode', timeReady ? 'LIVE' : exact ? 'LIVE • GATE' : 'LIVE • CLOCK PENDENTE');
+  const alignment = modeAlignment(state);
+  const conflictBanner = $('modeConflictBanner');
+  const conflictText = $('modeConflictText');
+  if (conflictBanner) conflictBanner.hidden = !alignment.conflict;
+  if (conflictText && alignment.conflict) {
+    const scannerMode = alignment.operation.timeframe + ' + ' + expLabel(alignment.operation.expiration);
+    const casaMode = (alignment.liveTf || '—') + ' + ' + (alignment.liveExp ? expLabel(alignment.liveExp) : 'expiração não lida');
+    conflictText.textContent = 'Scanner: ' + scannerMode + ' • CasaTrade: ' + casaMode + '. Ajuste os dois para o mesmo modo.';
+  }
+  setText('heroTimeStatus', alignment.conflict ? 'CONFLITO' : timeReady ? 'OK' : 'AGUARDAR');
+  setText('sessionMode', alignment.conflict ? 'LIVE • MODO CONFLITANTE' : timeReady ? 'LIVE' : exact ? 'LIVE • GATE' : 'LIVE • CLOCK PENDENTE');
   setText('timeSyncStatus', exact ? 'EXATO • CASATRADE' : 'PENDENTE');
   syncTopLiveClock(state);
 
@@ -655,8 +708,8 @@ function render(state = {}) {
   }
 
   const buy = $('prepareBuy'), sell = $('prepareSell');
-  const canBuy = model.actionable && model.direction === 'BUY' && timeReady;
-  const canSell = model.actionable && model.direction === 'SELL' && timeReady;
+  const canBuy = !alignment.conflict && model.actionable && model.direction === 'BUY' && timeReady;
+  const canSell = !alignment.conflict && model.actionable && model.direction === 'SELL' && timeReady;
   if (buy) { buy.disabled = !canBuy; buy.classList.toggle('selected', canBuy); }
   if (sell) { sell.disabled = !canSell; sell.classList.toggle('selected', canSell); }
 

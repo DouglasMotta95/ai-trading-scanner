@@ -6,11 +6,11 @@ export const read = path => fs.readFileSync(new URL('../' + path, import.meta.ur
 const manifest = () => JSON.parse(read('manifest.json'));
 
 export function registerBuildContracts(label='build') {
-  test(label + ': current extension package is the v0.11.73 expiration-operational-fallback build', () => {
+  test(label + ': current extension package is the v0.11.74 single-operation-mode build', () => {
     const m = manifest();
     assert.equal(m.manifest_version, 3);
-    assert.equal(m.version, '0.11.73');
-    assert.equal(m.version_name, '0.11.73-expiration-operational-fallback');
+    assert.equal(m.version, '0.11.74');
+    assert.equal(m.version_name, '0.11.74-single-operation-mode');
     assert.equal(m.background?.service_worker, 'src/background-entry.js');
     assert.equal(m.side_panel?.default_path, 'src/sidepanel/index.html');
   });
@@ -156,6 +156,16 @@ export function registerManualContracts(label='manual') {
   });
 }
 
+export function registerSingleOperationModeContracts(label='single-operation-mode') {
+  test(label + ': scanner and CasaTrade must use one explicit mode', () => {
+    const panel = read('src/sidepanel/app-v2.js');
+    assert.match(panel, /function modeAlignment/);
+    assert.match(panel, /CONFLITO DE MODO/);
+    assert.match(panel, /Scanner: /);
+    assert.match(panel, /CasaTrade: /);
+    assert.match(panel, /Sugest[aã]o\\s\\*: \\s*M5/);
+  });
+}
 export function registerExpirationOperationalContracts(label='expiration-operational') {
   test(label + ': matching declared expiration remains operational when direct reader is unverified', () => {
     const policy = read('src/background-decision-policy.js');

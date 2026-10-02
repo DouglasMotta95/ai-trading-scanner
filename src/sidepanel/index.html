@@ -42,7 +42,7 @@
     .recent-trade-row .trade-time{font-variant-numeric:tabular-nums;color:#7190a5}
     .recent-trade-row.win .trade-status{color:#70ddb6}.recent-trade-row.loss .trade-status{color:#f1849c}.recent-trade-row.draw .trade-status{color:#e2ca78}.recent-trade-row.pending .trade-status{color:#8cc4ee}
     @media(max-width:560px){.operation-result-main{grid-template-columns:1.2fr 1fr 1fr}.operation-result-main b{font-size:12px}.operation-result-meta{font-size:8px}}
-  </style>
+  .mode-conflict-banner{margin-top:8px;padding:9px 11px;border:1px solid #765d2a;border-radius:12px;background:#211b0b;color:#f0d981;display:grid;gap:2px;font-size:9px;line-height:1.35}.mode-conflict-banner b{font-size:9px;letter-spacing:.08em}.mode-conflict-banner span{color:#cdbd87}</style>
   <link rel="stylesheet" href="styles.css">
   <link rel="stylesheet" href="asset-quality.css">
   <link rel="stylesheet" href="premium-v2.css">
@@ -127,6 +127,10 @@
           <span>ABERTURA DA PRÓXIMA VELA</span>
           <b id="liveClockNext">--:--:--</b>
           <small id="liveClockCountdown">AGUARDANDO CLOCK</small>
+        </div>
+        <div id="modeConflictBanner" class="mode-conflict-banner" role="alert" hidden>
+          <b>CONFLITO DE MODO</b>
+          <span id="modeConflictText">Scanner e CasaTrade estão configurados de formas diferentes.</span>
         </div>
       </section>
 
