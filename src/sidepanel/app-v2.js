@@ -128,8 +128,11 @@ function normExp(value = '') {
 }
 function operationRequirement(state = {}) {
   const timeframe = String(state.analystPreferences?.operationMode || prefs.operationMode || 'M1').toUpperCase() === 'M5' ? 'M5' : 'M1';
-  const durationSeconds = Number(state.analystPreferences?.operationDurationSeconds || timeframeSeconds(timeframe) || (timeframe === 'M5' ? 300 : 60));
-  const expiration = normExp(state.analystPreferences?.operationExpiration || `${durationSeconds}s`) || (timeframe === 'M5' ? '300s' : '60s');
+  // Canonical operation contract: M1 is always 60s and M5 is always 300s.
+  // Never let an older persisted operationExpiration or duration override the
+  // selected mode; those stale fields were causing false mode conflicts.
+  const durationSeconds = timeframe === 'M5' ? 300 : 60;
+  const expiration = timeframe === 'M5' ? '300s' : '60s';
   return { timeframe, expiration, durationSeconds };
 }
 
