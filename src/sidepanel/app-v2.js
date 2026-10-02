@@ -650,11 +650,14 @@ function render(state = {}) {
 
   if (actualExp) {
     const expirationGuardSource = expirationObs.source || clean(state.diagnostics?.expirationGuard?.source || '');
-    if (expirationObs.ready === true && expirationObs.verified !== true) {
+    const operationalFallback = actualExp === operation.expiration
+      && expirationObs.verified !== true
+      && ['user-declared', 'user-declared-match'].includes(expirationObs.source);
+    if (expirationObs.ready === true && expirationObs.verified !== true || operationalFallback) {
       const operationalLabel = `${expLabel(actualExp)} • operacional`;
       setText('heroExpiration', operationalLabel);
       setText('expiration', operationalLabel);
-      setSourceState('expirationSource', 'OPERACIONAL', 'estimated', 'Expiração coincide com o modo ativo; leitura direta da CasaTrade não está verificável.');
+      setSourceState('expirationSource', 'OPERACIONAL', 'estimated', 'Expiração coincide com o modo ativo; usando confirmação operacional enquanto a CasaTrade não expõe a leitura direta.');
     } else if (expirationObs.verified !== true || expirationGuardSource === 'user-declared') {
       const informedLabel = `${expLabel(actualExp)} (informada)`;
       setText('heroExpiration', informedLabel);
