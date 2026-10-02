@@ -599,7 +599,12 @@ function render(state = {}) {
 
   if (actualExp) {
     const expirationGuardSource = expirationObs.source || clean(state.diagnostics?.expirationGuard?.source || '');
-    if (expirationObs.verified !== true || expirationGuardSource === 'user-declared') {
+    if (expirationObs.ready === true && expirationObs.verified !== true) {
+      const operationalLabel = `${expLabel(actualExp)} • operacional`;
+      setText('heroExpiration', operationalLabel);
+      setText('expiration', operationalLabel);
+      setSourceState('expirationSource', 'OPERACIONAL', 'estimated', 'Expiração coincide com o modo ativo; leitura direta da CasaTrade não está verificável.');
+    } else if (expirationObs.verified !== true || expirationGuardSource === 'user-declared') {
       const informedLabel = `${expLabel(actualExp)} (informada)`;
       setText('heroExpiration', informedLabel);
       setText('expiration', informedLabel);
