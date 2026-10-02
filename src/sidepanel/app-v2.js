@@ -329,8 +329,12 @@ function currentOhlc(state = {}) {
 function modeAlignment(state = {}) {
   const operation = operationRequirement(state);
   const clock = state.diagnostics?.marketClock || {};
-  const liveTf = normTf(clock.timeframe || state.platformControls?.observed?.timeframe || state.analysisTimeframe || state.timeframe);
-  const liveExp = expirationObservation(state).value;
+  const clockSource = clean(clock.source);
+  const clockAuthoritative = clock.verified === true
+    && ['trader-dom-countdown', 'network-server-cycle'].includes(clockSource);
+  const liveTf = clockAuthoritative ? normTf(clock.timeframe) : null;
+  const expiration = expirationObservation(state);
+  const liveExp = expiration.verified === true ? expiration.value : null;
   const tfMatches = !liveTf || liveTf === operation.timeframe;
   const expMatches = !liveExp || liveExp === operation.expiration;
   return {
