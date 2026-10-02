@@ -421,3 +421,19 @@ export function registerEntryGateStabilityContracts(label='entry-gate-stability'
     assert.doesNotMatch(orchestrator, /Math\.round\(rawTarget \/ 5000\) \* 5000/);
   });
 }
+
+export function registerEntrySyncFallbackContracts(label='entry-sync-fallback') {
+  test(label + ': M1 and M5 always own canonical duration and expiration', () => {
+    const panel = read('src/sidepanel/app-v2.js');
+    assert.match(panel, /const durationSeconds = timeframe === 'M5' \? 300 : 60/);
+    assert.match(panel, /const expiration = timeframe === 'M5' \? '300s' : '60s'/);
+  });
+
+  test(label + ': selected operation mode seeds a user declaration for canvas expiration fallback', () => {
+    const controls = read('src/background-platform-controls.js');
+    assert.match(controls, /userDeclaredExpiration: nextMode\.expiration/);
+    assert.match(controls, /const operationalFallback = !authority\.realFresh/);
+    assert.match(controls, /authority\.source === 'user-declared'/);
+    assert.match(controls, /const ready = !!authority\.actual/);
+  });
+}
