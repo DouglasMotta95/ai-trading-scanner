@@ -233,15 +233,22 @@ export function CasaTradeExpiration(state = {}, timeframe = null) {
     };
   }
   const verified = realFresh && guard.verified === true && source !== 'user-declared';
+  const declared = normExp(controls.userDeclaredExpiration || '');
+  const declaredMatches = declared === operationMode.expiration
+    && (!liveTf || liveTf === operationMode.timeframe);
+  const observedMatches = actual === operationMode.expiration;
+  const operationalFallback = observedMatches && declaredMatches;
   return {
-    ready: verified && actual === operationMode.expiration,
+    ready: (verified || operationalFallback) && observedMatches,
     actual,
     required: operationMode.expiration,
-    source,
+    source: verified ? source : (operationalFallback ? 'user-declared-match' : source),
     verified,
     reason: verified
       ? `Expiração de ${expirationLabel} confirmada pela CasaTrade para o modo ${operationMode.timeframe}.`
-      : `Expiração de ${expirationLabel} ainda não verificada diretamente na CasaTrade.`
+      : operationalFallback
+        ? `Expiração de ${expirationLabel} coincide com o modo ativo; operação liberada enquanto a leitura direta da CasaTrade não é verificável.`
+        : `Expiração de ${expirationLabel} ainda não verificada diretamente na CasaTrade.`
   };
 }
 
