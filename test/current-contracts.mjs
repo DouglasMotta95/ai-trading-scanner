@@ -6,11 +6,11 @@ export const read = path => fs.readFileSync(new URL('../' + path, import.meta.ur
 const manifest = () => JSON.parse(read('manifest.json'));
 
 export function registerBuildContracts(label='build') {
-  test(label + ': current extension package is the v0.11.74 single-operation-mode build', () => {
+  test(label + ': current extension package is the v0.11.76 single-operation-mode build', () => {
     const m = manifest();
     assert.equal(m.manifest_version, 3);
-    assert.equal(m.version, '0.11.74');
-    assert.equal(m.version_name, '0.11.74-single-operation-mode');
+    assert.equal(m.version, '0.11.76');
+    assert.equal(m.version_name, '0.11.76-entry-sync-fallback');
     assert.equal(m.background?.service_worker, 'src/background-entry.js');
     assert.equal(m.side_panel?.default_path, 'src/sidepanel/index.html');
   });
@@ -318,7 +318,7 @@ export function registerVideo15292Contracts(label='video-15292') {
     const policy = read('src/background-decision-policy.js');
     const panel = read('src/sidepanel/app-v2.js');
     const controlHandler = read('src/background-control.js');
-    assert.match(controls, /ready = authority\.realFresh === true/);
+    assert.match(controls, /operationalFallback = !authority\.realFresh/);
     assert.match(policy, /source: 'user-declared'/);
     assert.match(policy, /ready: true/);
     assert.match(policy, /verified: false/);
@@ -399,5 +399,41 @@ export function registerVideo15319Contracts(label='video-15319') {
     const radar = read('src/sidepanel/market-radar-ui.js');
     assert.match(radar, /RADAR: MELHOR CENÁRIO/);
     assert.match(radar, /O Radar não troca o modo automaticamente/);
+  });
+}
+
+export function registerEntryGateStabilityContracts(label='entry-gate-stability') {
+  test(label + ': authoritative clock wins over stale timeframe metadata', () => {
+    const policy = read('src/background-decision-policy.js');
+    const panel = read('src/sidepanel/app-v2.js');
+    assert.match(policy, /liveTf !== operationMode\.timeframe/);
+    assert.doesNotMatch(policy, /if \(stateTf && liveTf !== stateTf\) return/);
+    assert.doesNotMatch(policy, /if \(controlTf && liveTf !== controlTf\) return/);
+    assert.match(panel, /clockAuthoritative/);
+    assert.doesNotMatch(panel, /if \(stateTf && stateTf !== clockTf\) return false/);
+    assert.doesNotMatch(panel, /if \(controlTf && controlTf !== clockTf\) return false/);
+  });
+
+  test(label + ': decision cycle uses immutable candle opening time', () => {
+    const orchestrator = read('src/core/orchestrator.js');
+    assert.match(orchestrator, /const openAt = num\(clock\.openAt\) \?\? num\(clock\.candleOpenAt\)/);
+    assert.match(orchestrator, /Math\.round\(openAt \/ 1000\) \* 1000/);
+    assert.doesNotMatch(orchestrator, /Math\.round\(rawTarget \/ 5000\) \* 5000/);
+  });
+}
+
+export function registerEntrySyncFallbackContracts(label='entry-sync-fallback') {
+  test(label + ': M1 and M5 always own canonical duration and expiration', () => {
+    const panel = read('src/sidepanel/app-v2.js');
+    assert.match(panel, /const durationSeconds = timeframe === 'M5' \? 300 : 60/);
+    assert.match(panel, /const expiration = timeframe === 'M5' \? '300s' : '60s'/);
+  });
+
+  test(label + ': selected operation mode seeds a user declaration for canvas expiration fallback', () => {
+    const controls = read('src/background-platform-controls.js');
+    assert.match(controls, /userDeclaredExpiration: nextMode\.expiration/);
+    assert.match(controls, /const operationalFallback = !authority\.realFresh/);
+    assert.match(controls, /authority\.source === 'user-declared'/);
+    assert.match(controls, /const ready = !!authority\.actual/);
   });
 }

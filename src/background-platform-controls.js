@@ -189,9 +189,19 @@ function applyExpirationAuthority(state = {}, observedInput = {}, expirationSour
   const operationMode = getOperationMode(state.analystPreferences?.operationMode || 'M1');
   const modeReady = effectiveTf === operationMode.timeframe;
   const expirationValid = authority.actual === operationMode.expiration;
-  // Manual expiration is only a temporary display hint. Execution stays blocked
-  // until CasaTrade itself confirms a fresh matching expiration.
-  const ready = authority.realFresh === true && !!authority.actual && modeReady && expirationValid && !authority.divergence;
+  // CasaTrade normally exposes expiration through the direct reader. When the
+  // platform does not expose it (canvas/embedded UI), the user-selected
+  // operation mode is the operational fallback. A fresh real observation always
+  // supersedes this fallback and can still block on a real mismatch.
+  const operationalFallback = !authority.realFresh
+    && authority.source === 'user-declared'
+    && !!authority.declared
+    && authority.declared === operationMode.expiration;
+  const ready = !!authority.actual
+    && modeReady
+    && expirationValid
+    && !authority.divergence
+    && (authority.realFresh === true || operationalFallback);
   const preferred = normExp(state.analystPreferences?.preferredExpiration || state.executionPreferences?.expiration || '');
   const expirationLabel = operationMode.expiration === '300s' ? '5 minutos' : '1 minuto';
 
@@ -203,8 +213,8 @@ function applyExpirationAuthority(state = {}, observedInput = {}, expirationSour
         ? 'Expiração real da CasaTrade ainda não confirmada.'
         : !expirationValid
           ? `Ajuste a expiração da CasaTrade para ${expirationLabel}`
-          : authority.source === 'user-declared'
-            ? `Expiração de ${expirationLabel} informada por você; aguardando verificação real da CasaTrade.`
+          : operationalFallback
+            ? `Expiração de ${expirationLabel} coincide com o modo ativo; usando confirmação operacional enquanto a CasaTrade não expõe a leitura direta.`
             : `Expiração ao vivo de ${expirationLabel} confirmada pela CasaTrade.`;
 
   const diagnostics = { ...(state.diagnostics || {}) };
@@ -219,7 +229,7 @@ function applyExpirationAuthority(state = {}, observedInput = {}, expirationSour
     real: authority.realExpiration,
     divergence: false,
     manualInvalidated: authority.invalidatedDeclared || null,
-    label: authority.source === 'user-declared' ? 'informada por você, não verificada' : authority.source ? 'confirmada pela CasaTrade' : 'pendente',
+    label: operationalFallback ? 'operacional' : authority.source === 'user-declared' ? 'informada por você, não verificada' : authority.source ? 'confirmada pela CasaTrade' : 'pendente',
     ready,
     validForM1: operationMode.timeframe === 'M1' ? ready : false,
     validForMode: ready,
@@ -282,7 +292,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const base = currentMode.timeframe !== nextMode.timeframe
         ? clearUserDeclaredExpirationState(state)
         : state;
-      return { ...base, analystPreferences: analystPrefs(base, message) };
+      const now = Date.now();
+      const nextControls = {
+        ...(base.platformControls || {}),
+        userDeclaredExpiration: nextMode.expiration,
+        userDeclaredAt: now
+      };
+      return {
+        ...base,
+        analystPreferences: analystPrefs(base, message),
+        platformControls: nextControls
+      };
     })
       .then(state => sendResponse({ ok: true, analystPreferences: state.analystPreferences, state }))
       .catch(error => sendResponse({ ok: false, error: String(error?.message || error) }));

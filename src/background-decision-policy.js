@@ -144,8 +144,9 @@ export function exactCasaTradeTime(state = {}) {
   const controlTf = normTf(state.platformControls?.observed?.timeframe);
   if (!liveTf) return { ready: false, reason: 'Timeframe real ainda não foi confirmado.' };
   if (liveTf !== operationMode.timeframe) return { ready: false, reason: `Ajuste o timeframe da CasaTrade para ${operationMode.timeframe}.` };
-  if (stateTf && liveTf !== stateTf) return { ready: false, reason: 'Timeframe interno divergiu do gráfico.' };
-  if (controlTf && liveTf !== controlTf) return { ready: false, reason: 'Timeframe visível divergiu do clock da vela.' };
+  // The exact, focus-bound CasaTrade clock is the runtime authority. The
+  // analysis/control fields are retained as telemetry only because they may
+  // lag one update behind during a mode change or canvas re-render.
   // Bridge one missed DOM/feed observation with a bounded projection from the
   // latest exact CasaTrade sample. We never roll a decision into the next candle:
   // once projected time reaches zero the entry gate closes until a new exact sample.
