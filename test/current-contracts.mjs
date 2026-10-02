@@ -6,11 +6,11 @@ export const read = path => fs.readFileSync(new URL('../' + path, import.meta.ur
 const manifest = () => JSON.parse(read('manifest.json'));
 
 export function registerBuildContracts(label='build') {
-  test(label + ': current extension package is the v0.11.75 single-operation-mode build', () => {
+  test(label + ': current extension package is the v0.11.76 single-operation-mode build', () => {
     const m = manifest();
     assert.equal(m.manifest_version, 3);
-    assert.equal(m.version, '0.11.75');
-    assert.equal(m.version_name, '0.11.75-entry-gate-stale-metadata');
+    assert.equal(m.version, '0.11.76');
+    assert.equal(m.version_name, '0.11.76-entry-gate-stale-metadata');
     assert.equal(m.background?.service_worker, 'src/background-entry.js');
     assert.equal(m.side_panel?.default_path, 'src/sidepanel/index.html');
   });
@@ -318,7 +318,7 @@ export function registerVideo15292Contracts(label='video-15292') {
     const policy = read('src/background-decision-policy.js');
     const panel = read('src/sidepanel/app-v2.js');
     const controlHandler = read('src/background-control.js');
-    assert.match(controls, /ready = authority\.realFresh === true/);
+    assert.match(controls, /operationalFallback = !authority\.realFresh/);
     assert.match(policy, /source: 'user-declared'/);
     assert.match(policy, /ready: true/);
     assert.match(policy, /verified: false/);
