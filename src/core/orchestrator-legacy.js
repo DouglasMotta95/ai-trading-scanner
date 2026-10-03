@@ -14,11 +14,12 @@ const POSSIBLE_HOLD_MS = 2500;
 const CANDIDATE_MAX_GAP_MS = 8000;
 
 // Live CasaTrade price updates can move the raw technical score several points
-// every analysis tick while the current candle is still forming. Keep the
-// decision score responsive, but prevent sub-second spikes from making the
-// visible score and final gate jump around the threshold.
-const SCORE_SAMPLE_MAX = 3;
-const SCORE_EMA_ALPHA = 0.55;
+// every analysis tick while the current candle is still forming. Keep rises
+// responsive, but apply hysteresis to drops so one noisy tick cannot erase a
+// candidate/final threshold immediately.
+const SCORE_RISE_ALPHA = 0.70;
+const SCORE_DROP_ALPHA = 0.30;
+const SCORE_MAX_DROP_PER_TICK = 5;
 
 function clampScore(value) {
   const n = Number(value);
@@ -26,98 +27,24 @@ function clampScore(value) {
   return Math.max(0, Math.min(100, n));
 }
 
-function medianScore(values = []) {
-  const sorted = values.filter(Number.isFinite).slice().sort((a, b) => a - b);
-  if (!sorted.length) return 0;
-  const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2
-    ? sorted[middle]
-    : (sorted[middle - 1] + sorted[middle]) / 2;
-}
-
 function stabilizeScore(tracker = {}, rawScore = 0) {
   const raw = clampScore(rawScore);
-  const samples = Array.isArray(tracker.scoreSamples) ? tracker.scoreSamples : [];
-  samples.push(raw);
-  while (samples.length > SCORE_SAMPLE_MAX) samples.shift();
-  tracker.scoreSamples = samples;
+  const previous = Number(tracker.stableScore);
 
-  const robust = medianScore(samples);
-  if (!Number.isFinite(Number(tracker.stableScore))) tracker.stableScore = robust;
-  else tracker.stableScore += (robust - Number(tracker.stableScore)) * SCORE_EMA_ALPHA;
+  if (!Number.isFinite(previous)) {
+    tracker.stableScore = raw;
+  } else {
+    const delta = raw - previous;
+    const boundedDelta = delta < -SCORE_MAX_DROP_PER_TICK
+      ? -SCORE_MAX_DROP_PER_TICK
+      : delta;
+    const alpha = boundedDelta < 0 ? SCORE_DROP_ALPHA : SCORE_RISE_ALPHA;
+    tracker.stableScore += boundedDelta * alpha;
+  }
 
   tracker.rawScore = raw;
   tracker.stableScore = clampScore(tracker.stableScore);
   return tracker.stableScore;
-}
-
-function parseTimeframeMs(value = '') {
-  const tf = clean(value).toUpperCase().replace(/\s+/g, '');
-  if (TIMEFRAMES[tf]) return TIMEFRAMES[tf];
-  let match = tf.match(/^S(\d{1,5})$/);
-  if (match && Number(match[1]) > 0) return Number(match[1]) * 1000;
-  match = tf.match(/^M(\d{1,4})$/);
-  if (match && Number(match[1]) > 0) return Number(match[1]) * 60_000;
-  match = tf.match(/^H(\d{1,3})$/);
-  if (match && Number(match[1]) > 0) return Number(match[1]) * 3_600_000;
-  return null;
-}
-
-function timeframeMs(value = 'M1') {
-  return parseTimeframeMs(value) || TIMEFRAMES.M1;
-}
-
-function builderKey(snapshot = {}) {
-  return `${clean(snapshot.platformId || 'casatrade')}|${clean(snapshot.asset)}|${clean(snapshot.analysisTimeframe || snapshot.timeframe || 'M1')}`;
-}
-
-function getBuilder(snapshot = {}) {
-  const key = builderKey(snapshot);
-  if (!builders.has(key)) builders.set(key, new CandleBuilder(timeframeMs(snapshot.analysisTimeframe || snapshot.timeframe || 'M1')));
-  return builders.get(key);
-}
-
-function candleTime(raw = {}) {
-  let t = Number(raw?.time ?? raw?.timestamp);
-  if (Number.isFinite(t) && t > 0 && t < 1e12) t *= 1000;
-  return Number.isFinite(t) ? t : null;
-}
-
-function validCandle(raw = {}) {
-  const open = num(raw.open), high = num(raw.high), low = num(raw.low), close = num(raw.close);
-  if ([open, high, low, close].some(v => v == null)) return null;
-  return { ...raw, open, high, low, close };
-}
-
-function sameTimeframe(raw = {}, wanted = 'M1') {
-  const tf = clean(raw?.timeframe).toUpperCase();
-  const target = clean(wanted).toUpperCase();
-  if (!tf || tf === target) return true;
-  const sourceMs = parseTimeframeMs(tf);
-  const targetMs = timeframeMs(target);
-  return Number.isFinite(sourceMs) && sourceMs > 0 && sourceMs < targetMs && targetMs % sourceMs === 0;
-}
-
-function currentFromSnapshot(candles = [], bucket, timeframeMsValue, timeframeLabel, price) {
-  const rows = (Array.isArray(candles) ? candles : [])
-    .map(raw => ({ raw, time: candleTime(raw), candle: validCandle(raw) }))
-    .filter(row => row.candle && row.time != null && sameTimeframe(row.raw, timeframeLabel)
-      && Math.floor(row.time / timeframeMsValue) * timeframeMsValue === bucket)
-    .sort((a, b) => a.time - b.time);
-  if (!rows.length) return null;
-  const first = rows[0].candle;
-  const last = rows[rows.length - 1].candle;
-  const high = Math.max(price, ...rows.map(row => row.candle.high));
-  const low = Math.min(price, ...rows.map(row => row.candle.low));
-  return {
-    time: bucket,
-    open: first.open,
-    high,
-    low,
-    close: price,
-    ticks: rows.reduce((sum, row) => sum + Number(row.candle.ticks || 1), 0),
-    sourceClose: last.close
-  };
 }
 
 function trackerFor(key, bucket, at) {
@@ -135,7 +62,6 @@ function trackerFor(key, bucket, at) {
       publishedScore: 0,
       rawScore: 0,
       stableScore: null,
-      scoreSamples: [],
       weakHits: 0,
       confirmDirection: null,
       confirmHits: 0,
@@ -352,7 +278,7 @@ function stabilitySnapshot(tracker = {}) {
     confirmHits: Number(tracker.confirmHits || 0),
     rawScore: Number(tracker.rawScore || 0),
     stableScore: Number(tracker.stableScore || 0),
-    scoreSamples: Array.isArray(tracker.scoreSamples) ? tracker.scoreSamples.length : 0
+    scoreSamples: Number.isFinite(Number(tracker.stableScore)) ? 1 : 0
   };
 }
 
