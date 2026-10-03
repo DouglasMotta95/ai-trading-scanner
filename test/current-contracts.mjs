@@ -6,11 +6,11 @@ export const read = path => fs.readFileSync(new URL('../' + path, import.meta.ur
 const manifest = () => JSON.parse(read('manifest.json'));
 
 export function registerBuildContracts(label='build') {
-  test(label + ': current extension package is the v0.11.79 mode-alignment build', () => {
+  test(label + ': current extension package is the v0.11.80 control-reader-authority build', () => {
     const m = manifest();
     assert.equal(m.manifest_version, 3);
-    assert.equal(m.version, '0.11.79');
-    assert.equal(m.version_name, '0.11.79-mode-alignment');
+    assert.equal(m.version, '0.11.80');
+    assert.equal(m.version_name, '0.11.80-control-reader-authority');
     assert.equal(m.background?.service_worker, 'src/background-entry.js');
     assert.equal(m.side_panel?.default_path, 'src/sidepanel/index.html');
   });
@@ -82,6 +82,15 @@ export function registerTimeContracts(label='time') {
     assert.match(panel, /setText\('timeframe'.*operation\.timeframe/);
     assert.match(analysis, /timeframe: 'M5'[\s\S]*expiration: '300s'/);
     assert.match(analysis, /timeframe: 'M1'[\s\S]*expiration: '60s'/);
+  });
+}
+
+export function registerControlReaderContracts(label='control-reader') {
+  test(label + ': fresh dedicated CasaTrade control probe overrides stale generic control scores', () => {
+    const controls = read('src/background-platform-controls.js');
+    assert.match(controls, /const dedicatedControlReader = incomingSource === 'casatrade-expiration-probe-v3'/);
+    assert.match(controls, /const freshDedicatedOverride = dedicatedControlReader && newer/);
+    assert.match(controls, /freshDedicatedOverride \|\| realOverridesDeclared/);
   });
 }
 
