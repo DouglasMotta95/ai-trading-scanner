@@ -6,11 +6,11 @@ export const read = path => fs.readFileSync(new URL('../' + path, import.meta.ur
 const manifest = () => JSON.parse(read('manifest.json'));
 
 export function registerBuildContracts(label='build') {
-  test(label + ': current extension package is the v0.11.80 control-reader-authority build', () => {
+  test(label + ': current extension package is the v0.11.86 score-display-and-entry-hysteresis build', () => {
     const m = manifest();
     assert.equal(m.manifest_version, 3);
-    assert.equal(m.version, '0.11.80');
-    assert.equal(m.version_name, '0.11.80-control-reader-authority');
+    assert.equal(m.version, '0.11.86');
+    assert.equal(m.version_name, '0.11.86-score-display-and-entry-hysteresis');
     assert.equal(m.background?.service_worker, 'src/background-entry.js');
     assert.equal(m.side_panel?.default_path, 'src/sidepanel/index.html');
   });
@@ -233,6 +233,22 @@ export function registerEntryRolloverContracts(label='entry-rollover') {
     assert.match(panel, /function rolloverEntryGrace/);
     assert.match(panel, /rolloverEntryGrace(state)/);
     assert.match(market, /previousBoundaryReusable/);
+  });
+}
+
+export function registerScoreDisplayAndEntryHysteresisContracts(label='score-display-entry-hysteresis') {
+  test(label + ': visible score is smoothed in the panel without replacing raw decision score', () => {
+    const guidance = read('src/sidepanel/signal-guidance-ui.js');
+    assert.match(guidance, /function stabilizeVisibleScore/);
+    assert.match(guidance, /displayedScore \+= \(raw - displayedScore\) \* 0\.35/);
+    assert.match(guidance, /the decision engine keeps its own raw-score gate/);
+  });
+
+  test(label + ': final confirmation tolerates only a small dip after a qualified hit', () => {
+    const legacy = read('src/core/orchestrator-legacy.js');
+    assert.match(legacy, /CONFIRM_SCORE_HYSTERESIS = 6/);
+    assert.match(legacy, /lastConfirmQualifiedScore/);
+    assert.match(legacy, /threshold - CONFIRM_SCORE_HYSTERESIS/);
   });
 }
 
