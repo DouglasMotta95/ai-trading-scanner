@@ -515,7 +515,11 @@ export function processSnapshot(snapshot = {}, state = {}) {
       tracker.confirmHits = 0;
       tracker.lastConfirmAt = null;
     }
-    const canConfirm = !rangeBlocked && observeConfirmation(tracker, liveResult, direction, decisionScore, sampleAt, gateThresholds);
+    // Once POSSÍVEL has been published, keep its last confirmed score as the
+    // floor for the final gate. A small live-price dip must not erase a score
+    // threshold that was already reached inside the same candle.
+    const confirmationScore = Math.max(decisionScore, Number(tracker.publishedScore || 0));
+    const canConfirm = !rangeBlocked && observeConfirmation(tracker, liveResult, direction, confirmationScore, sampleAt, gateThresholds);
     if (canConfirm) {
       const latestDecision = {
         bucket: currentBucket,
