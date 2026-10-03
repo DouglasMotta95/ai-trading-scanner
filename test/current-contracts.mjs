@@ -6,11 +6,11 @@ export const read = path => fs.readFileSync(new URL('../' + path, import.meta.ur
 const manifest = () => JSON.parse(read('manifest.json'));
 
 export function registerBuildContracts(label='build') {
-  test(label + ': current extension package is the v0.11.87 mode-and-score-latch build', () => {
+  test(label + ': current extension package is the v0.11.88 control-evidence-authority build', () => {
     const m = manifest();
     assert.equal(m.manifest_version, 3);
-    assert.equal(m.version, '0.11.87');
-    assert.equal(m.version_name, '0.11.87-mode-and-score-latch');
+    assert.equal(m.version, '0.11.88');
+    assert.equal(m.version_name, '0.11.88-control-evidence-authority');
     assert.equal(m.background?.service_worker, 'src/background-entry.js');
     assert.equal(m.side_panel?.default_path, 'src/sidepanel/index.html');
   });
@@ -65,7 +65,7 @@ export function registerTimeContracts(label='time') {
   test(label + ': mode conflict only appears when a fresh authoritative mismatch is identifiable', () => {
     const panel = read('src/sidepanel/app-v2.js');
     assert.match(panel, /function casaTradeTimeframeEvidence/);
-    assert.match(panel, /Never claim a conflict when the reader has not supplied enough current/);
+    assert.match(panel, /Conflict requires fresh, dedicated visible-control evidence/);
     assert.match(panel, /conflict: \(liveTf != null && !tfMatches\) \|\| \(liveExp != null && !expMatches\)/);
   });
 
