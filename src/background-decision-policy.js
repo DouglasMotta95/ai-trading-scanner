@@ -182,7 +182,11 @@ export function CasaTradeExpiration(state = {}, timeframe = null) {
 
   const realExpirationAt = Number(controls.realExpirationAt || 0);
   const realExpiration = normExp(controls.realExpiration || '');
-  const realFresh = !!realExpiration && realExpirationAt > 0 && Date.now() - realExpirationAt < 15000;
+  const declaredAt = Number(controls.userDeclaredAt || 0);
+  const realFresh = !!realExpiration
+    && realExpirationAt > 0
+    && Date.now() - realExpirationAt < 15000
+    && (!declaredAt || realExpirationAt >= declaredAt);
   const observedSource = text(controls.realExpirationSource || controls.expirationSource || controls.observed?.source || '');
   const actual = realFresh ? realExpiration : guardActual || null;
   const source = realFresh ? (text(controls.realExpirationSource) || 'casatrade-observed') : guardSource || '';
