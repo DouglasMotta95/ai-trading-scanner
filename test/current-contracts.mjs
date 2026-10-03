@@ -6,11 +6,11 @@ export const read = path => fs.readFileSync(new URL('../' + path, import.meta.ur
 const manifest = () => JSON.parse(read('manifest.json'));
 
 export function registerBuildContracts(label='build') {
-  test(label + ': current extension package is the v0.11.87 mode-and-score-latch build', () => {
+  test(label + ': current extension package is the v0.11.88 control-evidence-authority build', () => {
     const m = manifest();
     assert.equal(m.manifest_version, 3);
-    assert.equal(m.version, '0.11.87');
-    assert.equal(m.version_name, '0.11.87-mode-and-score-latch');
+    assert.equal(m.version, '0.11.88');
+    assert.equal(m.version_name, '0.11.88-control-evidence-authority');
     assert.equal(m.background?.service_worker, 'src/background-entry.js');
     assert.equal(m.side_panel?.default_path, 'src/sidepanel/index.html');
   });
@@ -251,6 +251,16 @@ export function registerModeAndScoreLatchContracts(label='mode-and-score-latch')
     const guidance = read('src/sidepanel/signal-guidance-ui.js');
     assert.match(guidance, /function stabilizedVisibleScore/);
     assert.match(guidance, /underlying decision score/);
+  });
+}
+
+export function registerControlEvidenceAuthorityContracts(label='control-evidence-authority') {
+  test(label + ': mode conflict only trusts fresh dedicated visible CasaTrade controls', () => {
+    const panel = read('src/sidepanel/app-v2.js');
+    assert.match(panel, /function freshCasaTradeControlEvidence/);
+    assert.match(panel, /source === 'casatrade-expiration-probe-v3'/);
+    assert.match(panel, /const liveTf = control\?\.timeframe \|\| null/);
+    assert.match(panel, /const liveExp = control\?\.expiration \|\| null/);
   });
 }
 
