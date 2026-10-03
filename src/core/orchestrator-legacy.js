@@ -13,6 +13,40 @@ const CONFIRM_HITS = 2;
 const POSSIBLE_HOLD_MS = 2500;
 const CANDIDATE_MAX_GAP_MS = 8000;
 
+// Live CasaTrade price updates can move the raw technical score several points
+// on successive sub-second observations while the current candle is forming.
+// Keep increases responsive, but make downward moves resistant to one noisy
+// tick. This affects the visible/decision score only; thresholds stay unchanged.
+const SCORE_RISE_ALPHA = 0.70;
+const SCORE_DROP_ALPHA = 0.30;
+const SCORE_MAX_DROP_PER_TICK = 5;
+
+function clampScore(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.min(100, n));
+}
+
+function stabilizeScore(tracker = {}, rawScore = 0) {
+  const raw = clampScore(rawScore);
+  const previous = Number(tracker.stableScore);
+
+  if (!Number.isFinite(previous)) {
+    tracker.stableScore = raw;
+  } else {
+    const delta = raw - previous;
+    const boundedDelta = delta < -SCORE_MAX_DROP_PER_TICK
+      ? -SCORE_MAX_DROP_PER_TICK
+      : delta;
+    const alpha = boundedDelta < 0 ? SCORE_DROP_ALPHA : SCORE_RISE_ALPHA;
+    tracker.stableScore += boundedDelta * alpha;
+  }
+
+  tracker.rawScore = raw;
+  tracker.stableScore = clampScore(tracker.stableScore);
+  return tracker.stableScore;
+}
+
 function parseTimeframeMs(value = '') {
   const tf = clean(value).toUpperCase().replace(/\s+/g, '');
   if (TIMEFRAMES[tf]) return TIMEFRAMES[tf];
@@ -95,6 +129,8 @@ function trackerFor(key, bucket, at) {
       publishedAt: null,
       lastStrongAt: null,
       publishedScore: 0,
+      rawScore: 0,
+      stableScore: null,
       weakHits: 0,
       confirmDirection: null,
       confirmHits: 0,
@@ -308,7 +344,9 @@ function stabilitySnapshot(tracker = {}) {
     possibleDirection: tracker.publishedDirection || null,
     possibleHits: Number(tracker.candidateHits || 0),
     possibleSince: tracker.publishedAt || null,
-    confirmHits: Number(tracker.confirmHits || 0)
+    confirmHits: Number(tracker.confirmHits || 0),
+    rawScore: Number(tracker.rawScore || 0),
+    stableScore: Number(tracker.stableScore || 0)
   };
 }
 
@@ -371,9 +409,10 @@ export function processSnapshot(snapshot = {}, state = {}) {
   const professional = liveResult.analytics?.professional || {};
   const professionalReady = professional.contextReady === true && professional.triggerReady === true;
   const direction = professionalReady ? analysisDirection : null;
-  const score = Number(liveResult.score || 0);
+  const rawScore = Number(liveResult.score || 0);
   const expiration = snapshot.targetExpiration || state.targetExpiration || snapshot.expiration || state.expiration || null;
   const tracker = trackerFor(key, currentBucket, sampleAt);
+  const score = stabilizeScore(tracker, rawScore);
   const possibleDirection = observePossible(tracker, direction, score, sampleAt, gateThresholds);
   const common = {
     timeframe: analysisTimeframe,
