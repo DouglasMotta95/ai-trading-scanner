@@ -13,6 +13,11 @@ const CONFIRM_HITS = 2;
 const POSSIBLE_HOLD_MS = 2500;
 const CANDIDATE_MAX_GAP_MS = 8000;
 
+// Final confirmation uses a small hysteresis band after the first qualified
+// confirmation hit. This is not a threshold change: the normal confirm score
+// remains unchanged, but one noisy live-price tick cannot erase the first hit.
+const CONFIRM_SCORE_HYSTERESIS = 6;
+
 function parseTimeframeMs(value = '') {
   const tf = clean(value).toUpperCase().replace(/\s+/g, '');
   if (TIMEFRAMES[tf]) return TIMEFRAMES[tf];
@@ -99,6 +104,7 @@ function trackerFor(key, bucket, at) {
       confirmDirection: null,
       confirmHits: 0,
       lastConfirmAt: null,
+      lastConfirmQualifiedScore: null,
       updatedAt: at
     };
     signalStability.set(key, tracker);
@@ -193,13 +199,40 @@ function rangeOverrideQuality(result = {}, direction = null, thresholds = getThr
 }
 
 function observeConfirmation(tracker, result, direction, score, at, thresholds) {
+  const threshold = Number(thresholds.confirmScore || 0);
+  const rawScore = Number(score);
+  const sameWindow = tracker.confirmDirection === direction
+    && tracker.lastConfirmAt != null
+    && at - tracker.lastConfirmAt <= CANDIDATE_MAX_GAP_MS;
+  const previousQualified = sameWindow
+    && Number(tracker.lastConfirmQualifiedScore || 0) >= threshold;
+  const effectiveScoreFloor = previousQualified
+    ? Math.max(threshold - CONFIRM_SCORE_HYSTERESIS, 0)
+    : threshold;
   const qualifies = tracker.publishedDirection === direction
-    && Number(score) >= thresholds.confirmScore
+    && rawScore >= effectiveScoreFloor
     && confirmationQuality(result, direction, thresholds);
+
   if (!qualifies) {
+    // Preserve the first qualified hit across a small score dip inside the same
+    // confirmation window. A larger deterioration or a different direction
+    // still resets confirmation normally.
+    const canHoldHit = previousQualified
+      && rawScore >= Math.max(threshold - CONFIRM_SCORE_HYSTERESIS, 0)
+      && confirmationQuality(result, direction, thresholds);
+    if (canHoldHit) {
+      tracker.lastConfirmAt = at;
+      tracker.lastConfirmQualifiedScore = Math.max(
+        Number(tracker.lastConfirmQualifiedScore || 0),
+        rawScore
+      );
+      tracker.confirmHits = Math.max(1, Number(tracker.confirmHits || 0));
+      return tracker.confirmHits >= CONFIRM_HITS;
+    }
     tracker.confirmDirection = null;
     tracker.confirmHits = 0;
     tracker.lastConfirmAt = null;
+    tracker.lastConfirmQualifiedScore = null;
     return false;
   }
 
@@ -212,6 +245,10 @@ function observeConfirmation(tracker, result, direction, score, at, thresholds) 
     tracker.confirmHits = 1;
   }
   tracker.lastConfirmAt = at;
+  tracker.lastConfirmQualifiedScore = Math.max(
+    Number(tracker.lastConfirmQualifiedScore || 0),
+    rawScore
+  );
   return tracker.confirmHits >= CONFIRM_HITS;
 }
 
