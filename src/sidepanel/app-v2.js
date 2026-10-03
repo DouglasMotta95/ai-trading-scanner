@@ -363,9 +363,10 @@ function casaTradeTimeframeEvidence(state = {}) {
     && closeAt - now <= Math.max(60000, spanMs || 60000) + 1500;
   if (!(fresh || boundary)) return null;
 
-  // The candle's real open/close span is stronger evidence than a stale
-  // timeframe label carried over after switching M1/M5.
-  return tfFromSpan || tfFromLabel || null;
+  // CasaTrade's current countdown reader already publishes the selected
+  // timeframe. When that label is fresh/authoritative, prefer it. The open/close
+  // span is only a fallback because a stale span can survive an M1↔M5 switch.
+  return tfFromLabel || tfFromSpan || null;
 }
 
 function modeAlignment(state = {}) {
