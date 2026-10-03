@@ -61,22 +61,28 @@ function decisionWindows(snapshot = {}, signal = {}, thresholds = getThresholds(
   return { pre, decision, skip, duration, timeframe };
 }
 
+function targetStartOf(snapshot = {}, signal = {}) {
+  const timeframe = clean(snapshot.analysisTimeframe || snapshot.timeframe || signal.timeframe || 'M1').toUpperCase();
+  const tfMs = timeframeMs(timeframe);
+  const sampleAt = num(snapshot.serverTime) ?? Date.now();
+  const seconds = num(signal.secondsRemaining) ?? num(snapshot.secondsRemaining) ?? 0;
+  const rawTarget = num(signal.targetStart);
+  if (Number.isFinite(tfMs) && tfMs > 0) {
+    // A countdown reader can miss the exact 60→59 rollover and first report
+    // a later value (for example 46s). Never make that late observation the
+    // candle opening time. Snap the target to the real timeframe boundary.
+    if (rawTarget != null) return Math.round(rawTarget / tfMs) * tfMs;
+    return Math.ceil(sampleAt / tfMs) * tfMs;
+  }
+  return rawTarget ?? (sampleAt + Math.max(0, seconds) * 1000);
+}
+
 function cycleKey(snapshot = {}, signal = {}) {
   const asset = clean(snapshot.asset || 'unknown');
   const timeframe = clean(snapshot.analysisTimeframe || snapshot.timeframe || signal.timeframe || 'M1').toUpperCase();
-  const sampleAt = num(snapshot.serverTime) ?? Date.now();
-  const seconds = num(signal.secondsRemaining) ?? num(snapshot.secondsRemaining) ?? 0;
-  const rawTarget = num(signal.targetStart) ?? (sampleAt + Math.max(0, seconds) * 1000);
-  const targetKey = Math.round(rawTarget / 5000) * 5000;
-  return `${asset}|${timeframe}|${targetKey}`;
+  const targetKey = targetStartOf(snapshot, signal);
+  return asset + '|' + timeframe + '|' + targetKey;
 }
-
-function targetStartOf(snapshot = {}, signal = {}) {
-  const sampleAt = num(snapshot.serverTime) ?? Date.now();
-  const seconds = num(signal.secondsRemaining) ?? num(snapshot.secondsRemaining) ?? 0;
-  return num(signal.targetStart) ?? (sampleAt + Math.max(0, seconds) * 1000);
-}
-
 function confirmationModeOf(state = {}) {
   return clean(state.analystPreferences?.confirmationMode).toUpperCase() === 'EXIGENTE' ? 'EXIGENTE' : 'SIMPLES';
 }
