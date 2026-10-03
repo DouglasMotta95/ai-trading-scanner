@@ -174,13 +174,48 @@ function guidance(state = {}) {
   };
 }
 
+let displayedScore = null;
+let displayedScoreKey = '';
+
+function currentCandleScoreKey(state = {}) {
+  const candle = state.signal?.currentCandle || state.currentCandle || {};
+  const clock = state.diagnostics?.marketClock || {};
+  const openAt = Number(candle.time ?? candle.timestamp ?? clock.openAt ?? clock.candleOpenAt ?? 0);
+  const asset = clean(state.asset || '');
+  const timeframe = clean(state.analysisTimeframe || state.timeframe || state.signal?.timeframe || '');
+  return [asset, timeframe, openAt].join('|');
+}
+
+function stabilizeVisibleScore(state = {}, rawScore = 0, ready = false) {
+  if (!ready) {
+    displayedScore = 0;
+    displayedScoreKey = '';
+    return 0;
+  }
+
+  const raw = Math.max(0, Math.min(100, Number(rawScore) || 0));
+  const key = currentCandleScoreKey(state);
+  if (!key || key !== displayedScoreKey) {
+    displayedScoreKey = key;
+    displayedScore = raw;
+    return Math.round(displayedScore);
+  }
+
+  // The source score can move several points between 650ms analysis ticks
+  // because the current candle is still forming. Smooth the presentation only;
+  // the decision engine keeps its own raw-score gate.
+  displayedScore += (raw - displayedScore) * 0.35;
+  displayedScore = Math.max(0, Math.min(100, displayedScore));
+  return Math.round(displayedScore);
+}
+
 function render(state = {}) {
   const ready = analysisReady(state);
   const technicalConfidence = ready ? assessEntryConfidence(state) : { score: 0 };
   const decision = ready ? (state.professionalDecision || {}) : {};
   const technical = ready ? (state.signal || {}) : {};
   const scoreRaw = ready ? (decision.score ?? technical.analysisScore ?? technical.score ?? technicalConfidence.score) : 0;
-  const score = Math.max(0, Math.min(100, Math.round(Number(scoreRaw) || 0)));
+  const score = stabilizeVisibleScore(state, scoreRaw, ready);
   const guide = guidance(state);
   const card = $('triggerCard');
 
