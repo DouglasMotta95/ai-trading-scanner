@@ -6,11 +6,11 @@ export const read = path => fs.readFileSync(new URL('../' + path, import.meta.ur
 const manifest = () => JSON.parse(read('manifest.json'));
 
 export function registerBuildContracts(label='build') {
-  test(label + ': current extension package is the v0.11.77 single-operation-mode build', () => {
+  test(label + ': current extension package is the v0.11.78 single-operation-mode build', () => {
     const m = manifest();
     assert.equal(m.manifest_version, 3);
-    assert.equal(m.version, '0.11.77');
-    assert.equal(m.version_name, '0.11.77-stale-entry-guard');
+    assert.equal(m.version, '0.11.78');
+    assert.equal(m.version_name, '0.11.78-fresh-expiration-state');
     assert.equal(m.background?.service_worker, 'src/background-entry.js');
     assert.equal(m.side_panel?.default_path, 'src/sidepanel/index.html');
   });
@@ -447,5 +447,24 @@ export function registerStaleEntryGuardContracts(label='stale-entry-guard') {
     assert.match(control, /decisionCycle: null/);
     assert.match(panel, /const staleActionable/);
     assert.match(panel, /updatedAt.*PANEL_OPENED_AT/);
+  });
+}
+
+export function registerFreshExpirationStateContracts(label='fresh-expiration-state') {
+  test(label + ': prior mode expiration cannot create a false conflict after current mode selection', () => {
+    const controls = read('src/background-platform-controls.js');
+    const policy = read('src/background-decision-policy.js');
+    const panel = read('src/sidepanel/app-v2.js');
+    const shell = read('src/sidepanel/ui-shell-v2.js');
+    assert.match(controls, /!declaredAt \|\| realExpirationAt >= declaredAt/);
+    assert.match(policy, /!declaredAt \|\| realExpirationAt >= declaredAt/);
+    assert.match(panel, /!declaredAt \|\| realAt >= declaredAt/);
+    assert.match(shell, /!declaredAt \|\| realExpirationAt >= declaredAt/);
+  });
+
+  test(label + ': valid operational fallback does not trigger expiration recovery', () => {
+    const bg = read('src/background.js');
+    assert.match(bg, /const expirationOperational = !!manualExpiration/);
+    assert.match(bg, /&& !expirationOperational/);
   });
 }
