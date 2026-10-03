@@ -174,13 +174,48 @@ function guidance(state = {}) {
   };
 }
 
+let displayedScore = null;
+let displayedScoreKey = '';
+
+function visibleScoreKey(state = {}) {
+  const candle = state.signal?.currentCandle || state.currentCandle || {};
+  const clock = state.diagnostics?.marketClock || {};
+  return [
+    clean(state.asset || ''),
+    clean(state.analysisTimeframe || state.timeframe || state.signal?.timeframe || ''),
+    Number(candle.time ?? candle.timestamp ?? clock.openAt ?? clock.candleOpenAt ?? 0)
+  ].join('|');
+}
+
+function stabilizedVisibleScore(state = {}, rawScore = 0, ready = false) {
+  if (!ready) {
+    displayedScore = 0;
+    displayedScoreKey = '';
+    return 0;
+  }
+  const raw = Math.max(0, Math.min(100, Number(rawScore) || 0));
+  const key = visibleScoreKey(state);
+  if (!key || key !== displayedScoreKey) {
+    displayedScoreKey = key;
+    displayedScore = raw;
+    return Math.round(displayedScore);
+  }
+  // The candle is live and the raw score may jump on every price tick. Keep the
+  // presentation readable without changing the underlying decision score.
+  const delta = raw - displayedScore;
+  if (Math.abs(delta) <= 2) displayedScore = raw;
+  else displayedScore += delta * 0.20;
+  displayedScore = Math.max(0, Math.min(100, displayedScore));
+  return Math.round(displayedScore);
+}
+
 function render(state = {}) {
   const ready = analysisReady(state);
   const technicalConfidence = ready ? assessEntryConfidence(state) : { score: 0 };
   const decision = ready ? (state.professionalDecision || {}) : {};
   const technical = ready ? (state.signal || {}) : {};
   const scoreRaw = ready ? (decision.score ?? technical.analysisScore ?? technical.score ?? technicalConfidence.score) : 0;
-  const score = Math.max(0, Math.min(100, Math.round(Number(scoreRaw) || 0)));
+  const score = stabilizedVisibleScore(state, scoreRaw, ready);
   const guide = guidance(state);
   const card = $('triggerCard');
 
