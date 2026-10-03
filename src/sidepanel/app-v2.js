@@ -274,12 +274,9 @@ function entryTimeReady(state = {}) {
   if (!actualExpiration || !expirationTimingCompatible(expiration, operation)) return false;
   const clockTf = casaTradeTimeframeEvidence(state) || normTf(clock.timeframe);
   const stateTf = normTf(state.analysisTimeframe || state.timeframe);
-  const controlEvidence = freshCasaTradeControlEvidence(state);
-  const controlTf = controlEvidence?.timeframe || null;
   if (!clockTf || clockTf !== operation.timeframe) return false;
   if (actualExpiration !== operation.expiration) return false;
   if (stateTf && stateTf !== clockTf) return false;
-  if (controlTf && controlTf !== clockTf) return false;
   return state.professionalDecision?.timeReady === true && state.professionalDecision?.expirationReady === true;
 }
 
@@ -390,23 +387,29 @@ function casaTradeTimeframeEvidence(state = {}) {
 
 function modeAlignment(state = {}) {
   const operation = operationRequirement(state);
-  const control = freshCasaTradeControlEvidence(state);
-  const liveTf = control?.timeframe || null;
-  const liveExp = control?.expiration || null;
+  const runtimeTf = casaTradeTimeframeEvidence(state);
+  const visual = freshCasaTradeControlEvidence(state);
+  const liveTf = runtimeTf || null;
+  // Visual controls remain telemetry. They never block a live decision when
+  // the exact CasaTrade countdown already establishes the current timeframe.
+  const visualTf = visual?.timeframe || null;
+  const visualExp = visual?.expiration || null;
+  const expiration = expirationObservation(state);
+  const liveExp = expiration.verified === true && expiration.fresh === true ? expiration.value : null;
   const tfMatches = liveTf == null || liveTf === operation.timeframe;
   const expMatches = liveExp == null || liveExp === operation.expiration;
   return {
     operation,
     liveTf,
     liveExp,
+    visualTf,
+    visualExp,
     tfMatches,
     expMatches,
     aligned: tfMatches && expMatches,
-    // Never claim a conflict when the reader has not supplied enough current
-    // evidence to identify which setting actually differs.
-    // Only the fresh dedicated visible-control probe may assert a mode
-    // conflict. Generic clock labels are not enough because they can lag a
-    // just-switched CasaTrade control.
+    // A mode conflict is a hard state only when the exact CasaTrade runtime
+    // clock proves a mismatch. A delayed/ambiguous visual-control reader is
+    // informational and must not trap the scanner in an "evidence" wait.
     conflict: (liveTf != null && !tfMatches) || (liveExp != null && !expMatches)
   };
 }
@@ -423,8 +426,6 @@ function entryBlockReason(state = {}) {
 
   const clockTf = normTf(clock.timeframe);
   if (clockTf !== operation.timeframe) return `AJUSTE O TIMEFRAME DA CASATRADE PARA ${operation.timeframe}`;
-  const controlTf = freshCasaTradeControlEvidence(state)?.timeframe || null;
-  if (controlTf && controlTf !== operation.timeframe) return `AJUSTE O TIMEFRAME DA CASATRADE PARA ${operation.timeframe}`;
   return 'ENTRADA AINDA NÃO LIBERADA';
 }
 
