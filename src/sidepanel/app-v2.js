@@ -274,7 +274,7 @@ function entryTimeReady(state = {}) {
   if (!actualExpiration || !expirationTimingCompatible(expiration, operation)) return false;
   const clockTf = casaTradeTimeframeEvidence(state) || normTf(clock.timeframe);
   const stateTf = normTf(state.analysisTimeframe || state.timeframe);
-  const controlTf = normTf(state.platformControls?.observed?.timeframe);
+  const controlTf = freshCasaTradeControlEvidence(state)?.timeframe || null;
   if (!clockTf || clockTf !== operation.timeframe) return false;
   if (actualExpiration !== operation.expiration) return false;
   if (stateTf && stateTf !== clockTf) return false;
@@ -334,6 +334,24 @@ function currentOhlc(state = {}) {
   return { ...liveOhlc, approximate: true, source: 'live-price-observed' };
 }
 
+function freshCasaTradeControlEvidence(state = {}) {
+  const observed = state.platformControls?.observed || {};
+  const observedAtTf = Number(observed.observedAt?.timeframe || 0);
+  const observedAtExp = Number(observed.observedAt?.expiration || 0);
+  const now = Date.now();
+  const source = clean(observed.source);
+  const dedicated = source === 'casatrade-expiration-probe-v3';
+  const freshTf = dedicated && observedAtTf > 0 && now - observedAtTf < 15000 && normTf(observed.timeframe);
+  const freshExp = dedicated && observedAtExp > 0 && now - observedAtExp < 15000 && normExp(observed.expiration);
+  if (!freshTf && !freshExp) return null;
+  return {
+    source,
+    timeframe: freshTf ? normTf(observed.timeframe) : null,
+    expiration: freshExp ? normExp(observed.expiration) : null,
+    observedAt: Math.max(observedAtTf, observedAtExp)
+  };
+}
+
 function casaTradeTimeframeEvidence(state = {}) {
   const clock = state.diagnostics?.marketClock || {};
   const focus = state.diagnostics?.focusedAsset || {};
@@ -371,9 +389,9 @@ function casaTradeTimeframeEvidence(state = {}) {
 
 function modeAlignment(state = {}) {
   const operation = operationRequirement(state);
-  const liveTf = casaTradeTimeframeEvidence(state);
-  const expiration = expirationObservation(state);
-  const liveExp = expiration.verified === true && expiration.fresh === true ? expiration.value : null;
+  const control = freshCasaTradeControlEvidence(state);
+  const liveTf = control?.timeframe || null;
+  const liveExp = control?.expiration || null;
   const tfMatches = liveTf == null || liveTf === operation.timeframe;
   const expMatches = liveExp == null || liveExp === operation.expiration;
   return {
@@ -383,8 +401,7 @@ function modeAlignment(state = {}) {
     tfMatches,
     expMatches,
     aligned: tfMatches && expMatches,
-    // Never claim a conflict when the reader has not supplied enough current
-    // evidence to identify which setting actually differs.
+    // Conflict requires fresh, dedicated visible-control evidence.
     conflict: (liveTf != null && !tfMatches) || (liveExp != null && !expMatches)
   };
 }
