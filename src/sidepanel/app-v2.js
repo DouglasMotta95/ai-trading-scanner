@@ -248,23 +248,23 @@ function rolloverEntryGrace(state = {}) {
 function liveTimingReady(state = {}) {
   const expiration = expirationObservation(state);
   const operation = operationRequirement(state);
-  const clock = state.diagnostics?.marketClock || {};
+  const casaTf = casaTradeTimeframeEvidence(state);
   if (rolloverEntryGrace(state)) {
     return expirationTimingCompatible(expiration, operation)
-      && (!clock.timeframe || normTf(clock.timeframe) === operation.timeframe);
+      && (casaTf == null || casaTf === operation.timeframe);
   }
   if (!exactClockReady(state)) return false;
   return expirationTimingCompatible(expiration, operation)
-    && normTf(clock.timeframe) === operation.timeframe;
+    && (casaTf == null || casaTf === operation.timeframe);
 }
 
 function entryTimeReady(state = {}) {
   if (rolloverEntryGrace(state)) {
     const expiration = expirationObservation(state);
     const operation = operationRequirement(state);
-    const clock = state.diagnostics?.marketClock || {};
+    const casaTf = casaTradeTimeframeEvidence(state);
     if (expirationTimingCompatible(expiration, operation)
-      && (!clock.timeframe || normTf(clock.timeframe) === operation.timeframe)) return true;
+      && (casaTf == null || casaTf === operation.timeframe)) return true;
   }
   if (!exactClockReady(state)) return false;
   const clock = state.diagnostics?.marketClock || {};
@@ -272,7 +272,7 @@ function entryTimeReady(state = {}) {
   const actualExpiration = expiration.value;
   const operation = operationRequirement(state);
   if (!actualExpiration || !expirationTimingCompatible(expiration, operation)) return false;
-  const clockTf = normTf(clock.timeframe);
+  const clockTf = casaTradeTimeframeEvidence(state) || normTf(clock.timeframe);
   const stateTf = normTf(state.analysisTimeframe || state.timeframe);
   const controlTf = normTf(state.platformControls?.observed?.timeframe);
   if (!clockTf || clockTf !== operation.timeframe) return false;
@@ -334,17 +334,47 @@ function currentOhlc(state = {}) {
   return { ...liveOhlc, approximate: true, source: 'live-price-observed' };
 }
 
+function casaTradeTimeframeEvidence(state = {}) {
+  const clock = state.diagnostics?.marketClock || {};
+  const focus = state.diagnostics?.focusedAsset || {};
+  const source = clean(clock.source);
+  const authoritative = clock.verified === true
+    && ['trader-dom-countdown', 'network-server-cycle'].includes(source)
+    && sameMarket(clock.asset, state.asset)
+    && clockBoundToFocus(clock, focus);
+  if (!authoritative) return null;
+
+  const now = Date.now();
+  const at = Number(clock.at || 0);
+  const closeAt = num(clock.closeAt) ?? num(clock.candleCloseAt);
+  const openAt = num(clock.openAt) ?? num(clock.candleOpenAt);
+  const rawSpan = closeAt != null && openAt != null ? closeAt - openAt : 0;
+  const spanMs = rawSpan > 0 ? rawSpan : 0;
+  const fresh = at > 0 && now - at < 4500;
+  const tfFromSpan = spanMs >= 45000 && spanMs <= 75000
+    ? 'M1'
+    : spanMs >= 255000 && spanMs <= 345000
+      ? 'M5'
+      : null;
+  const tfFromLabel = normTf(clock.timeframe);
+  const boundary = closeAt != null && openAt != null
+    && now >= openAt - 2000
+    && now <= closeAt + 1500
+    && closeAt - now <= Math.max(60000, spanMs || 60000) + 1500;
+  if (!(fresh || boundary)) return null;
+
+  // The candle's real open/close span is stronger evidence than a stale
+  // timeframe label carried over after switching M1/M5.
+  return tfFromSpan || tfFromLabel || null;
+}
+
 function modeAlignment(state = {}) {
   const operation = operationRequirement(state);
-  const clock = state.diagnostics?.marketClock || {};
-  const clockSource = clean(clock.source);
-  const clockAuthoritative = clock.verified === true
-    && ['trader-dom-countdown', 'network-server-cycle'].includes(clockSource);
-  const liveTf = clockAuthoritative ? normTf(clock.timeframe) : null;
+  const liveTf = casaTradeTimeframeEvidence(state);
   const expiration = expirationObservation(state);
-  const liveExp = expiration.verified === true ? expiration.value : null;
-  const tfMatches = !liveTf || liveTf === operation.timeframe;
-  const expMatches = !liveExp || liveExp === operation.expiration;
+  const liveExp = expiration.verified === true && expiration.fresh === true ? expiration.value : null;
+  const tfMatches = liveTf == null || liveTf === operation.timeframe;
+  const expMatches = liveExp == null || liveExp === operation.expiration;
   return {
     operation,
     liveTf,
@@ -352,7 +382,9 @@ function modeAlignment(state = {}) {
     tfMatches,
     expMatches,
     aligned: tfMatches && expMatches,
-    conflict: !tfMatches || !expMatches
+    // Never claim a conflict when the reader has not supplied enough current
+    // evidence to identify which setting actually differs.
+    conflict: (liveTf != null && !tfMatches) || (liveExp != null && !expMatches)
   };
 }
 function entryBlockReason(state = {}) {
