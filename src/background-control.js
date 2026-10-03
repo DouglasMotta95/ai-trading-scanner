@@ -708,7 +708,10 @@ async function probePlatformControlsDirect(tabId) {
     if (Number(state.targetTabId || 0) && Number(state.targetTabId) !== Number(tabId)) return state;
     const previousControls = state.platformControls || {};
     const previous = previousControls.observed || {};
-    const realExpiration = exp?.expiration || null;
+    const previousRealAt = Number(previousControls.realExpirationAt || 0);
+    const declaredAt = Number(previousControls.userDeclaredAt || 0);
+    const previousRealIsCurrent = previousRealAt > 0 && (!declaredAt || previousRealAt >= declaredAt);
+    const realExpiration = exp?.expiration || (previousRealIsCurrent ? previousControls.realExpiration || null : null);
     const expiration = realExpiration || previous.expiration || null;
     const timeframe = tf?.timeframe || previous.timeframe || null;
     const observedAt = {
@@ -781,9 +784,9 @@ async function probePlatformControlsDirect(tabId) {
         expirationVerified: !!realExpiration,
         aligned: expirationReady,
         liveAuthority: !!realExpiration,
-        realExpiration: realExpiration || previousControls.realExpiration || null,
-        realExpirationAt: realExpiration ? now : Number(previousControls.realExpirationAt || 0),
-        realExpirationSource: realExpiration ? 'background-direct-dom' : clean(previousControls.realExpirationSource || '')
+        realExpiration: realExpiration || null,
+        realExpirationAt: realExpiration ? now : (previousRealIsCurrent ? previousRealAt : 0),
+        realExpirationSource: realExpiration ? 'background-direct-dom' : (previousRealIsCurrent ? clean(previousControls.realExpirationSource || '') : '')
       },
       diagnostics
     };
