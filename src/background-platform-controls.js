@@ -79,10 +79,18 @@ function mergeObserved(previous = {}, incoming = {}, previousExpirationSource = 
     const previousStale = !previousAt || Date.now() - previousAt >= 7000;
     const newer = incomingAt > previousAt;
     const notOlder = incomingAt >= previousAt;
+    const incomingSource = clean(incoming.source);
+    const dedicatedControlReader = incomingSource === 'casatrade-expiration-probe-v3';
     const realOverridesDeclared = field === 'expiration'
       && previousExpirationSource === 'user-declared'
-      && clean(incoming.source) !== 'user-declared';
-    if (value != null && (realOverridesDeclared || next[field] == null || previousStale || (newer && score >= Math.max(55, oldScore - 15)) || (notOlder && score >= oldScore - 2))) {
+      && incomingSource !== 'user-declared';
+    // The dedicated visible-control probe is the authoritative reader for the
+    // on-screen CasaTrade Expiração/timeframe controls. Older generic readers
+    // can retain a higher score after the user changes 5m -> 1m (or vice versa),
+    // which caused the panel to report a false CONFLITO DE MODO. A newer value
+    // from this probe must replace that stale high-score value.
+    const freshDedicatedOverride = dedicatedControlReader && newer;
+    if (value != null && (freshDedicatedOverride || realOverridesDeclared || next[field] == null || previousStale || (newer && score >= Math.max(55, oldScore - 15)) || (notOlder && score >= oldScore - 2))) {
       next[field] = value;
       next.confidence[field] = score;
       next.observedAt[field] = incomingAt || Date.now();
