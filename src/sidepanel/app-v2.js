@@ -76,9 +76,14 @@ function expirationObservation(state = {}) {
   const realAt = Number(controls.realExpirationAt || 0);
   const realValue = normExp(controls.realExpiration || '');
   const realSource = clean(controls.realExpirationSource || controls.expirationSource || '');
-  // A verified CasaTrade expiration survives short control re-renders. Manual
-  // fallback is visible to the user but never counts as verified timing.
-  const realFresh = !!realValue && realAt > 0 && Date.now() - realAt < 15000 && realSource !== 'user-declared';
+  const declaredAt = Number(controls.userDeclaredAt || 0);
+  // An observation captured before the latest mode selection belongs to the
+  // previous operation and must not trigger a false UI conflict.
+  const realFresh = !!realValue
+    && realAt > 0
+    && Date.now() - realAt < 15000
+    && (!declaredAt || realAt >= declaredAt)
+    && realSource !== 'user-declared';
   const at = realFresh ? realAt : observedAt;
   const declaredValue = normExp(controls.userDeclaredExpiration || '');
   const observedManualValue = normExp(controls.observed?.expiration || '');
