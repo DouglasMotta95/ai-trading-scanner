@@ -6,11 +6,11 @@ export const read = path => fs.readFileSync(new URL('../' + path, import.meta.ur
 const manifest = () => JSON.parse(read('manifest.json'));
 
 export function registerBuildContracts(label='build') {
-  test(label + ': current extension package is the v0.11.81 score-stabilization build', () => {
+  test(label + ': current extension package is the v0.11.82 score-hysteresis build', () => {
     const m = manifest();
     assert.equal(m.manifest_version, 3);
-    assert.equal(m.version, '0.11.81');
-    assert.equal(m.version_name, '0.11.81-score-stabilization');
+    assert.equal(m.version, '0.11.82');
+    assert.equal(m.version_name, '0.11.82-score-hysteresis');
     assert.equal(m.background?.service_worker, 'src/background-entry.js');
     assert.equal(m.side_panel?.default_path, 'src/sidepanel/index.html');
   });
@@ -239,9 +239,11 @@ export function registerEntryRolloverContracts(label='entry-rollover') {
 export function registerScoreStabilityContracts(label='score-stability') {
   test(label + ': live score is stabilized per candle before possible/final decisions', () => {
     const legacy = read('src/core/orchestrator-legacy.js');
-    assert.match(legacy, /SCORE_SAMPLE_MAX = 3/);
-    assert.match(legacy, /SCORE_EMA_ALPHA = 0\.55/);
+    assert.match(legacy, /SCORE_RISE_ALPHA = 0\.70/);
+    assert.match(legacy, /SCORE_DROP_ALPHA = 0\.30/);
     assert.match(legacy, /function stabilizeScore/);
+    assert.match(legacy, /SCORE_MAX_DROP_PER_TICK = 5/);
+    assert.match(legacy, /boundedDelta/);
     assert.match(legacy, /const score = stabilizeScore\(tracker, rawScore\)/);
     assert.match(legacy, /rawScore:/);
     assert.match(legacy, /stableScore:/);
