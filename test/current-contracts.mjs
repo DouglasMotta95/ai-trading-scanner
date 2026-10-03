@@ -6,11 +6,11 @@ export const read = path => fs.readFileSync(new URL('../' + path, import.meta.ur
 const manifest = () => JSON.parse(read('manifest.json'));
 
 export function registerBuildContracts(label='build') {
-  test(label + ': current extension package is the v0.11.84 score-display-and-gate build', () => {
+  test(label + ': current extension package is the v0.11.85 final-score-latch build', () => {
     const m = manifest();
     assert.equal(m.manifest_version, 3);
-    assert.equal(m.version, '0.11.84');
-    assert.equal(m.version_name, '0.11.84-score-display-and-gate');
+    assert.equal(m.version, '0.11.85');
+    assert.equal(m.version_name, '0.11.85-final-score-latch');
     assert.equal(m.background?.service_worker, 'src/background-entry.js');
     assert.equal(m.side_panel?.default_path, 'src/sidepanel/index.html');
   });
@@ -246,6 +246,14 @@ export function registerScoreDisplayGateContracts(label='score-display-gate') {
     assert.match(legacy, /const decisionScore = decisionScoreWithHysteresis\(tracker, rawScore, gateThresholds\)/);
     assert.match(legacy, /observePossible\(tracker, direction, decisionScore/);
     assert.match(legacy, /observeConfirmation\(tracker, liveResult, direction, decisionScore/);
+  });
+}
+
+export function registerFinalScoreLatchContracts(label='final-score-latch') {
+  test(label + ': published candidate score is retained through final confirmation', () => {
+    const legacy = read('src/core/orchestrator-legacy.js');
+    assert.match(legacy, /const confirmationScore = Math\.max\(decisionScore, Number\(tracker\.publishedScore \|\| 0\)\)/);
+    assert.match(legacy, /observeConfirmation\(tracker, liveResult, direction, confirmationScore/);
   });
 }
 
