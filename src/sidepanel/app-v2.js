@@ -402,6 +402,8 @@ function modeAlignment(state = {}) {
     tfMatches,
     expMatches,
     aligned: tfMatches && expMatches,
+    // Never claim a conflict when the reader has not supplied enough current
+    // evidence to identify which setting actually differs.
     // Only the fresh dedicated visible-control probe may assert a mode
     // conflict. Generic clock labels are not enough because they can lag a
     // just-switched CasaTrade control.
