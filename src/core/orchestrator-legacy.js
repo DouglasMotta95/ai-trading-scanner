@@ -125,7 +125,10 @@ function observePossible(tracker, direction, score, at, thresholds) {
     if (tracker.publishedDirection === direction) {
       tracker.weakHits = 0;
       tracker.lastStrongAt = at;
-      tracker.publishedScore = Number(score);
+      // Once the candidate is published, keep the best score reached in this
+      // candle. A weaker sub-second tick must not overwrite the score that got
+      // the candidate into the final confirmation window.
+      tracker.publishedScore = Math.max(Number(tracker.publishedScore || 0), Number(score));
     } else if (tracker.candidateHits >= POSSIBLE_HITS) {
       tracker.publishedDirection = direction;
       tracker.publishedAt = at;
