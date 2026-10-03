@@ -13,6 +13,53 @@ const CONFIRM_HITS = 2;
 const POSSIBLE_HOLD_MS = 2500;
 const CANDIDATE_MAX_GAP_MS = 8000;
 
+// The displayed score is stabilized per candle so sub-second price noise does
+// not make the UI jump. Entry qualification still uses the raw score, with a
+// small hysteresis band only when a score has already crossed a threshold.
+const SCORE_RISE_ALPHA = 0.70;
+const SCORE_DROP_ALPHA = 0.30;
+const SCORE_MAX_DROP_PER_TICK = 5;
+const SCORE_HYSTERESIS_MARGIN = 6;
+
+function clampScore(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.min(100, n));
+}
+
+function stabilizeDisplayScore(tracker = {}, rawScore = 0) {
+  const raw = clampScore(rawScore);
+  const previous = Number(tracker.displayScore);
+  if (!Number.isFinite(previous)) {
+    tracker.displayScore = raw;
+  } else {
+    const delta = raw - previous;
+    const boundedDelta = delta < -SCORE_MAX_DROP_PER_TICK ? -SCORE_MAX_DROP_PER_TICK : delta;
+    const alpha = boundedDelta < 0 ? SCORE_DROP_ALPHA : SCORE_RISE_ALPHA;
+    tracker.displayScore += boundedDelta * alpha;
+  }
+  tracker.rawScore = raw;
+  tracker.displayScore = clampScore(tracker.displayScore);
+  return tracker.displayScore;
+}
+
+function decisionScoreWithHysteresis(tracker = {}, rawScore = 0, thresholds = getThresholds()) {
+  const raw = clampScore(rawScore);
+  const previous = Number(tracker.lastDecisionScore);
+  let effective = raw;
+
+  if (Number.isFinite(previous)) {
+    const possible = Number(thresholds.possibleScore || 0);
+    const confirm = Number(thresholds.confirmScore || 0);
+
+    if (previous >= possible && raw >= possible - SCORE_HYSTERESIS_MARGIN) effective = Math.max(effective, possible);
+    if (previous >= confirm && raw >= confirm - SCORE_HYSTERESIS_MARGIN) effective = Math.max(effective, confirm);
+  }
+
+  tracker.lastDecisionScore = effective;
+  return effective;
+}
+
 function parseTimeframeMs(value = '') {
   const tf = clean(value).toUpperCase().replace(/\s+/g, '');
   if (TIMEFRAMES[tf]) return TIMEFRAMES[tf];
@@ -95,6 +142,9 @@ function trackerFor(key, bucket, at) {
       publishedAt: null,
       lastStrongAt: null,
       publishedScore: 0,
+      rawScore: 0,
+      displayScore: null,
+      lastDecisionScore: null,
       weakHits: 0,
       confirmDirection: null,
       confirmHits: 0,
@@ -308,7 +358,9 @@ function stabilitySnapshot(tracker = {}) {
     possibleDirection: tracker.publishedDirection || null,
     possibleHits: Number(tracker.candidateHits || 0),
     possibleSince: tracker.publishedAt || null,
-    confirmHits: Number(tracker.confirmHits || 0)
+    confirmHits: Number(tracker.confirmHits || 0),
+    rawScore: Number(tracker.rawScore || 0),
+    stableScore: Number(tracker.displayScore || 0)
   };
 }
 
@@ -371,10 +423,12 @@ export function processSnapshot(snapshot = {}, state = {}) {
   const professional = liveResult.analytics?.professional || {};
   const professionalReady = professional.contextReady === true && professional.triggerReady === true;
   const direction = professionalReady ? analysisDirection : null;
-  const score = Number(liveResult.score || 0);
+  const rawScore = Number(liveResult.score || 0);
   const expiration = snapshot.targetExpiration || state.targetExpiration || snapshot.expiration || state.expiration || null;
   const tracker = trackerFor(key, currentBucket, sampleAt);
-  const possibleDirection = observePossible(tracker, direction, score, sampleAt, gateThresholds);
+  const score = stabilizeDisplayScore(tracker, rawScore);
+  const decisionScore = decisionScoreWithHysteresis(tracker, rawScore, gateThresholds);
+  const possibleDirection = observePossible(tracker, direction, decisionScore, sampleAt, gateThresholds);
   const common = {
     timeframe: analysisTimeframe,
     expiration,
@@ -461,7 +515,11 @@ export function processSnapshot(snapshot = {}, state = {}) {
       tracker.confirmHits = 0;
       tracker.lastConfirmAt = null;
     }
-    const canConfirm = !rangeBlocked && observeConfirmation(tracker, liveResult, direction, score, sampleAt, gateThresholds);
+    // Once POSSÍVEL has been published, keep its last confirmed score as the
+    // floor for the final gate. A small live-price dip must not erase a score
+    // threshold that was already reached inside the same candle.
+    const confirmationScore = Math.max(decisionScore, Number(tracker.publishedScore || 0));
+    const canConfirm = !rangeBlocked && observeConfirmation(tracker, liveResult, direction, confirmationScore, sampleAt, gateThresholds);
     if (canConfirm) {
       const latestDecision = {
         bucket: currentBucket,

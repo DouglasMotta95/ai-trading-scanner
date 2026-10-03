@@ -6,11 +6,11 @@ export const read = path => fs.readFileSync(new URL('../' + path, import.meta.ur
 const manifest = () => JSON.parse(read('manifest.json'));
 
 export function registerBuildContracts(label='build') {
-  test(label + ': current extension package is the v0.11.80 control-reader-authority build', () => {
+  test(label + ': current extension package is the v0.11.85 final-score-latch build', () => {
     const m = manifest();
     assert.equal(m.manifest_version, 3);
-    assert.equal(m.version, '0.11.80');
-    assert.equal(m.version_name, '0.11.80-control-reader-authority');
+    assert.equal(m.version, '0.11.85');
+    assert.equal(m.version_name, '0.11.85-final-score-latch');
     assert.equal(m.background?.service_worker, 'src/background-entry.js');
     assert.equal(m.side_panel?.default_path, 'src/sidepanel/index.html');
   });
@@ -233,6 +233,27 @@ export function registerEntryRolloverContracts(label='entry-rollover') {
     assert.match(panel, /function rolloverEntryGrace/);
     assert.match(panel, /rolloverEntryGrace(state)/);
     assert.match(market, /previousBoundaryReusable/);
+  });
+}
+
+export function registerScoreDisplayGateContracts(label='score-display-gate') {
+  test(label + ': visible score is stabilized while decision gate keeps raw score with hysteresis', () => {
+    const legacy = read('src/core/orchestrator-legacy.js');
+    assert.match(legacy, /function stabilizeDisplayScore/);
+    assert.match(legacy, /function decisionScoreWithHysteresis/);
+    assert.match(legacy, /SCORE_HYSTERESIS_MARGIN = 6/);
+    assert.match(legacy, /const score = stabilizeDisplayScore\(tracker, rawScore\)/);
+    assert.match(legacy, /const decisionScore = decisionScoreWithHysteresis\(tracker, rawScore, gateThresholds\)/);
+    assert.match(legacy, /observePossible\(tracker, direction, decisionScore/);
+    assert.match(legacy, /observeConfirmation\(tracker, liveResult, direction, decisionScore/);
+  });
+}
+
+export function registerFinalScoreLatchContracts(label='final-score-latch') {
+  test(label + ': published candidate score is retained through final confirmation', () => {
+    const legacy = read('src/core/orchestrator-legacy.js');
+    assert.match(legacy, /const confirmationScore = Math\.max\(decisionScore, Number\(tracker\.publishedScore \|\| 0\)\)/);
+    assert.match(legacy, /observeConfirmation\(tracker, liveResult, direction, confirmationScore/);
   });
 }
 
