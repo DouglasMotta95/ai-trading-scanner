@@ -6,11 +6,11 @@ export const read = path => fs.readFileSync(new URL('../' + path, import.meta.ur
 const manifest = () => JSON.parse(read('manifest.json'));
 
 export function registerBuildContracts(label='build') {
-  test(label + ': current extension package is the v0.11.80 control-reader-authority build', () => {
+  test(label + ': current extension package is the v0.11.81 score-stabilization build', () => {
     const m = manifest();
     assert.equal(m.manifest_version, 3);
-    assert.equal(m.version, '0.11.80');
-    assert.equal(m.version_name, '0.11.80-control-reader-authority');
+    assert.equal(m.version, '0.11.81');
+    assert.equal(m.version_name, '0.11.81-score-stabilization');
     assert.equal(m.background?.service_worker, 'src/background-entry.js');
     assert.equal(m.side_panel?.default_path, 'src/sidepanel/index.html');
   });
@@ -233,6 +233,18 @@ export function registerEntryRolloverContracts(label='entry-rollover') {
     assert.match(panel, /function rolloverEntryGrace/);
     assert.match(panel, /rolloverEntryGrace(state)/);
     assert.match(market, /previousBoundaryReusable/);
+  });
+}
+
+export function registerScoreStabilityContracts(label='score-stability') {
+  test(label + ': live score is stabilized per candle before possible/final decisions', () => {
+    const legacy = read('src/core/orchestrator-legacy.js');
+    assert.match(legacy, /SCORE_SAMPLE_MAX = 3/);
+    assert.match(legacy, /SCORE_EMA_ALPHA = 0\.55/);
+    assert.match(legacy, /function stabilizeScore/);
+    assert.match(legacy, /const score = stabilizeScore\(tracker, rawScore\)/);
+    assert.match(legacy, /rawScore:/);
+    assert.match(legacy, /stableScore:/);
   });
 }
 
