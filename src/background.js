@@ -986,8 +986,14 @@ function acquisitionGaps(state = {}) {
     && Date.now() - Number(clock.at) < CLOCK_FRESH_MS;
   if (!clockFresh) gaps.push('countdown exato');
   const expirationAt = Number(controls.expirationCheckedAt || controls.observed?.observedAt?.expiration || 0);
-  const expirationFresh = expirationAt > 0 && Date.now() - expirationAt < 7000;
-  if (!expirationFresh || !clean(controls.observed?.expiration)) gaps.push('expiração');
+  const declaredAt = Number(controls.userDeclaredAt || 0);
+  const expirationFresh = expirationAt > 0
+    && Date.now() - expirationAt < 15000
+    && (!declaredAt || expirationAt >= declaredAt);
+  const manualExpiration = normExp(controls.userDeclaredExpiration || '');
+  const requiredExpiration = getOperationMode(state.analystPreferences?.operationMode || 'M1').expiration;
+  const expirationOperational = !!manualExpiration && manualExpiration === requiredExpiration;
+  if ((!expirationFresh || !clean(controls.observed?.expiration)) && !expirationOperational) gaps.push('expiração');
   return gaps;
 }
 

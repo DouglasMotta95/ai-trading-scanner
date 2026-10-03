@@ -123,10 +123,13 @@ function expirationContext(state = {}, observed = {}, expirationSource = '') {
     realExpirationSource = observedSource;
   }
 
-  const realFresh = !!realExpiration && realExpirationAt > 0 && now - realExpirationAt < 15000;
-  // A real CasaTrade observation always supersedes the temporary manual
-  // fallback. Once real expiration exists, the declaration is invalidated
-  // instead of remaining stuck and creating a false divergence/block.
+  const declaredAt = Number(state.platformControls?.userDeclaredAt || 0);
+  // A real expiration observed before the latest operation-mode selection is
+  // stale. Do not let it create a false M1/M5 conflict.
+  const realFresh = !!realExpiration
+    && realExpirationAt > 0
+    && now - realExpirationAt < 15000
+    && (!declaredAt || realExpirationAt >= declaredAt);
   const invalidatedDeclared = realFresh && declared ? declared : null;
   const effectiveDeclared = invalidatedDeclared ? null : declared;
   const actual = realFresh ? realExpiration : effectiveDeclared || null;

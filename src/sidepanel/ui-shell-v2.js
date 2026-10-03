@@ -148,7 +148,7 @@ function exactClockReady(state = {}) {
 
 function operationRequirement(state = {}) {
   const timeframe = clean(state.analystPreferences?.operationMode || 'M1').toUpperCase() === 'M5' ? 'M5' : 'M1';
-  const expiration = clean(state.analystPreferences?.operationExpiration || state.diagnostics?.expirationGuard?.required || (timeframe === 'M5' ? '300s' : '60s'));
+  const expiration = timeframe === 'M5' ? '300s' : '60s';
   return {
     timeframe,
     expiration,
@@ -334,7 +334,10 @@ function renderShell(state = {}) {
   const pendingAsset = clean(session.pendingAsset || session.asset || '');
   const switching = session.transitioning === true && !!pendingAsset;
   const dataConnected = baseHandshake(state);
-  const connected = dataConnected || switching;
+  const recentLiveState = state.connection === 'online'
+    && Number(state.lastSeen || 0) > 0
+    && Date.now() - Number(state.lastSeen) < 12000;
+  const connected = dataConnected || recentLiveState || switching;
   const platformLinked = connected;
   const tradeReady = exactLiveTime(state);
   const failure = connectionFailure(state);
@@ -348,7 +351,11 @@ function renderShell(state = {}) {
   const declaredExpiration = clean(state.platformControls?.userDeclaredExpiration || expirationGuard.userDeclared || rememberedUserExpiration || '');
   const realExpirationAt = Number(state.platformControls?.realExpirationAt || 0);
   const realExpirationSource = clean(state.platformControls?.realExpirationSource || '');
-  const realExpirationFresh = realExpirationAt > 0 && Date.now() - realExpirationAt < 15000 && realExpirationSource !== 'user-declared';
+  const declaredAt = Number(state.platformControls?.userDeclaredAt || 0);
+  const realExpirationFresh = realExpirationAt > 0
+    && Date.now() - realExpirationAt < 15000
+    && (!declaredAt || realExpirationAt >= declaredAt)
+    && realExpirationSource !== 'user-declared';
   const expirationSource = realExpirationFresh ? realExpirationSource : (declaredExpiration ? 'user-declared' : clean(expirationGuard.source || state.platformControls?.expirationSource || ''));
   const expirationDivergence = expirationGuard.divergence === true;
   const expiration = realExpirationFresh ? clean(state.platformControls?.realExpiration || '') : clean(declaredExpiration || expirationGuard.actual || '');
@@ -407,7 +414,7 @@ function renderShell(state = {}) {
           : expirationDivergence
             ? clean(expirationGuard.reason || 'A expiração lida da CasaTrade diverge do valor informado. Entrada bloqueada.')
             : expirationPending
-              ? 'EXPIRAÇÃO REAL PENDENTE — aguardando a CasaTrade confirmar o valor. O campo manual não libera entrada.'
+              ? 'EXPIRAÇÃO EM SINCRONIZAÇÃO — o valor informado coincide com o modo ativo; aguardando uma nova leitura direta da CasaTrade sem bloquear o acompanhamento.'
               : connected && expirationWrong
             ? `Ajuste a expiração da CasaTrade para ${operation.expirationLabel}.`
             : tradeReady
