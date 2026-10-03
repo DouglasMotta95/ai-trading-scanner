@@ -329,7 +329,8 @@ export function registerVideo15292Contracts(label='video-15292') {
 
   test(label + ': direct DOM probe publishes real expiration authority instead of promoting fallback', () => {
     const control = read('src/background-control.js');
-    assert.match(control, /const realExpiration = exp\?\.expiration \|\| null/);
+    assert.match(control, /const previousRealAt = Number\(previousControls\.realExpirationAt \|\| 0\)/);
+    assert.match(control, /const realExpiration = exp\?\.expiration \|\|/);
     assert.match(control, /realExpirationAt: realExpiration \? now/);
     assert.match(control, /realExpirationSource: realExpiration \? 'background-direct-dom'/);
     assert.match(control, /liveAuthority: !!realExpiration/);
