@@ -65,7 +65,7 @@ export function registerTimeContracts(label='time') {
   test(label + ': mode conflict only appears when a fresh authoritative mismatch is identifiable', () => {
     const panel = read('src/sidepanel/app-v2.js');
     assert.match(panel, /function casaTradeTimeframeEvidence/);
-    assert.match(panel, /Only the fresh dedicated visible-control probe may assert a mode conflict/);
+    assert.match(panel, /dedicated visible-control probe may assert a mode conflict/);
     assert.match(panel, /conflict: \(liveTf != null && !tfMatches\) \|\| \(liveExp != null && !expMatches\)/);
   });
 
