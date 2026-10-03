@@ -274,7 +274,8 @@ function entryTimeReady(state = {}) {
   if (!actualExpiration || !expirationTimingCompatible(expiration, operation)) return false;
   const clockTf = casaTradeTimeframeEvidence(state) || normTf(clock.timeframe);
   const stateTf = normTf(state.analysisTimeframe || state.timeframe);
-  const controlTf = normTf(state.platformControls?.observed?.timeframe);
+  const controlEvidence = freshCasaTradeControlEvidence(state);
+  const controlTf = controlEvidence?.timeframe || null;
   if (!clockTf || clockTf !== operation.timeframe) return false;
   if (actualExpiration !== operation.expiration) return false;
   if (stateTf && stateTf !== clockTf) return false;
@@ -334,6 +335,24 @@ function currentOhlc(state = {}) {
   return { ...liveOhlc, approximate: true, source: 'live-price-observed' };
 }
 
+function freshCasaTradeControlEvidence(state = {}) {
+  const observed = state.platformControls?.observed || {};
+  const observedAtTf = Number(observed.observedAt?.timeframe || 0);
+  const observedAtExp = Number(observed.observedAt?.expiration || 0);
+  const now = Date.now();
+  const source = clean(observed.source);
+  const dedicated = source === 'casatrade-expiration-probe-v3';
+  const freshTf = observedAtTf > 0 && now - observedAtTf < 15000 && dedicated && normTf(observed.timeframe);
+  const freshExp = observedAtExp > 0 && now - observedAtExp < 15000 && dedicated && normExp(observed.expiration);
+  if (!freshTf && !freshExp) return null;
+  return {
+    source,
+    timeframe: freshTf ? normTf(observed.timeframe) : null,
+    expiration: freshExp ? normExp(observed.expiration) : null,
+    observedAt: Math.max(observedAtTf, observedAtExp)
+  };
+}
+
 function casaTradeTimeframeEvidence(state = {}) {
   const clock = state.diagnostics?.marketClock || {};
   const focus = state.diagnostics?.focusedAsset || {};
@@ -363,16 +382,17 @@ function casaTradeTimeframeEvidence(state = {}) {
     && closeAt - now <= Math.max(60000, spanMs || 60000) + 1500;
   if (!(fresh || boundary)) return null;
 
-  // The candle's real open/close span is stronger evidence than a stale
-  // timeframe label carried over after switching M1/M5.
-  return tfFromSpan || tfFromLabel || null;
+  // CasaTrade's current countdown reader already publishes the selected
+  // timeframe. When that label is fresh/authoritative, prefer it. The open/close
+  // span is only a fallback because a stale span can survive an M1↔M5 switch.
+  return tfFromLabel || tfFromSpan || null;
 }
 
 function modeAlignment(state = {}) {
   const operation = operationRequirement(state);
-  const liveTf = casaTradeTimeframeEvidence(state);
-  const expiration = expirationObservation(state);
-  const liveExp = expiration.verified === true && expiration.fresh === true ? expiration.value : null;
+  const control = freshCasaTradeControlEvidence(state);
+  const liveTf = control?.timeframe || null;
+  const liveExp = control?.expiration || null;
   const tfMatches = liveTf == null || liveTf === operation.timeframe;
   const expMatches = liveExp == null || liveExp === operation.expiration;
   return {
@@ -384,6 +404,9 @@ function modeAlignment(state = {}) {
     aligned: tfMatches && expMatches,
     // Never claim a conflict when the reader has not supplied enough current
     // evidence to identify which setting actually differs.
+    // Only the fresh dedicated visible-control probe may assert a mode
+    // conflict. Generic clock labels are not enough because they can lag a
+    // just-switched CasaTrade control.
     conflict: (liveTf != null && !tfMatches) || (liveExp != null && !expMatches)
   };
 }
@@ -400,6 +423,8 @@ function entryBlockReason(state = {}) {
 
   const clockTf = normTf(clock.timeframe);
   if (clockTf !== operation.timeframe) return `AJUSTE O TIMEFRAME DA CASATRADE PARA ${operation.timeframe}`;
+  const controlTf = freshCasaTradeControlEvidence(state)?.timeframe || null;
+  if (controlTf && controlTf !== operation.timeframe) return `AJUSTE O TIMEFRAME DA CASATRADE PARA ${operation.timeframe}`;
   return 'ENTRADA AINDA NÃO LIBERADA';
 }
 

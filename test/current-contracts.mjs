@@ -6,11 +6,11 @@ export const read = path => fs.readFileSync(new URL('../' + path, import.meta.ur
 const manifest = () => JSON.parse(read('manifest.json'));
 
 export function registerBuildContracts(label='build') {
-  test(label + ': current extension package is the v0.11.80 control-reader-authority build', () => {
+  test(label + ': current extension package is the v0.11.88 control-evidence-authority build', () => {
     const m = manifest();
     assert.equal(m.manifest_version, 3);
-    assert.equal(m.version, '0.11.80');
-    assert.equal(m.version_name, '0.11.80-control-reader-authority');
+    assert.equal(m.version, '0.11.88');
+    assert.equal(m.version_name, '0.11.88-control-evidence-authority');
     assert.equal(m.background?.service_worker, 'src/background-entry.js');
     assert.equal(m.side_panel?.default_path, 'src/sidepanel/index.html');
   });
@@ -65,7 +65,7 @@ export function registerTimeContracts(label='time') {
   test(label + ': mode conflict only appears when a fresh authoritative mismatch is identifiable', () => {
     const panel = read('src/sidepanel/app-v2.js');
     assert.match(panel, /function casaTradeTimeframeEvidence/);
-    assert.match(panel, /Never claim a conflict when the reader has not supplied enough current/);
+    assert.match(panel, /dedicated visible-control probe may assert a mode conflict/);
     assert.match(panel, /conflict: \(liveTf != null && !tfMatches\) \|\| \(liveExp != null && !expMatches\)/);
   });
 
@@ -233,6 +233,34 @@ export function registerEntryRolloverContracts(label='entry-rollover') {
     assert.match(panel, /function rolloverEntryGrace/);
     assert.match(panel, /rolloverEntryGrace(state)/);
     assert.match(market, /previousBoundaryReusable/);
+  });
+}
+
+export function registerModeAndScoreLatchContracts(label='mode-and-score-latch') {
+  test(label + ': fresh CasaTrade timeframe label has priority over stale candle span', () => {
+    const panel = read('src/sidepanel/app-v2.js');
+    assert.match(panel, /return tfFromLabel \|\| tfFromSpan \|\| null/);
+  });
+
+  test(label + ': published candidate score never gets overwritten by a weaker live tick', () => {
+    const legacy = read('src/core/orchestrator-legacy.js');
+    assert.match(legacy, /tracker\.publishedScore = Math\.max\(Number\(tracker\.publishedScore \|\| 0\), Number\(score\)\)/);
+  });
+
+  test(label + ': visible score is smoothed without changing underlying decision score', () => {
+    const guidance = read('src/sidepanel/signal-guidance-ui.js');
+    assert.match(guidance, /function stabilizedVisibleScore/);
+    assert.match(guidance, /underlying decision score/);
+  });
+}
+
+export function registerControlEvidenceAuthorityContracts(label='control-evidence-authority') {
+  test(label + ': mode conflict only trusts fresh dedicated visible CasaTrade controls', () => {
+    const panel = read('src/sidepanel/app-v2.js');
+    assert.match(panel, /function freshCasaTradeControlEvidence/);
+    assert.match(panel, /source === 'casatrade-expiration-probe-v3'/);
+    assert.match(panel, /const liveTf = control\?\.timeframe \|\| null/);
+    assert.match(panel, /const liveExp = control\?\.expiration \|\| null/);
   });
 }
 
