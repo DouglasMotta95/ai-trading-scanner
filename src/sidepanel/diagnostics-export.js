@@ -165,6 +165,40 @@
         source: clean(clock.source || ''), secondsRemaining: num(clock.secondsRemaining), timeframe: clean(clock.timeframe || ''),
         ageMs: clockAgeMs
       },
+      modeAlignment: modeAlignmentDiagnostic(state),
+      clockModeEvidence: {
+        clockSource: clean(clock.source || '', 80),
+        clockVerified: clock.verified === true,
+        clockAsset: clean(clock.asset || '', 120),
+        openAt: num(clock.openAt) ?? num(clock.candleOpenAt),
+        candleOpenAt: num(clock.candleOpenAt),
+        closeAt: num(clock.closeAt) ?? num(clock.candleCloseAt),
+        candleCloseAt: num(clock.candleCloseAt),
+        spanMs: (() => {
+          const openAt = num(clock.openAt) ?? num(clock.candleOpenAt);
+          const closeAt = num(clock.closeAt) ?? num(clock.candleCloseAt);
+          return openAt != null && closeAt != null ? closeAt - openAt : 0;
+        })(),
+        clockBoundToFocus: (() => {
+          const sameFrame = Number(clock.frameId) === Number(focus.frameId)
+            && clean(clock.frameHost).toLowerCase() === clean(focus.frameHost).toLowerCase();
+          const boundControlFrame = clock.crossFrameControl === true
+            && Number(clock.boundFocusFrameId) === Number(focus.frameId)
+            && clean(clock.boundFocusFrameHost).toLowerCase() === clean(focus.frameHost).toLowerCase();
+          return sameFrame || boundControlFrame;
+        })(),
+        sameMarketClockAssetStateAsset: (() => {
+          const marketId0 = value => {
+            const raw = clean(value, 120).toUpperCase();
+            if (!raw) return '';
+            const otc = /(?:\\(|\\b|[_-])OTC(?:\\)|\\b)?/i.test(raw);
+            const pair = raw.match(/\\b([A-Z0-9]{2,20})\\s*[\\/_-]\\s*([A-Z0-9]{2,12})/i);
+            return pair ? `${pair[1]}/${pair[2]}${otc ? ' (OTC)' : ''}` : raw.replace(/\\s+/g, ' ');
+          };
+          const left = marketId0(clock.asset), right = marketId0(state.asset);
+          return !!left && left === right;
+        })()
+      },
       session: {
         epoch: num(session.epoch), asset: clean(session.asset || ''), timeframe: clean(session.timeframe || ''),
         dataMode: clean(session.dataMode || ''), frameId: num(session.frameId)
