@@ -72,16 +72,54 @@ function marketIdentityReady(state = {}) {
 }
 function expirationObservation(state = {}) {
   const controls = state.platformControls || {};
+  const focus = state.diagnostics?.focusedAsset || {};
   const observedAt = Number(controls.expirationCheckedAt || controls.observed?.observedAt?.expiration || 0);
   const realAt = Number(controls.realExpirationAt || 0);
   const realValue = normExp(controls.realExpiration || '');
   const realSource = clean(controls.realExpirationSource || controls.expirationSource || '');
   const declaredAt = Number(controls.userDeclaredAt || 0);
+  const now = Date.now();
+
+  // Platform-control observations are emitted from several CasaTrade frames.
+  // Only the focused frame (or the top shell while the focused market lives in
+  // an embedded trader frame) is allowed to override a stale global value.
+  const controlsFrame = Number(controls.frameId);
+  const focusFrame = Number(focus.frameId);
+  const frameBound = !Number.isFinite(controlsFrame)
+    || !Number.isFinite(focusFrame)
+    || controlsFrame < 0
+    || focusFrame < 0
+    || controlsFrame === focusFrame
+    || (controlsFrame === 0 && focus.embeddedTrader === true);
+
+  const dedicated = clean(controls.observed?.source || '');
+  const observedControlAt = Number(controls.observed?.observedAt?.expiration || 0);
+  const observedControlExp = normExp(controls.observed?.expiration || '');
+  const dedicatedFresh = frameBound
+    && dedicated === 'casatrade-expiration-probe-v3'
+    && !!observedControlExp
+    && observedControlAt > 0
+    && now - observedControlAt < 15000;
+
+  // Prefer a fresh, focused visible-control reading over a stale value that
+  // another frame may have published earlier. This is still real CasaTrade
+  // evidence; it is not the user's manual declaration.
+  if (dedicatedFresh) {
+    return {
+      value: observedControlExp,
+      fresh: true,
+      verified: true,
+      source: dedicated,
+      at: observedControlAt,
+      ageMs: Math.max(0, now - observedControlAt)
+    };
+  }
+
   // An observation captured before the latest mode selection belongs to the
   // previous operation and must not trigger a false UI conflict.
   const realFresh = !!realValue
     && realAt > 0
-    && Date.now() - realAt < 15000
+    && now - realAt < 15000
     && (!declaredAt || realAt >= declaredAt)
     && realSource !== 'user-declared';
   const at = realFresh ? realAt : observedAt;
@@ -91,7 +129,7 @@ function expirationObservation(state = {}) {
   const manualFresh = !!manualValue;
   const value = realFresh ? realValue : manualValue;
   const source = realFresh ? (realSource || 'casatrade-observed') : manualValue ? 'user-declared' : '';
-  return { value, fresh: realFresh || manualFresh, verified: realFresh, source, at, ageMs: at > 0 ? Date.now() - at : Infinity };
+  return { value, fresh: realFresh || manualFresh, verified: realFresh, source, at, ageMs: at > 0 ? now - at : Infinity };
 }
 function expirationTimingCompatible(expiration, operation) {
   return !!expiration?.value
@@ -389,13 +427,17 @@ function modeAlignment(state = {}) {
   const operation = operationRequirement(state);
   const runtimeTf = casaTradeTimeframeEvidence(state);
   const visual = freshCasaTradeControlEvidence(state);
-  const liveTf = runtimeTf || null;
-  // Visual controls remain telemetry. They never block a live decision when
-  // the exact CasaTrade countdown already establishes the current timeframe.
   const visualTf = visual?.timeframe || null;
   const visualExp = visual?.expiration || null;
   const expiration = expirationObservation(state);
-  const liveExp = expiration.verified === true && expiration.fresh === true ? expiration.value : null;
+
+  // A fresh visible-control reading is the strongest evidence for the user's
+  // actual CasaTrade selection. Runtime candle evidence is used when the
+  // control reader is unavailable. This prevents a stale hidden frame/clock
+  // from producing a false M1/M5 or 1m/5m conflict.
+  const liveTf = visualTf || runtimeTf || null;
+  const liveExp = visualExp || (expiration.verified === true && expiration.fresh === true ? expiration.value : null);
+
   const tfMatches = liveTf == null || liveTf === operation.timeframe;
   const expMatches = liveExp == null || liveExp === operation.expiration;
   return {
@@ -404,12 +446,10 @@ function modeAlignment(state = {}) {
     liveExp,
     visualTf,
     visualExp,
+    runtimeTf: runtimeTf || null,
     tfMatches,
     expMatches,
     aligned: tfMatches && expMatches,
-    // A mode conflict is a hard state only when the exact CasaTrade runtime
-    // clock proves a mismatch. A delayed/ambiguous visual-control reader is
-    // informational and must not trap the scanner in an "evidence" wait.
     conflict: (liveTf != null && !tfMatches) || (liveExp != null && !expMatches)
   };
 }
@@ -638,7 +678,17 @@ function projectedRemaining(state = {}) {
   // into the next candle; stay at zero until the next candle is observed.
   const closeAt = num(clock.closeAt) ?? num(clock.candleCloseAt);
   if (closeAt != null) {
-    const remaining = (closeAt - Date.now()) / 1000;
+    const now = Date.now();
+    let nextCloseAt = closeAt;
+    // At the exact rollover instant the previous candle has already closed.
+    // Continue the display into the new candle instead of freezing at 0s.
+    if (duration && now >= closeAt) {
+      const durationMs = duration * 1000;
+      const elapsed = now - closeAt;
+      const completedCycles = Math.floor(elapsed / durationMs);
+      nextCloseAt = closeAt + (completedCycles + 1) * durationMs;
+    }
+    const remaining = (nextCloseAt - now) / 1000;
     return Math.max(0, Math.min(duration || Number.MAX_SAFE_INTEGER, remaining));
   }
 
