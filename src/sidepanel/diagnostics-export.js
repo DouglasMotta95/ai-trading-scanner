@@ -215,7 +215,7 @@
       expMatches,
       aligned: tfMatches && expMatches,
       conflict: (liveTf != null && !tfMatches) || (liveExp != null && !expMatches),
-      clockModeEvidence: {
+      casaTradeTimeframeEvidenceInputs: {
         clockSource: source,
         clockVerified: clock0.verified === true,
         clockAsset: clean(clock0.asset || '', 120),
@@ -305,7 +305,7 @@
             && clean(clock.boundFocusFrameHost).toLowerCase() === clean(focus.frameHost).toLowerCase();
           return sameFrame || boundControlFrame;
         })(),
-        sameMarketClockAssetStateAsset: (() => {
+        sameMarket: (() => {
           const marketId0 = value => {
             const raw = clean(value, 120).toUpperCase();
             if (!raw) return '';
