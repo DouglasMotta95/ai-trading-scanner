@@ -112,6 +112,124 @@
     return out;
   }
 
+  function modeAlignmentDiagnostic(state = {}) {
+    const operationTimeframe = String(state.analystPreferences?.operationMode || 'M1').toUpperCase() === 'M5' ? 'M5' : 'M1';
+    const operation = {
+      timeframe: operationTimeframe,
+      expiration: operationTimeframe === 'M5' ? '300s' : '60s',
+      durationSeconds: operationTimeframe === 'M5' ? 300 : 60
+    };
+    const normTf0 = value => {
+      const raw = clean(value, 24).toUpperCase().replace(/\s+/g, '');
+      let m = raw.match(/^([SMH])(\d{1,5})$/);
+      if (m && Number(m[2]) > 0) return \`\${m[1]}\${Number(m[2])}\`;
+      m = raw.match(/^(\d{1,4})(?:M|MIN)$/);
+      return m && Number(m[1]) > 0 ? \`M\${Number(m[1])}\` : null;
+    };
+    const normExp0 = value => {
+      const raw = clean(value, 32).toLowerCase().replace(/\s+/g, '');
+      let m = raw.match(/^(\d{1,5})(?:s|seg|segundo|segundos)$/);
+      if (m) return \`\${Number(m[1])}s\`;
+      m = raw.match(/^(\d{1,4})(?:m|min|minuto|minutos)$/);
+      if (m) return \`\${Number(m[1]) * 60}s\`;
+      m = raw.match(/^(\d{1,3}):(\d{2})$/);
+      return m ? \`\${Number(m[1]) * 60 + Number(m[2])}s\` : null;
+    };
+    const marketId0 = value => {
+      const raw = clean(value, 120).toUpperCase();
+      if (!raw) return '';
+      const otc = /(?:\(|\b|[_-])OTC(?:\)|\b)?/i.test(raw);
+      const pair = raw.match(/\b([A-Z0-9]{2,20})\s*[\/_-]\s*([A-Z0-9]{2,12})/i);
+      return pair ? \`\${pair[1]}/\${pair[2]}\${otc ? ' (OTC)' : ''}\` : raw.replace(/\s+/g, ' ');
+    };
+    const sameMarket0 = (a, b) => !!marketId0(a) && marketId0(a) === marketId0(b);
+    const boundToFocus0 = (clock0, focus0) => {
+      const sameFrame = Number(clock0.frameId) === Number(focus0.frameId)
+        && clean(clock0.frameHost, 120).toLowerCase() === clean(focus0.frameHost, 120).toLowerCase();
+      const boundControlFrame = clock0.crossFrameControl === true
+        && Number(clock0.boundFocusFrameId) === Number(focus0.frameId)
+        && clean(clock0.boundFocusFrameHost, 120).toLowerCase() === clean(focus0.frameHost, 120).toLowerCase();
+      return sameFrame || boundControlFrame;
+    };
+    const clock0 = state.diagnostics?.marketClock || {};
+    const focus0 = state.diagnostics?.focusedAsset || {};
+    const sameMarketClockAssetStateAsset = sameMarket0(clock0.asset, state.asset);
+    const clockBoundToFocus = boundToFocus0(clock0, focus0);
+    const openAt = num(clock0.openAt) ?? num(clock0.candleOpenAt);
+    const closeAt = num(clock0.closeAt) ?? num(clock0.candleCloseAt);
+    const spanMs = openAt != null && closeAt != null ? closeAt - openAt : 0;
+    const source = clean(clock0.source, 80);
+    const authoritative = clock0.verified === true
+      && ['trader-dom-countdown', 'network-server-cycle'].includes(source)
+      && sameMarketClockAssetStateAsset
+      && clockBoundToFocus;
+    let liveTf = null;
+    if (authoritative) {
+      const now = Date.now();
+      const at = Number(clock0.at || 0);
+      const fresh = at > 0 && now - at < 4500;
+      const tfFromSpan = spanMs >= 45000 && spanMs <= 75000 ? 'M1'
+        : spanMs >= 255000 && spanMs <= 345000 ? 'M5' : null;
+      const tfFromLabel = normTf0(clock0.timeframe);
+      const boundary = closeAt != null && openAt != null
+        && now >= openAt - 2000
+        && now <= closeAt + 1500
+        && closeAt - now <= Math.max(60000, spanMs || 60000) + 1500;
+      if (fresh || boundary) liveTf = tfFromLabel || tfFromSpan || null;
+    }
+    const controls = state.platformControls || {};
+    const observedAt = Number(controls.expirationCheckedAt || controls.observed?.observedAt?.expiration || 0);
+    const realAt = Number(controls.realExpirationAt || 0);
+    const realValue = normExp0(controls.realExpiration || '');
+    const realSource = clean(controls.realExpirationSource || controls.expirationSource || '', 80);
+    const declaredAt = Number(controls.userDeclaredAt || 0);
+    const realFresh = !!realValue && realAt > 0 && Date.now() - realAt < 15000
+      && (!declaredAt || realAt >= declaredAt) && realSource !== 'user-declared';
+    const expAt = realFresh ? realAt : observedAt;
+    const manualValue = normExp0(controls.userDeclaredExpiration || '')
+      || normExp0(controls.observed?.expiration || '') || null;
+    const expValue = realFresh ? realValue : manualValue;
+    const expVerified = realFresh;
+    const expFresh = realFresh || !!manualValue;
+    const liveExp = expVerified === true && expFresh === true ? expValue : null;
+    const visualObserved = state.platformControls?.observed || {};
+    const visualTfFresh = Number(visualObserved.observedAt?.timeframe || 0) > 0
+      && Date.now() - Number(visualObserved.observedAt.timeframe) < 15000
+      && visualObserved.source === 'casatrade-expiration-probe-v3'
+      && normTf0(visualObserved.timeframe);
+    const visualExpFresh = Number(visualObserved.observedAt?.expiration || 0) > 0
+      && Date.now() - Number(visualObserved.observedAt.expiration) < 15000
+      && visualObserved.source === 'casatrade-expiration-probe-v3'
+      && normExp0(visualObserved.expiration);
+    const visualTf = visualTfFresh ? normTf0(visualObserved.timeframe) : null;
+    const visualExp = visualExpFresh ? normExp0(visualObserved.expiration) : null;
+    const tfMatches = liveTf == null || liveTf === operation.timeframe;
+    const expMatches = liveExp == null || liveExp === operation.expiration;
+    return {
+      operation,
+      liveTf,
+      liveExp,
+      visualTf,
+      visualExp,
+      tfMatches,
+      expMatches,
+      aligned: tfMatches && expMatches,
+      conflict: (liveTf != null && !tfMatches) || (liveExp != null && !expMatches),
+      clockModeEvidence: {
+        clockSource: source,
+        clockVerified: clock0.verified === true,
+        clockAsset: clean(clock0.asset || '', 120),
+        openAt,
+        candleOpenAt: num(clock0.candleOpenAt),
+        closeAt,
+        candleCloseAt: num(clock0.candleCloseAt),
+        spanMs,
+        clockBoundToFocus,
+        sameMarketClockAssetStateAsset
+      }
+    };
+  }
+
   function sanitizeState(state = {}, manual = null) {
     const focus = state.diagnostics?.focusedAsset || {};
     const clock = state.diagnostics?.marketClock || {};
