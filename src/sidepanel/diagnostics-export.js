@@ -122,25 +122,25 @@
     const normTf0 = value => {
       const raw = clean(value, 24).toUpperCase().replace(/\s+/g, '');
       let m = raw.match(/^([SMH])(\d{1,5})$/);
-      if (m && Number(m[2]) > 0) return \`\${m[1]}\${Number(m[2])}\`;
+      if (m && Number(m[2]) > 0) return `${m[1]}${Number(m[2])}`;
       m = raw.match(/^(\d{1,4})(?:M|MIN)$/);
-      return m && Number(m[1]) > 0 ? \`M\${Number(m[1])}\` : null;
+      return m && Number(m[1]) > 0 ? `M${Number(m[1])}` : null;
     };
     const normExp0 = value => {
       const raw = clean(value, 32).toLowerCase().replace(/\s+/g, '');
       let m = raw.match(/^(\d{1,5})(?:s|seg|segundo|segundos)$/);
-      if (m) return \`\${Number(m[1])}s\`;
+      if (m) return `${Number(m[1])}s`;
       m = raw.match(/^(\d{1,4})(?:m|min|minuto|minutos)$/);
-      if (m) return \`\${Number(m[1]) * 60}s\`;
+      if (m) return `${Number(m[1]) * 60}s`;
       m = raw.match(/^(\d{1,3}):(\d{2})$/);
-      return m ? \`\${Number(m[1]) * 60 + Number(m[2])}s\` : null;
+      return m ? `${Number(m[1]) * 60 + Number(m[2])}s` : null;
     };
     const marketId0 = value => {
       const raw = clean(value, 120).toUpperCase();
       if (!raw) return '';
       const otc = /(?:\(|\b|[_-])OTC(?:\)|\b)?/i.test(raw);
       const pair = raw.match(/\b([A-Z0-9]{2,20})\s*[\/_-]\s*([A-Z0-9]{2,12})/i);
-      return pair ? \`\${pair[1]}/\${pair[2]}\${otc ? ' (OTC)' : ''}\` : raw.replace(/\s+/g, ' ');
+      return pair ? `${pair[1]}/${pair[2]}${otc ? ' (OTC)' : ''}` : raw.replace(/\s+/g, ' ');
     };
     const sameMarket0 = (a, b) => !!marketId0(a) && marketId0(a) === marketId0(b);
     const boundToFocus0 = (clock0, focus0) => {
