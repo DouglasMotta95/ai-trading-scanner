@@ -228,12 +228,19 @@
 
   function liveCycleTf(state = {}, controlsFresh = false) {
     const controls = state.platformControls?.observed || {};
-    const controlTf = controlsFresh ? tf(controls.timeframe) : null;
     const chartTf = selectedChartTf();
     const exactTf = tf(freshExactClock(state, state.diagnostics?.focusedAsset || null, null)?.timeframe);
+    const controlTf = controlsFresh ? tf(controls.timeframe) : null;
     const platformDiag = state.diagnostics?.platformTime || {};
     const platformTf = Number(platformDiag.at || 0) > 0 && Date.now() - Number(platformDiag.at) < 7000 ? tf(platformDiag.timeframe) : null;
-    return controlTf || chartTf || exactTf || platformTf || null;
+
+    // The selected timeframe of the active CasaTrade chart must win over
+    // global platform-control observations. Those observations are emitted by
+    // multiple CasaTrade frames and can legitimately describe a hidden
+    // M5/M1 control without describing the focused chart. Using them first
+    // was creating a false exact clock such as M5 while the visible chart
+    // remained M1.
+    return chartTf || exactTf || controlTf || platformTf || null;
   }
 
   function structuredFeedTf(state = {}, focus = null) {
