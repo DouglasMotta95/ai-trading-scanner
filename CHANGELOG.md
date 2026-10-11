@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.11.95 — Video 20737: recognize USD/XOF OTC focus
+
+### Problema observado
+- In the new screenshot the selected CasaTrade instrument is `USD/XOF (OTC)`, while the scanner showed `DESCONECTADO`, no asset, and a connection timeout.
+- The focused-asset parser restricted quote currencies to a short allowlist that did not include `XOF`; the selected instrument was therefore rejected. Older visible tabs such as `EUR/USD (OTC)` could be misidentified if stale focus evidence survived.
+
+### Correção
+- Added `XOF` and `XAF` plus common exotic OTC quote currencies to the parser's allowlist.
+- Added a regression test that executes the actual parser block and confirms `USD/XOF (OTC)` and `USD/XAF (OTC)` are recognized.
+- Kept the existing ambiguous-market safety gate; the scanner still cannot authorize a trade based on an uncertain chart or stale market.
+
+---
+
 ## 0.11.94 — Video 20732/20734: hide false mode-conflict banner
 
 ### Problema observado
