@@ -423,6 +423,8 @@ function casaTradeTimeframeEvidence(state = {}) {
   return tfFromLabel || tfFromSpan || null;
 }
 
+// Visual controls remain telemetry for the selected-mode comparison; exact, fresh
+// CasaTrade clock evidence and the technical gates separately authorize timing/entry.
 function modeAlignment(state = {}) {
   const operation = operationRequirement(state);
   const runtimeTf = casaTradeTimeframeEvidence(state);
