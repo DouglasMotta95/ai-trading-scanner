@@ -32,6 +32,54 @@ test('shows only a high-confidence POSSIBLE inside the 30 second preparation win
   assert.match(r.reason, /ALTA CONFIANÇA/i);
 });
 
+test('pre-signal survives one weak technical tick without becoming a confirmed entry', () => {
+  resetFastLiveDecision();
+  const strong = base({ score: 64, analysisScore: 64, secondsRemaining: 20 });
+  const first = fastLiveDecision(strong, { asset: 'AUD/CAD (OTC)', timeframe: 'M1', serverTime: 100000 });
+  assert.equal(first.uiState, 'POSSIBLE_SELL');
+  assert.equal(first.state, 'WATCH');
+
+  const weaker = {
+    ...strong,
+    secondsRemaining: 19,
+    analytics: { ...strong.analytics, sellPower: 54 }
+  };
+  const second = fastLiveDecision(weaker, { asset: 'AUD/CAD (OTC)', timeframe: 'M1', serverTime: 101000 });
+  assert.equal(second.uiState, 'POSSIBLE_SELL');
+  assert.equal(second.state, 'WATCH');
+  assert.equal(second.stabilityHold, true);
+  assert.match(second.reason, /PRÉ-SINAL MANTIDO POR ESTABILIDADE/i);
+});
+
+test('pre-signal hysteresis expires and never carries a candidate into a different direction', () => {
+  resetFastLiveDecision();
+  const strong = base({ score: 64, analysisScore: 64, secondsRemaining: 20 });
+  const first = fastLiveDecision(strong, { asset: 'AUD/CAD (OTC)', timeframe: 'M1', serverTime: 200000 });
+  assert.equal(first.uiState, 'POSSIBLE_SELL');
+
+  const weaker = {
+    ...strong,
+    secondsRemaining: 18,
+    analytics: { ...strong.analytics, sellPower: 54 }
+  };
+  const expired = fastLiveDecision(weaker, { asset: 'AUD/CAD (OTC)', timeframe: 'M1', serverTime: 205000 });
+  assert.equal(expired.uiState, 'WAIT');
+  assert.notEqual(expired.state, 'CONFIRM');
+
+  resetFastLiveDecision();
+  const initial = fastLiveDecision(strong, { asset: 'AUD/CAD (OTC)', timeframe: 'M1', serverTime: 300000 });
+  assert.equal(initial.uiState, 'POSSIBLE_SELL');
+  const opposite = {
+    ...strong,
+    analysisDirection: 'BUY',
+    secondsRemaining: 19,
+    analytics: { ...strong.analytics, buyPower: 62, sellPower: 38, momentumDirection: 'BUY', continuationDirection: 'BUY' }
+  };
+  const changed = fastLiveDecision(opposite, { asset: 'AUD/CAD (OTC)', timeframe: 'M1', serverTime: 301000 });
+  assert.notEqual(changed.stabilityHold, true);
+  assert.notEqual(changed.uiState, 'POSSIBLE_SELL');
+});
+
 test('confirms ENTER on two high-confidence observations inside final window', () => {
   resetFastLiveDecision();
   const signal = base({ score: 74, analysisScore: 74, secondsRemaining: 4 });
