@@ -30,13 +30,19 @@ test('mode-conflict evidence does not rely on the merged global source label', (
   assert.match(helper, /if \(!tf && !exp\) return null/);
 });
 
+test('hidden mode-conflict banner is actually removed from layout when aligned', () => {
+  const html = read('src/sidepanel/index.html');
+  assert.match(html, /\.mode-conflict-banner\[hidden\]\s*\{\s*display:\s*none\s*;?\s*\}/);
+  assert.match(html, /id="modeConflictBanner"[^>]*hidden/);
+});
+
 test('video 20730 fix increments package version and leaves execution gates present', () => {
   const manifest = JSON.parse(read('manifest.json'));
   const pkg = JSON.parse(read('package.json'));
   const panel = read('src/sidepanel/app-v2.js');
-  assert.equal(manifest.version, '0.11.93');
+  assert.equal(manifest.version, '0.11.94');
   assert.equal(pkg.version, manifest.version);
-  assert.equal(manifest.version_name, '0.11.93-video-20730-mode-evidence');
+  assert.equal(manifest.version_name, '0.11.94-video-20732-20734-hidden-banner');
   assert.match(panel, /if \(!exactClockReady\(state\)\) return false/);
   assert.match(panel, /const canBuy = !alignment\.conflict && model\.actionable/);
 });
