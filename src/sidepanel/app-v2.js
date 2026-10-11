@@ -371,20 +371,40 @@ function currentOhlc(state = {}) {
 }
 
 function freshCasaTradeControlEvidence(state = {}) {
-  const observed = state.platformControls?.observed || {};
-  const observedAtTf = Number(observed.observedAt?.timeframe || 0);
-  const observedAtExp = Number(observed.observedAt?.expiration || 0);
+  const controls = state.platformControls || {};
+  const observed = controls.observed || {};
+  const focus = state.diagnostics?.focusedAsset || {};
+  const focusFrame = Number(focus.frameId);
   const now = Date.now();
-  const source = clean(observed.source);
-  const dedicated = source === 'casatrade-expiration-probe-v3';
-  const freshTf = observedAtTf > 0 && now - observedAtTf < 15000 && dedicated && normTf(observed.timeframe);
-  const freshExp = observedAtExp > 0 && now - observedAtExp < 15000 && dedicated && normExp(observed.expiration);
-  if (!freshTf && !freshExp) return null;
+
+  // Each control can be merged from a different CasaTrade frame. Never let a
+  // recent probe from a hidden chart/tab declare a conflict for the focused chart.
+  const fieldEvidence = field => {
+    const at = Number(observed.observedAt?.[field] || 0);
+    const frameId = Number(observed.frameIds?.[field]);
+    const source = clean(observed.sourceByField?.[field] || '');
+    const value = field === 'timeframe' ? normTf(observed.timeframe) : normExp(observed.expiration);
+    const frameBound = Number.isFinite(frameId)
+      && frameId >= 0
+      && Number.isFinite(focusFrame)
+      && focusFrame >= 0
+      && (frameId === focusFrame || (frameId === 0 && focus.embeddedTrader === true));
+    const fresh = at > 0 && now - at >= 0 && now - at < 15000;
+    return source === 'casatrade-expiration-probe-v3' && frameBound && fresh && value
+      ? { value, source, frameId, observedAt: at }
+      : null;
+  };
+
+  const tf = fieldEvidence('timeframe');
+  const exp = fieldEvidence('expiration');
+  if (!tf && !exp) return null;
   return {
-    source,
-    timeframe: freshTf ? normTf(observed.timeframe) : null,
-    expiration: freshExp ? normExp(observed.expiration) : null,
-    observedAt: Math.max(observedAtTf, observedAtExp)
+    source: 'casatrade-expiration-probe-v3',
+    timeframe: tf?.value || null,
+    expiration: exp?.value || null,
+    timeframeFrameId: tf?.frameId ?? null,
+    expirationFrameId: exp?.frameId ?? null,
+    observedAt: Math.max(tf?.observedAt || 0, exp?.observedAt || 0)
   };
 }
 
