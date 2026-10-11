@@ -59,7 +59,7 @@ test('pre-signal hysteresis expires and never carries a candidate into a differe
 
   const weaker = {
     ...strong,
-    secondsRemaining: 18,
+    secondsRemaining: 15,
     analytics: { ...strong.analytics, sellPower: 54 }
   };
   const expired = fastLiveDecision(weaker, { asset: 'AUD/CAD (OTC)', timeframe: 'M1', serverTime: 205000 });
