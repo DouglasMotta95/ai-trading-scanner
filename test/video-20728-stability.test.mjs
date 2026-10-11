@@ -29,7 +29,7 @@ test('pre-signal stability remains display-only and bounded', () => {
 test('manifest and package versions identify the stability patch consistently', () => {
   const manifest = JSON.parse(read('manifest.json'));
   const pkg = JSON.parse(read('package.json'));
-  assert.equal(manifest.version, '0.11.94');
+  assert.equal(manifest.version, '0.11.95');
   assert.equal(pkg.version, manifest.version);
-  assert.equal(manifest.version_name, '0.11.94-video-20732-20734-hidden-banner');
+  assert.equal(manifest.version_name, '0.11.95-video-20737-xof-focus-recovery');
 });
