@@ -1019,7 +1019,10 @@ function exactTradeReady(state = {}) {
   const focus = state.diagnostics?.focusedAsset || {};
   const professional = state.professionalDecision || {};
   const expirationAt = Number(state.platformControls?.expirationCheckedAt || state.platformControls?.observed?.observedAt?.expiration || 0);
-  const controlsFresh = expirationAt > 0 && Date.now() - expirationAt < 7000;
+  // Expiration is configuration evidence, not a heartbeat. A valid observed value
+  // remains usable until superseded/cleared; clock and focused-market freshness are
+  // checked separately below.
+  const controlsFresh = expirationAt > 0;
   const actualExpiration = controlsFresh ? clean(state.platformControls?.observed?.expiration || '') : '';
   if (professional.timeReady !== true || professional.expirationReady !== true || professional.actionable !== true) return false;
   if (clock.verified !== true || clock.available === false || clock.role !== 'candle-close' || !EXACT_CLOCK_SOURCES.has(clean(clock.source))) return false;
