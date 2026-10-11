@@ -68,7 +68,9 @@ function mergeObserved(previous = {}, incoming = {}, previousExpirationSource = 
     timeframe: previous.timeframe ?? null,
     source: incoming.source || previous.source || 'casatrade-ui-v2',
     observedAt: { ...(previous.observedAt || {}) },
-    confidence: { ...oldConfidence }
+    confidence: { ...oldConfidence },
+    sourceByField: { ...(previous.sourceByField || {}) },
+    frameIds: { ...(previous.frameIds || {}) }
   };
   for (const field of ['amount', 'expiration', 'timeframe']) {
     const value = incoming[field];
@@ -94,6 +96,8 @@ function mergeObserved(previous = {}, incoming = {}, previousExpirationSource = 
       next[field] = value;
       next.confidence[field] = score;
       next.observedAt[field] = incomingAt || Date.now();
+      next.sourceByField[field] = incomingSource;
+      next.frameIds[field] = Number.isFinite(Number(incoming.frameId)) ? Number(incoming.frameId) : null;
     }
   }
   return next;
@@ -388,7 +392,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type !== 'ATS_PLATFORM_CONTROLS_OBSERVED') return false;
   if (!trusted(sender)) { sendResponse({ ok: false, error: 'untrusted_sender' }); return false; }
   const tabId = Number(sender.tab?.id || 0);
-  const incoming = safeObserved(message.snapshot || {});
+  const incoming = {
+    ...safeObserved(message.snapshot || {}),
+    // Values from different CasaTrade frames are merged independently. Keep the
+    // sender frame on every field so the panel can reject hidden/stale-frame modes.
+    frameId: Number(sender.frameId || 0)
+  };
 
   updateScannerState(state => {
     if (Number(state.targetTabId || 0) && Number(state.targetTabId) !== tabId) return state;
