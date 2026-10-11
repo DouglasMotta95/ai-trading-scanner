@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.11.94 — Video 20732/20734: hide false mode-conflict banner
+
+### Problema observado
+- The screenshots showed a generic static `CONFLITO DE MODO` banner even while the main state was `AGUARDAR`; this did not show a concrete M1/M5 or 1m/5m mismatch.
+
+### Causa raiz
+- The inline stylesheet forced `.mode-conflict-banner` to `display:grid`, which overrode the browser's default hiding behavior for the HTML `hidden` attribute. The stale generic banner therefore remained visible even when the code set `hidden = true`.
+
+### Correção
+- Added an explicit `.mode-conflict-banner[hidden] { display: none; }` rule so the banner only appears when the current alignment check detects a real mismatch.
+- Added a regression test for the CSS/HTML contract and aligned package and extension versions to 0.11.94.
+- This change only fixes the misleading banner; it does not force a buy/sell signal or bypass the scanner's timing and technical-entry checks.
+
+---
+
 ## 0.11.93 — Video 20730 focused-frame mode evidence
 
 ### Problema observado
