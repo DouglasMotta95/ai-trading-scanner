@@ -328,7 +328,7 @@ export function registerVideo15290Contracts(label='video-15290') {
     const controls = read('src/background-platform-controls.js');
     const panel = read('src/sidepanel/app-v2.js');
     assert.match(controls, /now - realExpirationAt < 15000/);
-    assert.match(panel, /Date\.now\(\) - realAt < 15000/);
+    assert.match(panel, /now - realAt < 15000/);
   });
   test(label + ': exact countdown UI rolls over from an immutable candle boundary', () => {
     const panel = read('src/sidepanel/app-v2.js');
