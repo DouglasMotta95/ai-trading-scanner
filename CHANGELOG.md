@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.11.93 — Video 20730 focused-frame mode evidence
+
+### Problema observado
+- The panel displayed a generic `CONFLITO DE MODO` while the visible runtime status showed M1, a real countdown, and a matching operational 1-minute expiration. A radar recommendation for M5 is advisory and must not change the selected M1 operation.
+
+### Correção
+- Preserve source and frame provenance separately for each observed CasaTrade control (timeframe and expiration).
+- Use a visible-control value for conflict detection only when it came from the dedicated probe, is fresh, and is bound to the currently focused chart frame (or the top shell when the trader is embedded).
+- Fall back to the focused chart's authoritative runtime clock when per-field control provenance cannot be proven; do not report a mismatch based solely on an unattributed merged/global source.
+- Preserve all exact-clock, active-focus, expiration-alignment, technical-confirmation and manual-execution gates.
+- Add regressions for cross-frame control mixing and align extension/package version to 0.11.93.
+
+### Validation note
+- This patch is designed to remove false mode conflicts; an actual M1/M5 or 1m/5m mismatch from fresh, focused evidence remains a conflict.
+
 ## 0.11.92 — Video 20728 signal stability + expiration gate
 
 ### Corrections
