@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.11.92 — Video 20728 signal stability + expiration gate
+
+### Corrections
+- Keep a recent high-confidence PRE-SIGNAL visible through one brief weak technical sample, for up to 3.5 seconds, only for the same asset, timeframe, cycle, and direction.
+- The stability hold is presentation-only: it does not add final confirmation hits and never upgrades a provisional candidate to ENTER.
+- Remove the arbitrary 7-second age limit from the existing observed-expiration value in the manual preparation gate. Clock freshness, clock authority, active asset/focus match, professional decision, and a non-empty expiration remain required.
+- Align manifest/package versions and add regression tests for weak-tick flicker, expiry of the display hold, direction changes, and the expiration-age regression.
+
+### Verification
+- Regression tests are added in `test/fast-live-decision.test.mjs` and `test/video-20728-stability.test.mjs`.
+- This is a code patch, not a guarantee of a profitable signal or automatic execution; CasaTrade timing and data authority gates remain in place.
+
 ## 0.11.25 — Expiration authority hotfix
 
 ### Problema real corrigido
