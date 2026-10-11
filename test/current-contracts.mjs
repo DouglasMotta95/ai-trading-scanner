@@ -6,11 +6,11 @@ export const read = path => fs.readFileSync(new URL('../' + path, import.meta.ur
 const manifest = () => JSON.parse(read('manifest.json'));
 
 export function registerBuildContracts(label='build') {
-  test(label + ': current extension package is the v0.11.92 video-20728-stability build', () => {
+  test(label + ': current extension package is the v0.11.93 video-20730-mode-evidence build', () => {
     const m = manifest();
     assert.equal(m.manifest_version, 3);
-    assert.equal(m.version, '0.11.92');
-    assert.equal(m.version_name, '0.11.92-video-20728-stability');
+    assert.equal(m.version, '0.11.93');
+    assert.equal(m.version_name, '0.11.93-video-20730-mode-evidence');
     assert.equal(m.background?.service_worker, 'src/background-entry.js');
     assert.equal(m.side_panel?.default_path, 'src/sidepanel/index.html');
   });
@@ -260,8 +260,13 @@ export function registerControlEvidenceAuthorityContracts(label='control-evidenc
     const panel = read('src/sidepanel/app-v2.js');
     assert.match(panel, /function freshCasaTradeControlEvidence/);
     assert.match(panel, /source === 'casatrade-expiration-probe-v3'/);
-    assert.match(panel, /const liveTf = control\?\.timeframe \|\| null/);
-    assert.match(panel, /const liveExp = control\?\.expiration \|\| null/);
+    assert.match(panel, /observed\.sourceByField\?\.\[field\]/);
+    assert.match(panel, /observed\.frameIds\?\.\[field\]/);
+    assert.match(panel, /const frameBound = Number\.isFinite\(frameId\)/);
+    const controls = read('src/background-platform-controls.js');
+    assert.match(controls, /frameId: Number\(sender\.frameId \|\| 0\)/);
+    assert.match(controls, /next\.sourceByField\[field\] = incomingSource/);
+    assert.match(controls, /next\.frameIds\[field\] =/);
   });
 }
 
