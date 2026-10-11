@@ -11,6 +11,10 @@ export const FAST_DECISION = Object.freeze({
 
 const trackers = new Map();
 const directionTrackers = new Map();
+// Display-only hysteresis: a single weak live sample must not erase a recent
+// high-confidence PRE-SIGNAL. It never contributes to final-entry confirmations.
+const candidateTrackers = new Map();
+const CANDIDATE_JITTER_GRACE_MS = 3500;
 const DIRECTION_FLIP_HITS = 2;
 const DIRECTION_FLIP_MIN_MS = 600;
 const DIRECTION_FLIP_WINDOW_MS = 2600;
@@ -112,6 +116,61 @@ function stabilizeDirection(key, rawDirection, at, score) {
   return { direction: old.stable, transitioning: true, from: old.stable, to: rawDirection, hits: pendingHits };
 }
 
+function rememberCandidate(key, direction, score, at) {
+  if (!direction || !Number.isFinite(score) || !Number.isFinite(at)) return;
+  const old = candidateTrackers.get(key);
+  candidateTrackers.set(key, {
+    direction,
+    score,
+    at,
+    since: old?.direction === direction ? Number(old.since || at) : at
+  });
+  // Keep this display-only cache bounded during long sessions with many assets/cycles.
+  if (candidateTrackers.size > 128) {
+    const oldest = [...candidateTrackers.entries()]
+      .sort((a, b) => Number(a[1].at || 0) - Number(b[1].at || 0))
+      .slice(0, candidateTrackers.size - 96);
+    for (const [oldKey] of oldest) candidateTrackers.delete(oldKey);
+  }
+}
+
+function recentCandidate(key, direction, at, score, minimumScore) {
+  const old = candidateTrackers.get(key);
+  if (!old) return null;
+  const age = at - Number(old.at || 0);
+  const valid = !!direction
+    && old.direction === direction
+    && age >= 0
+    && age <= CANDIDATE_JITTER_GRACE_MS
+    && Number.isFinite(score)
+    && score >= Number(minimumScore || 0) - 8;
+  if (!valid) {
+    candidateTrackers.delete(key);
+    return null;
+  }
+  return old;
+}
+
+function possibleHeld(signal, direction, score, seconds) {
+  const side = direction === 'BUY' ? 'COMPRA' : 'VENDA';
+  const reason = `${side} — PRÉ-SINAL MANTIDO POR ESTABILIDADE • a leitura técnica oscilou por instantes; aguardando nova confirmação • ${seconds}s • score ${Math.round(score)}/100.`;
+  return {
+    ...signal,
+    state: 'WATCH',
+    direction,
+    diagnosis: direction,
+    uiState: direction === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL',
+    provisional: true,
+    phase: 'POSSIBLE',
+    score,
+    analysisScore: score,
+    reason,
+    hint: reason,
+    fastDecision: true,
+    stabilityHold: true
+  };
+}
+
 function observe(key, direction, strong, at) {
   const old = trackers.get(key);
   if (!strong || !direction) {
@@ -190,19 +249,25 @@ export function fastLiveDecision(signal = {}, context = {}) {
   if (seconds <= 0) {
     trackers.delete(key);
     directionTrackers.delete(key);
+    candidateTrackers.delete(key);
     return waitFinal(signal, score, 'fechamento da vela em andamento');
   }
 
   if (seconds > preSignalWindowSeconds) {
     trackers.delete(key);
     directionTrackers.delete(key);
+    candidateTrackers.delete(key);
     const text = `ANALISANDO VELA ${operationMode.timeframe} • ${seconds}s — pré-sinal abre por volta de ${preSignalWindowSeconds}s.`;
     return { ...signal, state: 'WAIT', direction: null, diagnosis: 'WAIT', uiState: 'BUILDING_PATTERN', provisional: true, phase: 'BUILDING', reason: text, hint: text, fastDecision: true };
   }
 
   const possibleScore = signalPolicy.possibleScore;
   if (!rawDirection || score < possibleScore) {
+    const retained = recentCandidate(key, rawDirection, at, score, possibleScore);
     trackers.delete(key);
+    if (retained && seconds > finalWindowSeconds && seconds <= preSignalWindowSeconds) {
+      return possibleHeld(signal, retained.direction, score, seconds);
+    }
     const text = `AGUARDAR • ${seconds}s — confiança insuficiente (score ${Math.round(score)}/${possibleScore}).`;
     return { ...signal, state: 'WAIT', direction: null, diagnosis: 'WAIT', uiState: 'WAIT', provisional: true, phase: seconds <= finalWindowSeconds ? 'FINAL' : 'LIVE', reason: text, hint: text, fastDecision: true };
   }
@@ -232,12 +297,19 @@ export function fastLiveDecision(signal = {}, context = {}) {
   const q = quality(signal, direction, thresholds, confirmationMode, signalPolicy);
 
   if (!q.strong) {
+    const retained = recentCandidate(key, direction, at, score, possibleScore);
     const heldHits = observe(key, direction, false, at);
+    if (retained && seconds > finalWindowSeconds && seconds <= preSignalWindowSeconds) {
+      return possibleHeld(signal, retained.direction, score, seconds);
+    }
     if (seconds <= finalWindowSeconds && heldHits > 0) {
       return possible(signal, direction, score, seconds, q);
     }
+    if (seconds <= finalWindowSeconds) candidateTrackers.delete(key);
     return waitFinal(signal, score, `confiança insuficiente: poder ${Math.round(q.power)}/${signalPolicy.possiblePower}, confluências ${q.reasons.length}/${signalPolicy.minimumConfluence}`);
   }
+
+  rememberCandidate(key, direction, score, at);
 
   if (seconds > finalWindowSeconds) {
     observe(key, direction, false, at);
@@ -263,4 +335,5 @@ export function fastLiveDecision(signal = {}, context = {}) {
 export function resetFastLiveDecision() {
   trackers.clear();
   directionTrackers.clear();
+  candidateTrackers.clear();
 }
