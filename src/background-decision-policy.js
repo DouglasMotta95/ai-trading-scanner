@@ -336,26 +336,46 @@ function completeCandles(state = {}) {
 function marketIdentity(state = {}, signal = {}) {
   const expected = marketId(state.asset || '');
   const focus = marketId(state.diagnostics?.focusedAsset?.asset || '');
-  const confirmed = marketId(state.diagnostics?.marketSession?.confirmedAsset || '');
+  const session = state.diagnostics?.marketSession || {};
+  const confirmed = marketId(session.confirmedAsset || '');
   const signalAsset = marketId(signal.asset || '');
   const candleAsset = marketId(state.currentCandle?.asset || '');
-  if (!expected || !focus || !confirmed) {
+  const transitionMatches = session.transitioning === true
+    && sameMarket(session.pendingAsset || session.asset || '', expected)
+    && focus === expected;
+  if (!expected || !focus || (!confirmed && !transitionMatches)) {
     return { ready: false, reason: 'Ativo visual, sessão e feed ainda não foram confirmados juntos.' };
   }
-  const rows = [focus, confirmed, signalAsset, candleAsset].filter(Boolean);
+  const rows = [focus, signalAsset, candleAsset, ...(transitionMatches ? [] : [confirmed])].filter(Boolean);
   const mismatch = rows.find(value => value !== expected);
   if (mismatch) {
     return { ready: false, reason: `Bloqueio de segurança: gráfico ${focus || '—'}, sessão ${confirmed || '—'} e sinal ${signalAsset || expected} não pertencem ao mesmo ativo.` };
   }
-  return { ready: true, asset: expected };
+  return { ready: true, asset: expected, transitionGrace: transitionMatches && confirmed !== expected };
 }
 
 function signalDirection(signal = {}) {
   const ui = text(signal.uiState).toUpperCase();
   if (ui.includes('BUY')) return 'BUY';
   if (ui.includes('SELL')) return 'SELL';
-  const direction = text(signal.analysisDirection || signal.direction).toUpperCase();
-  return ['BUY', 'SELL'].includes(direction) ? direction : null;
+  const direct = text(signal.analysisDirection || signal.direction || signal.analytics?.professional?.direction || '').toUpperCase();
+  if (['BUY', 'SELL'].includes(direct)) return direct;
+  const a = signal.analytics || {};
+  const continuation = text(a.continuationDirection).toUpperCase();
+  const continuationReady = ['BUY','SELL'].includes(continuation) && Number(a.continuationScore || 0) >= 60;
+  const trigger = text(a.breakoutDirection || a.breakout || a.rejectionDirection).toUpperCase();
+  if (['BUY','SELL'].includes(trigger)) return trigger;
+  if (continuationReady) return continuation;
+  if (a.pullbackContinuation?.qualified === true && ['BUY','SELL'].includes(text(a.pullbackContinuation.direction).toUpperCase())) {
+    return text(a.pullbackContinuation.direction).toUpperCase();
+  }
+  const localIsAmbiguous = signal.recent?.lateral === true || signal.recent?.doji === true
+    || a.lateral === true || a.doji === true
+    || /lateral|doji|compressão/i.test(text(signal.reason || a.opinion || ''));
+  if (localIsAmbiguous) return null;
+  const buyPower = Number(a.buyPower || 0), sellPower = Number(a.sellPower || 0);
+  if (Math.max(buyPower, sellPower) >= 45 && buyPower !== sellPower) return buyPower > sellPower ? 'BUY' : 'SELL';
+  return null;
 }
 
 function confluence(signal = {}, direction = null, thresholds = getThresholds()) {
