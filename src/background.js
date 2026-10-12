@@ -420,7 +420,11 @@ function consolidatedSnapshot(state = {}) {
   const focus = state.diagnostics?.focusedAsset || null;
   const clock = state.diagnostics?.marketClock || null;
   if (!asset || price == null || !focus?.asset || !sameMarket(focus.asset, asset)) return null;
-  if (focus.reliable !== true || focus.chartScoped !== true || focus.trustedChartFrame !== true) return null;
+  const focusQualityReady = focus.reliable === true && focus.chartScoped === true && focus.trustedChartFrame === true;
+  const focusRecentlyObserved = Number(focus.at || 0) > 0
+    && Date.now() - Number(focus.at) >= -1500
+    && Date.now() - Number(focus.at) < 6500;
+  if (!focusQualityReady && !focusRecentlyObserved) return null;
   if (!clock || clock.available === false) return null;
   if (clock.asset && !sameMarket(clock.asset, asset)) return null;
   const nowForClock = Date.now();
