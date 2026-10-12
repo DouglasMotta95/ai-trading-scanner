@@ -33,7 +33,8 @@ test('system alerts support both matched M1/60s and M5/300s with per-candle dedu
   assert.match(qualification, /seconds > 10/);
   assert.match(qualification, /POSSIBLE_BUY/);
   assert.match(qualification, /POSSIBLE_SELL/);
-  assert.match(qualification, /seconds <= 0 \|\| seconds > 30/);
+  assert.match(qualification, /const alertWindow = patternQualified \? \(timeframe === 'M5' \? 120 : 45\) : 30/);
+  assert.match(qualification, /seconds <= 0 \|\| seconds > alertWindow/);
   assert.match(qualification, /ui === 'ENTER_BUY'/);
   assert.match(qualification, /ui === 'ENTER_SELL'/);
   assert.match(qualification, /if \(!confirmedBuy && !confirmedSell\) return null/);
