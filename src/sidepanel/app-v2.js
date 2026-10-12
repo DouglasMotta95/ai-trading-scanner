@@ -97,7 +97,12 @@ function marketIdentityReady(state = {}) {
   const transitionMatches = session.transitioning === true
     && sameMarket(session.pendingAsset || session.asset || '', asset)
     && focusMatches;
-  if (!asset || (!sameMarket(session.confirmedAsset, asset) && !transitionMatches) || !focusMatches) return false;
+  if (!asset || !focusMatches) return false;
+  // During a confirmed chart transition, the previous signal can remain in
+  // storage for one acquisition tick. Do not report a false security conflict;
+  // marketDataReady still prevents that old signal from becoming actionable.
+  if (transitionMatches) return true;
+  if (!sameMarket(session.confirmedAsset, asset)) return false;
   if (signal.asset && !sameMarket(signal.asset, asset)) return false;
   if (state.currentCandle?.asset && !sameMarket(state.currentCandle.asset, asset)) return false;
   return true;
@@ -116,11 +121,13 @@ function expirationObservation(state = {}) {
   try { rememberedManual = clean(localStorage.getItem('atsUserDeclaredExpiration') || ''); } catch {}
   const observedSourceForManual = clean(controls.observed?.sourceByField?.expiration || controls.observed?.source || '');
   const manualRaw = controls.userDeclaredExpiration
+    || state.executionPreferences?.expiration
+    || state.analystPreferences?.preferredExpiration
     || state.diagnostics?.expirationGuard?.userDeclared
     || (['user-declared','user-declared-match'].includes(observedSourceForManual) ? controls.observed?.expiration : '')
     || rememberedManual;
   const manual = normExp(manualRaw || '');
-  const currentTf = normTf(state.analysisTimeframe || state.timeframe || state.diagnostics?.marketClock?.timeframe);
+  const currentTf = normTf(state.diagnostics?.marketClock?.timeframe || state.analysisTimeframe || state.timeframe);
   if (manual === operation.expiration && (!currentTf || currentTf === operation.timeframe)) {
     return {
       value: operation.expiration,
@@ -273,6 +280,31 @@ function clockBoundToFocus(clock = {}, focus = {}) {
   return sameFrame || boundControlFrame;
 }
 
+function runningCountdownAvailable(state = {}) {
+  const clock = state.diagnostics?.marketClock || {};
+  if (!clock || clock.available === false) return false;
+  const operation = operationRequirement(state);
+  const focus = state.diagnostics?.focusedAsset || {};
+  const asset = marketId(state.asset || '');
+  if (!asset || (clock.asset && !sameMarket(clock.asset, asset))) return false;
+  if (focus.asset && !sameMarket(focus.asset, asset)) return false;
+  const tf = normTf(clock.timeframe || state.analysisTimeframe || state.timeframe || operation.timeframe);
+  if (tf && tf !== operation.timeframe) return false;
+  const now = Date.now();
+  const at = Number(clock.at || 0);
+  const age = at > 0 ? now - at : Infinity;
+  const remaining = num(clock.secondsRemaining);
+  const openAt = num(clock.openAt) ?? num(clock.candleOpenAt);
+  const closeAt = num(clock.closeAt) ?? num(clock.candleCloseAt);
+  const tfMs = operation.durationSeconds * 1000;
+  const boundaryCurrent = openAt != null && closeAt != null
+    && now >= openAt - 2000 && now <= closeAt + 1500
+    && closeAt - now <= tfMs + 1500;
+  const freshRunning = at > 0 && age >= -1500 && age < 6500
+    && remaining != null && remaining >= 0 && remaining <= operation.durationSeconds + 2;
+  return boundaryCurrent || freshRunning;
+}
+
 function clockBaseReady(state = {}) {
   const clock = state.diagnostics?.marketClock || {};
   const focus = state.diagnostics?.focusedAsset || {};
@@ -313,9 +345,9 @@ function exactClockReady(state = {}) {
 }
 
 function operationalClockReady(state = {}) {
-  // There is no operational fallback clock anymore. The scanner may only use
-  // an exact CasaTrade countdown source as time authority.
-  return exactClockReady(state);
+  // A current candle countdown is enough for cycle timing even while the
+  // source-verification badge is catching up. Exact/source trust stays separate.
+  return runningCountdownAvailable(state);
 }
 
 function sessionReady(state = {}) {
@@ -348,7 +380,7 @@ function liveTimingReady(state = {}) {
     return expirationTimingCompatible(expiration, operation)
       && (casaTf == null || casaTf === operation.timeframe);
   }
-  if (!exactClockReady(state)) return false;
+  if (!runningCountdownAvailable(state)) return false;
   return expirationTimingCompatible(expiration, operation)
     && (casaTf == null || casaTf === operation.timeframe);
 }
@@ -361,7 +393,7 @@ function entryTimeReady(state = {}) {
     if (expirationTimingCompatible(expiration, operation)
       && (casaTf == null || casaTf === operation.timeframe)) return true;
   }
-  if (!exactClockReady(state)) return false;
+  if (!runningCountdownAvailable(state)) return false;
   const clock = state.diagnostics?.marketClock || {};
   const expiration = expirationObservation(state);
   const actualExpiration = expiration.value;
@@ -545,7 +577,7 @@ function entryBlockReason(state = {}) {
   if (expiration.value !== operation.expiration) return `AJUSTE A EXPIRAÇÃO DA CASATRADE PARA ${expirationLabel}`;
 
   const clock = state.diagnostics?.marketClock || {};
-  if (!exactClockReady(state)) return 'COUNTDOWN REAL PENDENTE — AGUARDANDO TEMPO EXATO DA CASATRADE';
+  if (!runningCountdownAvailable(state)) return 'COUNTDOWN REAL PENDENTE — AGUARDANDO TEMPO EXATO DA CASATRADE';
 
   const clockTf = normTf(clock.timeframe);
   if (clockTf !== operation.timeframe) return `AJUSTE O TIMEFRAME DA CASATRADE PARA ${operation.timeframe}`;
@@ -558,7 +590,7 @@ function gateKind(state = {}) {
   if (!expiration.value) return 'waiting';
   if (!expirationTimingCompatible(expiration, operation)) return 'waiting';
   if (expiration.value !== operation.expiration) return 'rule';
-  if (!exactClockReady(state)) return 'waiting';
+  if (!runningCountdownAvailable(state)) return 'waiting';
   const clockTf = normTf(state.diagnostics?.marketClock?.timeframe);
   if (clockTf !== operation.timeframe) return 'rule';
   return 'waiting';
@@ -852,7 +884,7 @@ function renderUnsafe(state = {}) {
   const pending = transitionAsset(state);
   const session = sessionInfo(state);
   const panelFocusFresh = focusConfirmedThisPanel(state);
-  const freshMarket = marketDataReady(state) && focusReady(state) && panelFocusFresh && sameMarket(state.diagnostics?.focusedAsset?.asset, state.asset);
+  const freshMarket = marketDataReady(state) && focusReady(state) && sameMarket(state.diagnostics?.focusedAsset?.asset, state.asset);
   const visibleAsset = freshMarket ? marketId(state.asset || session.confirmedAsset) : '';
   const bootAwaitingFocus = !!state.targetTabId && !panelFocusFresh;
 
@@ -897,7 +929,8 @@ function renderUnsafe(state = {}) {
   setText('heroCountdown', countdownText);
   setText('secondsRemaining', remaining == null ? '—' : String(remaining));
   if (exact) setSourceState('countdownSource', 'REAL', 'real', 'Countdown exato lido da CasaTrade.');
-  else setSourceState('countdownSource', 'PENDENTE', 'estimated', 'Aguardando countdown real da CasaTrade; nenhum tempo local é usado.');
+  else if (runningCountdownAvailable(state)) setSourceState('countdownSource', 'DISPONÍVEL', 'estimated', 'Countdown da vela está rodando; usando o valor observado enquanto a verificação da fonte atualiza.');
+  else setSourceState('countdownSource', 'PENDENTE', 'estimated', 'Nenhuma fonte utilizável de countdown da vela está disponível.');
 
   const alignment = modeAlignment(state);
   const conflictBanner = $('modeConflictBanner');
@@ -909,8 +942,8 @@ function renderUnsafe(state = {}) {
     conflictText.textContent = 'Scanner: ' + scannerMode + ' • CasaTrade: ' + casaMode + '. Ajuste os dois para o mesmo modo.';
   }
   setText('heroTimeStatus', alignment.conflict ? 'CONFLITO' : timeReady ? 'OK' : 'AGUARDAR');
-  setText('sessionMode', alignment.conflict ? 'LIVE • MODO CONFLITANTE' : timeReady ? 'LIVE' : exact ? 'LIVE • GATE' : 'LIVE • CLOCK PENDENTE');
-  setText('timeSyncStatus', exact ? 'EXATO • CASATRADE' : 'PENDENTE');
+  setText('sessionMode', alignment.conflict ? 'LIVE • MODO CONFLITANTE' : timeReady ? 'LIVE' : exact ? 'LIVE • GATE' : runningCountdownAvailable(state) ? 'LIVE • CONTAGEM' : 'LIVE • CLOCK PENDENTE');
+  setText('timeSyncStatus', exact ? 'EXATO • CASATRADE' : runningCountdownAvailable(state) ? 'OPERACIONAL • CONTAGEM ATIVA' : 'PENDENTE');
   syncTopLiveClock(state);
 
   setText('signalTitle', model.title);
