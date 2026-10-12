@@ -37,7 +37,7 @@ export function createActiveSignalOperation(state = {}, decision = {}, now = Dat
   if (decision.actionable !== true || !['BUY', 'SELL'].includes(direction) || ui !== 'ENTER_' + direction) return null;
   const signal = state.signal || {};
   const signalDirection = clean(signal.direction || signal.analysisDirection).toUpperCase();
-  if (signalDirection !== direction || !['ENTER_BUY', 'ENTER_SELL'].includes(clean(signal.uiState).toUpperCase())) return null;
+  if (signalDirection !== direction) return null;
   const asset = operationMarketId(state.asset || signal.asset || '');
   const timeframe = clean(decision.timeframe || state.analysisTimeframe || state.timeframe || signal.timeframe || 'M1').toUpperCase();
   const tfMs = operationTimeframeMs(timeframe);
