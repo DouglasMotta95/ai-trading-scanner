@@ -60,6 +60,7 @@ export function registerBuildContracts(label='build') {
     assert.match(bg, /clearStaleAssetDecision\(current\)/);
     assert.match(bg, /activeAssetCandles\(state, asset\)/);
     assert.match(bg, /hasActiveHistory/);
+    assert.match(transition, /transitionTarget === target/);
     assert.match(transition, /signal: null/);
     assert.match(transition, /professionalDecision: null/);
     assert.match(transition, /currentCandleAsset && currentCandleAsset !== target/);
