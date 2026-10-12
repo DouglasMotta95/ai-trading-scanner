@@ -6,11 +6,11 @@ export const read = path => fs.readFileSync(new URL('../' + path, import.meta.ur
 const manifest = () => JSON.parse(read('manifest.json'));
 
 export function registerBuildContracts(label='build') {
-  test(label + ': current extension package is the v0.12.0-pattern-aware-pullback-continuation build', () => {
+  test(label + ': current extension package is the v0.12.1-proactive-pattern-alerts build', () => {
     const m = manifest();
     assert.equal(m.manifest_version, 3);
-    assert.equal(m.version, '0.12.0');
-    assert.equal(m.version_name, '0.12.0-pattern-aware-pullback-continuation');
+    assert.equal(m.version, '0.12.1');
+    assert.equal(m.version_name, '0.12.1-proactive-pattern-alerts');
     assert.equal(m.background?.service_worker, 'src/background-entry.js');
     assert.equal(m.side_panel?.default_path, 'src/sidepanel/index.html');
   });
@@ -217,13 +217,13 @@ export function registerEntryRolloverContracts(label='entry-rollover') {
     assert.match(policy, /pref\.operationMode === 'M1'[\s\S]*?\? 15/);
     assert.match(policy, /pref\.operationMode === 'M5'[\s\S]*?\? 20/);
     assert.match(orchestrator, /pre: 30, decision: 15, skip: 1, duration, timeframe/);
-    assert.match(orchestrator, /pre: 30, decision: 20, skip: 2, duration, timeframe/);
+    assert.match(orchestrator, /pre: 90, decision: 30, skip: 2, duration, timeframe/);
   });
 
   test(label + ': M1 and M5 final windows leave enough time to confirm the next candle', () => {
     const orchestrator = read('src/core/orchestrator.js');
     assert.match(orchestrator, /pre: 30, decision: 15, skip: 1, duration, timeframe/);
-    assert.match(orchestrator, /pre: 30, decision: 20, skip: 2, duration, timeframe/);
+    assert.match(orchestrator, /pre: 90, decision: 30, skip: 2, duration, timeframe/);
   });
   test(label + ': confirmed entry survives the exact candle boundary without losing the cycle', () => {
     const policy = read('src/background-decision-policy.js');
