@@ -421,22 +421,33 @@ function consolidatedSnapshot(state = {}) {
   const clock = state.diagnostics?.marketClock || null;
   if (!asset || price == null || !focus?.asset || !sameMarket(focus.asset, asset)) return null;
   if (focus.reliable !== true || focus.chartScoped !== true || focus.trustedChartFrame !== true) return null;
-  if (!clock || clock.available === false || clock.verified !== true) return null;
-  if (!EXACT_CLOCK_SOURCES.has(clean(clock.source))) return null;
-  if (!sameMarket(clock.asset, asset)) return null;
-  if (!clockBoundToFocus(clock, focus)) return null;
+  if (!clock || clock.available === false) return null;
+  if (clock.asset && !sameMarket(clock.asset, asset)) return null;
   const nowForClock = Date.now();
   const clockAge = nowForClock - Number(clock.at || 0);
   const closeAt = num(clock.closeAt) ?? num(clock.candleCloseAt);
   const openAt = num(clock.openAt) ?? num(clock.candleOpenAt);
   const tf = normTf(clock.timeframe || state.analysisTimeframe || state.timeframe) || 'M1';
+  const stateTf = normTf(state.analysisTimeframe || state.timeframe);
+  if (stateTf && stateTf !== tf) return null;
   const tfMs = performanceTimeframeMs(tf);
   const boundaryCurrent = closeAt != null && openAt != null
     && nowForClock >= openAt - 2000 && nowForClock <= closeAt + 1500
     && closeAt - nowForClock <= tfMs + 1500;
-  if (Number(clock.at || 0) <= 0 || (clockAge > CLOCK_FRESH_MS && !boundaryCurrent)) return null;
+  const remainingRaw = num(clock.secondsRemaining);
+  const freshRunningClock = Number(clock.at || 0) > 0
+    && clockAge >= -1500 && clockAge < 6500
+    && remainingRaw != null && remainingRaw >= 0 && remainingRaw <= tfMs / 1000 + 2;
+  const focusBoundClock = clockBoundToFocus(clock, focus);
+  const exactClock = clock.verified === true
+    && EXACT_CLOCK_SOURCES.has(clean(clock.source))
+    && focusBoundClock;
+  // Keep analysis alive when CasaTrade's candle countdown is actively ticking
+  // but its source-verification/frame metadata is lagging behind.
+  if (!exactClock && !freshRunningClock && !boundaryCurrent) return null;
+  if (!focusBoundClock && !freshRunningClock && !boundaryCurrent) return null;
 
-  const secondsRemaining = num(clock.secondsRemaining) ?? (boundaryCurrent ? Math.max(0, (closeAt - nowForClock) / 1000) : null);
+  const secondsRemaining = remainingRaw ?? (boundaryCurrent ? Math.max(0, (closeAt - nowForClock) / 1000) : null);
   if (secondsRemaining == null || secondsRemaining < 0) return null;
   const timeframe = normTf(clock.timeframe || state.analysisTimeframe || state.timeframe);
   if (!timeframe) return null;
