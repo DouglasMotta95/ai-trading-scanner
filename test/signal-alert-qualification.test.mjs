@@ -41,6 +41,54 @@ test('emits a pre-signal notification for valid M5 + 300s', () => {
   assert.match(event?.message || '', /USD\/XOF \(OTC\).*M5/);
 });
 
+const qualifiedPullback = direction => ({
+  qualified: true,
+  direction,
+  score: 90,
+  notStretched: true,
+  roomToLevel: 0.8,
+  reason: 'Pullback qualificado'
+});
+
+test('sends a pattern-specific early alert with time for the next candle in M1 and M5', () => {
+  const m1Base = makeState().professionalDecision;
+  const m1 = makeState({ professionalDecision: {
+    ...m1Base,
+    secondsRemaining: 40,
+    pullbackContinuation: qualifiedPullback('BUY')
+  }});
+  const m1Event = qualifiedDecision(m1);
+  assert.equal(m1Event?.stage, 'pre');
+  assert.match(m1Event?.title || '', /Padrão para a próxima vela/);
+  assert.match(m1Event?.message || '', /COMPRA na próxima vela/);
+
+  const m5 = makeState({ professionalDecision: {
+    ...m1Base,
+    timeframe: 'M5',
+    actualExpiration: '300s',
+    secondsRemaining: 110,
+    cycleKey: 'USD/XOF (OTC)|M5|3000',
+    uiState: 'POSSIBLE_SELL',
+    direction: 'SELL',
+    pullbackContinuation: qualifiedPullback('SELL')
+  }});
+  const m5Event = qualifiedDecision(m5);
+  assert.equal(m5Event?.stage, 'pre');
+  assert.match(m5Event?.message || '', /VENDA na próxima vela/);
+});
+
+test('does not send the wider M5 early notification window without a qualified pattern', () => {
+  const base = makeState().professionalDecision;
+  const event = qualifiedDecision(makeState({ professionalDecision: {
+    ...base,
+    timeframe: 'M5',
+    actualExpiration: '300s',
+    secondsRemaining: 110,
+    cycleKey: 'USD/XOF (OTC)|M5|4000'
+  }}));
+  assert.equal(event, null);
+});
+
 test('emits a final notification only for direction-matched ENTER in M1 and M5', () => {
   for (const [timeframe, actualExpiration, uiState, direction] of [
     ['M1','60s','ENTER_BUY','BUY'],
