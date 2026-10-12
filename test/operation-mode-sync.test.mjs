@@ -46,6 +46,6 @@ test('background mode sync maps the manual 5-minute declaration and applies veri
   assert.match(source, /trustedModeFromObservedControls\(incoming, Date\.now\(\)\)/);
   assert.match(source, /persistUiOperationMode\(selectedMode\)/);
   assert.match(platform, /message\?\.type === 'ATS_PLATFORM_APPLY'/);
-  assert.match(platform, /matched\.timeframe: !!desired\.timeframe && after\.timeframe === desired\.timeframe/);
-  assert.match(platform, /matched\.expiration: !!desired\.expiration && after\.expiration === desired\.expiration/);
+  assert.match(platform, /timeframe: !!desired\.timeframe && after\.timeframe === desired\.timeframe/);
+  assert.match(platform, /expiration: !!desired\.expiration && after\.expiration === desired\.expiration/);
 });
