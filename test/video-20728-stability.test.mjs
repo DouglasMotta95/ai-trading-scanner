@@ -29,7 +29,7 @@ test('pre-signal stability remains display-only and bounded', () => {
 test('manifest and package versions identify the stability patch consistently', () => {
   const manifest = JSON.parse(read('manifest.json'));
   const pkg = JSON.parse(read('package.json'));
-  assert.equal(manifest.version, '0.11.98');
+  assert.equal(manifest.version, '0.11.99');
   assert.equal(pkg.version, manifest.version);
-  assert.equal(manifest.version_name, '0.11.98-consolidated-m1-m5-signal-alerts');
+  assert.equal(manifest.version_name, '0.11.99-full-reader-quote-consistency-alert-retry');
 });
