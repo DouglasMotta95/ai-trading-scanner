@@ -294,10 +294,12 @@ function runningCountdownAvailable(state = {}) {
   const at = Number(clock.at || 0);
   const age = at > 0 ? now - at : Infinity;
   const remaining = num(clock.secondsRemaining);
-  const openAt = num(clock.openAt) ?? num(clock.candleOpenAt);
-  const closeAt = num(clock.closeAt) ?? num(clock.candleCloseAt);
+  const observedOpenAt = num(clock.openAt) ?? num(clock.candleOpenAt);
+  const observedCloseAt = num(clock.closeAt) ?? num(clock.candleCloseAt);
   const tfMs = operation.durationSeconds * 1000;
-  const boundaryCurrent = openAt != null && closeAt != null
+  const openAt = observedOpenAt ?? (observedCloseAt != null ? observedCloseAt - tfMs : null);
+  const closeAt = observedCloseAt ?? (observedOpenAt != null ? observedOpenAt + tfMs : null);
+  const boundaryCurrent = closeAt != null && openAt != null
     && now >= openAt - 2000 && now <= closeAt + 1500
     && closeAt - now <= tfMs + 1500;
   const freshRunning = at > 0 && age >= -1500 && age < 6500
@@ -399,7 +401,7 @@ function entryTimeReady(state = {}) {
   const actualExpiration = expiration.value;
   const operation = operationRequirement(state);
   if (!actualExpiration || !expirationTimingCompatible(expiration, operation)) return false;
-  const clockTf = casaTradeTimeframeEvidence(state) || normTf(clock.timeframe);
+  const clockTf = casaTradeTimeframeEvidence(state) || normTf(clock.timeframe || state.analysisTimeframe || state.timeframe || operation.timeframe);
   const stateTf = normTf(state.analysisTimeframe || state.timeframe);
   if (!clockTf || clockTf !== operation.timeframe) return false;
   if (actualExpiration !== operation.expiration) return false;
@@ -579,7 +581,7 @@ function entryBlockReason(state = {}) {
   const clock = state.diagnostics?.marketClock || {};
   if (!runningCountdownAvailable(state)) return 'COUNTDOWN REAL PENDENTE — AGUARDANDO TEMPO EXATO DA CASATRADE';
 
-  const clockTf = normTf(clock.timeframe);
+  const clockTf = normTf(clock.timeframe || state.analysisTimeframe || state.timeframe || operation.timeframe);
   if (clockTf !== operation.timeframe) return `AJUSTE O TIMEFRAME DA CASATRADE PARA ${operation.timeframe}`;
   return 'ENTRADA AINDA NÃO LIBERADA';
 }
@@ -591,7 +593,7 @@ function gateKind(state = {}) {
   if (!expirationTimingCompatible(expiration, operation)) return 'waiting';
   if (expiration.value !== operation.expiration) return 'rule';
   if (!runningCountdownAvailable(state)) return 'waiting';
-  const clockTf = normTf(state.diagnostics?.marketClock?.timeframe);
+  const clockTf = normTf(state.diagnostics?.marketClock?.timeframe || state.analysisTimeframe || state.timeframe || operation.timeframe);
   if (clockTf !== operation.timeframe) return 'rule';
   return 'waiting';
 }
