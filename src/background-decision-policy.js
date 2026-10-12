@@ -107,9 +107,11 @@ export function runningCasaTradeCountdown(state = {}, expectedTimeframe = null, 
   const at = Number(clock.at || 0);
   const age = at > 0 ? now - at : Infinity;
   const tfMs = getOperationMode(clockTf || expectedTf).durationSeconds * 1000;
-  const openAt = num(clock.openAt) ?? num(clock.candleOpenAt);
-  const closeAt = num(clock.closeAt) ?? num(clock.candleCloseAt);
-  const boundaryCurrent = openAt != null && closeAt != null
+  const observedOpenAt = num(clock.openAt) ?? num(clock.candleOpenAt);
+  const observedCloseAt = num(clock.closeAt) ?? num(clock.candleCloseAt);
+  const openAt = observedOpenAt ?? (observedCloseAt != null ? observedCloseAt - tfMs : null);
+  const closeAt = observedCloseAt ?? (observedOpenAt != null ? observedOpenAt + tfMs : null);
+  const boundaryCurrent = closeAt != null && openAt != null
     && now >= openAt - 2000 && now <= closeAt + 1500
     && closeAt - now <= tfMs + 1500;
   const freshRunningCountdown = at > 0 && age >= -1500 && age < 6500
@@ -279,10 +281,13 @@ export function CasaTradeExpiration(state = {}, timeframe = null) {
   const actual = realFresh ? realExpiration : guardActual || null;
   const source = realFresh ? (text(controls.realExpirationSource) || 'casatrade-observed') : guardSource || '';
   const liveTf = normTf(timeframe || state.diagnostics?.marketClock?.timeframe || state.analysisTimeframe || state.timeframe);
+  const observedExpirationSource = text(controls.observed?.sourceByField?.expiration || controls.observed?.source || '').toLowerCase();
   const manualRaw = controls.userDeclaredExpiration
     || state.executionPreferences?.expiration
     || state.analystPreferences?.preferredExpiration
-    || state.diagnostics?.expirationGuard?.userDeclared
+    || (['user-declared', 'user-declared-match'].includes(observedExpirationSource) ? controls.observed?.expiration : '')
+    || (['user-declared', 'user-declared-match'].includes(guardSource.toLowerCase()) ? guard.actual : '')
+    || guard.userDeclared
     || '';
   const declaredManual = normExp(manualRaw);
   const manualModeMatch = !!declaredManual
@@ -414,8 +419,14 @@ function signalDirection(signal = {}) {
   const a = signal.analytics || {};
   const continuation = text(a.continuationDirection).toUpperCase();
   const continuationReady = ['BUY','SELL'].includes(continuation) && Number(a.continuationScore || 0) >= 60;
-  const trigger = text(a.breakoutDirection || a.breakout || a.rejectionDirection).toUpperCase();
-  if (['BUY','SELL'].includes(trigger)) return trigger;
+  const breakout = text(a.breakoutDirection || (['BUY', 'SELL'].includes(text(a.breakout).toUpperCase()) ? a.breakout : '')).toUpperCase();
+  if (['BUY','SELL'].includes(breakout)) return breakout;
+  const rejection = text(a.rejectionDirection).toUpperCase();
+  const rejectionPower = Math.max(
+    Number(a.rejectionStrength || 0) || 0,
+    Number(rejection === 'BUY' ? a.rejectionBuy : rejection === 'SELL' ? a.rejectionSell : 0) || 0
+  );
+  if (['BUY','SELL'].includes(rejection) && rejectionPower >= 45) return rejection;
   if (continuationReady) return continuation;
   if (a.pullbackContinuation?.qualified === true && ['BUY','SELL'].includes(text(a.pullbackContinuation.direction).toUpperCase())) {
     return text(a.pullbackContinuation.direction).toUpperCase();
