@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.12.1 — Proactive pattern alerts and bounded pullback entries
+
+### Goal from user feedback
+- Identify promising next-candle setups before the last seconds of the candle, rather than only waiting for a generic high score or final window.
+- Explicitly call out a qualified pullback/continuation pattern and the direction (BUY/SELL) while keeping the final signal separate.
+
+### Changes
+- A validated pullback/continuation pattern can publish an early candidate with a lower global-score floor (45/100) and directional-power floor (52%), only when pattern score >=80/100, the trigger is not stretched, and room to the opposing level is >=0.35 average candle ranges.
+- M1 candidate window: up to 45s remaining. M5 candidate window: up to 120s remaining. M5 final-confirmation window expanded to 30s, leaving time for two bounded observations.
+- UI reason now states "Padrão de pullback + retomada", pattern-quality score, average-range room, direction and remaining time. Notifications use an explicit "Padrão para a próxima vela" label.
+- A pullback-specific final-entry path uses a score floor of 64/100 and directional power of 55%, plus an independent same-direction rejection/continuation/momentum/strong-candle confirmation. The normal exact-clock, asset-focus, expiration-match, and confirmation-hit/cycle guards remain active.
+- Regression tests verify early BUY/SELL candidates, room/stretched gating, M1/M5 alert lead windows, notification wording, and that no pattern means no early M5 notification.
+
+### Retained safeguards
+- A preview is not automatic execution; it is an anticipatory signal for the user.
+- No final alert is emitted for AGUARDAR.
+- No active market is guessed, and no trade is fired from a provisional candidate.
+
+---
+
 ## 0.12.0 — Pattern-aware pullback continuation
 
 ### Analysis from video 20791
