@@ -2,6 +2,15 @@ const clean = value => String(value ?? '').replace(/\s+/g, ' ').trim();
 const numberOrNull = value => value == null || value === '' || !Number.isFinite(Number(value)) ? null : Number(value);
 const upper = value => clean(value).toUpperCase();
 
+function hash(value = '') {
+  let result = 2166136261;
+  for (let index = 0; index < value.length; index++) {
+    result ^= value.charCodeAt(index);
+    result = Math.imul(result, 16777619);
+  }
+  return (result >>> 0).toString(36);
+}
+
 function shortBlocker(decision = {}, state = {}) {
   if (decision.actionable === true || ['ENTER_BUY','ENTER_SELL'].includes(upper(decision.uiState))) return null;
   if (decision.marketIdentityReady === false) return clean(decision.marketIdentityReason || 'Identidade do ativo não confirmada.');
@@ -53,9 +62,10 @@ export function buildDecisionAudit(state = {}, decision = {}, now = Date.now()) 
     expirationReady: !!decision.expirationReady, context: !!decision.professionalContextReady,
     trigger: !!decision.professionalTriggerReady, hits: finalHits, actionable,
     bucket, pattern: pattern.qualified === true ? direction : null,
-    patternScore: Number(pattern.score || 0)
+    patternScore: Number(pattern.score || 0),
+    scanner: clean(state.scanner), connection: clean(state.connection)
   });
-  const id = `${cycleKey || 'no-cycle'}|${uiState}|${direction || 'none'}|${Math.round(score)}|${bucket}`;
+  const id = `${cycleKey || 'no-cycle'}|${hash(signature)}`;
   return {
     id, signature, at: now, cycleKey, asset: clean(state.asset || signal.asset || '—'),
     timeframe, expiration,
