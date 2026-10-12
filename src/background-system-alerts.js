@@ -179,7 +179,7 @@ function terminalDeliveryForSameAudit(state = {}, stage = null) {
   const latest = state.decisionAudit?.latest || {};
   const delivery = latest.delivery || {};
   if (!latest.id || delivery.auditId !== latest.id || (stage && delivery.stage !== stage)) return false;
-  return ['delivered','failed','disabled','deduplicated','not_eligible'].includes(delivery.status);
+  return ['attempting','delivered','failed','disabled','deduplicated','not_eligible'].includes(delivery.status);
 }
 
 async function dispatchForState(state = {}) {
