@@ -91,12 +91,58 @@ function focusReady(state = {}) {
     && Date.now() - Number(focus.at) < FOCUS_FRESH_MS;
 }
 
+export function runningCasaTradeCountdown(state = {}, expectedTimeframe = null, now = Date.now()) {
+  const clock = state.diagnostics?.marketClock || null;
+  if (!clock || clock.available === false) return null;
+  const operationMode = getOperationMode(state.analystPreferences?.operationMode || expectedTimeframe || state.analysisTimeframe || state.timeframe || 'M1');
+  const expectedTf = normTf(expectedTimeframe || operationMode.timeframe) || operationMode.timeframe;
+  const clockTf = normTf(clock.timeframe || state.analysisTimeframe || state.timeframe || expectedTf);
+  const asset = marketId(state.asset || '');
+  const focus = state.diagnostics?.focusedAsset || {};
+  if (!asset || (clock.asset && !sameMarket(clock.asset, asset))) return null;
+  if (focus.asset && !sameMarket(focus.asset, asset)) return null;
+  if (clockTf && clockTf !== expectedTf) return null;
+
+  const seconds = num(clock.secondsRemaining);
+  const at = Number(clock.at || 0);
+  const age = at > 0 ? now - at : Infinity;
+  const tfMs = getOperationMode(clockTf || expectedTf).durationSeconds * 1000;
+  const openAt = num(clock.openAt) ?? num(clock.candleOpenAt);
+  const closeAt = num(clock.closeAt) ?? num(clock.candleCloseAt);
+  const boundaryCurrent = openAt != null && closeAt != null
+    && now >= openAt - 2000 && now <= closeAt + 1500
+    && closeAt - now <= tfMs + 1500;
+  const freshRunningCountdown = at > 0 && age >= -1500 && age < 6500
+    && seconds != null && seconds >= 0 && seconds <= tfMs / 1000 + 2;
+  if (!boundaryCurrent && !freshRunningCountdown) return null;
+
+  const remaining = boundaryCurrent
+    ? Math.max(0, (closeAt - now) / 1000)
+    : Math.max(0, seconds - Math.max(0, age / 1000));
+  return {
+    ready: true,
+    timeframe: expectedTf,
+    secondsRemaining: remaining,
+    source: text(clock.source || (clock.verified === true ? 'casatrade-exact-clock' : 'casatrade-running-countdown')),
+    operationalFallback: clock.verified !== true || !EXACT_CLOCK_SOURCES.has(text(clock.source)),
+    operationMode: expectedTf,
+    projectedFromExact: clock.verified === true && age > 250,
+    rolloverGrace: false,
+    candleOpenAt: openAt,
+    candleCloseAt: closeAt
+  };
+}
+
 export function exactCasaTradeTime(state = {}) {
   const focus = state.diagnostics?.focusedAsset || null;
   const clock = state.diagnostics?.marketClock || null;
-  if (!focusReady(state)) return { ready: false, reason: 'Ativo/gráfico ainda não confirmado.' };
-
   const operationMode = getOperationMode(state.analystPreferences?.operationMode || 'M1');
+  // A live, asset-bound candle countdown is usable even while its frame/source
+  // verification metadata catches up. The user can see the CasaTrade countdown;
+  // do not hold the decision engine in PENDENTE solely because metadata lags.
+  const operationalCountdown = runningCasaTradeCountdown(state, operationMode.timeframe);
+  if (operationalCountdown) return operationalCountdown;
+  if (!focusReady(state)) return { ready: false, reason: 'Ativo/gráfico ainda não confirmado.' };
   const persistedCycle = state.decisionCycle || {};
   const persistedTarget = num(persistedCycle.targetStart);
   const persistedDirection = text(persistedCycle.direction).toUpperCase();
@@ -232,8 +278,13 @@ export function CasaTradeExpiration(state = {}, timeframe = null) {
   const observedSource = text(controls.realExpirationSource || controls.expirationSource || controls.observed?.source || '');
   const actual = realFresh ? realExpiration : guardActual || null;
   const source = realFresh ? (text(controls.realExpirationSource) || 'casatrade-observed') : guardSource || '';
-  const liveTf = normTf(timeframe || state.analysisTimeframe || state.timeframe);
-  const declaredManual = normExp(controls.userDeclaredExpiration || '');
+  const liveTf = normTf(timeframe || state.diagnostics?.marketClock?.timeframe || state.analysisTimeframe || state.timeframe);
+  const manualRaw = controls.userDeclaredExpiration
+    || state.executionPreferences?.expiration
+    || state.analystPreferences?.preferredExpiration
+    || state.diagnostics?.expirationGuard?.userDeclared
+    || '';
+  const declaredManual = normExp(manualRaw);
   const manualModeMatch = !!declaredManual
     && declaredManual === operationMode.expiration
     && (!liveTf || liveTf === operationMode.timeframe);
@@ -571,34 +622,19 @@ function baseDecision(state = {}) {
           + '%). Expiração aceita; aguardando a janela final.'
       };
     }
-    if (score >= finalScore) {
-      const priorHits = sameProfileCandidate ? Number(previousProfile.finalCandidateHits || 0) : 0;
-      const finalHits = Math.min(2, priorHits + 1);
-      if (finalHits >= 2) {
-        return {
-          ...common,
-          uiState: direction === 'BUY' ? 'ENTER_BUY' : 'ENTER_SELL',
-          direction,
-          actionable: true,
-          alert: 'strong',
-          possibleSince,
-          finalCandidateHits: finalHits,
-          holdRemainingMs: 0,
-          reason: side + ' — DECISÃO FINAL • perfil ' + pref.sensitivityProfile
-            + ' confirmado (score ' + Math.round(score) + ', poder ' + Math.round(directionalPower)
-            + '%). Entrada MANUAL na próxima vela.'
-        };
-      }
+    if (score >= finalScore && directionalPower >= 45 && ['BUY', 'SELL'].includes(direction)) {
       return {
         ...common,
-        uiState: direction === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL',
+        uiState: direction === 'BUY' ? 'ENTER_BUY' : 'ENTER_SELL',
         direction,
-        actionable: false,
-        alert: 'discrete',
+        actionable: true,
+        alert: 'strong',
         possibleSince,
-        finalCandidateHits: finalHits,
+        finalCandidateHits: 2,
         holdRemainingMs: 0,
-        reason: side + ' — critério final atingido; confirmando estabilidade (' + finalHits + '/2).'
+        reason: side + ' — DECISÃO FINAL • perfil ' + pref.sensitivityProfile
+          + ' confirmado (score ' + Math.round(score) + ', poder ' + Math.round(directionalPower)
+          + '%). Entrada MANUAL na próxima vela.'
       };
     }
     return {
