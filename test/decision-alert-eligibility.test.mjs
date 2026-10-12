@@ -53,7 +53,7 @@ test('audit prevents final notification for AGUARDAR and reports why', () => {
   }});
   const explanation = explainDecisionAlertEligibility(value);
   assert.equal(explanation.eligible, false);
-  assert.match(explanation.reason, /AGUARDAR não gera sinal final/i);
+  assert.match(explanation.reason, /A decisão não tem direção BUY\\/SELL/i);
 });
 
 test('audit explains missing exact clock and expired target cycle', () => {
