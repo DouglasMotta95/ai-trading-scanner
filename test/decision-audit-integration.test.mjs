@@ -16,8 +16,8 @@ test('signal dispatcher records eligibility blocker and actual notification/soun
   const alerts = read('src/background-system-alerts.js');
   assert.match(alerts, /explainDecisionAlertEligibility\(state\)/);
   assert.match(alerts, /status: 'not_eligible'/);
-  assert.match(alerts, /notification: notificationDelivered \? 'delivered' : 'failed'/);
-  assert.match(alerts, /sound: soundDelivered \? 'delivered' : 'failed'/);
+  assert.match(alerts, /notification: !notificationsEnabled \? 'disabled' : notificationDelivered \? 'delivered' : 'failed'/);
+  assert.match(alerts, /sound: !soundEnabled \? 'disabled' : soundDelivered \? 'delivered' : 'failed'/);
   assert.match(alerts, /status: delivered \? 'delivered' : 'failed'/);
   assert.match(alerts, /updateDecisionAuditDelivery/);
 });
