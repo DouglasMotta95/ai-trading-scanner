@@ -1,6 +1,8 @@
 import { updateScannerState } from './services/scanner-state-atomic.js';
 import { getThresholds, getOperationMode } from './core/analysis.js';
 import { clearUserDeclaredExpirationState } from './background-market-session.js';
+import { resetOrchestrator } from './core/orchestrator.js';
+import { operationModeForExpiration, trustedModeFromObservedControls } from './core/operation-mode-sync.js';
 
 const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
 const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
@@ -105,6 +107,112 @@ function mergeObserved(previous = {}, incoming = {}, previousExpirationSource = 
 
 const USER_DECLARED_EXPIRATIONS = new Set(['5s','15s','30s','60s','300s']);
 const USER_DECLARED_FRESH_OFFSET_MS = 10 * 365 * 24 * 60 * 60 * 1000;
+
+const UI_PREF_KEY = 'atsScannerUiPreferences';
+
+async function persistUiOperationMode(operationMode) {
+  try {
+    const stored = await chrome.storage.local.get(UI_PREF_KEY);
+    const current = stored?.[UI_PREF_KEY] || {};
+    await chrome.storage.local.set({ [UI_PREF_KEY]: { ...current, operationMode } });
+  } catch {}
+}
+
+function sendApplyToFrame(tabId, frameId, preferences) {
+  return new Promise(resolve => {
+    let settled = false;
+    const finish = response => {
+      if (settled) return;
+      settled = true;
+      try { void chrome.runtime?.lastError; } catch {}
+      resolve(response || null);
+    };
+    try {
+      const message = { type: 'ATS_PLATFORM_APPLY', preferences };
+      const returned = chrome.tabs.sendMessage(tabId, message, { frameId }, finish);
+      if (returned && typeof returned.then === 'function') returned.then(finish).catch(() => finish(null));
+    } catch {
+      finish(null);
+    }
+  });
+}
+
+async function applyCasaTradeMode(state = {}, timeframe = 'M1', source = 'mode-change', preferredFrameId = null) {
+  const operation = getOperationMode(timeframe);
+  const tabId = Number(state.targetTabId || state.diagnostics?.target?.tabId || 0);
+  const observed = state.platformControls?.observed || {};
+  const focus = state.diagnostics?.focusedAsset || {};
+  const frameCandidates = [
+    preferredFrameId,
+    observed.frameIds?.timeframe,
+    observed.frameIds?.expiration,
+    state.platformControls?.frameId,
+    focus.frameId,
+    0
+  ].map(value => Number(value)).filter(value => Number.isInteger(value) && value >= 0);
+  const frames = [...new Set(frameCandidates)];
+  const attempts = [];
+  let verified = false;
+
+  if (tabId > 0 && chrome.tabs?.sendMessage) {
+    for (const frameId of frames) {
+      const response = await sendApplyToFrame(tabId, frameId, {
+        timeframe: operation.timeframe,
+        expiration: operation.expiration
+      });
+      const matched = {
+        timeframe: response?.matched?.timeframe === true,
+        expiration: response?.matched?.expiration === true
+      };
+      attempts.push({ frameId, responded: !!response, matched, error: response?.error || null });
+      if (matched.timeframe && matched.expiration) {
+        verified = true;
+        break;
+      }
+    }
+  }
+
+  const telemetry = {
+    source,
+    timeframe: operation.timeframe,
+    expiration: operation.expiration,
+    attempted: tabId > 0 && attempts.length > 0,
+    verified,
+    tabId: tabId || null,
+    attempts,
+    reason: verified
+      ? 'Timeframe e expiração definidos e relidos no controle da CasaTrade.'
+      : tabId > 0
+        ? 'Modo alterado no scanner; não foi possível confirmar os dois controles da CasaTrade. A entrada permanece bloqueada até a leitura real coincidir.'
+        : 'Modo alterado no scanner; conecte a aba da CasaTrade para sincronizar os controles.',
+    at: Date.now()
+  };
+  const updated = await updateScannerState(current => ({
+    ...current,
+    platformControls: { ...(current.platformControls || {}), autoModeSync: telemetry },
+    diagnostics: { ...(current.diagnostics || {}), platformModeSync: telemetry }
+  })).catch(() => state);
+  return { state: updated, telemetry };
+}
+
+function resetSignalStateForModeSwitch(state = {}) {
+  return {
+    ...state,
+    signal: null,
+    professionalDecision: null,
+    decisionCycle: null,
+    candidateBlockerTrace: [],
+    diagnostics: {
+      ...(state.diagnostics || {}),
+      platformModeSync: {
+        ...(state.diagnostics?.platformModeSync || {}),
+        transitionPending: true,
+        at: Date.now()
+      }
+    }
+  };
+}
+
 
 function expLabel(value = '') {
   const exp = normExp(value);
