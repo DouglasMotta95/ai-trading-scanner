@@ -204,7 +204,19 @@ export function CasaTradeExpiration(state = {}, timeframe = null) {
     };
   }
   if (!realFresh) {
-    const manual = normExp(controls.userDeclaredExpiration || guardActual || '');
+    const observedExpirationSource = text(
+      controls.observed?.sourceByField?.expiration
+        || controls.observed?.source
+        || controls.expirationSource
+        || ''
+    );
+    const observedManual = ['user-declared', 'user-declared-match'].includes(observedExpirationSource)
+      ? normExp(controls.observed?.expiration || '')
+      : null;
+    const guardManual = guardFresh && ['user-declared', 'user-declared-match'].includes(guardSource)
+      ? guardActual
+      : null;
+    const manual = normExp(controls.userDeclaredExpiration || observedManual || guardManual || '');
     const manualMatches = !!manual && manual === operationMode.expiration
       && (!liveTf || liveTf === operationMode.timeframe);
     if (manualMatches) {

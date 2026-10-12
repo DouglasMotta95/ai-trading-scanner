@@ -4,6 +4,7 @@ import { storageLocalGet, storageSessionGet, tabsQuery, sidePanelSetBehavior, sc
 import { detectPlatform } from './platforms/registry.js';
 import { clearMarketAuthorityState, clearUserDeclaredExpirationState } from './background-market-session.js';
 import { getOperationMode } from './core/analysis.js';
+import { getExpirationReadiness } from './core/expiration-readiness.js';
 import { resetOrchestrator } from './core/orchestrator.js';
 
 const DEFAULT_LICENSE = Object.freeze({
@@ -1018,18 +1019,14 @@ function exactTradeReady(state = {}) {
   const clock = state.diagnostics?.marketClock || {};
   const focus = state.diagnostics?.focusedAsset || {};
   const professional = state.professionalDecision || {};
-  const expirationAt = Number(state.platformControls?.expirationCheckedAt || state.platformControls?.observed?.observedAt?.expiration || 0);
-  // Expiration is configuration evidence, not a heartbeat. A valid observed value
-  // remains usable until superseded/cleared; clock and focused-market freshness are
-  // checked separately below.
-  const controlsFresh = expirationAt > 0;
-  const actualExpiration = controlsFresh ? clean(state.platformControls?.observed?.expiration || '') : '';
+  const operationMode = getOperationMode(state.analystPreferences?.operationMode || 'M1');
+  const expiration = getExpirationReadiness(state);
   if (professional.timeReady !== true || professional.expirationReady !== true || professional.actionable !== true) return false;
   if (clock.verified !== true || clock.available === false || clock.role !== 'candle-close' || !EXACT_CLOCK_SOURCES.has(clean(clock.source))) return false;
   if (Date.now() - Number(clock.at || 0) >= 3000) return false;
   if (!sameAsset(clock.asset, state.asset) || !sameAsset(focus.asset, state.asset)) return false;
   if (!clockBoundToFocus(clock, focus)) return false;
-  if (!actualExpiration || !controlsFresh) return false;
+  if (!expiration.ready || expiration.actual !== operationMode.expiration) return false;
   return true;
 }
 
@@ -1049,7 +1046,7 @@ async function manualIntent(direction = '') {
   }
   if (!exactTradeReady(state)) return { ok: false, error: 'time_not_synchronized', state };
 
-  const actualExpiration = clean(state.platformControls?.observed?.expiration || state.targetExpiration || state.expiration || '') || null;
+  const actualExpiration = getExpirationReadiness(state).actual || clean(state.targetExpiration || state.expiration || state.platformControls?.observed?.expiration || '') || null;
   const intent = {
     direction, asset: state.asset, timeframe: state.analysisTimeframe || state.timeframe,
     expiration: actualExpiration,

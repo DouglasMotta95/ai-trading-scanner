@@ -1,6 +1,8 @@
 import { assessEntryConfidence } from '../core/entry-confidence.js';
 import { getOperationMode } from '../core/analysis.js';
 import { canShowFinalEntry, canShowTechnicalAnalysis, selectTechnicalScore } from '../core/decision-display.js';
+import { getExpirationReadiness } from '../core/expiration-readiness.js';
+import { createScoreStabilizer, scoreCycleKey } from '../core/score-stability.js';
 
 const $ = id => document.getElementById(id);
 const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
@@ -62,14 +64,8 @@ function timingReady(state = {}) {
   const operationMode = getOperationMode(state.analystPreferences?.operationMode || 'M1');
   const focus = state.diagnostics?.focusedAsset || {};
   const clock = state.diagnostics?.marketClock || {};
-  const controls = state.platformControls || {};
-  const expAt = Number(controls.realExpirationAt || 0);
-  const expSource = clean(controls.realExpirationSource || controls.expirationSource || '');
-  const expiration = expAt > 0 && Date.now() - expAt < 15000 && expSource !== 'user-declared'
-    ? clean(controls.realExpiration)
-    : '';
-  return expiration === operationMode.expiration
-    && state.diagnostics?.expirationGuard?.verified === true
+  const expiry = getExpirationReadiness(state);
+  return expiry.ready
     && clock.verified === true
     && clock.available !== false
     && ['trader-dom-countdown','network-server-cycle'].includes(clean(clock.source))
@@ -77,7 +73,8 @@ function timingReady(state = {}) {
     && sameMarket(clock.asset, state.asset)
     && clockBoundToFocus(clock, focus)
     && Number(clock.at || 0) > 0
-    && Date.now() - Number(clock.at) < 4500
+    && Date.now() - Number(clock.at || 0) >= 0
+    && Date.now() - Number(clock.at || 0) < 4500
     && num(clock.secondsRemaining) != null;
 }
 
@@ -89,21 +86,11 @@ function analysisReady(state = {}) {
 
 function timingBlockReason(state = {}) {
   const operation = getOperationMode(state.analystPreferences?.operationMode || 'M1');
-  const controls = state.platformControls || {};
   const clock = state.diagnostics?.marketClock || {};
   const focus = state.diagnostics?.focusedAsset || {};
-  const now = Date.now();
-  const expAt = Number(controls.realExpirationAt || 0);
-  const expSource = clean(controls.realExpirationSource || controls.expirationSource || '');
-  const observedExpiration = expAt > 0 && now - expAt >= 0 && now - expAt < 15000 && expSource !== 'user-declared'
-    ? clean(controls.realExpiration)
-    : '';
-  if (observedExpiration !== operation.expiration) {
-    return `Expiração real de ${operation.expiration === '300s' ? '5 minutos' : '1 minuto'} ainda não foi confirmada; valor informado não libera entrada.`;
-  }
-  if (state.diagnostics?.expirationGuard?.verified !== true) {
-    return 'A CasaTrade ainda não confirmou a expiração real do ativo selecionado.';
-  }
+  const expiry = getExpirationReadiness(state);
+  if (!expiry.ready) return expiry.reason;
+
   if (clock.verified !== true || clock.available === false
     || !['trader-dom-countdown','network-server-cycle'].includes(clean(clock.source))) {
     return 'Countdown exato da CasaTrade ainda não está validado.';
@@ -113,10 +100,10 @@ function timingBlockReason(state = {}) {
   }
   if (!sameMarket(clock.asset, state.asset)) return 'O relógio observado pertence a outro ativo.';
   if (!clockBoundToFocus(clock, focus)) return 'O relógio ainda não está vinculado ao frame do gráfico ativo.';
-  const age = now - Number(clock.at || 0);
+  const age = Date.now() - Number(clock.at || 0);
   if (!(Number(clock.at || 0) > 0 && age >= 0 && age < 4500)) return 'A leitura do countdown ficou desatualizada.';
   if (num(clock.secondsRemaining) == null) return 'Countdown da próxima vela indisponível.';
-  return 'Timeframe e expiração ainda não foram confirmados juntos.';
+  return '';
 }
 
 function technicalDirection(state = {}) {
@@ -205,40 +192,8 @@ function guidance(state = {}) {
   };
 }
 
-let displayedScore = null;
-let displayedScoreKey = '';
+const scoreStabilizer = createScoreStabilizer({ alpha: 0.20, sampleIntervalMs: 650, maxPointsPerSecond: 6 });
 
-function visibleScoreKey(state = {}) {
-  const candle = state.signal?.currentCandle || state.currentCandle || {};
-  const clock = state.diagnostics?.marketClock || {};
-  return [
-    clean(state.asset || ''),
-    clean(state.analysisTimeframe || state.timeframe || state.signal?.timeframe || ''),
-    Number(candle.time ?? candle.timestamp ?? clock.openAt ?? clock.candleOpenAt ?? 0)
-  ].join('|');
-}
-
-function stabilizedVisibleScore(state = {}, rawScore = 0, ready = false) {
-  if (!ready) {
-    displayedScore = 0;
-    displayedScoreKey = '';
-    return 0;
-  }
-  const raw = Math.max(0, Math.min(100, Number(rawScore) || 0));
-  const key = visibleScoreKey(state);
-  if (!key || key !== displayedScoreKey) {
-    displayedScoreKey = key;
-    displayedScore = raw;
-    return Math.round(displayedScore);
-  }
-  // The candle is live and the raw score may jump on every price tick. Keep the
-  // presentation readable without changing the underlying decision score.
-  const delta = raw - displayedScore;
-  if (Math.abs(delta) <= 2) displayedScore = raw;
-  else displayedScore += delta * 0.20;
-  displayedScore = Math.max(0, Math.min(100, displayedScore));
-  return Math.round(displayedScore);
-}
 
 function render(state = {}) {
   const ready = analysisReady(state);
@@ -251,7 +206,19 @@ function render(state = {}) {
     decisionScore: decision.score,
     confidenceScore: technicalConfidence.score
   }) : 0;
-  const score = stabilizedVisibleScore(state, scoreRaw, ready);
+  const score = scoreStabilizer.update({
+    key: scoreCycleKey({
+      asset: state.asset,
+      timeframe: state.analysisTimeframe || state.timeframe || state.signal?.timeframe,
+      candle: state.signal?.currentCandle || state.currentCandle || {},
+      clock: state.diagnostics?.marketClock || {},
+      targetStart: state.signal?.targetStart ?? state.decisionCycle?.targetStart,
+      now: Date.now()
+    }),
+    rawScore: scoreRaw,
+    ready,
+    at: Date.now()
+  });
   const guide = guidance(state);
   const card = $('triggerCard');
 
@@ -260,8 +227,8 @@ function render(state = {}) {
   if ($('triggerValue')) $('triggerValue').textContent = guide.value;
   if ($('triggerHint')) $('triggerHint').textContent = guide.hint;
   if ($('technicalConfidence')) $('technicalConfidence').textContent = `${score}/100`;
-  if ($('technicalConfidenceLabel')) $('technicalConfidenceLabel').textContent = 'SCORE';
-  if ($('confidenceNote')) $('confidenceNote').textContent = 'Score técnico interno de 0 a 100; não representa garantia de resultado.';
+  if ($('technicalConfidenceLabel')) $('technicalConfidenceLabel').textContent = 'SCORE ESTÁVEL';
+  if ($('confidenceNote')) $('confidenceNote').textContent = 'Pontuação suavizada dentro da mesma vela para reduzir oscilações por tick. Os gates usam a decisão técnica original; não é garantia de resultado.';
 }
 
 async function readState() {
