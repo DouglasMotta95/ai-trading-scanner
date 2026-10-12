@@ -22,7 +22,7 @@ export function operationModeForExpiration(value = '') {
 
 export function trustedModeFromObservedControls(snapshot = {}, now = Date.now()) {
   if (String(snapshot.source || '') !== 'casatrade-expiration-probe-v3') return null;
-  const observedAt = Number(snapshot.observedAt || 0);
+  const observedAt = Number(typeof snapshot.observedAt === 'object' ? snapshot.observedAt?.expiration || 0 : snapshot.observedAt || 0);
   const age = now - observedAt;
   if (!(observedAt > 0 && age >= -1000 && age < 15000)) return null;
   if (Number(snapshot.confidence?.expiration || 0) < 110) return null;
