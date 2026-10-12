@@ -46,15 +46,15 @@ test('video 20942: manual M1 expiration and running countdown cannot deadlock th
   const panel = read('src/sidepanel/app-v2.js');
   assert.match(readiness, /const conflict = !manualAccepted/);
   assert.match(policy, /EXPIRAÇÃO MANUAL ACEITA – usando 1 min/);
-  assert.match(panel, /if \\(manual === operation\\.expiration && \\(!currentTf \\|\\| currentTf === operation\\.timeframe\\)\\)/);
-  assert.match(policy, /observedCloseAt != null \\? observedCloseAt - tfMs/);
-  assert.match(panel, /observedCloseAt != null \\? observedCloseAt - tfMs/);
+  assert.ok(panel.includes('if (manual === operation.expiration && (!currentTf || currentTf === operation.timeframe))'));
+  assert.ok(policy.includes('observedCloseAt != null ? observedCloseAt - tfMs'));
+  assert.ok(panel.includes('observedCloseAt != null ? observedCloseAt - tfMs'));
 });
 
 test('asset switch retains global expiration selection and the market-keyed candle cache', () => {
   const session = read('src/background-market-session.js');
   assert.match(session, /const sessionBase = state;/);
-  assert.match(session, /marketHistory: sessionBase\\.marketHistory \\|\\| \\{\\}/);
+  assert.ok(session.includes('marketHistory: sessionBase.marketHistory || {}'));
 });
 
 test('white-panel recovery has a storage-backed visible emergency view', () => {
