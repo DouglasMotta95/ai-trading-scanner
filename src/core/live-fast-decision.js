@@ -238,9 +238,9 @@ export function fastLiveDecision(signal = {}, context = {}) {
   const operationMode = getOperationMode(context.operationMode || context.timeframe || 'M1');
   const preSignalWindowSeconds = 30;
   const finalWindowSeconds = operationMode.timeframe === 'M1'
-    ? 5
+    ? 10
     : operationMode.timeframe === 'M5'
-      ? 8
+      ? 15
       : thresholds.entryWindowSeconds;
   if (signal.uiState === 'ENTER_BUY' || signal.uiState === 'ENTER_SELL' || signal.state === 'CONFIRM') return signal;
 
@@ -299,6 +299,26 @@ export function fastLiveDecision(signal = {}, context = {}) {
   }
   const direction = stabilized.direction;
   const q = quality(signal, direction, thresholds, confirmationMode, signalPolicy);
+  const directionalPower = Number(direction === 'BUY' ? signal.analytics?.buyPower : signal.analytics?.sellPower) || 0;
+  const directCandidateReady = !!direction && score >= signalPolicy.possibleScore && directionalPower >= 45;
+
+  // The primary score+direction+power gate is independent from the optional
+  // professional-context accelerator. This makes the selected profiles govern
+  // actual signal volume while preserving direction stabilization and the
+  // two-hit rule before a final entry.
+  if (directCandidateReady && seconds > finalWindowSeconds) {
+    rememberCandidate(key, direction, score, at);
+    const directQuality = { strong: true, power: directionalPower, reasons: ['score', 'direção', 'poder direcional'], setup: signal.setup || 'critério do perfil atingido' };
+    observe(key, direction, false, at);
+    return possible(signal, direction, score, seconds, directQuality);
+  }
+  if (directCandidateReady && seconds <= finalWindowSeconds && score >= signalPolicy.finalScore) {
+    rememberCandidate(key, direction, score, at);
+    const directQuality = { strong: true, power: directionalPower, reasons: ['score final', 'direção', 'poder direcional'], setup: signal.setup || 'critério final do perfil atingido' };
+    const directHits = observe(key, direction, true, at);
+    if (directHits >= FAST_DECISION.confirmHits) return enter(signal, direction, score, seconds, directQuality);
+    return possible(signal, direction, score, seconds, directQuality);
+  }
 
   if (!q.strong) {
     const retained = recentCandidate(key, direction, at, score, possibleScore);
