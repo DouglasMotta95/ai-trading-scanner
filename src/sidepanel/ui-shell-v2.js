@@ -424,13 +424,14 @@ function renderShell(state = {}) {
     && (!declaredAt || realExpirationAt >= declaredAt)
     && realExpirationSource !== 'user-declared';
   const expirationSource = realExpirationFresh ? realExpirationSource : (declaredExpiration ? 'user-declared' : clean(expirationGuard.source || state.platformControls?.expirationSource || ''));
-  const expirationDivergence = expirationGuard.divergence === true;
-  const expiration = realExpirationFresh ? clean(state.platformControls?.realExpiration || '') : clean(declaredExpiration || expirationGuard.actual || '');
+  const manualModeMatches = !!declaredExpiration && normExp(declaredExpiration) === operation.expiration;
+  const expirationDivergence = expirationGuard.divergence === true && !manualModeMatches;
+  const expiration = manualModeMatches ? operation.expiration : realExpirationFresh ? clean(state.platformControls?.realExpiration || '') : clean(declaredExpiration || expirationGuard.actual || '');
   const expirationVerified = realExpirationFresh && expirationGuard.verified === true;
   const manualExpirationAccepted = !!declaredExpiration
     && normExp(declaredExpiration) === operation.expiration
     && !expirationDivergence;
-  const expirationWrong = dataConnected && ((expirationVerified && !!expiration && expiration !== operation.expiration)
+  const expirationWrong = !manualModeMatches && dataConnected && ((expirationVerified && !!expiration && expiration !== operation.expiration)
     || (!expirationVerified && !!declaredExpiration && !manualExpirationAccepted));
   const sessionStartedAt = Number(session.startedAt || state.diagnostics?.target?.connectedAt || 0);
   const sessionAge = sessionStartedAt > 0 ? Date.now() - sessionStartedAt : 0;
