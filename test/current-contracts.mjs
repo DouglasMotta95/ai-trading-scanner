@@ -89,7 +89,8 @@ export function registerMarketContracts(label='market') {
     const start = market.indexOf('function resetForSession');
     const end = market.indexOf('function clockRecord', start);
     const reset = market.slice(start, end);
-    for (const field of ['price: null','candles: []','marketHistory: {}','signal: null','professionalDecision: null','lastConfirmed: null','lastSeen: null']) assert.ok(reset.includes(field), 'missing reset field ' + field);
+    for (const field of ['price: null','candles: []','signal: null','professionalDecision: null','lastConfirmed: null','lastSeen: null']) assert.ok(reset.includes(field), 'missing reset field ' + field);
+    assert.match(reset, /marketHistory: sessionBase\.marketHistory \|\| \{\}/);
   });
   test(label + ': technical analysis has one runtime owner', () => {
     const background = read('src/background.js');
