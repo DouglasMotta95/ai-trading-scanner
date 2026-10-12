@@ -5,7 +5,7 @@ import vm from 'node:vm';
 
 const read = path => fs.readFileSync(new URL('../' + path, import.meta.url), 'utf8');
 
-test('focused asset parser recognizes USD/XOF OTC without guessing EUR/USD', () => {
+test('all focused-asset readers recognize USD/XOF OTC without guessing another tab', () => {
   const source = read('src/content/focused-asset-v2.js');
   const start = source.indexOf('const QUOTES = new Set(');
   const end = source.indexOf('\n  const canonicalAsset', start);
@@ -21,6 +21,22 @@ test('focused asset parser recognizes USD/XOF OTC without guessing EUR/USD', () 
   assert.equal(assetsIn('USD/XOF (OTC)')[0], 'USD/XOF (OTC)');
   assert.equal(assetsIn('EUR/USD (OTC)')[0], 'EUR/USD (OTC)');
   assert.equal(assetsIn('USD/XAF (OTC)')[0], 'USD/XAF (OTC)');
+});
+
+test('alias bridge parser also recognizes XOF/XAF rather than dropping the selected market', () => {
+  const source = read('src/content/focused-asset-alias-bridge.js');
+  const start = source.indexOf('const ALIASES = new Map(');
+  const end = source.indexOf('\n  const metaText', start);
+  assert.ok(start >= 0 && end > start, 'alias parser block exists');
+  const parserBlock = source.slice(start, end);
+  const parser = vm.runInNewContext(`(() => {
+    ${parserBlock}
+    return { directPairFromText, canonicalFromText };
+  })()`);
+  assert.equal(parser.directPairFromText('USD/XOF (OTC)'), 'USD/XOF (OTC)');
+  assert.equal(parser.canonicalFromText('USD/XOF (OTC)'), 'USD/XOF (OTC)');
+  assert.equal(parser.canonicalFromText('USD/XAF (OTC)'), 'USD/XAF (OTC)');
+  assert.equal(parser.canonicalFromText('EUR/USD (OTC)'), 'EUR/USD (OTC)');
 });
 
 test('market focus stays explicit/ambiguous-safe after adding exotic currency quotes', () => {
