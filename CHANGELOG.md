@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.12.5 — Keep technical score visible when entry timing is blocked
+
+### Regression observed in video 20843
+- The panel remained connected and showed an M1 countdown, but the technical card displayed `AGUARDANDO TEMPO CASATRADE` and `0/100`.
+- The card used `analysisReady = marketReady && timingReady`; this coupled technical-score display to strict timing/expiration verification and forcibly set the score to zero when only the entry timing gate was blocked.
+- Score precedence started with `professionalDecision.score`, so a zero from a blocked decision could mask a nonzero technical-engine score.
+
+### Fix
+- Separate market/candle readiness (allowed to calculate and display analysis) from time/expiration authorization (required to promote an entry).
+- Calculate and show the best available technical score from the technical engine/entry-confidence outputs even if the operational decision has a zero score due to a timing block.
+- Keep buy/sell entry authorization gated by the exact CasaTrade clock, matching timeframe, real expiration verification, technical final decision and actionable flag.
+- Keep directional patterns visible with an explicit `Entrada bloqueada: ...` reason when timing or expiration is not validated instead of replacing analysis with an empty `AGUARDAR TEMPO` card.
+- Added tests proving score visibility and that timing/expiration failures still prevent final-entry display.
+
+### Safety
+This changes display/diagnostics only. It does not permit an entry when the clock or expiration is unverified and does not auto-execute orders.
+
+---
+
 ## 0.12.4 — Decision audit: score, pattern, blocker, timing and delivery
 
 ### Purpose
