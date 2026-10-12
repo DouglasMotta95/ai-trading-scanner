@@ -105,7 +105,7 @@ function highConfidenceEvidence(signal = {}, direction = null, thresholds = getT
   return evidence;
 }
 
-function decisionQuality(signal = {}, direction = null, thresholds = getThresholds(), confirmationMode = 'SIMPLES') {
+export function decisionQuality(signal = {}, direction = null, thresholds = getThresholds(), confirmationMode = 'SIMPLES') {
   const mode = clean(confirmationMode).toUpperCase() === 'EXIGENTE' ? 'EXIGENTE' : 'SIMPLES';
   const score = Number(signal.analysisScore ?? signal.score ?? 0);
   const analytics = signal.analytics || {};
