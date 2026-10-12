@@ -241,7 +241,7 @@ function decisionQuality(signal = {}, direction = null, thresholds = getThreshol
   };
 }
 
-function qualifiesEarlyPattern(signal = {}, direction = null, score = 0) {
+export function qualifiesEarlyPattern(signal = {}, direction = null, score = 0) {
   const pattern = signal.analytics?.pullbackContinuation || {};
   if (pattern.qualified !== true || pattern.direction !== direction) return false;
   if (pattern.notStretched !== true || Number(pattern.roomToLevel) < 0.35 || Number(pattern.score) < 80) return false;
