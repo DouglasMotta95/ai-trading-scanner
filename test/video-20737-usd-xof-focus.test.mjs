@@ -39,6 +39,33 @@ test('alias bridge parser also recognizes XOF/XAF rather than dropping the selec
   assert.equal(parser.canonicalFromText('EUR/USD (OTC)'), 'EUR/USD (OTC)');
 });
 
+test('protocol focus path and compact market normalization also accept XOF/XAF', () => {
+  const protocolSource = read('src/content/focused-asset-protocol.js');
+  const protocolStart = protocolSource.indexOf('const quotes = new Set(');
+  const protocolEnd = protocolSource.indexOf('\n\n  function visualBlocksProtocolRollback', protocolStart);
+  assert.ok(protocolStart >= 0 && protocolEnd > protocolStart, 'protocol normalizer block exists');
+  const protocol = vm.runInNewContext(`(() => {
+    const host = 'trade.casatrade.com';
+    ${protocolSource.slice(protocolStart, protocolEnd)}
+    return normAsset;
+  })()`);
+  assert.equal(protocol('USD/XOF (OTC)'), 'USD/XOF (OTC)');
+  assert.equal(protocol('USDXOF OTC'), 'USD/XOF (OTC)');
+  assert.equal(protocol('USD/XAF (OTC)'), 'USD/XAF (OTC)');
+
+  const marketSource = read('src/background-market-session.js');
+  const marketStart = marketSource.indexOf('function normAsset(');
+  const marketEnd = marketSource.indexOf('\nconst marketId', marketStart);
+  assert.ok(marketStart >= 0 && marketEnd > marketStart, 'market session normalizer exists');
+  const marketNorm = vm.runInNewContext(`(() => {
+    const clean = value => String(value ?? '').normalize('NFKC').replace(/\\s+/g, ' ').trim();
+    ${marketSource.slice(marketStart, marketEnd)}
+    return normAsset;
+  })()`);
+  assert.equal(marketNorm('USDXOF OTC'), 'USD/XOF (OTC)');
+  assert.equal(marketNorm('USDXAF OTC'), 'USD/XAF (OTC)');
+});
+
 test('market focus stays explicit/ambiguous-safe after adding exotic currency quotes', () => {
   const source = read('src/content/focused-asset-v2.js');
   assert.match(source, /if \(!first\.interaction && !first\.explicit\) return null/);
