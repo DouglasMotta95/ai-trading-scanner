@@ -315,9 +315,10 @@ export function fastLiveDecision(signal = {}, context = {}) {
   if (directCandidateReady && seconds <= finalWindowSeconds && score >= signalPolicy.finalScore) {
     rememberCandidate(key, direction, score, at);
     const directQuality = { strong: true, power: directionalPower, reasons: ['score final', 'direção', 'poder direcional'], setup: signal.setup || 'critério final do perfil atingido' };
-    const directHits = observe(key, direction, true, at);
-    if (directHits >= FAST_DECISION.confirmHits) return enter(signal, direction, score, seconds, directQuality);
-    return possible(signal, direction, score, seconds, directQuality);
+    // The profile score + clear direction + power>=45 are the final contract.
+    // Do not delay a qualifying M1/M5 decision for an extra polling hit.
+    trackers.set(key, { direction, hits: FAST_DECISION.confirmHits, at, weakHits: 0 });
+    return enter(signal, direction, score, seconds, directQuality);
   }
 
   if (!q.strong) {
