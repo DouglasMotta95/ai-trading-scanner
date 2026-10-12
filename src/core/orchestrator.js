@@ -93,7 +93,6 @@ function highConfidenceEvidence(signal = {}, direction = null, thresholds = getT
   const rejectionStrength = Number(analytics.rejectionStrength || 0);
   const continuationScore = Number(analytics.continuationScore || 0);
   const momentumScore = Number(analytics.momentumScore || 0);
-  const pullbackContinuation = analytics.pullbackContinuation?.qualified === true && analytics.pullbackContinuation?.direction === direction;
   const directionalRejection = analytics.rejectionDirection === direction
     || Number(direction === 'BUY' ? analytics.rejectionBuy : analytics.rejectionSell) >= Math.max(50, thresholds.rejectionStrength);
   const evidence = [];
@@ -119,7 +118,8 @@ export function decisionQuality(signal = {}, direction = null, thresholds = getT
   const continuation = analytics.continuationDirection === direction && continuationScore >= 55;
   const momentum = analytics.momentumDirection === direction && momentumScore >= 40;
   const strongCandle = currentStrength >= thresholds.candleStrength;
-  const pullbackContinuation = analytics.pullbackContinuation?.qualified === true && analytics.pullbackContinuation?.direction === direction;
+  const pattern = analytics.pullbackContinuation || {};
+  const pullbackContinuation = pattern.qualified === true && pattern.direction === direction && pattern.notStretched === true && Number(pattern.roomToLevel) >= 0.35 && Number(pattern.score) >= 80;
   const rejection = directionalRejection && rejectionStrength >= thresholds.rejectionStrength;
   const regime = String(signal.regime?.type || '').toLowerCase();
   const evidence = highConfidenceEvidence(signal, direction, thresholds);
