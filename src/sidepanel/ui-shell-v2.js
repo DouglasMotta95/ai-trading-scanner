@@ -84,13 +84,54 @@ async function persistConfirmationMode(value) {
   }
 }
 
+const LICENSE_UI_GRACE_MS = 5 * 60 * 1000;
+let lastActiveLicenseAt = 0;
+let lastActiveLicensePersistAt = 0;
 function activeLicense(state = {}) {
-  const status = clean(state?.license?.status).toLowerCase();
-  return ['active','valid'].includes(status)
-    || state?.license?.devMode === true
-    || clean(state?.license?.plan).toUpperCase() === 'OWNER_DEV'
+  const license = state?.license || {};
+  const status = clean(license.status).toLowerCase();
+  const plan = clean(license.plan || license.planLabel).toUpperCase();
+  const ownerDev = license?.devMode === true || plan === 'OWNER_DEV'
     || state?.diagnostics?.access?.ownerDev === true
     || state?.diagnostics?.access?.state === 'owner_dev';
+  const active = ['active','valid'].includes(status) || ownerDev;
+
+  let expiryValid = true;
+  if (license.expiresAt) {
+    let expiry = Number(license.expiresAt);
+    if (Number.isFinite(expiry) && expiry > 0) {
+      if (expiry < 1e12) expiry *= 1000;
+    } else expiry = Date.parse(String(license.expiresAt));
+    expiryValid = Number.isFinite(expiry) && expiry > Date.now();
+  }
+  if (active && expiryValid) {
+    const now = Date.now();
+    lastActiveLicenseAt = now;
+    if (now - lastActiveLicensePersistAt >= 30_000) {
+      lastActiveLicensePersistAt = now;
+      try {
+        localStorage.setItem('atsLastActiveLicenseUI', JSON.stringify({
+          at: now, plan: String(license.planLabel || license.plan || (ownerDev ? 'OWNER_DEV' : 'Acesso ativo'))
+        }));
+      } catch {}
+    }
+    return true;
+  }
+
+  const error = clean(license.error || state?.diagnostics?.access?.error).toLowerCase();
+  const authoritativeErrors = ['license_not_found','license_inactive','license_expired','device_limit_reached','device_locked'];
+  if (['expired','limit','device_locked','revoked'].includes(status)
+    || authoritativeErrors.includes(error)
+    || (license.expiresAt && !expiryValid)) return false;
+
+  try {
+    const saved = JSON.parse(localStorage.getItem('atsLastActiveLicenseUI') || 'null');
+    const at = Number(saved?.at || 0);
+    const age = Date.now() - at;
+    if (at > 0 && age >= 0 && age <= LICENSE_UI_GRACE_MS) lastActiveLicenseAt = at;
+  } catch {}
+  const age = Date.now() - Number(lastActiveLicenseAt || 0);
+  return age >= 0 && age <= LICENSE_UI_GRACE_MS;
 }
 
 function baseHandshake(state = {}) {
