@@ -1,6 +1,7 @@
 import { processSnapshot, resetOrchestrator } from './core/orchestrator.js';
 import { readScannerState, updateScannerState } from './services/scanner-state-atomic.js';
 import { resolveSignalHistory, signalPerformance, resolveSignalOutcome, diagnoseSignalOutcomePending } from './core/signal-outcomes.js';
+import { createActiveSignalOperation, reconcileActiveSignalOperation, signalOperationHolds, sameOperationMarket } from './core/signal-operation.js';
 import { getThresholds, getOperationMode } from './core/analysis.js';
 import { storageLocalGet, storageLocalSet } from './services/chrome-compat.js';
 import { track as telemetryEvent, heartbeat as telemetryHeartbeat } from './services/telemetry.js';
@@ -484,9 +485,17 @@ function reconcileSignalHistory(state = {}, next = {}, snapshot = {}) {
     || ['ENTER_BUY', 'ENTER_SELL'].includes(clean(signal.uiState).toUpperCase());
   const professional = state.professionalDecision || {};
   const professionalUi = clean(professional.uiState).toUpperCase();
-  const professionalConfirmed = professional.actionable === true
+  const activeOperationForHistory = next.activeSignalOperation || state.activeSignalOperation || null;
+  const operationConfirms = !!activeOperationForHistory
+    && activeOperationForHistory.status !== 'COMPLETED'
+    && sameMarket(activeOperationForHistory.asset, snapshot.asset)
+    && clean(activeOperationForHistory.timeframe).toUpperCase() === timeframe
+    && clean(activeOperationForHistory.direction).toUpperCase() === direction
+    && Number(activeOperationForHistory.targetStart || 0) === Number(outcomeTargetStart || 0);
+  const professionalConfirmed = (professional.actionable === true
     && ['ENTER_BUY', 'ENTER_SELL'].includes(professionalUi)
-    && clean(professional.direction).toUpperCase() === direction;
+    && clean(professional.direction).toUpperCase() === direction)
+    || operationConfirms;
   const confirmed = technicalConfirmed && professionalConfirmed;
 
   if (confirmed && ['BUY', 'SELL'].includes(direction) && outcomeTargetStart != null && timeframe) {
@@ -659,11 +668,49 @@ async function runCentralAnalysis(force = false) {
         }
       } : current;
       if (assetDataTransition) resetOrchestrator();
-      let processed = processSnapshot(snapshot, analysisInput);
+      const operationNow = num(snapshot.serverTime) ?? Date.now();
+      const candidateOperation = createActiveSignalOperation(analysisInput, analysisInput.professionalDecision || {}, operationNow);
+      const activeOperation = reconcileActiveSignalOperation(
+        analysisInput.activeSignalOperation || candidateOperation,
+        analysisInput.signalHistory || [],
+        operationNow
+      );
+      const holdActiveOperation = signalOperationHolds(activeOperation)
+        && sameOperationMarket(activeOperation.asset, snapshot.asset)
+        && clean(activeOperation.timeframe).toUpperCase() === clean(snapshot.analysisTimeframe || snapshot.timeframe).toUpperCase();
+      let processed;
+      if (holdActiveOperation) {
+        const direction = clean(activeOperation.direction).toUpperCase();
+        const side = direction === 'BUY' ? 'COMPRA' : 'VENDA';
+        const originalSignal = analysisInput.signal || {};
+        processed = {
+          signal: {
+            ...originalSignal, state: 'CONFIRM', direction, analysisDirection: direction,
+            uiState: 'ENTER_' + direction, provisional: false, phase: 'OPERATION_LOCKED',
+            targetStart: activeOperation.targetStart, targetEnd: activeOperation.targetEnd,
+            reason: activeOperation.status === 'SETTLING'
+              ? 'APURANDO RESULTADO — ' + side + ' • aguardando fechamento confirmado da vela-alvo.'
+              : 'OPERAÇÃO EM ACOMPANHAMENTO — ' + side + ' • o próximo sinal só será liberado depois do fechamento desta vela.',
+            hint: 'Abertura da vela: ' + (activeOperation.candleOpenPrice ?? 'aguardando captura')
+              + ' • fechamento: ' + (activeOperation.candleClosePrice ?? 'aguardando fechamento')
+              + ' • resultado: ' + (activeOperation.result || 'pendente')
+          },
+          decisionCycle: {
+            ...(analysisInput.decisionCycle || {}),
+            key: activeOperation.asset + '|' + activeOperation.timeframe + '|' + activeOperation.targetStart,
+            targetStart: activeOperation.targetStart, locked: 'ENTER', direction,
+            score: activeOperation.score, setup: activeOperation.setup, resolved: false,
+            reason: 'Operação travada até concluir a vela-alvo (' + side + ').'
+          },
+          diagnostics: { ...(analysisInput.diagnostics || {}), signalOperation: activeOperation }
+        };
+      } else {
+        processed = processSnapshot(snapshot, analysisInput);
+      }
       const allowance = signalAllowance(analysisInput);
       const processedUi = clean(processed?.signal?.uiState).toUpperCase();
       const processedConfirmed = processed?.signal?.state === 'CONFIRM' || processedUi === 'ENTER_BUY' || processedUi === 'ENTER_SELL';
-      if (processedConfirmed && !allowance.allowed) {
+      if (!holdActiveOperation && processedConfirmed && !allowance.allowed) {
         processed = {
           ...processed,
           signal: blockEntrySignal(processed.signal, allowance.reason),
@@ -719,6 +766,14 @@ async function runCentralAnalysis(force = false) {
       };
 
       const history = reconcileSignalHistory(current, next, snapshot);
+      const trackedOperation = reconcileActiveSignalOperation(
+        activeOperation || current.activeSignalOperation,
+        history.rows,
+        num(snapshot.serverTime) ?? Date.now()
+      );
+      const previouslyTracked = current.activeSignalOperation || null;
+      const newlyCompletedOperation = trackedOperation?.status === 'COMPLETED' && previouslyTracked?.status !== 'COMPLETED';
+      const lastSignalOperation = newlyCompletedOperation ? trackedOperation : (current.lastSignalOperation || null);
       const usageNow = Date.now();
       confirmedForUsage = history.rows.filter(row => {
         const status = clean(row?.usageStatus).toLowerCase();
@@ -734,10 +789,13 @@ async function runCentralAnalysis(force = false) {
       resolvedForTelemetry = history.resolved;
       const nextWithHistory = {
         ...next,
+        ...(trackedOperation ? { activeSignalOperation: trackedOperation } : {}),
+        ...(lastSignalOperation ? { lastSignalOperation } : {}),
         signalHistory: history.rows,
         performance: history.performance,
         diagnostics: {
           ...(next.diagnostics || {}),
+          signalOperation: trackedOperation || next.diagnostics?.signalOperation || null,
           outcomes: {
             pending: history.performance.pending,
             resolved: history.performance.resolved,
