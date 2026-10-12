@@ -1,5 +1,6 @@
 import { readScannerState, updateScannerState } from './services/scanner-state-atomic.js';
 import { getThresholds, getOperationMode, getSignalPolicy } from './core/analysis.js';
+import { buildDecisionAudit, appendDecisionAudit } from './core/decision-audit.js';
 
 // Product policy layer. The technical engine can keep collecting evidence with an
 // estimated clock, but the user-facing decision is never promoted while CasaTrade
@@ -667,13 +668,27 @@ let writing = false;
 async function evaluate(state = {}) {
   if (writing) return;
   const decision = baseDecision(state);
-  if (signature(decision) === signature(state.professionalDecision || {})) return;
+  const decisionChanged = signature(decision) !== signature(state.professionalDecision || {});
+  const auditRow = buildDecisionAudit(state, decision);
+  const auditNext = appendDecisionAudit(state.decisionAudit || {}, auditRow, 40);
+  const auditChanged = auditNext !== (state.decisionAudit || null);
+  if (!decisionChanged && !auditChanged) return;
+
   writing = true;
   try {
     await updateScannerState(current => {
       const next = baseDecision(current);
-      if (signature(next) === signature(current.professionalDecision || {})) return current;
-      return { ...current, professionalDecision: next };
+      const updateDecision = signature(next) !== signature(current.professionalDecision || {});
+      const row = buildDecisionAudit(current, next);
+      const oldAudit = current.decisionAudit || {};
+      const audit = appendDecisionAudit(oldAudit, row, 40);
+      const updateAudit = audit !== oldAudit;
+      if (!updateDecision && !updateAudit) return current;
+      return {
+        ...current,
+        ...(updateDecision ? { professionalDecision: next } : {}),
+        ...(updateAudit ? { decisionAudit: audit } : {})
+      };
     });
   } finally {
     writing = false;
