@@ -298,6 +298,7 @@ function confluence(signal = {}, direction = null, thresholds = getThresholds())
   if (text(a.rejectionDirection).toUpperCase() === direction && Number(a.rejectionStrength || 0) >= thresholds.rejectionStrength) factors.push('rejeição');
   if (text(a.continuationDirection).toUpperCase() === direction && Number(a.continuationScore || 0) >= 60) factors.push('continuação');
   if (text(a.momentumDirection).toUpperCase() === direction && Number(a.momentumScore || 0) >= 45) factors.push('momentum');
+  if (a.pullbackContinuation?.qualified === true && a.pullbackContinuation?.direction === direction) factors.push('pullback sem esticamento');
   const setup = text(signal.setup).toLowerCase();
   if (/romp|breakout|support|resist|suporte|resistência|resistencia/.test(setup)) factors.push('estrutura');
   if (a.professional?.contextReady === true) factors.push('contexto');
