@@ -19,7 +19,7 @@ test('manifest enables native notifications and offscreen audio without changing
 test('system alerts support both matched M1/60s and M5/300s with per-candle dedupe', () => {
   const source = read('src/background-system-alerts.js');
   const qualification = read('src/core/signal-alert-qualification.js');
-  assert.match(source, /import \{ qualifiedDecision \} from '\.\/core\/signal-alert-qualification\.js'/);
+  assert.match(source, /import \{ qualifiedDecision, explainDecisionAlertEligibility \} from '\.\/core\/signal-alert-qualification\.js'/);
   assert.match(source, /const event = qualifiedDecision\(state\)/);
   assert.match(source, /atsSystemAlertLedgerV1/);
   assert.match(source, /claimCycleStage/);
@@ -37,7 +37,7 @@ test('system alerts support both matched M1/60s and M5/300s with per-candle dedu
   assert.match(qualification, /seconds <= 0 \|\| seconds > alertWindow/);
   assert.match(qualification, /ui === 'ENTER_BUY'/);
   assert.match(qualification, /ui === 'ENTER_SELL'/);
-  assert.match(qualification, /if \(!confirmedBuy && !confirmedSell\) return null/);
+  assert.match(qualification, /if \(!confirmedBuy && !confirmedSell\) reason =/);
 });
 test('notification and sound preferences persist in the existing sidepanel preferences store', () => {
   const html = read('src/sidepanel/index.html');
