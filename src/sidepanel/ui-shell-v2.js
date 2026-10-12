@@ -315,7 +315,7 @@ function renderOperationalPulse(state = {}) {
   if ($('auditDelivery')) {
     const d = latestAudit?.delivery || {};
     $('auditDelivery').textContent = latestAudit
-      ? `${statusLabel(d.status)} • estágio=${clean(d.stage || '—')} • notificação=${statusLabel(d.notification)} • som=${statusLabel(d.sound)} • tentado=${d.attempted ? 'sim' : 'não'}${d.reason ? '\\n' + d.reason : ''}`
+      ? `${statusLabel(d.status)} • estágio=${clean(d.stage || '—')} • notificação=${statusLabel(d.notification)} • som=${statusLabel(d.sound)} • tentado=${d.attempted ? 'sim' : 'não'}${d.reason ? '\n' + d.reason : ''}`
       : 'Sem tentativa registrada.';
     $('auditDeliveryRow')?.classList.toggle('ok', d.status === 'delivered');
     $('auditDeliveryRow')?.classList.toggle('warn', ['failed','not_eligible','disabled'].includes(d.status));
@@ -326,7 +326,7 @@ function renderOperationalPulse(state = {}) {
       ? history.map(row => {
           const s = row.scoreDirection || {}, d = row.delivery || {};
           return `${auditTime(row.at)} • ${clean(row.timeframe || '—')} • ${Math.round(Number(s.score || 0))}/100 ${clean(s.direction || '—')} • ${clean(row.decision?.uiState || '—')} • ${statusLabel(d.status)} • ${clean(row.blockerReason || 'sem bloqueio')}`;
-        }).join('\\n')
+        }).join('\n')
       : 'O histórico de decisões aparecerá aqui.';
   }
 
@@ -793,6 +793,17 @@ function expirationDiagnosticText(response = {}) {
       }).join('\n')
     : '- Nenhum dos últimos ciclos registrou direção candidata.';
 
+  const auditRows = Array.isArray(lastState?.decisionAudit?.events) ? lastState.decisionAudit.events.slice(-40) : [];
+  const latestAudit = lastState?.decisionAudit?.latest || null;
+  const decisionAuditLines = [
+    latestAudit ? `Latest: ${new Date(Number(latestAudit.at || 0)).toISOString()} | ${clean(latestAudit.asset || '—')} | ${clean(latestAudit.timeframe || '—')} | ${Math.round(Number(latestAudit.scoreDirection?.score || 0))}/100 | direção=${clean(latestAudit.scoreDirection?.direction || '—')} | decisão=${clean(latestAudit.decision?.uiState || '—')}` : 'Sem diagnóstico de decisão.',
+    latestAudit ? `Padrão=${clean(latestAudit.pattern?.name || '—')} | qualificado=${latestAudit.pattern?.qualified === true} | scorePadrão=${Number(latestAudit.pattern?.score || 0)} | nãoEsticado=${latestAudit.pattern?.notStretched === true} | espaço=${latestAudit.pattern?.roomToLevel ?? '—'} | contexto=${latestAudit.pattern?.contextReady === true} | gatilho=${latestAudit.pattern?.triggerReady === true}` : '',
+    latestAudit ? `Bloqueador=${clean(latestAudit.blockerReason || 'nenhum')} | checks=${(latestAudit.checks || []).map(row => `${row.key}=${row.ok ? 'OK' : 'PENDENTE'}(${clean(row.detail)})`).join('; ')}` : '',
+    latestAudit ? `Prazo: tf=${clean(latestAudit.timeframe || '—')} exp=${clean(latestAudit.expiration || '—')} segundos=${latestAudit.timing?.secondsRemaining ?? '—'} alvo=${latestAudit.timing?.targetAt ? new Date(Number(latestAudit.timing.targetAt)).toISOString() : '—'} relógio=${latestAudit.timing?.timeReady === true} expiraçãoOK=${latestAudit.timing?.expirationReady === true}` : '',
+    latestAudit ? `Entrega: status=${clean(latestAudit.delivery?.status || '—')} etapa=${clean(latestAudit.delivery?.stage || '—')} notificação=${clean(latestAudit.delivery?.notification || '—')} som=${clean(latestAudit.delivery?.sound || '—')} tentado=${latestAudit.delivery?.attempted === true} motivo=${clean(latestAudit.delivery?.reason || '—')}` : '',
+    '',
+    ...auditRows.map(row => `[${new Date(Number(row.at || 0)).toISOString()}] ${clean(row.cycleKey || '—')} | score=${Number(row.scoreDirection?.score || 0)} | direção=${clean(row.scoreDirection?.direction || '—')} | decisão=${clean(row.decision?.uiState || '—')} | bloqueio=${clean(row.blockerReason || 'nenhum')} | entrega=${clean(row.delivery?.status || '—')} (${clean(row.delivery?.reason || '—')})`)
+  ];
   return [
     'AI Trading Scanner — diagnóstico de leitura de expiração',
     `Frames examinados: ${Number(response.frameCount || response.frames?.length || 0)}`,
@@ -854,7 +865,10 @@ function expirationDiagnosticText(response = {}) {
     networkDiagnosticLines,
     '',
     '7. BLOQUEIO DO CANDIDATO',
-    candidateBlockerLines
+    candidateBlockerLines,
+    '',
+    '8. RASTRO COMPLETO DA DECISÃO E ENTREGA DO SINAL',
+    decisionAuditLines.join('\n')
   ].join('\n');
 }
 
