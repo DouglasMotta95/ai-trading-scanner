@@ -816,6 +816,21 @@ async function recoverLicense(state = {}, force = false) {
   }
 
   const error = validated?.error || state.license?.error || 'license_required';
+  const currentLicense = state.license || {};
+  const currentExpiryRaw = currentLicense.expiresAt;
+  let currentExpiry = null;
+  if (currentExpiryRaw != null && currentExpiryRaw !== '') {
+    currentExpiry = Number(currentExpiryRaw);
+    if (Number.isFinite(currentExpiry) && currentExpiry > 0) {
+      if (currentExpiry < 1e12) currentExpiry *= 1000;
+    } else currentExpiry = Date.parse(String(currentExpiryRaw));
+  }
+  const currentStillValid = activeLicense(currentLicense)
+    && (!currentExpiryRaw || (Number.isFinite(currentExpiry) && currentExpiry > Date.now()));
+  const transientFailure = ['backend_unreachable','network_error','timeout','request_timeout'].includes(clean(error).toLowerCase());
+  if (transientFailure && currentStillValid) {
+    return { ...currentLicense, status: 'active', error, syncPending: true };
+  }
   return {
     ...(state.license || DEFAULT_LICENSE),
     ...(validated?.license || {}),
