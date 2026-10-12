@@ -1,6 +1,6 @@
 import { assessEntryConfidence } from '../core/entry-confidence.js';
 import { getOperationMode } from '../core/analysis.js';
-import { selectTechnicalScore } from '../core/decision-display.js';
+import { canShowFinalEntry, canShowTechnicalAnalysis, selectTechnicalScore } from '../core/decision-display.js';
 
 const $ = id => document.getElementById(id);
 const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
@@ -84,7 +84,7 @@ function timingReady(state = {}) {
 // Candle analysis and permission to enter are separate concerns.
 // A stale/unverified clock must block a trade, not erase the technical score.
 function analysisReady(state = {}) {
-  return marketReady(state);
+  return canShowTechnicalAnalysis({ marketReady: marketReady(state) });
 }
 
 function timingBlockReason(state = {}) {
@@ -157,7 +157,7 @@ function guidance(state = {}) {
     };
   }
 
-  if ((professionalUi === 'ENTER_BUY' || professionalUi === 'ENTER_SELL') && decision.actionable === true && timeReady) {
+  if ((professionalUi === 'ENTER_BUY' || professionalUi === 'ENTER_SELL') && canShowFinalEntry({ marketReady: marketReady(state), timingReady: clockAndExpiryReady, decisionTimeReady: decision.timeReady === true, expirationReady: decision.expirationReady === true, actionable: decision.actionable === true }) && timeReady) {
     return {
       tone: direction === 'BUY' ? 'buy' : 'sell',
       value: `CONFIRMADO • ${side}`,
