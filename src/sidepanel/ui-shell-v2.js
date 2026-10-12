@@ -452,11 +452,26 @@ function renderShell(state = {}) {
     if (expirationSelect.value !== storedValue) expirationSelect.value = storedValue;
   }
   if (expirationStatus) {
+    const modeSync = state.platformControls?.autoModeSync || state.diagnostics?.platformModeSync || {};
+    const modeSyncAge = Date.now() - Number(modeSync.at || 0);
+    const modeSyncFresh = modeSync.at > 0 && modeSyncAge >= 0 && modeSyncAge < 30000;
+    const activeMode = clean(state.analystPreferences?.operationMode || 'M1').toUpperCase() === 'M5' ? 'M5' : 'M1';
+    const requiredExpiration = activeMode === 'M5' ? '300s' : '60s';
+    const clockMode = clean(state.diagnostics?.marketClock?.timeframe || state.analysisTimeframe || state.timeframe).toUpperCase();
+    const guardVerified = state.diagnostics?.expirationGuard?.verified === true
+      && clean(state.diagnostics?.expirationGuard?.actual || state.platformControls?.realExpiration || '') === requiredExpiration;
+    const liveModeAligned = clockMode === activeMode && guardVerified;
     expirationStatus.textContent = expirationDivergence
       ? clean(expirationGuard.reason || 'Divergência entre a leitura real e o valor informado.')
-      : expirationSource === 'user-declared'
-        ? 'informada por você, não verificada'
-        : '';
+      : modeSyncFresh && liveModeAligned
+        ? `Modo ${activeMode} confirmado pelo relógio e pela expiração reais da CasaTrade.`
+        : modeSyncFresh && modeSync.verified
+          ? `Scanner em ${activeMode}: controles ajustados e relidos; aguardando confirmação do relógio real da CasaTrade.`
+          : modeSyncFresh
+            ? `Scanner em ${activeMode}, mas a CasaTrade não confirmou timeframe + expiração. ${clean(modeSync.reason || 'Ajuste os controles no gráfico; entradas continuam bloqueadas.')}`
+            : expirationSource === 'user-declared'
+              ? 'informada por você, não verificada'
+              : '';
   }
 
   const expirationDiagnostic = $('copyExpirationDiagnostic');
