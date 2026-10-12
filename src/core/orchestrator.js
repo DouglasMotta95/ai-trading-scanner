@@ -48,10 +48,10 @@ function decisionWindows(snapshot = {}, signal = {}, thresholds = getThresholds(
   // latest CasaTrade price action. Leave a small late cutoff so the 2-hit
   // confirmation still has time to complete without publishing at the turn.
   if (timeframe === 'M1') {
-    return { pre: 30, decision: 15, skip: 1, duration, timeframe };
+    return { pre: 30, decision: 10, skip: 1, duration, timeframe };
   }
   if (timeframe === 'M5') {
-    return { pre: 90, decision: 30, skip: 2, duration, timeframe };
+    return { pre: 90, decision: 15, skip: 1, duration, timeframe };
   }
 
   // Longer/shorter candles keep proportional windows.
@@ -211,12 +211,12 @@ export function decisionQuality(signal = {}, direction = null, thresholds = getT
         },
         {
           name: 'continuação',
-          ok: power >= 50 && continuation,
-          reason: `power>=50=${power >= 50} | continuação direcional>=55=${continuation}`
+          ok: power >= 45 && continuation,
+          reason: `power>=45=${power >= 45} | continuação direcional>=55=${continuation}`
         },
         {
           name: 'momentum',
-          ok: power >= 50 && strongCandle && momentum,
+          ok: power >= 45 && strongCandle && momentum,
           reason: `power>=50=${power >= 50} | currentStrength>=${thresholds.candleStrength}=${strongCandle} | momentum direcional>=40=${momentum}`
         },
         {
@@ -535,7 +535,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
       setups: quality.checks || []
     },
     technicalFinal,
-    mandatoryPowerReady: power >= 50,
+    mandatoryPowerReady: power >= 45,
     secondsRemaining,
     updatedAt: at
   });
