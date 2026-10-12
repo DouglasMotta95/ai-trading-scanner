@@ -529,47 +529,29 @@ function decisionModel(state = {}) {
   }
 
   const alignment = modeAlignment(state);
-  if (alignment.conflict) {
-    const tf = alignment.liveTf && alignment.liveTf !== alignment.operation.timeframe
-      ? `timeframe CasaTrade ${alignment.liveTf} ≠ scanner ${alignment.operation.timeframe}`
-      : '';
-    const exp = alignment.liveExp && alignment.liveExp !== alignment.operation.expiration
-      ? `expiração CasaTrade ${expLabel(alignment.liveExp)} ≠ scanner ${expLabel(alignment.operation.expiration)}`
-      : '';
-    const conflict = [tf, exp].filter(Boolean).join(' • ');
-    return {
-      uiState: 'MODE_CONFLICT',
-      title: 'CONFLITO DE MODO',
-      text: 'AJUSTAR CASA TRADE',
-      sub: conflict || 'Scanner e CasaTrade estão usando configurações diferentes.',
-      tone: 'waiting',
-      reason: conflict,
-      score: 0,
-      actionable: false
-    };
-  }
-
-  const timingReady = liveTimingReady(state);
-  if (!timingReady) {
-    const blocked = entryBlockReason(state);
-    return {
-      uiState: 'WAIT',
-      title: 'AGUARDAR',
-      text: 'AGUARDAR',
-      sub: blocked,
-      tone: 'waiting',
-      reason: blocked,
-      score: 0,
-      actionable: false
-    };
-  }
-
+  const alignmentBlock = alignment.conflict
+    ? [
+        alignment.liveTf && alignment.liveTf !== alignment.operation.timeframe
+          ? `timeframe CasaTrade ${alignment.liveTf} ≠ scanner ${alignment.operation.timeframe}`
+          : '',
+        alignment.liveExp && alignment.liveExp !== alignment.operation.expiration
+          ? `expiração CasaTrade ${expLabel(alignment.liveExp)} ≠ scanner ${expLabel(alignment.operation.expiration)}`
+          : ''
+      ].filter(Boolean).join(' • ') || 'Scanner e CasaTrade estão usando configurações diferentes.'
+    : '';
+  // Timing/mode blocks prevent entries, but must not short-circuit the technical
+  // score and candidate display below.
+  const timingReady = liveTimingReady(state) && !alignment.conflict;
   const p = state.professionalDecision || {};
   const technical = state.signal || {};
   const ui = String(p.uiState || technical.uiState || '').toUpperCase();
   const technicalUi = String(technical.uiState || '').toUpperCase();
   const direction = String(p.direction || technical.direction || technical.analysisDirection || '').toUpperCase();
-  const score = Number(p.score ?? technical.analysisScore ?? technical.score ?? 0) || 0;
+  const scoreCandidates = [technical.analysisScore, technical.score, p.score]
+    .map(value => value == null || value === '' ? null : Number(value))
+    .filter(value => value != null && Number.isFinite(value))
+    .map(value => Math.max(0, Math.min(100, value)));
+  const score = scoreCandidates.find(value => value > 0) ?? scoreCandidates[0] ?? 0;
   const rawReason = clean(p.reason || technical.reason || 'Aguardando confluência técnica.');
   const reason = rawReason
     .replace(/Sugest[aã]o\s*:\s*M5\s*\(n[aã]o\s*validada\)/ig, '')
@@ -577,8 +559,8 @@ function decisionModel(state = {}) {
     .replace(/\s{2,}/g, ' ')
     .replace(/^\s*[•·-]\s*/, '')
     .trim() || 'Aguardando confluência técnica.';
-  const timeReady = entryTimeReady(state);
-  const blocked = timeReady ? '' : entryBlockReason(state);
+  const timeReady = !alignment.conflict && entryTimeReady(state);
+  const blocked = timeReady ? '' : alignmentBlock || entryBlockReason(state);
 
   if (!timeReady) {
     const possibleUi = ['POSSIBLE_BUY','POSSIBLE_SELL','ENTER_BUY','ENTER_SELL'].includes(ui)
