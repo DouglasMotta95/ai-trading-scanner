@@ -160,8 +160,10 @@ async function recordDeliveryAudit(state = {}, stage = null, delivery = {}) {
   await updateScannerState(current => {
     const audit = current.decisionAudit || {};
     const latest = audit.latest || null;
-    if (!latest || latest.id !== stateLatest.id) return current;
-    const currentDelivery = latest.delivery || {};
+    const inHistory = Array.isArray(audit.events) && audit.events.some(row => row?.id === stateLatest.id);
+    if (!latest || (latest.id !== stateLatest.id && !inHistory)) return current;
+    const target = latest.id === stateLatest.id ? latest : audit.events.find(row => row?.id === stateLatest.id);
+    const currentDelivery = target?.delivery || {};
     if (currentDelivery.auditId === proposed.auditId
       && currentDelivery.stage === proposed.stage
       && currentDelivery.status === proposed.status
@@ -170,7 +172,7 @@ async function recordDeliveryAudit(state = {}, stage = null, delivery = {}) {
       && currentDelivery.sound === proposed.sound) return current;
     return {
       ...current,
-      decisionAudit: updateDecisionAuditDelivery(audit, { id: latest.id, cycleKey: latest.cycleKey }, proposed)
+      decisionAudit: updateDecisionAuditDelivery(audit, { id: stateLatest.id, cycleKey: stateLatest.cycleKey }, proposed)
     };
   }).catch(() => {});
 }
