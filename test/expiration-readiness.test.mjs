@@ -34,7 +34,7 @@ const operationalState = () => ({
   }
 });
 
-test('matching manual expiration is reported as operational only when the central decision policy approved it', () => {
+test('matching manual expiration is operational while direct verification is pending', () => {
   const result = getExpirationReadiness(operationalState(), now);
   assert.equal(result.ready, true);
   assert.equal(result.verified, false);
@@ -70,13 +70,17 @@ test('an incompatible live expiration blocks when no matching manual value was d
   assert.equal(result.conflict, true);
 });
 
-test('an unapproved or stale decision cannot authorize the operational fallback', () => {
+test('matching manual expiration stays accepted when central policy metadata is stale', () => {
   const state = operationalState();
   state.professionalDecision.expirationReady = false;
-  assert.equal(getExpirationReadiness(state, now).ready, false);
+  let result = getExpirationReadiness(state, now);
+  assert.equal(result.ready, true);
+  assert.equal(result.operational, true);
   state.professionalDecision.expirationReady = true;
   state.professionalDecision.updatedAt = now - 6000;
-  assert.equal(getExpirationReadiness(state, now).ready, false);
+  result = getExpirationReadiness(state, now);
+  assert.equal(result.ready, true);
+  assert.equal(result.operational, true);
 });
 
 test('a fresh matching real expiration can pass only with the guard verification flag', () => {
