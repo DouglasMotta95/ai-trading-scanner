@@ -96,7 +96,7 @@ export function runningCasaTradeCountdown(state = {}, expectedTimeframe = null, 
   if (!clock || clock.available === false) return null;
   const operationMode = getOperationMode(state.analystPreferences?.operationMode || expectedTimeframe || state.analysisTimeframe || state.timeframe || 'M1');
   const expectedTf = normTf(expectedTimeframe || operationMode.timeframe) || operationMode.timeframe;
-  const clockTf = normTf(clock.timeframe || state.analysisTimeframe || state.timeframe || expectedTf);
+  const clockTf = normTf(clock.timeframe || expectedTf || state.analysisTimeframe || state.timeframe);
   const asset = marketId(state.asset || '');
   const focus = state.diagnostics?.focusedAsset || {};
   if (!asset || (clock.asset && !sameMarket(clock.asset, asset))) return null;
