@@ -5,6 +5,7 @@ import { getThresholds, getOperationMode } from './core/analysis.js';
 import { storageLocalGet, storageLocalSet } from './services/chrome-compat.js';
 import { track as telemetryEvent, heartbeat as telemetryHeartbeat } from './services/telemetry.js';
 import { consumeSignal, validateLicense } from './services/license.js';
+import { activeAssetTransitionNeeded, clearStaleAssetDecision, activeAssetCandles } from './core/active-asset-transition.js';
 
 // Single owner of technical analysis.
 // All acquisition modules only update scannerState. This loop coalesces those
@@ -406,21 +407,9 @@ function blockEntrySignal(signal = {}, reason = 'limite de sinais atingido') {
 }
 
 function historyFor(state = {}, asset = '') {
-  const history = state.marketHistory || {};
-  const key = Object.keys(history).find(value => sameMarket(value, asset));
-  if (key && Array.isArray(history[key])) {
-    return history[key].filter(row => [row?.open, row?.high, row?.low, row?.close].every(value => num(value) != null)).slice(-180);
-  }
-
-  // Never reuse the previous asset's unkeyed candle history after the active
-  // symbol changes. The active frame has to publish at least one candle tagged
-  // to the new asset before the analysis engine is allowed to score it.
-  const currentCandleAsset = clean(state.currentCandle?.asset || '');
-  if (currentCandleAsset && !sameMarket(currentCandleAsset, asset)) return [];
-  const signalAsset = clean(state.signal?.asset || '');
-  if (signalAsset && !sameMarket(signalAsset, asset)) return [];
-  const rows = Array.isArray(state.candles) ? state.candles : [];
-  return rows.filter(row => [row?.open, row?.high, row?.low, row?.close].every(value => num(value) != null)).slice(-180);
+  return activeAssetCandles(state, asset)
+    .filter(row => [row?.open, row?.high, row?.low, row?.close].every(value => num(value) != null))
+    .slice(-180);
 }
 
 function consolidatedSnapshot(state = {}) {
@@ -973,8 +962,29 @@ async function pushLiveHeartbeat(state = {}) {
   }
 }
 
+let assetResetInFlight = false;
+
 function observeState(state = {}) {
   pushLiveHeartbeat(state).catch(() => {});
+  if (activeAssetTransitionNeeded(state)) {
+    const marker = state.diagnostics?.activeAssetTransition || {};
+    const alreadyCleared = sameMarket(marker.to || '', state.asset)
+      && Number(marker.clearedAt || 0) > 0;
+    if (!alreadyCleared && !assetResetInFlight) {
+      assetResetInFlight = true;
+      updateScannerState(current => clearStaleAssetDecision(current))
+        .then(nextState => {
+          if (nextState) {
+            try { resetOrchestrator(); } catch {}
+            lastInputSignature = '';
+            lastMarketKey = '';
+          }
+        })
+        .catch(() => {})
+        .finally(() => { assetResetInFlight = false; });
+    }
+    return;
+  }
   const snapshot = consolidatedSnapshot(state);
   if (!snapshot) return;
   const signature = rawInputSignature(state, snapshot);
