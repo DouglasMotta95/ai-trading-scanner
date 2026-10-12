@@ -51,6 +51,30 @@ function exactClockReady(state = {}) {
     && Number.isFinite(Number(clock.secondsRemaining));
 }
 
+function operationalCountdownAvailable(state = {}, now = Date.now()) {
+  const clock = state.diagnostics?.marketClock || {};
+  const focus = state.diagnostics?.focusedAsset || {};
+  const asset = clean(state.asset || '');
+  if (!asset || clock.available === false) return false;
+  if (clock.asset && !sameMarket(clock.asset, asset)) return false;
+  if (focus.asset && !sameMarket(focus.asset, asset)) return false;
+  const selectedTf = clean(state.analysisTimeframe || state.timeframe || state.analystPreferences?.operationMode || 'M1').toUpperCase();
+  const clockTf = clean(clock.timeframe || selectedTf).toUpperCase();
+  if (selectedTf && clockTf !== selectedTf) return false;
+  const tfSeconds = clockTf === 'M5' ? 300 : 60;
+  const at = Number(clock.at || 0);
+  const age = at > 0 ? now - at : Infinity;
+  const seconds = num(clock.secondsRemaining);
+  const openAt = num(clock.openAt) ?? num(clock.candleOpenAt);
+  const closeAt = num(clock.closeAt) ?? num(clock.candleCloseAt);
+  const boundaryCurrent = openAt != null && closeAt != null
+    && now >= openAt - 2000 && now <= closeAt + 1500
+    && closeAt - now <= tfSeconds * 1000 + 1500;
+  const freshCountdown = at > 0 && age >= -1500 && age < 6500
+    && seconds != null && seconds >= 0 && seconds <= tfSeconds + 2;
+  return boundaryCurrent || freshCountdown;
+}
+
 function sameSignal(a = {}, b = {}) {
   return a.uiState === b.uiState
     && a.direction === b.direction
@@ -80,7 +104,7 @@ function canFastApply(current = {}, decided = {}) {
 
 async function applyFastDecision(observed = {}) {
   if (writing || !activeAccess(observed) || observed.scanner !== 'scanning' || observed.connection !== 'online') return;
-  if (!marketFresh(observed) || !exactClockReady(observed) || !observed.asset || !Array.isArray(observed.candles) || observed.candles.length < 3 || !observed.signal) return;
+  if (!marketFresh(observed) || !operationalCountdownAvailable(observed) || !observed.asset || !Array.isArray(observed.candles) || observed.candles.length < 3 || !observed.signal) return;
 
   const observedEpoch = marketSessionEpoch(observed);
   const nextSignal = fastLiveDecision(observed.signal, {
