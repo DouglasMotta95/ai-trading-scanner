@@ -312,9 +312,14 @@ export function resetForSession(state = {}, { asset, timeframe = null, info, rea
   const toAsset = normAsset(asset);
   const switched = !!fromAsset && !!toAsset && !sameMarket(fromAsset, toAsset);
   // Expiration choice is an operator setting for the active timeframe, not an
-  // asset-scoped market observation. Preserve it across chart instrument switches;
-  // the live CasaTrade probe continues to refresh the actual platform control.
+  // asset-scoped market observation. Preserve it across chart instrument switches.
   const sessionBase = state;
+  // Reuse only an existing cache keyed to the newly focused symbol. Never carry
+  // the previous symbol's candle history into the new session.
+  const cachedTargetHistory = sessionBase.marketHistory && typeof sessionBase.marketHistory === 'object'
+    ? sessionBase.marketHistory[toAsset]
+    : null;
+  const nextMarketHistory = Array.isArray(cachedTargetHistory) ? { [toAsset]: cachedTargetHistory } : {};
   const switchLog = [
     ...(Array.isArray(state.diagnostics?.assetSwitchLog) ? state.diagnostics.assetSwitchLog : []),
     ...(switched ? [{
@@ -346,9 +351,8 @@ export function resetForSession(state = {}, { asset, timeframe = null, info, rea
     serverTime: null,
     candles: [],
     currentCandle: null,
-    // Keep the market-keyed cache so already acquired candles for the newly
-    // focused instrument can be reused after the session identity is revalidated.
-    marketHistory: sessionBase.marketHistory || {},
+    // Preserve only cached history for this exact target asset; stale symbols stay cleared.
+    marketHistory: nextMarketHistory,
     signal: null,
     professionalDecision: null,
     aiAudit: null,
