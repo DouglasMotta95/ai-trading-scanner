@@ -91,6 +91,7 @@ function highConfidenceEvidence(signal = {}, direction = null, thresholds = getT
   const rejectionStrength = Number(analytics.rejectionStrength || 0);
   const continuationScore = Number(analytics.continuationScore || 0);
   const momentumScore = Number(analytics.momentumScore || 0);
+  const pullbackContinuation = analytics.pullbackContinuation?.qualified === true && analytics.pullbackContinuation?.direction === direction;
   const directionalRejection = analytics.rejectionDirection === direction
     || Number(direction === 'BUY' ? analytics.rejectionBuy : analytics.rejectionSell) >= Math.max(50, thresholds.rejectionStrength);
   const evidence = [];
@@ -98,6 +99,7 @@ function highConfidenceEvidence(signal = {}, direction = null, thresholds = getT
   if (analytics.continuationDirection === direction && continuationScore >= 60) evidence.push('continuação');
   if (analytics.momentumDirection === direction && momentumScore >= 45) evidence.push('momentum');
   if (currentStrength >= Math.max(60, thresholds.candleStrength)) evidence.push('força');
+  if (pullbackContinuation) evidence.push('pullback sem esticamento');
   return evidence;
 }
 
@@ -115,6 +117,7 @@ function decisionQuality(signal = {}, direction = null, thresholds = getThreshol
   const continuation = analytics.continuationDirection === direction && continuationScore >= 55;
   const momentum = analytics.momentumDirection === direction && momentumScore >= 40;
   const strongCandle = currentStrength >= thresholds.candleStrength;
+  const pullbackContinuation = analytics.pullbackContinuation?.qualified === true && analytics.pullbackContinuation?.direction === direction;
   const rejection = directionalRejection && rejectionStrength >= thresholds.rejectionStrength;
   const regime = String(signal.regime?.type || '').toLowerCase();
   const evidence = highConfidenceEvidence(signal, direction, thresholds);
@@ -154,6 +157,11 @@ function decisionQuality(signal = {}, direction = null, thresholds = getThreshol
         name: 'força da vela',
         ok: strongCandle,
         reason: `currentStrength ${Math.round(currentStrength)} ${strongCandle ? '>=' : '<'} ${thresholds.candleStrength}`
+      },
+      {
+        name: 'pullback sem esticamento',
+        ok: pullbackContinuation,
+        reason: `pullback qualificado na direção ${direction}=${pullbackContinuation}`
       }
     ];
     const matched = setups.find(item => item.ok) || null;
@@ -181,6 +189,11 @@ function decisionQuality(signal = {}, direction = null, thresholds = getThreshol
           name: 'continuação confirmada no range',
           ok: power >= 55 && score >= 64 && continuation && momentum,
           reason: `power>=55=${power >= 55} | score>=64=${score >= 64} | continuação>=55=${continuation} | momentum>=40=${momentum}`
+        },
+        {
+          name: 'pullback sem esticamento no range',
+          ok: power >= 55 && score >= 64 && pullbackContinuation && momentum,
+          reason: `power>=55=${power >= 55} | score>=64=${score >= 64} | pullback=${pullbackContinuation} | momentum=${momentum}`
         }
       ]
     : [
@@ -203,6 +216,11 @@ function decisionQuality(signal = {}, direction = null, thresholds = getThreshol
           name: 'confluência forte',
           ok: power >= 48 && score >= 68 && momentum && (strongCandle || continuation),
           reason: `power>=48=${power >= 48} | score>=68=${score >= 68} | momentum=${momentum} | força/continuação=${strongCandle || continuation}`
+        },
+        {
+          name: 'pullback sem esticamento',
+          ok: power >= 55 && score >= 66 && pullbackContinuation && momentum,
+          reason: `power>=55=${power >= 55} | score>=66=${score >= 66} | pullback=${pullbackContinuation} | momentum=${momentum}`
         }
       ];
   const matched = commonReady ? setups.find(item => item.ok) || null : null;
