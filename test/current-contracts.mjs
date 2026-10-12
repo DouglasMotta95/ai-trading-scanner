@@ -63,7 +63,7 @@ export function registerBuildContracts(label='build') {
     assert.match(transition, /transitionTarget === target/);
     assert.match(transition, /signal: null/);
     assert.match(transition, /professionalDecision: null/);
-    assert.match(transition, /currentCandleAsset && currentCandleAsset !== target/);
+    assert.match(transition, /candleAsset && candleAsset !== target/);
   });
   test(label + ': current CasaTrade readers are packaged', () => {
     const files = manifest().content_scripts.flatMap(row => row.js || []);
@@ -95,7 +95,7 @@ export function registerMarketContracts(label='market') {
     const background = read('src/background.js');
     const market = read('src/background-market-session.js');
     assert.match(background, /Single owner of technical analysis/);
-    assert.match(background, /processSnapshot\(snapshot, current\)/);
+    assert.match(background, /processSnapshot\(snapshot, analysisInput\)/);
     assert.doesNotMatch(market, /processSnapshot\(/);
   });
 }
