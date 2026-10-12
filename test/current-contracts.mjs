@@ -211,6 +211,19 @@ export function registerStableEntryClockContracts(label='stable-entry-clock') {
 }
 
 export function registerEntryRolloverContracts(label='entry-rollover') {
+  test(label + ': qualified pullback candidates publish before the generic final window', () => {
+    const orchestrator = read('src/core/orchestrator.js');
+    const policy = read('src/background-decision-policy.js');
+    const alerts = read('src/core/signal-alert-qualification.js');
+    assert.match(orchestrator, /export function qualifiesEarlyPattern/);
+    assert.match(orchestrator, /earlyPatternActive/);
+    assert.match(orchestrator, /pre: 90, decision: 30, skip: 2, duration, timeframe/);
+    assert.match(policy, /earlyPatternCandidate: true/);
+    assert.match(policy, /seconds <= anticipationWindow/);
+    assert.match(alerts, /timeframe === 'M5' \? 120 : 45/);
+    assert.match(alerts, /Padrão para a próxima vela/);
+  });
+
   test(label + ': entry window is aligned across decision layers', () => {
     const policy = read('src/background-decision-policy.js');
     const orchestrator = read('src/core/orchestrator.js');
