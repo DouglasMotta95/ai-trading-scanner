@@ -27,6 +27,8 @@ jobs:
         run: find apps/admin-dashboard -name '*.js' -print0 | xargs -0 -n1 node --check
       - name: Syntax check customer portal
         run: find apps/customer-portal -name '*.js' -print0 | xargs -0 -n1 node --check
+      - name: Signal operation lifecycle tests
+        run: node --test tests/signal-operation.test.mjs
       - name: Core unit tests
         run: |
           set -o pipefail
