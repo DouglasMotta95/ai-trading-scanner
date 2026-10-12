@@ -23,6 +23,8 @@ test('system alerts support both matched M1/60s and M5/300s with per-candle dedu
   assert.match(source, /const event = qualifiedDecision\(state\)/);
   assert.match(source, /atsSystemAlertLedgerV1/);
   assert.match(source, /claimCycleStage/);
+  assert.match(source, /async function releaseCycleStage\(cycleKey, stage\)/);
+  assert.match(source, /if \(!delivered\) await releaseCycleStage\(event\.cycleKey, event\.stage\)/);
   assert.match(source, /chrome\.notifications\.create/);
   assert.match(source, /chrome\.sidePanel\.open/);
 
