@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.11.97 — Final consolidated recovery for videos 20728/20730/20734/20737
+
+### Additional gap found before release
+- The protocol focus reader (`focused-asset-protocol.js`) still maintained its own older currency allowlist and compact-pair expression, so it could reject `USD/XOF (OTC)` even after the two visual readers were corrected.
+- The background market-session normalizer had another shorter quote list for compact symbols.
+
+### Final consolidated changes
+- Correct all selected-asset readers/normalizers for `XOF`, `XAF` and common OTC quote currencies (visual focus, alias bridge, protocol focus, market-session compact normalization).
+- Include the previous false mode-banner CSS fix, mode-evidence frame binding and pre-signal display stability in the same package.
+- Add executable regression tests for the three independent content-side parsers and compact state normalizers so the same rejection is caught before packaging.
+
+### Release condition
+- Ship one package only after the full CI validation and packaging workflow succeeds.
+- Keep exact-clock, focus, expiration and technical-entry gates unchanged; never guess the active instrument when focus is ambiguous.
+
+---
+
 ## 0.11.96 — Consolidated fix for videos 20728/20730/20734/20737
 
 ### Corrections included in this one build
