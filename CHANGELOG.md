@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.12.3 — Frame-aware CasaTrade mode synchronization
+
+### Fix from video 20837
+- v0.12.2 changed the scanner to M5 but failed to adjust the CasaTrade chart. The existing sync attempted to change timeframe and expiration together in one frame and only reported success if both controls could be read back there.
+- Apply the timeframe and expiration independently across candidate CasaTrade frames. A field is accepted only after its own control is reread and matches the requested value.
+- Diagnostics now show per-field match/application/frame and report partial synchronization precisely; entries remain blocked unless both controls are confirmed.
+- Added regression contract coverage and bumped the package to v0.12.3.
+
+---
+
 ## 0.12.2 — Automatic expiration/timeframe mode synchronization
 
 ### Problem observed in screenshot 20832
