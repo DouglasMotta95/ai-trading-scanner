@@ -29,12 +29,14 @@ test('system alerts support both matched M1/60s and M5/300s with per-candle dedu
   assert.match(source, /chrome\.sidePanel\.open/);
 
   assert.match(qualification, /M1: '60s', M5: '300s'/);
-  assert.match(qualification, /decision\.timeReady !== true \|\| decision\.expirationReady !== true/);
+  assert.match(qualification, /decision\.timeReady !== true\) reason =/);
+  assert.match(qualification, /decision\.expirationReady !== true\) reason =/);
   assert.match(qualification, /seconds > 10/);
   assert.match(qualification, /POSSIBLE_BUY/);
   assert.match(qualification, /POSSIBLE_SELL/);
   assert.match(qualification, /const alertWindow = patternQualified \? \(timeframe === 'M5' \? 120 : 45\) : 30/);
-  assert.match(qualification, /seconds <= 0 \|\| seconds > alertWindow/);
+  assert.match(qualification, /seconds > alertWindow\) reason = patternQualified/);
+  assert.match(qualification, /seconds <= 0\) reason = 'Countdown ausente ou vela já encerrada\.'/);
   assert.match(qualification, /ui === 'ENTER_BUY'/);
   assert.match(qualification, /ui === 'ENTER_SELL'/);
   assert.match(qualification, /if \(!confirmedBuy && !confirmedSell\) reason =/);
