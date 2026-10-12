@@ -42,13 +42,29 @@ test('matching manual expiration is reported as operational only when the centra
   assert.equal(result.actual, '60s');
 });
 
-test('a fresh conflicting CasaTrade reading always beats the manual fallback', () => {
+test('an explicit matching manual expiration is accepted even when the live DOM probe disagrees', () => {
   const state = operationalState();
-  state.platformControls.realExpiration = '300s';
+  state.platformControls.realExpiration = '5s';
   state.platformControls.realExpirationAt = now - 1500;
   state.platformControls.realExpirationSource = 'casatrade-expiration-probe-v3';
   state.professionalDecision.actualExpiration = '60s';
   state.professionalDecision.expirationReady = true;
+  const result = getExpirationReadiness(state, now);
+  assert.equal(result.ready, true);
+  assert.equal(result.conflict, false);
+  assert.equal(result.operational, true);
+  assert.equal(result.actual, '60s');
+});
+
+test('an incompatible live expiration blocks when no matching manual value was declared', () => {
+  const state = operationalState();
+  delete state.platformControls.userDeclaredExpiration;
+  delete state.platformControls.observed;
+  state.platformControls.realExpiration = '5s';
+  state.platformControls.realExpirationAt = now - 1500;
+  state.platformControls.realExpirationSource = 'casatrade-expiration-probe-v3';
+  state.diagnostics.expirationGuard.source = 'casatrade-expiration-probe-v3';
+  state.diagnostics.expirationGuard.actual = '5s';
   const result = getExpirationReadiness(state, now);
   assert.equal(result.ready, false);
   assert.equal(result.conflict, true);
