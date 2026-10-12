@@ -311,11 +311,10 @@ export function resetForSession(state = {}, { asset, timeframe = null, info, rea
   const fromAsset = normAsset(state.asset || previous.confirmedAsset || previous.asset || state.diagnostics?.focusedAsset?.asset || '');
   const toAsset = normAsset(asset);
   const switched = !!fromAsset && !!toAsset && !sameMarket(fromAsset, toAsset);
-  // The existing market-session epoch is the asset-boundary authority.
-  // When that epoch advances because the confirmed market changed, any
-  // user-declared expiration belongs to the previous asset and must not cross
-  // into the new session.
-  const sessionBase = switched ? clearUserDeclaredExpirationState(state) : state;
+  // Expiration choice is an operator setting for the active timeframe, not an
+  // asset-scoped market observation. Preserve it across chart instrument switches;
+  // the live CasaTrade probe continues to refresh the actual platform control.
+  const sessionBase = state;
   const switchLog = [
     ...(Array.isArray(state.diagnostics?.assetSwitchLog) ? state.diagnostics.assetSwitchLog : []),
     ...(switched ? [{
@@ -347,7 +346,9 @@ export function resetForSession(state = {}, { asset, timeframe = null, info, rea
     serverTime: null,
     candles: [],
     currentCandle: null,
-    marketHistory: {},
+    // Keep the market-keyed cache so already acquired candles for the newly
+    // focused instrument can be reused after the session identity is revalidated.
+    marketHistory: sessionBase.marketHistory || {},
     signal: null,
     professionalDecision: null,
     aiAudit: null,
