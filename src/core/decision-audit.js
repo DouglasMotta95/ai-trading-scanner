@@ -111,8 +111,7 @@ export function appendDecisionAudit(previous = {}, row = {}, maxEvents = 40) {
   if (same) {
     // Refresh the live countdown once it changes by a second, but keep the
     // event history transition-based and preserve the asynchronous delivery result.
-    if (Number(latest?.timing?.secondsRemaining) === Number(row?.timing?.secondsRemaining)
-      && latest?.delivery?.status === row?.delivery?.status) return previous;
+    if (Number(latest?.timing?.secondsRemaining) === Number(row?.timing?.secondsRemaining)) return previous;
     return {
       ...previous,
       latest: { ...row, delivery: latest?.delivery || row.delivery },
