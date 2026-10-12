@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - fix/v01161-restore-top-license-clock
+      - fix/v01210-operation-lock-results
 
 jobs:
   package:
