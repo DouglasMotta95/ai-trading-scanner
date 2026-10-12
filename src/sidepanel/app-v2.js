@@ -29,9 +29,8 @@ let lastLicensePersistAt = 0;
 const ACTIVE_LICENSE_GRACE_MS = 5 * 60 * 1000;
 function uiLicenseValid(license = {}) {
   const status = String(license?.status || '').toLowerCase();
-  if (!['active','valid'].includes(status)
-    && license?.devMode !== true
-    && String(license?.plan || '').toUpperCase() !== 'OWNER_DEV') return false;
+  const devMode = license?.devMode === true || String(license?.plan || '').toUpperCase() === 'OWNER_DEV';
+  if (!['active','valid'].includes(status) && !devMode) return false;
   if (!license.expiresAt) return true;
   let expires = Number(license.expiresAt);
   if (Number.isFinite(expires) && expires > 0) {
