@@ -510,6 +510,30 @@ function decisionModel(state = {}) {
   if (pending) return { uiState: 'ANALYZING_MARKET', title: 'ATUALIZANDO ATIVO', text: `ATUALIZANDO PARA ${pending}`, sub: 'Limpando dados anteriores e confirmando preço + velas do novo ativo.', tone: 'waiting', reason: 'Troca de ativo em validação.', score: 0, actionable: false };
   if (!marketDataReady(state) || !focusReady(state)) return { uiState: 'ANALYZING_MARKET', title: 'AGUARDAR', text: 'AGUARDAR', sub: 'Confirmando ativo, preço e velas reais.', tone: 'waiting', reason: 'Identificando o gráfico atual da CasaTrade.', score: 0, actionable: false };
 
+  const trackedOperation = state.activeSignalOperation || null;
+  if (trackedOperation && trackedOperation.status !== 'COMPLETED'
+    && ['BUY','SELL'].includes(String(trackedOperation.direction || '').toUpperCase())
+    && sameMarket(trackedOperation.asset, state.asset)
+    && String(trackedOperation.timeframe || '').toUpperCase() === String(state.analysisTimeframe || state.timeframe || '').toUpperCase()
+    && Date.now() > Number(trackedOperation.targetStart || 0) + 6500) {
+    const direction = String(trackedOperation.direction).toUpperCase();
+    const side = direction === 'BUY' ? 'COMPRA' : 'VENDA';
+    const opened = trackedOperation.candleOpenPrice == null ? 'capturando abertura' : String(trackedOperation.candleOpenPrice);
+    const closed = trackedOperation.candleClosePrice == null ? 'aguardando fechamento' : String(trackedOperation.candleClosePrice);
+    const result = trackedOperation.result || (trackedOperation.status === 'SETTLING' ? 'apurando resultado' : 'em andamento');
+    return {
+      uiState: 'OPERATION_ACTIVE_' + direction,
+      title: 'OPERAÇÃO EM ACOMPANHAMENTO',
+      text: 'ACOMPANHANDO VELA',
+      sub: side + ' • abertura ' + opened + ' • fechamento ' + closed,
+      tone: 'possible',
+      reason: side + ': ' + result + '. A direção fica travada até a vela-alvo fechar; nenhuma nova entrada será recomendada antes da apuração.',
+      score: Number(trackedOperation.score || state.professionalDecision?.score || state.signal?.score || 0),
+      actionable: false,
+      direction
+    };
+  }
+
   // A panel refresh starts a new observation session. Never flash an ENTER
   // decision that predates this panel opening while the background rehydrates.
   const staleActionable = state.professionalDecision?.actionable === true
@@ -831,7 +855,12 @@ function render(state = {}) {
   setText('signalTitle', model.title);
   setText('decisionText', model.text);
   setText('decisionSubtext', model.sub);
-  setText('signalReason', model.reason);
+  const lastOperation = state.lastSignalOperation;
+  const resultLabel = ({ WIN: 'DEU BOM (WIN)', LOSS: 'NÃO DEU BOM (LOSS)', DRAW: 'EMPATE (DRAW)' })[String(lastOperation?.result || '').toUpperCase()];
+  const resultLine = resultLabel && lastOperation?.candleOpenPrice != null && lastOperation?.candleClosePrice != null
+    ? ' • ÚLTIMA VELA: ' + (lastOperation.direction === 'BUY' ? 'COMPRA' : 'VENDA') + ' ' + lastOperation.candleOpenPrice + ' → ' + lastOperation.candleClosePrice + ' — ' + resultLabel
+    : '';
+  setText('signalReason', model.reason + resultLine);
   const setupLabel = liveTimingReady(state)
     ? (clean(state.signal?.setup || state.signal?.regime?.type || '—') || '—')
     : '—';
