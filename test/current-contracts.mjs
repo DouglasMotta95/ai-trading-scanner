@@ -41,6 +41,29 @@ export function registerBuildContracts(label='build') {
     assert.match(gates, /timingReady === true/);
     assert.match(gates, /expirationReady === true/);
   });
+  test(label + ': mode conflict and clock blocks do not early-return before technical score', () => {
+    const app = read('src/sidepanel/app-v2.js');
+    const start = app.indexOf('function decisionModel(state = {})');
+    const end = app.indexOf('function setText(', start);
+    assert.ok(start >= 0 && end > start, 'decisionModel function exists');
+    const model = app.slice(start, end);
+    assert.match(model, /const alignmentBlock = alignment\.conflict/);
+    assert.doesNotMatch(model, /if \(alignment\.conflict\)\s*\{\s*const tf =/);
+    assert.match(model, /const scoreCandidates = \[technical\.analysisScore, technical\.score, p\.score\]/);
+    assert.match(model, /const timeReady = !alignment\.conflict && entryTimeReady\(state\)/);
+    assert.match(model, /const blocked = timeReady \? '' : alignmentBlock \|\| entryBlockReason\(state\)/);
+  });
+  test(label + ': active asset changes reset stale signal and do not reuse previous candle history', () => {
+    const bg = read('src/background.js');
+    const transition = read('src/core/active-asset-transition.js');
+    assert.match(bg, /activeAssetTransitionNeeded\(state\)/);
+    assert.match(bg, /clearStaleAssetDecision\(current\)/);
+    assert.match(bg, /activeAssetCandles\(state, asset\)/);
+    assert.match(bg, /hasActiveHistory/);
+    assert.match(transition, /signal: null/);
+    assert.match(transition, /professionalDecision: null/);
+    assert.match(transition, /currentCandleAsset && currentCandleAsset !== target/);
+  });
   test(label + ': current CasaTrade readers are packaged', () => {
     const files = manifest().content_scripts.flatMap(row => row.js || []);
     for (const required of ['src/content/focused-asset-v2.js','src/content/embedded-feed-bridge.js','src/content/market-cycle-clock-v4.js','src/content/casatrade-expiration-probe.js','src/content/account-metrics-observer.js','src/content/trade-handoff-v2.js']) assert.ok(files.includes(required), 'missing ' + required);
