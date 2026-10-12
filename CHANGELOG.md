@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.12.6 — Restore technical decisions and refresh analysis on asset switch
+
+### Findings from video 20859
+- The panel badge visibly showed **v0.12.4**, not the v0.12.5 package supplied earlier. This recording therefore ran the older UI and cannot verify the score-visibility fix.
+- In the primary `decisionModel`, the mode-conflict and `!timingReady` branches returned early with score 0 before reading the primary technical signal. That masked an available technical score whenever the operation clock/expiration was blocked.
+- Active-asset identity gates could continue to see the previous signal/current candle after switching symbols, leaving the panel stuck at “analyzing” and avoiding a new analysis cycle.
+
+### Fixes
+- The primary panel now computes technical score/direction before applying timing authorization. Mode/clock mismatch is attached as a blocker message, and the entry remains non-actionable until all operational gates pass.
+- Score selection no longer lets an operational zero mask a positive score from the technical engine.
+- Added a safe active-asset transition: discard the prior asset's signal/professional decision/cycle immediately when the selected focus changes, retain the old candle's asset label as a safety marker, and wait for fresh candles tagged to the new symbol or history keyed to that asset.
+- Analysis resumes from the current asset's keyed history, replacing stale `currentCandle` and resetting the orchestrator when needed. Unkeyed candles from the prior asset are not relabelled as the new asset.
+- Added unit tests for asset ownership/reset and contract tests for score visibility under timing blocks.
+
+### Safety
+- A technical candidate can be visible while blocked, but no buy/sell entry is authorized until current asset identity, exact clock, timeframe/expiration, and technical final-decision gates pass.
+- No automatic trade execution was added.
+
+---
+
 ## 0.12.5 — Keep technical score visible when entry timing is blocked
 
 ### Regression observed in video 20843
