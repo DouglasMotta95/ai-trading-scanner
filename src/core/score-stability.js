@@ -31,7 +31,7 @@ function epochMs(value) {
  */
 export function scoreCycleKey({
   asset = '',
-  timeframe = 'M1',
+  timeframe = '',
   candle = {},
   clock = {},
   targetStart = null,

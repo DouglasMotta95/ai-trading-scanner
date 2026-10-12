@@ -34,6 +34,15 @@ test('score cycle key resets at a new candle boundary and normalizes seconds tim
   }));
 });
 
+test('score key uses the observed M5 timeframe when no state timeframe is supplied', () => {
+  const key = scoreCycleKey({
+    asset: 'EUR/USD (OTC)',
+    clock: { timeframe: 'M5', openAt: 1791816900000 },
+    candle: { time: 1791817000000 }
+  });
+  assert.match(key, /\\|M5\\|/);
+});
+
 test('large score jumps are smoothed within a candle and raw score returns on rollover', () => {
   const smoother = createScoreStabilizer({ alpha: 0.2, sampleIntervalMs: 650, maxPointsPerSecond: 6 });
   assert.equal(smoother.update({ key: 'EUR/USD|M1|1', rawScore: 61, ready: true, at: 1000 }), 61);
