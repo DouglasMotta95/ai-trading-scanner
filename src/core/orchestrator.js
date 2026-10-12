@@ -253,7 +253,7 @@ export function qualifiesEarlyPattern(signal = {}, direction = null, score = 0) 
   return Number(score) >= 45 && power >= 52;
 }
 
-function anticipationWindowSeconds(timeframe = 'M1') {
+export function anticipationWindowSeconds(timeframe = 'M1') {
   const tf = clean(timeframe).toUpperCase();
   return tf === 'M5' ? 120 : tf === 'M1' ? 45 : Math.max(15, Math.min(120, timeframeMs(tf) / 1000 * 0.25));
 }
