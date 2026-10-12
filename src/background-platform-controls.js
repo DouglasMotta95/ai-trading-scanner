@@ -408,13 +408,16 @@ function analystPrefs(state = {}, message = {}) {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === 'ATS_SET_ANALYST_PREFERENCES') {
+    let modeChanged = false;
+    let selectedMode = 'M1';
     updateScannerState(state => {
       const currentMode = getOperationMode(state.analystPreferences?.operationMode || 'M1');
       const nextPreferences = analystPrefs(state, message);
       const nextMode = getOperationMode(nextPreferences.operationMode);
-      const base = currentMode.timeframe !== nextMode.timeframe
-        ? clearUserDeclaredExpirationState(state)
-        : state;
+      selectedMode = nextMode.timeframe;
+      modeChanged = currentMode.timeframe !== nextMode.timeframe;
+      let base = modeChanged ? clearUserDeclaredExpirationState(state) : state;
+      if (modeChanged) base = resetSignalStateForModeSwitch(base);
       const now = Date.now();
       const nextControls = {
         ...(base.platformControls || {}),
@@ -427,7 +430,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         platformControls: nextControls
       };
     })
-      .then(state => sendResponse({ ok: true, analystPreferences: state.analystPreferences, state }))
+      .then(async state => {
+        if (modeChanged) {
+          try { resetOrchestrator(); } catch {}
+          await persistUiOperationMode(selectedMode);
+          const applied = await applyCasaTradeMode(state, selectedMode, 'scanner-mode-selection');
+          state = applied.state;
+        }
+        sendResponse({ ok: true, analystPreferences: state.analystPreferences, state, modeSync: state.platformControls?.autoModeSync || null });
+      })
       .catch(error => sendResponse({ ok: false, error: String(error?.message || error) }));
     return true;
   }
