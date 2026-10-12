@@ -43,6 +43,8 @@ test('background mode sync maps the manual 5-minute declaration and applies veri
   assert.match(source, /const mappedMode = operationModeForExpiration\(declared\)/);
   assert.match(source, /analystPreferences: analystPrefs\(base, \{ operationMode: nextMode\.timeframe \}\)/);
   assert.match(source, /applyCasaTradeMode\(state, selectedMode, 'user-expiration-selection'\)/);
+  assert.match(source, /for \(const field of \['timeframe', 'expiration'\]\)/);
+  assert.match(source, /Sincronização parcial: timeframe=/);
   assert.match(source, /trustedModeFromObservedControls\(incoming, Date\.now\(\)\)/);
   assert.match(source, /persistUiOperationMode\(selectedMode\)/);
   assert.match(platform, /message\?\.type === 'ATS_PLATFORM_APPLY'/);
