@@ -88,6 +88,8 @@ function confirmationModeOf(state = {}) {
 function highConfidenceEvidence(signal = {}, direction = null, thresholds = getThresholds()) {
   const analytics = signal.analytics || {};
   const currentStrength = Number(analytics.currentStrength || 0);
+  const pattern = analytics.pullbackContinuation || {};
+  const pullbackContinuation = pattern.qualified === true && pattern.direction === direction && pattern.notStretched === true && Number(pattern.roomToLevel) >= 0.35 && Number(pattern.score) >= 80;
   const rejectionStrength = Number(analytics.rejectionStrength || 0);
   const continuationScore = Number(analytics.continuationScore || 0);
   const momentumScore = Number(analytics.momentumScore || 0);
@@ -126,6 +128,11 @@ function decisionQuality(signal = {}, direction = null, thresholds = getThreshol
     && score >= finalScore
     && power >= HIGH_CONFIDENCE.finalPower
     && evidence.length >= HIGH_CONFIDENCE.minimumEvidence;
+  // A fully-qualified, non-extended pullback has its own final path: still
+  // require independent directional confirmation plus power/score floors,
+  // but don't demand the generic 70/60 gate if this specific setup is sound.
+  const patternIndependentConfirmation = rejection || continuation || momentum || strongCandle;
+  const pullbackFinalReady = !!direction && pullbackContinuation && score >= 64 && power >= 55 && patternIndependentConfirmation;
   const commonReason = !direction
     ? 'sem direção'
     : score < finalScore
@@ -168,7 +175,7 @@ function decisionQuality(signal = {}, direction = null, thresholds = getThreshol
     return {
       // SIMPLES no longer bypasses setup quality: every final signal must have
       // high score, directional power and at least two independent confirmations.
-      qualifies: commonReady,
+      qualifies: commonReady || pullbackFinalReady,
       setup: matched ? matched.name : evidence.join(' + ') || 'alta confiança',
       checks: setups,
       mode,
@@ -192,8 +199,8 @@ function decisionQuality(signal = {}, direction = null, thresholds = getThreshol
         },
         {
           name: 'pullback sem esticamento no range',
-          ok: power >= 55 && score >= 64 && pullbackContinuation && momentum,
-          reason: `power>=55=${power >= 55} | score>=64=${score >= 64} | pullback=${pullbackContinuation} | momentum=${momentum}`
+          ok: pullbackFinalReady && (momentum || continuation || rejection),
+          reason: `score>=64=${score >= 64} | power>=55=${power >= 55} | pullback=${pullbackContinuation} | confirmação independente=${momentum || continuation || rejection}`
         }
       ]
     : [
@@ -219,11 +226,11 @@ function decisionQuality(signal = {}, direction = null, thresholds = getThreshol
         },
         {
           name: 'pullback sem esticamento',
-          ok: power >= 55 && score >= 66 && pullbackContinuation && momentum,
-          reason: `power>=55=${power >= 55} | score>=66=${score >= 66} | pullback=${pullbackContinuation} | momentum=${momentum}`
+          ok: pullbackFinalReady && (momentum || continuation || rejection),
+          reason: `score>=64=${score >= 64} | power>=55=${power >= 55} | pullback=${pullbackContinuation} | confirmação independente=${momentum || continuation || rejection}`
         }
       ];
-  const matched = commonReady ? setups.find(item => item.ok) || null : null;
+  const matched = commonReady ? setups.find(item => item.ok) || null : pullbackFinalReady ? setups.find(item => item.name === 'pullback sem esticamento' && item.ok) || null : null;
   return {
     qualifies: !!matched,
     setup: matched?.name || null,
