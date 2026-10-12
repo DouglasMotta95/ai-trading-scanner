@@ -24,6 +24,9 @@ let audioContext = null;
 const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
 const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
 let lastKnownActiveLicense = null;
+let lastKnownActiveLicenseAt = 0;
+let lastLicensePersistAt = 0;
+const ACTIVE_LICENSE_GRACE_MS = 5 * 60 * 1000;
 function uiLicenseValid(license = {}) {
   const status = String(license?.status || '').toLowerCase();
   if (!['active','valid'].includes(status)
@@ -37,13 +40,35 @@ function uiLicenseValid(license = {}) {
   return Number.isFinite(expires) && expires > Date.now();
 }
 const activeLicense = state => {
-  if (uiLicenseValid(state?.license || {})) {
-    lastKnownActiveLicense = { ...state.license, status: 'active' };
+  const now = Date.now();
+  const current = state?.license || {};
+  if (uiLicenseValid(current)) {
+    lastKnownActiveLicense = { ...current, status: 'active' };
+    lastKnownActiveLicenseAt = now;
+    if (now - lastLicensePersistAt >= 30_000) {
+      lastLicensePersistAt = now;
+      try {
+        chrome.storage?.local?.set?.({
+          atsLastValidLicense: { at: now, license: lastKnownActiveLicense }
+        })?.catch?.(() => {});
+      } catch {}
+    }
     return true;
   }
-  const status = String(state?.license?.status || '').toLowerCase();
-  if (['expired','inactive','limit','device_locked'].includes(status)) return false;
-  return uiLicenseValid(lastKnownActiveLicense || {})
+
+  const status = String(current.status || '').toLowerCase();
+  const error = String(current.error || state?.diagnostics?.access?.error || '').toLowerCase();
+  const authoritativeErrors = [
+    'license_not_found', 'license_inactive', 'license_expired',
+    'device_limit_reached', 'device_locked'
+  ];
+  if (['expired','limit','device_locked','revoked'].includes(status)
+    || authoritativeErrors.includes(error)) return false;
+
+  const age = now - Number(lastKnownActiveLicenseAt || 0);
+  const retained = age >= 0 && age <= ACTIVE_LICENSE_GRACE_MS
+    && uiLicenseValid(lastKnownActiveLicense || {});
+  return retained
     || state?.diagnostics?.access?.ownerDev === true
     || state?.diagnostics?.access?.state === 'owner_dev';
 };
@@ -1162,8 +1187,16 @@ async function setPref(key, value) {
 
 async function loadPrefs() {
   const stored = await chrome.storage.local.get([PREF_KEY, 'atsLastValidLicense']).catch(() => ({}));
-  const cachedLicense = stored?.atsLastValidLicense?.license || null;
-  if (uiLicenseValid(cachedLicense)) lastKnownActiveLicense = { ...cachedLicense, status: 'active' };
+  const cached = stored?.atsLastValidLicense || null;
+  const cachedLicense = cached?.license || null;
+  const cachedAt = Number(cached?.at || 0);
+  if (uiLicenseValid(cachedLicense) && cachedAt > 0
+    && Date.now() - cachedAt >= 0
+    && Date.now() - cachedAt <= ACTIVE_LICENSE_GRACE_MS) {
+    lastKnownActiveLicense = { ...cachedLicense, status: 'active' };
+    lastKnownActiveLicenseAt = cachedAt;
+    lastLicensePersistAt = cachedAt;
+  }
   const raw = stored?.[PREF_KEY] || {};
   const migratedAlert = raw.alertLevel || (raw.confirmSoundEnabled ? 'strong' : raw.possibleSoundEnabled ? 'discrete' : DEFAULT_PREFS.alertLevel);
   prefs = {
