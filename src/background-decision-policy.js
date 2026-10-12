@@ -121,11 +121,51 @@ export function exactCasaTradeTime(state = {}) {
       candleCloseAt: persistedTarget + operationMode.durationSeconds * 1000
     };
   }
-  if (!clock) return { ready: false, reason: 'Relógio exato da vela ainda não foi confirmado.' };
-  if (clock.available === false || clock.verified !== true || clock.role !== 'candle-close') {
+  if (!clock) return { ready: false, reason: 'Nenhuma fonte de tempo da vela está disponível.' };
+
+  // The focused CasaTrade frame can publish a running candle countdown before
+  // its source-verification metadata catches up. Use that fresh, frame-bound
+  // candle clock; do not report PENDENTE when seconds are actually available.
+  const liveTfFallback = normTf(clock.timeframe || state.analysisTimeframe || state.timeframe);
+  const clockAtFallback = Number(clock.at || 0);
+  const clockAgeFallback = clockAtFallback > 0 ? Date.now() - clockAtFallback : Infinity;
+  const rawRemainingFallback = num(clock.secondsRemaining);
+  const closeAtFallback = num(clock.closeAt) ?? num(clock.candleCloseAt);
+  const openAtFallback = num(clock.openAt) ?? num(clock.candleOpenAt);
+  const tfMsFallback = getOperationMode(liveTfFallback || operationMode.timeframe).durationSeconds * 1000;
+  const boundaryFallback = closeAtFallback != null && openAtFallback != null
+    && Date.now() >= openAtFallback - 2000 && Date.now() <= closeAtFallback + 1500
+    && closeAtFallback - Date.now() <= tfMsFallback + 1500;
+  const focusedCountdownAvailable = clock.available !== false
+    && clock.role === 'candle-close'
+    && sameMarket(clock.asset, state.asset)
+    && clockBoundToFocus(clock, focus)
+    && liveTfFallback === operationMode.timeframe
+    && (clockAgeFallback >= 0 && clockAgeFallback < CLOCK_FRESH_MS || boundaryFallback)
+    && (rawRemainingFallback != null && rawRemainingFallback >= 0 && rawRemainingFallback <= operationMode.durationSeconds + 1 || boundaryFallback);
+  if (focusedCountdownAvailable) {
+    const remaining = boundaryFallback
+      ? Math.max(0, (closeAtFallback - Date.now()) / 1000)
+      : Math.max(0, rawRemainingFallback - Math.max(0, clockAgeFallback / 1000));
+    return {
+      ready: true,
+      timeframe: liveTfFallback,
+      secondsRemaining: remaining,
+      source: text(clock.source || 'focused-casatrade-countdown'),
+      operationMode: operationMode.timeframe,
+      projectedFromExact: clockAgeFallback > 250,
+      rolloverGrace: false,
+      candleOpenAt: openAtFallback,
+      candleCloseAt: closeAtFallback
+    };
+  }
+
+  if (clock.available === false || clock.role !== 'candle-close') {
     return { ready: false, reason: 'Relógio exato da vela ainda não foi confirmado.' };
   }
-  if (!EXACT_CLOCK_SOURCES.has(text(clock.source))) return { ready: false, reason: 'Fonte de tempo não autoritativa.' };
+  if (clock.verified !== true || !EXACT_CLOCK_SOURCES.has(text(clock.source))) {
+    return { ready: false, reason: 'Nenhuma fonte confiável de countdown da vela está disponível.' };
+  }
   if (!sameMarket(clock.asset, state.asset)) return { ready: false, reason: 'Relógio pertence a outro ativo.' };
   if (!clockBoundToFocus(clock, focus)) return { ready: false, reason: 'Relógio ainda não foi vinculado ao gráfico ativo.' };
   const clockAt = Number(clock.at || 0);
@@ -193,6 +233,22 @@ export function CasaTradeExpiration(state = {}, timeframe = null) {
   const actual = realFresh ? realExpiration : guardActual || null;
   const source = realFresh ? (text(controls.realExpirationSource) || 'casatrade-observed') : guardSource || '';
   const liveTf = normTf(timeframe || state.analysisTimeframe || state.timeframe);
+  const declaredManual = normExp(controls.userDeclaredExpiration || '');
+  const manualModeMatch = !!declaredManual
+    && declaredManual === operationMode.expiration
+    && (!liveTf || liveTf === operationMode.timeframe);
+  if (manualModeMatch) {
+    return {
+      ready: true,
+      actual: declaredManual,
+      required: operationMode.expiration,
+      source: 'user-declared',
+      verified: false,
+      reason: operationMode.timeframe === 'M1'
+        ? 'EXPIRAÇÃO MANUAL ACEITA – usando 1 min'
+        : 'EXPIRAÇÃO MANUAL ACEITA – usando 5 min'
+    };
+  }
 
   if (guardDivergence) {
     return {
@@ -307,7 +363,7 @@ function confluence(signal = {}, direction = null, thresholds = getThresholds())
   const a = signal.analytics || {};
   const factors = [];
   const power = Number(direction === 'BUY' ? a.buyPower : a.sellPower) || 0;
-  if (power >= 50) factors.push(direction === 'BUY' ? 'poder comprador' : 'poder vendedor');
+  if (power >= 45) factors.push(direction === 'BUY' ? 'poder comprador' : 'poder vendedor');
   if (Number(a.currentStrength || 0) >= thresholds.candleStrength) factors.push('força da vela');
   if (text(a.rejectionDirection).toUpperCase() === direction && Number(a.rejectionStrength || 0) >= thresholds.rejectionStrength) factors.push('rejeição');
   if (text(a.continuationDirection).toUpperCase() === direction && Number(a.continuationScore || 0) >= 60) factors.push('continuação');
@@ -367,9 +423,9 @@ function baseDecision(state = {}) {
   const possibleScore = signalPolicy.possibleScore;
   const finalScore = signalPolicy.finalScore;
   const entryWindowSeconds = pref.operationMode === 'M1'
-    ? 15
+    ? 10
     : pref.operationMode === 'M5'
-      ? 20
+      ? 15
       : pref.thresholds.entryWindowSeconds;
   const preSignalWindowSeconds = 30;
   const directionalPower = Number(direction === 'BUY' ? signal.analytics?.buyPower : signal.analytics?.sellPower) || 0;
@@ -457,6 +513,88 @@ function baseDecision(state = {}) {
   }
 
   const seconds = Number(time.secondsRemaining);
+
+  // Profile thresholds are the primary signal-volume control. The technical
+  // engine may still label the sample WAIT/NO_TRADE while professional
+  // context indicators catch up; a clear direction, score, power, matching
+  // session, exact countdown and accepted expiration are the mandatory gate.
+  const basicProfileCandidate = !!direction
+    && score >= possibleScore
+    && directionalPower >= 45
+    && identity.ready
+    && time.ready
+    && expiration.ready
+    && Number.isFinite(seconds)
+    && seconds > 0
+    && seconds <= preSignalWindowSeconds;
+  if (basicProfileCandidate) {
+    const previousProfile = state.professionalDecision || {};
+    const previousProfileUi = text(previousProfile.uiState).toUpperCase();
+    const sameProfileCandidate = previousProfile.cycleKey === cycle
+      && previousProfile.direction === direction
+      && ['POSSIBLE_BUY','POSSIBLE_SELL','ENTER_BUY','ENTER_SELL'].includes(previousProfileUi);
+    const possibleSince = sameProfileCandidate && Number(previousProfile.possibleSince || 0) > 0
+      ? Number(previousProfile.possibleSince) : now;
+    const side = direction === 'BUY' ? 'COMPRA' : 'VENDA';
+    if (seconds > entryWindowSeconds) {
+      return {
+        ...common,
+        uiState: direction === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL',
+        direction,
+        actionable: false,
+        alert: sameProfileCandidate ? 'silent' : 'discrete',
+        possibleSince,
+        finalCandidateHits: 0,
+        holdRemainingMs: 0,
+        reason: 'POSSÍVEL ' + side + ' — perfil ' + pref.sensitivityProfile
+          + ' atingido (score ' + Math.round(score) + ', poder ' + Math.round(directionalPower)
+          + '%). Expiração aceita; aguardando a janela final.'
+      };
+    }
+    if (score >= finalScore) {
+      const priorHits = sameProfileCandidate ? Number(previousProfile.finalCandidateHits || 0) : 0;
+      const finalHits = Math.min(2, priorHits + 1);
+      if (finalHits >= 2) {
+        return {
+          ...common,
+          uiState: direction === 'BUY' ? 'ENTER_BUY' : 'ENTER_SELL',
+          direction,
+          actionable: true,
+          alert: 'strong',
+          possibleSince,
+          finalCandidateHits: finalHits,
+          holdRemainingMs: 0,
+          reason: side + ' — DECISÃO FINAL • perfil ' + pref.sensitivityProfile
+            + ' confirmado (score ' + Math.round(score) + ', poder ' + Math.round(directionalPower)
+            + '%). Entrada MANUAL na próxima vela.'
+        };
+      }
+      return {
+        ...common,
+        uiState: direction === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL',
+        direction,
+        actionable: false,
+        alert: 'discrete',
+        possibleSince,
+        finalCandidateHits: finalHits,
+        holdRemainingMs: 0,
+        reason: side + ' — critério final atingido; confirmando estabilidade (' + finalHits + '/2).'
+      };
+    }
+    return {
+      ...common,
+      uiState: 'WAIT',
+      direction: null,
+      actionable: false,
+      alert: 'silent',
+      possibleSince: null,
+      finalCandidateHits: 0,
+      holdRemainingMs: 0,
+      reason: 'AGUARDAR — score ' + Math.round(score) + '/' + finalScore
+        + ' abaixo do limiar final do perfil ' + pref.sensitivityProfile + '.'
+    };
+  }
+
   const anticipationWindow = pref.operationMode === 'M5' ? 120 : 45;
   const directionalPowerForPattern = Number(direction === 'BUY' ? signal.analytics?.buyPower : direction === 'SELL' ? signal.analytics?.sellPower : 0) || 0;
   const globalScoreForPattern = Number(signal.analysisScore ?? signal.score ?? 0) || 0;
@@ -542,7 +680,7 @@ function baseDecision(state = {}) {
     if (previousCandidateSameCycle
       && direction === previousDirection
       && score >= Math.max(58, thresholds.possibleScore)
-      && Number(signal.analytics?.[direction === 'BUY' ? 'buyPower' : 'sellPower'] || 0) >= 50
+      && Number(signal.analytics?.[direction === 'BUY' ? 'buyPower' : 'sellPower'] || 0) >= 45
       && seconds > 0) {
       return {
         ...common,
