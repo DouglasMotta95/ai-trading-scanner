@@ -506,7 +506,18 @@ function baseDecision(state = {}) {
     return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, holdRemainingMs: 0, reason: 'AGUARDAR — tendência/contexto, região e gatilho ainda não estão confirmados juntos.' };
   }
 
-  if (!technicalCandidate || !direction || score < possibleScore || !mandatoryPowerReady || !additionalConfluenceReady) {
+  const patternAnalytics = signal.analytics || {};
+  const patternIndependentConfirmation =
+    (text(patternAnalytics.momentumDirection).toUpperCase() === direction && Number(patternAnalytics.momentumScore || 0) >= 40)
+    || (text(patternAnalytics.continuationDirection).toUpperCase() === direction && Number(patternAnalytics.continuationScore || 0) >= 50)
+    || (text(patternAnalytics.rejectionDirection).toUpperCase() === direction && Number(patternAnalytics.rejectionStrength || 0) >= thresholds.rejectionStrength)
+    || Number(patternAnalytics.currentStrength || 0) >= thresholds.candleStrength;
+  const pullbackFinalCandidate = pullbackCandidate
+    && !!direction
+    && globalScoreForPattern >= 64
+    && directionalPowerForPattern >= 55
+    && patternIndependentConfirmation;
+  if ((!technicalCandidate || !direction || score < possibleScore || !mandatoryPowerReady || !additionalConfluenceReady) && !pullbackFinalCandidate) {
     if (previousCandidateSameCycle
       && direction === previousDirection
       && score >= Math.max(58, thresholds.possibleScore)
@@ -537,9 +548,7 @@ function baseDecision(state = {}) {
     : technicalSinceValid ? technicalPossibleSince : now;
   const heldFor = Math.max(0, now - possibleSince);
   const candidateFinalReady = !!direction
-    && score >= finalScore
-    && finalPowerReady
-    && additionalConfluenceReady
+    && ((score >= finalScore && finalPowerReady && additionalConfluenceReady) || pullbackFinalCandidate)
     && professionalContextReady
     && professionalTriggerReady;
   const priorFinalHits = sameCandidate && previous.direction === direction
