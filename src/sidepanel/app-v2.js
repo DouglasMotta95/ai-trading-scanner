@@ -541,7 +541,6 @@ function decisionModel(state = {}) {
     : '';
   // Timing/mode blocks prevent entries, but must not short-circuit the technical
   // score and candidate display below.
-  const timingReady = liveTimingReady(state) && !alignment.conflict;
   const p = state.professionalDecision || {};
   const technical = state.signal || {};
   const ui = String(p.uiState || technical.uiState || '').toUpperCase();
