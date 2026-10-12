@@ -67,9 +67,19 @@ function marketDataReady(state = {}) {
   const rows = (Array.isArray(state.candles) ? state.candles : []).filter(row => [row?.open,row?.high,row?.low,row?.close].every(value => num(value) != null));
   const signalMatches = !signal.asset || sameMarket(signal.asset, state.asset);
   const candleMatches = !state.currentCandle?.asset || sameMarket(state.currentCandle.asset, state.asset);
-  return session.dataReady === true
-    && !!state.asset
-    && sameMarket(session.confirmedAsset, state.asset)
+  const focus = state.diagnostics?.focusedAsset || {};
+  const focusMatches = focus.reliable === true
+    && focus.chartScoped === true
+    && focus.trustedChartFrame === true
+    && sameMarket(focus.asset, state.asset)
+    && Number(focus.at || 0) > 0
+    && Date.now() - Number(focus.at) < 5500;
+  const transitionMatches = session.transitioning === true
+    && sameMarket(session.pendingAsset || session.asset || '', state.asset)
+    && focusMatches;
+  const confirmedSession = session.dataReady === true && sameMarket(session.confirmedAsset, state.asset);
+  return !!state.asset
+    && (confirmedSession || transitionMatches)
     && signalMatches
     && candleMatches
     && num(state.price) != null
@@ -81,7 +91,13 @@ function marketIdentityReady(state = {}) {
   const focus = state.diagnostics?.focusedAsset || {};
   const signal = state.signal || {};
   const asset = marketId(state.asset || '');
-  if (!asset || !sameMarket(session.confirmedAsset, asset) || !sameMarket(focus.asset, asset)) return false;
+  const focusMatches = !!asset && sameMarket(focus.asset, asset)
+    && focus.reliable === true && focus.chartScoped === true && focus.trustedChartFrame === true
+    && Number(focus.at || 0) > 0 && Date.now() - Number(focus.at) < 5500;
+  const transitionMatches = session.transitioning === true
+    && sameMarket(session.pendingAsset || session.asset || '', asset)
+    && focusMatches;
+  if (!asset || (!sameMarket(session.confirmedAsset, asset) && !transitionMatches) || !focusMatches) return false;
   if (signal.asset && !sameMarket(signal.asset, asset)) return false;
   if (state.currentCandle?.asset && !sameMarket(state.currentCandle.asset, asset)) return false;
   return true;
@@ -552,7 +568,7 @@ function decisionModel(state = {}) {
   if (!activeLicense(state)) return { uiState: 'WAIT', title: 'AGUARDAR', text: 'AGUARDAR', sub: 'Ative o acesso para iniciar a leitura.', tone: 'waiting', reason: 'Aguardando licença ativa.', score: 0, actionable: false };
   if (!marketIdentityReady(state)) return { uiState: 'ANALYZING_MARKET', title: 'ATUALIZANDO ATIVO', text: 'AGUARDAR', sub: 'Bloqueio de segurança: confirmando que gráfico, sessão, velas e sinal pertencem ao mesmo ativo.', tone: 'waiting', reason: 'Ativo técnico divergiu do gráfico atual da CasaTrade.', score: 0, actionable: false };
   const pending = transitionAsset(state);
-  if (pending) return { uiState: 'ANALYZING_MARKET', title: 'ATUALIZANDO ATIVO', text: `ATUALIZANDO PARA ${pending}`, sub: 'Limpando dados anteriores e confirmando preço + velas do novo ativo.', tone: 'waiting', reason: 'Troca de ativo em validação.', score: 0, actionable: false };
+  if (pending && !marketDataReady(state)) return { uiState: 'ANALYZING_MARKET', title: 'ATUALIZANDO ATIVO', text: `ATUALIZANDO PARA ${pending}`, sub: 'Limpando dados anteriores e confirmando preço + velas do novo ativo.', tone: 'waiting', reason: 'Troca de ativo em validação.', score: 0, actionable: false };
   if (!marketDataReady(state) || !focusReady(state)) return { uiState: 'ANALYZING_MARKET', title: 'AGUARDAR', text: 'AGUARDAR', sub: 'Confirmando ativo, preço e velas reais.', tone: 'waiting', reason: 'Identificando o gráfico atual da CasaTrade.', score: 0, actionable: false };
 
   const trackedOperation = state.activeSignalOperation || null;
@@ -837,7 +853,7 @@ function renderUnsafe(state = {}) {
   const session = sessionInfo(state);
   const panelFocusFresh = focusConfirmedThisPanel(state);
   const freshMarket = marketDataReady(state) && focusReady(state) && panelFocusFresh && sameMarket(state.diagnostics?.focusedAsset?.asset, state.asset);
-  const visibleAsset = freshMarket ? marketId(session.confirmedAsset || state.asset) : '';
+  const visibleAsset = freshMarket ? marketId(state.asset || session.confirmedAsset) : '';
   const bootAwaitingFocus = !!state.targetTabId && !panelFocusFresh;
 
   setText('asset', visibleAsset || (pending ? `Atualizando para ${pending}…` : bootAwaitingFocus ? 'ATUALIZANDO…' : '—'));
