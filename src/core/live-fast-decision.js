@@ -47,6 +47,7 @@ function quality(signal = {}, direction = null, thresholds = getThresholds(), co
     const momentumScore = Number(a.momentumScore || 0);
     const rejectionStrength = Number(a.rejectionStrength || 0);
     const currentStrength = Number(a.currentStrength || 0);
+    const pullbackContinuation = a.pullbackContinuation?.qualified === true && a.pullbackContinuation?.direction === direction;
     const directionalRejection = a.rejectionDirection === direction
       || Number(direction === 'BUY' ? a.rejectionBuy : a.rejectionSell) >= thresholds.rejectionStrength;
     const continuation = a.continuationDirection === direction && continuationScore >= 55;
@@ -56,6 +57,7 @@ function quality(signal = {}, direction = null, thresholds = getThresholds(), co
     if (continuation) reasons.push('continuação');
     if (momentum) reasons.push('momentum');
     if (currentStrength >= thresholds.candleStrength) reasons.push('força');
+    if (pullbackContinuation) reasons.push('pullback sem esticamento');
     return {
       strong: power >= signalPolicy.possiblePower && reasons.length >= signalPolicy.minimumConfluence,
       power,
@@ -69,11 +71,13 @@ function quality(signal = {}, direction = null, thresholds = getThresholds(), co
   const momentum = a.momentumDirection === direction && Number(a.momentumScore || 0) >= 40;
   const rejection = a.rejectionDirection === direction && Number(a.rejectionStrength || 0) >= thresholds.rejectionStrength;
   const strength = Number(a.currentStrength || 0) >= thresholds.candleStrength;
+  const pullbackContinuation = a.pullbackContinuation?.qualified === true && a.pullbackContinuation?.direction === direction;
   const reasons = [];
   if (continuation) reasons.push('continuação');
   if (momentum) reasons.push('momentum');
   if (rejection) reasons.push('rejeição');
   if (strength) reasons.push('força');
+  if (pullbackContinuation) reasons.push('pullback sem esticamento');
   return {
     strong: power >= signalPolicy.possiblePower && reasons.length >= signalPolicy.minimumConfluence,
     power,
