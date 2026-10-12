@@ -70,6 +70,11 @@ export function getExpirationReadiness(state = {}, now = Date.now()) {
   const guardManual = guardFresh && isManualSource(guardSource) ? normExp(guard.actual || '') : null;
   const declared = normExp(controls.userDeclaredExpiration || observedManual || guardManual || '');
 
+  const liveTf = clean(state.analysisTimeframe || state.timeframe || state.diagnostics?.marketClock?.timeframe).toUpperCase();
+  const manualAccepted = !!declared
+    && declared === required
+    && (!liveTf || liveTf === operationMode.timeframe);
+
   const decisionAt = Number(decision.updatedAt || 0);
   const decisionAge = decisionAt > 0 ? now - decisionAt : Infinity;
   const decisionFresh = decisionAge >= 0 && decisionAge < 4000;
@@ -77,22 +82,23 @@ export function getExpirationReadiness(state = {}, now = Date.now()) {
     && decision.expirationReady === true
     && normExp(decision.actualExpiration || '') === required;
 
-  const conflict = divergence || (realFresh && candidate.value !== required);
+  const conflict = !manualAccepted && (divergence || (realFresh && candidate.value !== required));
   const verified = policyReady
     && !conflict
     && realFresh
     && candidate.value === required
     && guard.verified === true;
-  const operationalCandidate = !realFresh
-    && !conflict
-    && !!declared
-    && declared === required;
-  const operational = policyReady && operationalCandidate;
+  const operationalCandidate = manualAccepted && !conflict;
+  const operational = operationalCandidate || (policyReady && !realFresh && !conflict && !!declared && declared === required);
   const ready = verified || operational;
-  const actual = realFresh ? candidate.value : declared || normExp(decision.actualExpiration || '');
+  const actual = manualAccepted ? declared : realFresh ? candidate.value : declared || normExp(decision.actualExpiration || '');
 
   let reason;
-  if (divergence) {
+  if (manualAccepted) {
+    reason = operationMode.timeframe === 'M1'
+      ? 'EXPIRAÇÃO MANUAL ACEITA – usando 1 min'
+      : 'EXPIRAÇÃO MANUAL ACEITA – usando 5 min';
+  } else if (divergence) {
     reason = clean(guard.reason || 'A expiração observada diverge do modo ativo.');
   } else if (realFresh && candidate.value !== required) {
     reason = `Expiração ao vivo de ${candidate.value} diverge do modo ativo (${required}).`;
@@ -118,7 +124,7 @@ export function getExpirationReadiness(state = {}, now = Date.now()) {
     conflict,
     required,
     actual: actual || null,
-    source: verified ? candidate.source : operational ? 'user-declared-match' : isManualSource(observedFieldSource) ? 'user-declared' : '',
+    source: verified ? candidate.source : operational ? 'user-declared' : isManualSource(observedFieldSource) ? 'user-declared' : '',
     reason,
     realFresh,
     decisionFresh
