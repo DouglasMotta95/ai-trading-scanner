@@ -1,5 +1,6 @@
 import { readScannerState } from './services/scanner-state-atomic.js';
 import { storageLocalGet, storageSessionGet, storageSessionSet, tabsUpdate } from './services/chrome-compat.js';
+import { qualifiedDecision } from './core/signal-alert-qualification.js';
 
 const PREF_KEY = 'atsScannerUiPreferences';
 const LEDGER_KEY = 'atsSystemAlertLedgerV1';
@@ -25,48 +26,6 @@ function normalizePrefs(raw = {}) {
 async function refreshPrefs() {
   const stored = await storageLocalGet(PREF_KEY).catch(() => ({}));
   prefs = normalizePrefs(stored?.[PREF_KEY] || {});
-}
-
-function qualifiedDecision(state = {}) {
-  const decision = state.professionalDecision || {};
-  const seconds = num(decision.secondsRemaining);
-  const cycleKey = clean(decision.cycleKey);
-
-  if (state.scanner !== 'scanning' || state.connection !== 'online') return null;
-  if (decision.timeReady !== true || decision.expirationReady !== true) return null;
-  if (clean(decision.timeframe).toUpperCase() !== 'M1') return null;
-  if (clean(decision.actualExpiration).toLowerCase() !== '60s') return null;
-  if (!cycleKey || seconds == null || seconds <= 0 || seconds > 30) return null;
-
-  const ui = clean(decision.uiState).toUpperCase();
-  const direction = clean(decision.direction).toUpperCase();
-
-  if (seconds > 10) {
-    if (!['POSSIBLE_BUY', 'POSSIBLE_SELL'].includes(ui) || !['BUY', 'SELL'].includes(direction)) return null;
-    return {
-      stage: 'pre',
-      cycleKey,
-      seconds,
-      label: direction === 'BUY' ? 'COMPRA' : 'VENDA',
-      title: 'Pré-sinal',
-      message: 'Possível ' + (direction === 'BUY' ? 'COMPRA' : 'VENDA') + ' — ' + clean(state.asset || 'ATIVO') + ' M1'
-    };
-  }
-
-  const finalLabel = ui === 'ENTER_BUY' && direction === 'BUY'
-    ? 'COMPRA'
-    : ui === 'ENTER_SELL' && direction === 'SELL'
-      ? 'VENDA'
-      : 'AGUARDAR';
-
-  return {
-    stage: 'final',
-    cycleKey,
-    seconds,
-    label: finalLabel,
-    title: 'Decisão',
-    message: finalLabel + ' — ' + clean(state.asset || 'ATIVO')
-  };
 }
 
 function hashKey(value = '') {
