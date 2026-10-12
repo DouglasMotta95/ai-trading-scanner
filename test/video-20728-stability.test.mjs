@@ -14,7 +14,7 @@ test('manual execution does not expire a valid observed expiration after an arbi
   assert.match(body, /getExpirationReadiness\(state\)/);
   assert.match(body, /if \(!expiration\.ready \|\| expiration\.actual !== operationMode\.expiration\) return false;/);
   assert.doesNotMatch(body, /Date\.now\(\)\s*-\s*expirationAt\s*<\s*7000/);
-  assert.match(body, /clock\.verified !== true/);
+  assert.doesNotMatch(body, /clock\.verified !== true/);
   assert.match(body, /clockBoundToFocus\(clock, focus\)/);
   assert.match(readiness, /const policyReady = decisionFresh/);
   assert.match(readiness, /const operationalCandidate = manualAccepted && !conflict/);
