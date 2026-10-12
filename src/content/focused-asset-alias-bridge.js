@@ -25,7 +25,7 @@
     ['AVALANCHE', 'AVAX/USD'], ['AVAX', 'AVAX/USD'],
     ['POLKADOT', 'DOT/USD'], ['DOT', 'DOT/USD']
   ]);
-  const QUOTES = new Set(['USD','USDT','USDC','EUR','GBP','JPY','AUD','CAD','CHF','NZD','BRL','BTC','ETH']);
+  const QUOTES = new Set(['USD','USDT','USDC','EUR','GBP','JPY','AUD','CAD','CHF','NZD','BRL','BTC','ETH','XOF','XAF','MXN','ZAR','SEK','NOK','DKK','TRY','PLN','RUB','SGD','HKD','CNY','INR','THB','KRW','TWD','IDR','MYR','PHP','SAR','AED','CZK','HUF','ILS','CLP','COP','ARS','EGP','NGN','PKR','QAR','RON','UAH','VND','MAD','ISK']);
   const STOP = new Set(['BUY','SELL','CALL','PUT','OTC','USD','USDT','USDC','TIME','TIMER','PRICE','ASSET','ATIVO','VALOR','SALDO','PAYOUT','LIVE','SYNC','CONECTAR','ENTRAR','VELA','GRAFICO','GRÁFICO']);
   const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
   const fold = value => clean(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
