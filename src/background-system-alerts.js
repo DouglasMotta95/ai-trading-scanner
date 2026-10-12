@@ -1,6 +1,7 @@
-import { readScannerState } from './services/scanner-state-atomic.js';
+import { readScannerState, updateScannerState } from './services/scanner-state-atomic.js';
 import { storageLocalGet, storageSessionGet, storageSessionSet, tabsUpdate } from './services/chrome-compat.js';
-import { qualifiedDecision } from './core/signal-alert-qualification.js';
+import { qualifiedDecision, explainDecisionAlertEligibility } from './core/signal-alert-qualification.js';
+import { updateDecisionAuditDelivery } from './core/decision-audit.js';
 
 const PREF_KEY = 'atsScannerUiPreferences';
 const LEDGER_KEY = 'atsSystemAlertLedgerV1';
@@ -136,18 +137,108 @@ async function playAlertSound(stage) {
   }
 }
 
+async function recordDeliveryAudit(state = {}, stage = null, delivery = {}) {
+  const stateAudit = state.decisionAudit || {};
+  const stateLatest = stateAudit.latest || null;
+  const cycleKey = clean(state.professionalDecision?.cycleKey || stateLatest?.cycleKey || '');
+  if (!stateLatest || !stateLatest.id || (cycleKey && stateLatest.cycleKey !== cycleKey)) return;
+  const proposed = {
+    ...delivery,
+    stage: stage || delivery.stage || null,
+    auditId: stateLatest.id,
+    attempted: delivery.attempted === true,
+    at: Number(delivery.at || Date.now())
+  };
+  const prior = stateLatest.delivery || {};
+  if (prior.auditId === proposed.auditId
+    && prior.stage === proposed.stage
+    && prior.status === proposed.status
+    && prior.reason === proposed.reason
+    && prior.notification === proposed.notification
+    && prior.sound === proposed.sound) return;
+
+  await updateScannerState(current => {
+    const audit = current.decisionAudit || {};
+    const latest = audit.latest || null;
+    if (!latest || latest.id !== stateLatest.id) return current;
+    const currentDelivery = latest.delivery || {};
+    if (currentDelivery.auditId === proposed.auditId
+      && currentDelivery.stage === proposed.stage
+      && currentDelivery.status === proposed.status
+      && currentDelivery.reason === proposed.reason
+      && currentDelivery.notification === proposed.notification
+      && currentDelivery.sound === proposed.sound) return current;
+    return {
+      ...current,
+      decisionAudit: updateDecisionAuditDelivery(audit, { id: latest.id, cycleKey: latest.cycleKey }, proposed)
+    };
+  }).catch(() => {});
+}
+
+function terminalDeliveryForSameAudit(state = {}, stage = null) {
+  const latest = state.decisionAudit?.latest || {};
+  const delivery = latest.delivery || {};
+  if (!latest.id || delivery.auditId !== latest.id || (stage && delivery.stage !== stage)) return false;
+  return ['delivered','failed','disabled','deduplicated','not_eligible'].includes(delivery.status);
+}
+
 async function dispatchForState(state = {}) {
+  const eligibility = explainDecisionAlertEligibility(state);
   const event = qualifiedDecision(state);
-  if (!event) return;
+  const latest = state.decisionAudit?.latest || {};
+  const existingDelivery = latest.delivery || {};
+
+  if (!event) {
+    if (latest.id && !terminalDeliveryForSameAudit(state, existingDelivery.stage || null)) {
+      await recordDeliveryAudit(state, null, {
+        status: 'not_eligible',
+        reason: eligibility.reason,
+        attempted: false,
+        notification: 'not_attempted',
+        sound: 'not_attempted'
+      });
+    }
+    return;
+  }
+
+  if (terminalDeliveryForSameAudit(state, event.stage)) return;
 
   const notificationsEnabled = prefs.notificationsEnabled !== false;
   const soundEnabled = prefs.alertLevel !== 'off';
-  if (!notificationsEnabled && !soundEnabled) return;
-  if (!(await claimCycleStage(event.cycleKey, event.stage))) return;
+  if (!notificationsEnabled && !soundEnabled) {
+    await recordDeliveryAudit(state, event.stage, {
+      status: 'disabled',
+      reason: 'Notificações e som estão desativados nas preferências.',
+      attempted: false,
+      notification: 'disabled',
+      sound: 'disabled'
+    });
+    return;
+  }
 
-  let delivered = false;
+  if (!(await claimCycleStage(event.cycleKey, event.stage))) {
+    await recordDeliveryAudit(state, event.stage, {
+      status: 'deduplicated',
+      reason: 'Este estágio da vela já foi registrado; alerta duplicado evitado.',
+      attempted: false,
+      notification: 'deduplicated',
+      sound: 'deduplicated'
+    });
+    return;
+  }
+
+  await recordDeliveryAudit(state, event.stage, {
+    status: 'attempting',
+    reason: 'Sinal elegível; tentando entregar notificação e/ou som.',
+    attempted: true,
+    notification: notificationsEnabled ? 'attempting' : 'disabled',
+    sound: soundEnabled ? 'attempting' : 'disabled'
+  });
+
+  let notificationDelivered = false;
+  let soundDelivered = false;
   if (notificationsEnabled) {
-    delivered = await createNotification(notificationId(event, state), {
+    notificationDelivered = await createNotification(notificationId(event, state), {
       type: 'basic',
       iconUrl: chrome.runtime.getURL(ICON_PATH),
       title: event.title,
@@ -155,13 +246,19 @@ async function dispatchForState(state = {}) {
       priority: event.stage === 'final' ? 2 : 1
     });
   }
+  if (soundEnabled) soundDelivered = await playAlertSound(event.stage);
+  const delivered = notificationDelivered || soundDelivered;
 
-  if (soundEnabled) delivered = (await playAlertSound(event.stage)) || delivered;
-
-  // Reserve the candle-stage first to prevent duplicates. If neither the native
-  // notification nor the sound channel actually delivered, release the stage so
-  // a later state update can retry within the same candle.
   if (!delivered) await releaseCycleStage(event.cycleKey, event.stage);
+  await recordDeliveryAudit(state, event.stage, {
+    status: delivered ? 'delivered' : 'failed',
+    reason: delivered
+      ? 'Alerta entregue por pelo menos um canal.'
+      : 'Falha nos dois canais de saída; estágio liberado para nova tentativa em um ciclo atualizado.',
+    attempted: true,
+    notification: !notificationsEnabled ? 'disabled' : notificationDelivered ? 'delivered' : 'failed',
+    sound: !soundEnabled ? 'disabled' : soundDelivered ? 'delivered' : 'failed'
+  });
 }
 
 function queueState(state = {}) {
