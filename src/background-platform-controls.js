@@ -152,38 +152,47 @@ async function applyCasaTradeMode(state = {}, timeframe = 'M1', source = 'mode-c
   ].map(value => Number(value)).filter(value => Number.isInteger(value) && value >= 0);
   const frames = [...new Set(frameCandidates)];
   const attempts = [];
-  let verified = false;
+  const fieldMatched = { timeframe: false, expiration: false };
+  const fieldApplied = { timeframe: false, expiration: false };
+  const fieldFrame = { timeframe: null, expiration: null };
 
+  // CasaTrade may expose the chart toolbar and the expiration widget in
+  // different frames. Apply and verify each control independently; requiring
+  // both controls to be present in one frame falsely reports failure forever.
   if (tabId > 0 && chrome.tabs?.sendMessage) {
-    for (const frameId of frames) {
-      const response = await sendApplyToFrame(tabId, frameId, {
-        timeframe: operation.timeframe,
-        expiration: operation.expiration
-      });
-      const matched = {
-        timeframe: response?.matched?.timeframe === true,
-        expiration: response?.matched?.expiration === true
-      };
-      attempts.push({ frameId, responded: !!response, matched, error: response?.error || null });
-      if (matched.timeframe && matched.expiration) {
-        verified = true;
-        break;
+    for (const field of ['timeframe', 'expiration']) {
+      const desired = field === 'timeframe' ? operation.timeframe : operation.expiration;
+      for (const frameId of frames) {
+        const response = await sendApplyToFrame(tabId, frameId, { [field]: desired });
+        const matched = response?.matched?.[field] === true;
+        const applied = response?.applied?.[field] === true;
+        attempts.push({ frameId, field, responded: !!response, applied, matched, before: response?.before?.[field] || null, after: response?.after?.[field] || null, error: response?.error || null });
+        if (matched) {
+          fieldMatched[field] = true;
+          fieldApplied[field] = applied;
+          fieldFrame[field] = frameId;
+          break;
+        }
       }
     }
   }
 
+  const verified = fieldMatched.timeframe && fieldMatched.expiration;
   const telemetry = {
     source,
     timeframe: operation.timeframe,
     expiration: operation.expiration,
     attempted: tabId > 0 && attempts.length > 0,
     verified,
+    matched: { ...fieldMatched },
+    applied: { ...fieldApplied },
+    fieldFrame: { ...fieldFrame },
     tabId: tabId || null,
     attempts,
     reason: verified
-      ? 'Timeframe e expiração definidos e relidos no controle da CasaTrade.'
+      ? 'Timeframe e expiração ajustados e relidos, cada um no frame que contém seu controle.'
       : tabId > 0
-        ? 'Modo alterado no scanner; não foi possível confirmar os dois controles da CasaTrade. A entrada permanece bloqueada até a leitura real coincidir.'
+        ? `Sincronização parcial: timeframe=${fieldMatched.timeframe ? 'confirmado' : 'não confirmado'}; expiração=${fieldMatched.expiration ? 'confirmada' : 'não confirmada'}. A entrada permanece bloqueada até ambos coincidirem.`
         : 'Modo alterado no scanner; conecte a aba da CasaTrade para sincronizar os controles.',
     at: Date.now()
   };
