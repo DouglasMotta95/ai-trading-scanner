@@ -23,11 +23,27 @@ let audioContext = null;
 
 const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
 const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
+let lastKnownActiveLicense = null;
+function uiLicenseValid(license = {}) {
+  const status = String(license?.status || '').toLowerCase();
+  if (!['active','valid'].includes(status)
+    && license?.devMode !== true
+    && String(license?.plan || '').toUpperCase() !== 'OWNER_DEV') return false;
+  if (!license.expiresAt) return true;
+  let expires = Number(license.expiresAt);
+  if (Number.isFinite(expires) && expires > 0) {
+    if (expires < 1e12) expires *= 1000;
+  } else expires = Date.parse(String(license.expiresAt));
+  return Number.isFinite(expires) && expires > Date.now();
+}
 const activeLicense = state => {
+  if (uiLicenseValid(state?.license || {})) {
+    lastKnownActiveLicense = { ...state.license, status: 'active' };
+    return true;
+  }
   const status = String(state?.license?.status || '').toLowerCase();
-  return ['active', 'valid'].includes(status)
-    || state?.license?.devMode === true
-    || String(state?.license?.plan || '').toUpperCase() === 'OWNER_DEV'
+  if (['expired','inactive','limit','device_locked'].includes(status)) return false;
+  return uiLicenseValid(lastKnownActiveLicense || {})
     || state?.diagnostics?.access?.ownerDev === true
     || state?.diagnostics?.access?.state === 'owner_dev';
 };
@@ -79,6 +95,27 @@ function expirationObservation(state = {}) {
   const realSource = clean(controls.realExpirationSource || controls.expirationSource || '');
   const declaredAt = Number(controls.userDeclaredAt || 0);
   const now = Date.now();
+  const operation = operationRequirement(state);
+  let rememberedManual = '';
+  try { rememberedManual = clean(localStorage.getItem('atsUserDeclaredExpiration') || ''); } catch {}
+  const observedSourceForManual = clean(controls.observed?.sourceByField?.expiration || controls.observed?.source || '');
+  const manualRaw = controls.userDeclaredExpiration
+    || state.diagnostics?.expirationGuard?.userDeclared
+    || (['user-declared','user-declared-match'].includes(observedSourceForManual) ? controls.observed?.expiration : '')
+    || rememberedManual;
+  const manual = normExp(manualRaw || '');
+  const currentTf = normTf(state.analysisTimeframe || state.timeframe || state.diagnostics?.marketClock?.timeframe);
+  if (manual === operation.expiration && (!currentTf || currentTf === operation.timeframe)) {
+    return {
+      value: operation.expiration,
+      fresh: true,
+      verified: false,
+      source: 'user-declared',
+      at: declaredAt || now,
+      ageMs: 0,
+      manualAccepted: true
+    };
+  }
 
   // Platform-control observations are emitted from several CasaTrade frames.
   // Only the focused frame (or the top shell while the focused market lives in
@@ -244,15 +281,19 @@ function clockBaseReady(state = {}) {
 function exactClockReady(state = {}) {
   const clock = state.diagnostics?.marketClock || {};
   if (!clockBaseReady(state)) return false;
-  if (!(clock.verified === true && ['trader-dom-countdown', 'network-server-cycle'].includes(String(clock.source || '')))) return false;
-  const fresh = Number(clock.at || 0) > 0 && Date.now() - Number(clock.at) < 4500;
+  const fresh = Number(clock.at || 0) > 0
+    && Date.now() - Number(clock.at) >= 0
+    && Date.now() - Number(clock.at) < 4500;
   const closeAt = num(clock.closeAt) ?? num(clock.candleCloseAt);
   const openAt = num(clock.openAt) ?? num(clock.candleOpenAt);
-  const tfMs = timeframeSeconds(clock.timeframe || state.analysisTimeframe || state.timeframe) * 1000;
+  const tf = normTf(clock.timeframe || state.analysisTimeframe || state.timeframe);
+  const tfMs = timeframeSeconds(tf) * 1000;
+  const remaining = num(clock.secondsRemaining);
   const boundaryCurrent = closeAt != null && openAt != null && tfMs
     && Date.now() >= openAt - 2000 && Date.now() <= closeAt + 1500
     && closeAt - Date.now() <= tfMs + 1500;
-  return (fresh || boundaryCurrent) && (num(clock.secondsRemaining) != null || boundaryCurrent);
+  return (fresh || boundaryCurrent)
+    && (remaining != null && remaining >= 0 && remaining <= timeframeSeconds(tf) + 1 || boundaryCurrent);
 }
 
 function operationalClockReady(state = {}) {
@@ -458,7 +499,11 @@ function modeAlignment(state = {}) {
   // control reader is unavailable. This prevents a stale hidden frame/clock
   // from producing a false M1/M5 or 1m/5m conflict.
   const liveTf = visualTf || runtimeTf || null;
-  const liveExp = visualExp || (expiration.verified === true && expiration.fresh === true ? expiration.value : null);
+  const manualMatches = expiration.source === 'user-declared'
+    && expiration.value === operation.expiration;
+  const liveExp = manualMatches
+    ? operation.expiration
+    : visualExp || (expiration.verified === true && expiration.fresh === true ? expiration.value : null);
 
   const tfMatches = liveTf == null || liveTf === operation.timeframe;
   const expMatches = liveExp == null || liveExp === operation.expiration;
@@ -774,7 +819,7 @@ function syncTopLiveClock(state = {}) {
       : 'SINCRONIZANDO CLOCK DA CASATRADE');
 }
 
-function render(state = {}) {
+function renderUnsafe(state = {}) {
   const model = decisionModel(state);
   const clock = state.diagnostics?.marketClock || {};
   const exact = exactClockReady(state);
@@ -956,6 +1001,35 @@ function render(state = {}) {
   globalThis.__ATS_MARK_UI_READY__?.();
 }
 
+function render(state = {}) {
+  try {
+    renderUnsafe(state);
+  } catch (error) {
+    // A display-only exception must not leave the side panel blank. Keep the
+    // document visible, restore the latest retained state, and expose a small
+    // recovery banner instead of hiding the whole interface.
+    try {
+      document.documentElement.classList.add('ats-ui-recovery');
+      document.body.style.visibility = 'visible';
+      document.body.style.opacity = '1';
+      const box = document.getElementById('bootError');
+      const label = document.getElementById('bootErrorText');
+      if (label) label.textContent = 'Painel recuperado após erro visual. A análise continua em segundo plano.';
+      if (box) box.hidden = false;
+      else {
+        let fallback = document.getElementById('atsRenderRecovery');
+        if (!fallback) {
+          fallback = document.createElement('div');
+          fallback.id = 'atsRenderRecovery';
+          fallback.style.cssText = 'position:fixed;z-index:2147483647;left:8px;right:8px;top:8px;padding:10px 12px;border-radius:10px;background:#142331;color:#fff;font:12px system-ui;box-shadow:0 4px 24px #0008';
+          document.body.appendChild(fallback);
+        }
+        fallback.textContent = 'Painel recuperado após erro visual. A análise continua em segundo plano.';
+      }
+    } catch {}
+  }
+}
+
 function tone(frequency, delay, duration, gain = .12) {
   try {
     audioContext ||= new (window.AudioContext || window.webkitAudioContext)();
@@ -1033,7 +1107,9 @@ async function setPref(key, value) {
 }
 
 async function loadPrefs() {
-  const stored = await chrome.storage.local.get(PREF_KEY).catch(() => ({}));
+  const stored = await chrome.storage.local.get([PREF_KEY, 'atsLastValidLicense']).catch(() => ({}));
+  const cachedLicense = stored?.atsLastValidLicense?.license || null;
+  if (uiLicenseValid(cachedLicense)) lastKnownActiveLicense = { ...cachedLicense, status: 'active' };
   const raw = stored?.[PREF_KEY] || {};
   const migratedAlert = raw.alertLevel || (raw.confirmSoundEnabled ? 'strong' : raw.possibleSoundEnabled ? 'discrete' : DEFAULT_PREFS.alertLevel);
   prefs = {
