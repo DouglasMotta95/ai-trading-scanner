@@ -14,6 +14,21 @@ export function registerBuildContracts(label='build') {
     assert.equal(m.background?.service_worker, 'src/background-entry.js');
     assert.equal(m.side_panel?.default_path, 'src/sidepanel/index.html');
   });
+  test(label + ': decision audit module and five live audit fields are wired', () => {
+    const m = manifest();
+    const audit = read('src/core/decision-audit.js');
+    const policy = read('src/background-decision-policy.js');
+    const alerts = read('src/background-system-alerts.js');
+    const panel = read('src/sidepanel/ui-shell-v2.js');
+    assert.ok(m.background?.service_worker === 'src/background-entry.js');
+    assert.match(policy, /buildDecisionAudit/);
+    assert.match(policy, /appendDecisionAudit/);
+    assert.match(alerts, /explainDecisionAlertEligibility/);
+    assert.match(alerts, /updateDecisionAuditDelivery/);
+    for (const id of ['auditScoreDirection','auditPatternTrigger','auditBlocker','auditTiming','auditDelivery']) assert.ok(panel.includes(id), 'missing audit field ' + id);
+    assert.match(audit, /blockerReason/);
+    assert.match(audit, /targetAt/);
+  });
   test(label + ': current CasaTrade readers are packaged', () => {
     const files = manifest().content_scripts.flatMap(row => row.js || []);
     for (const required of ['src/content/focused-asset-v2.js','src/content/embedded-feed-bridge.js','src/content/market-cycle-clock-v4.js','src/content/casatrade-expiration-probe.js','src/content/account-metrics-observer.js','src/content/trade-handoff-v2.js']) assert.ok(files.includes(required), 'missing ' + required);
