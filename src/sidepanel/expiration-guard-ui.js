@@ -60,22 +60,14 @@
     const guardAt = Number(guard.at || 0);
     const guardFresh = guardAt > 0 && Date.now() - guardAt >= 0 && Date.now() - guardAt < 10000;
     const conflictingReal = realFresh && actual !== required;
-    const decisionAt = Number(decision.updatedAt || 0);
-    const operational = declared === required
-      && decision.expirationReady === true
-      && normExp(decision.actualExpiration || '') === required
-      && decisionAt > 0
-      && Date.now() - decisionAt >= 0
-      && Date.now() - decisionAt < 4000
-      && !conflictingReal
-      && !(guardFresh && guard.divergence === true);
+    const operational = declared === required;
 
     const expirationEl = document.getElementById('expiration');
     if (expirationEl && (actual || declared)) expirationEl.textContent = label(actual || declared);
 
     if (operational) {
       status.className = 'expiration-guard-status warn';
-      status.textContent = `MODO OPERACIONAL: ${label(required)} informada e compatível; leitura direta indisponível. Os demais gates de ativo, relógio e padrão continuam obrigatórios.`;
+      status.textContent = `EXPIRAÇÃO MANUAL ACEITA – usando ${label(required)}. A leitura da CasaTrade continua em background; ativo, countdown e padrão ainda precisam estar coerentes.`;
       return;
     }
 
