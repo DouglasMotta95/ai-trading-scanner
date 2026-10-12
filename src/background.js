@@ -408,7 +408,18 @@ function blockEntrySignal(signal = {}, reason = 'limite de sinais atingido') {
 function historyFor(state = {}, asset = '') {
   const history = state.marketHistory || {};
   const key = Object.keys(history).find(value => sameMarket(value, asset));
-  const rows = key && Array.isArray(history[key]) ? history[key] : Array.isArray(state.candles) ? state.candles : [];
+  if (key && Array.isArray(history[key])) {
+    return history[key].filter(row => [row?.open, row?.high, row?.low, row?.close].every(value => num(value) != null)).slice(-180);
+  }
+
+  // Never reuse the previous asset's unkeyed candle history after the active
+  // symbol changes. The active frame has to publish at least one candle tagged
+  // to the new asset before the analysis engine is allowed to score it.
+  const currentCandleAsset = clean(state.currentCandle?.asset || '');
+  if (currentCandleAsset && !sameMarket(currentCandleAsset, asset)) return [];
+  const signalAsset = clean(state.signal?.asset || '');
+  if (signalAsset && !sameMarket(signalAsset, asset)) return [];
+  const rows = Array.isArray(state.candles) ? state.candles : [];
   return rows.filter(row => [row?.open, row?.high, row?.low, row?.close].every(value => num(value) != null)).slice(-180);
 }
 
@@ -638,8 +649,29 @@ async function runCentralAnalysis(force = false) {
       if (lastMarketKey && lastMarketKey !== marketKey) resetOrchestrator();
       lastMarketKey = marketKey;
 
-      let processed = processSnapshot(snapshot, current);
-      const allowance = signalAllowance(current);
+      const staleSignalForAsset = !!current.signal?.asset && !sameMarket(current.signal.asset, snapshot.asset);
+      const staleCandleForAsset = !!current.currentCandle?.asset && !sameMarket(current.currentCandle.asset, snapshot.asset);
+      const assetDataTransition = staleSignalForAsset || staleCandleForAsset;
+      const analysisInput = assetDataTransition ? {
+        ...current,
+        signal: null,
+        professionalDecision: null,
+        decisionCycle: null,
+        currentCandle: null,
+        diagnostics: {
+          ...(current.diagnostics || {}),
+          activeAssetTransition: {
+            from: current.signal?.asset || current.currentCandle?.asset || null,
+            to: snapshot.asset,
+            at: Date.now(),
+            clearedStaleSignal: staleSignalForAsset,
+            clearedStaleCandle: staleCandleForAsset
+          }
+        }
+      } : current;
+      if (assetDataTransition) resetOrchestrator();
+      let processed = processSnapshot(snapshot, analysisInput);
+      const allowance = signalAllowance(analysisInput);
       const processedUi = clean(processed?.signal?.uiState).toUpperCase();
       const processedConfirmed = processed?.signal?.state === 'CONFIRM' || processedUi === 'ENTER_BUY' || processedUi === 'ENTER_SELL';
       if (processedConfirmed && !allowance.allowed) {
@@ -670,7 +702,13 @@ async function runCentralAnalysis(force = false) {
         expiration: current.expiration,
         targetExpiration: current.targetExpiration,
         candles: current.candles,
-        currentCandle: current.currentCandle || processed?.currentCandle || null,
+        currentCandle: assetDataTransition
+          ? (processed?.currentCandle
+            ? { ...processed.currentCandle, asset: snapshot.asset, timeframe: snapshot.analysisTimeframe }
+            : { ...(snapshot.candles?.[snapshot.candles.length - 1] || {}), asset: snapshot.asset, timeframe: snapshot.analysisTimeframe })
+          : (current.currentCandle && (!current.currentCandle.asset || sameMarket(current.currentCandle.asset, snapshot.asset))
+            ? current.currentCandle
+            : processed?.currentCandle ? { ...processed.currentCandle, asset: snapshot.asset, timeframe: snapshot.analysisTimeframe } : null),
         marketHistory: current.marketHistory,
         lastSeen: current.lastSeen,
         connection: current.connection,
