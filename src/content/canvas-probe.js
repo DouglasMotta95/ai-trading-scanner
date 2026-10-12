@@ -26,7 +26,7 @@
   const frameRows = new Map();
 
   const SENSITIVE = /token|auth|cookie|session|password|secret|bearer|csrf|api[-_]?key|credential|authorization/i;
-  const QUOTES = ['USDT','USDC','USD','EUR','GBP','JPY','AUD','CAD','CHF','NZD','BRL','BTC','ETH'];
+  const QUOTES = ['USDT','USDC','USD','EUR','GBP','JPY','AUD','CAD','CHF','NZD','BRL','BTC','ETH','XOF','XAF','MXN','ZAR','SEK','NOK','DKK','TRY','PLN','RUB','SGD','HKD','CNY','INR','THB','KRW','TWD','IDR','MYR','PHP','SAR','AED','CZK','HUF','ILS','CLP','COP','ARS','EGP','NGN','PKR','QAR','RON','UAH','VND','MAD','ISK'];
   const ASSET_KEYS = ['symbol','symbolName','symbol_name','asset','assetName','asset_name','instrument','instrumentName','instrument_name','ticker','pair','market'];
   const PRICE_KEYS = ['price','last','lastPrice','last_price','quote','close','value','rate','current','currentPrice','current_price'];
   const BID_KEYS = ['bid','bidPrice','bid_price','bestBid','best_bid'];
@@ -100,7 +100,7 @@
     return `${m[1]}/${m[2]}${otc ? ' (OTC)' : ''}`;
   };
 
-  const assetRegex = /\b(?:[A-Z0-9]{2,16}\s*[\/_-]\s*(?:USDT|USDC|USD|EUR|GBP|JPY|AUD|CAD|CHF|NZD|BRL|BTC|ETH)|[A-Z]{6})(?:\s*\(\s*OTC\s*\)|\s+OTC)?/gi;
+  const assetRegex = /\b(?:[A-Z0-9]{2,16}\s*[\/_-]\s*(?:USDT|USDC|USD|EUR|GBP|JPY|AUD|CAD|CHF|NZD|BRL|BTC|ETH|XOF|XAF|MXN|ZAR|SEK|NOK|DKK|TRY|PLN|RUB|SGD|HKD|CNY|INR|THB|KRW|TWD|IDR|MYR|PHP|SAR|AED|CZK|HUF|ILS|CLP|COP|ARS|EGP|NGN|PKR|QAR|RON|UAH|VND|MAD|ISK)|[A-Z]{6})(?:\s*\(\s*OTC\s*\)|\s+OTC)?/gi;
   const assetsIn = text => {
     const out = [];
     for (const m of String(text || '').matchAll(assetRegex)) {

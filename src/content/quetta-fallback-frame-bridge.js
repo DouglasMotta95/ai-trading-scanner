@@ -74,7 +74,7 @@
     ['AVALANCHE', 'AVAX/USD'], ['AVAX', 'AVAX/USD'],
     ['POLKADOT', 'DOT/USD'], ['DOT', 'DOT/USD']
   ]);
-  const QUOTES = new Set(['USDT','USDC','USD','EUR','GBP','JPY','AUD','CAD','CHF','NZD','BRL','BTC','ETH']);
+  const QUOTES = new Set(['USDT','USDC','USD','EUR','GBP','JPY','AUD','CAD','CHF','NZD','BRL','BTC','ETH','XOF','XAF','MXN','ZAR','SEK','NOK','DKK','TRY','PLN','RUB','SGD','HKD','CNY','INR','THB','KRW','TWD','IDR','MYR','PHP','SAR','AED','CZK','HUF','ILS','CLP','COP','ARS','EGP','NGN','PKR','QAR','RON','UAH','VND','MAD','ISK']);
   const SENSITIVE = /token|auth|cookie|session|password|secret|bearer|csrf|api[-_]?key|credential|authorization/i;
   const BAD_CLOCK = /hora\s+de\s+compra|purchase\s+time|retorno|return|payout|saldo|balance|valor|amount|lucro|profit/i;
 
@@ -96,7 +96,7 @@
       const pattern = new RegExp(`(^|[^A-Z0-9])${label.replace(/ /g, '\\s+')}([^A-Z0-9]|$)`);
       if (pattern.test(stripped)) return `${pair}${otc ? ' (OTC)' : ''}`;
     }
-    const compact = stripped.replace(/\s+/g, '').match(/^([A-Z0-9]{2,16})(USDT|USDC|USD|EUR|GBP|JPY|AUD|CAD|CHF|NZD|BRL|BTC|ETH)$/);
+    const compact = stripped.replace(/\s+/g, '').match(/^([A-Z0-9]{2,16})(USDT|USDC|USD|EUR|GBP|JPY|AUD|CAD|CHF|NZD|BRL|BTC|ETH|XOF|XAF|MXN|ZAR|SEK|NOK|DKK|TRY|PLN|RUB|SGD|HKD|CNY|INR|THB|KRW|TWD|IDR|MYR|PHP|SAR|AED|CZK|HUF|ILS|CLP|COP|ARS|EGP|NGN|PKR|QAR|RON|UAH|VND|MAD|ISK)$/);
     return compact ? `${compact[1]}/${compact[2]}${otc ? ' (OTC)' : ''}` : '';
   }
   const marketId = value => canonicalAsset(value);

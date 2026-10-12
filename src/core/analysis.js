@@ -172,6 +172,22 @@ export function waitingFor(recent = {}, direction = null, score = 0, profile = '
     });
   }
 
+  const pullbackPattern = recent.pullbackContinuation || null;
+  if (pullbackPattern?.observed && !pullbackPattern.qualified && pullbackPattern.reason) {
+    const roomGap = pullbackPattern.roomToLevel == null ? 0.2 : Math.max(0, 0.35 - Number(pullbackPattern.roomToLevel)) / 0.35;
+    const stretchGap = pullbackPattern.notStretched ? 0 : Math.max(0.1, Number(pullbackPattern.stretchRatio || 1) - 1);
+    add({
+      type: 'pullback_continuation',
+      direction: pullbackPattern.direction,
+      label: 'Pullback + continuação',
+      level: null,
+      current: Number(pullbackPattern.score || 0),
+      required: 80,
+      gap: 0.03 + Math.min(1, Math.max(roomGap * 0.45, stretchGap * 0.35)),
+      text: pullbackPattern.reason
+    });
+  }
+
   if (chosenDirection) {
     const buy = chosenDirection === 'BUY';
     const rejectionNow = Number(buy ? metrics.rejectionBuy : metrics.rejectionSell) || 0;
@@ -346,6 +362,107 @@ function analystMetrics(rows = [], profile = 'MEDIO') {
   };
 }
 
+
+/**
+ * Detect a non-extended pullback continuation before scoring it as a trade candidate.
+ * The pattern requires an impulse, a shallow/opposite pullback with a higher low/high,
+ * a directional resumption, and measurable room to the nearest opposing swing level.
+ * It is evidence for a candidate only; normal clock/expiration/confluence gates still apply.
+ */
+export function detectPullbackContinuation(inputRows = []) {
+  const empty = {
+    observed: false, qualified: false, direction: null, score: 0,
+    higherStructure: false, notStretched: false, roomToLevel: null,
+    stretchRatio: null, reason: null
+  };
+  const rows = (Array.isArray(inputRows) ? inputRows : [])
+    .map(row => row && Number.isFinite(Number(row.bodyRatio)) && Number.isFinite(Number(row.range)) ? row : shape(row))
+    .filter(Boolean)
+    .slice(-6);
+  if (rows.length < 5) return empty;
+
+  const current = rows[rows.length - 1];
+  if (!['BUY', 'SELL'].includes(current.direction)) return empty;
+  const baselineRange = Math.max(1e-12, avg(rows.slice(0, -1).map(row => row.range)));
+  const prior = rows.slice(0, -1);
+  const nearbyHigh = Math.max(...prior.map(row => row.high));
+  const nearbyLow = Math.min(...prior.map(row => row.low));
+  const candidates = [];
+
+  // A pullback can be the immediately preceding candle or one candle earlier
+  // when the first resumption candle has already printed.
+  for (const index of [rows.length - 2, rows.length - 3]) {
+    if (index < 2) continue;
+    const pullback = rows[index];
+    const impulse = rows[index - 1];
+    const anchor = rows[Math.max(0, index - 3)];
+    const direction = current.direction;
+    const buy = direction === 'BUY';
+    const trendMove = buy ? impulse.close - anchor.close : anchor.close - impulse.close;
+    const trendReady = impulse.direction === direction && trendMove >= baselineRange * .15;
+    const pullbackAgainst = pullback.direction === (buy ? 'SELL' : 'BUY') || pullback.bodyRatio <= .40;
+    const rebound = buy
+      ? current.close > pullback.close && current.close >= current.low + current.range * .55
+      : current.close < pullback.close && current.close <= current.low + current.range * .45;
+    const higherReferenceRows = rows.slice(0, index);
+    if (!higherReferenceRows.length) continue;
+    const referenceExtreme = buy
+      ? Math.min(...higherReferenceRows.map(row => row.low))
+      : Math.max(...higherReferenceRows.map(row => row.high));
+    const higherStructure = buy
+      ? pullback.low >= referenceExtreme - baselineRange * .08
+      : pullback.high <= referenceExtreme + baselineRange * .08;
+    const stretchRatio = Math.max(
+      current.range / baselineRange,
+      current.body / baselineRange,
+      Math.abs(current.close - anchor.close) / (baselineRange * 2.6)
+    );
+    const notStretched = current.range <= baselineRange * 1.45
+      && current.body <= baselineRange * .90
+      && Math.abs(current.close - anchor.close) <= baselineRange * 2.6
+      && current.bodyRatio >= .14;
+    const roomToLevel = buy
+      ? (nearbyHigh - current.close) / baselineRange
+      : (current.close - nearbyLow) / baselineRange;
+    const roomReady = roomToLevel >= .35;
+    const observed = trendReady && pullbackAgainst && rebound;
+    if (!observed) continue;
+
+    const score = Math.round(
+      (trendReady ? 20 : 0)
+      + (pullbackAgainst ? 20 : 0)
+      + (higherStructure ? 20 : 0)
+      + (rebound ? 20 : 0)
+      + (notStretched ? 10 : 0)
+      + (roomReady ? 10 : 0)
+    );
+    const qualified = higherStructure && notStretched && roomReady && score >= 80;
+    const side = buy ? 'compradora' : 'vendedora';
+    let reason;
+    if (!higherStructure) {
+      reason = `Pullback ${side} identificado, mas o fundo/topo não confirmou uma estrutura mais favorável.`;
+    } else if (!notStretched) {
+      reason = `Pullback ${side} identificado, mas o candle ou o deslocamento já está esticado (${(current.range / baselineRange).toFixed(1)}× a faixa média); aguardar novo recuo.`;
+    } else if (!roomReady) {
+      reason = roomToLevel <= 0
+        ? `Retomada ${side} encostou/rompeu a máxima/mínima recente; precisa de confirmação do rompimento, não perseguir o preço.`
+        : `Padrão de continuação ${side} em formação, mas há apenas ${roomToLevel.toFixed(1)}× a faixa média até o nível contrário; aguardar mais espaço ou um recuo.`;
+    } else if (!qualified) {
+      reason = `Padrão de continuação ${side} em formação; aguardando estabilidade do candle de retomada.`;
+    } else {
+      reason = `Pullback ${side} qualificado: estrutura mais alta/baixa, retomada sem esticamento e ${roomToLevel.toFixed(1)}× a faixa média de espaço até o nível contrário.`;
+    }
+    candidates.push({
+      observed: true, qualified, direction, score, higherStructure,
+      notStretched, roomToLevel, stretchRatio, reason
+    });
+  }
+
+  if (!candidates.length) return empty;
+  candidates.sort((a, b) => Number(b.qualified) - Number(a.qualified) || b.score - a.score);
+  return candidates[0];
+}
+
 export function recentPriceAction(candles = [], profile = 'MEDIO') {
   const thresholds = getThresholds(profile);
   const rows = (Array.isArray(candles) ? candles : []).map(shape).filter(Boolean).slice(-10);
@@ -368,7 +485,8 @@ export function recentPriceAction(candles = [], profile = 'MEDIO') {
       support: null,
       resistance: null,
       averageRange: null,
-      lastClose: rows[rows.length - 1]?.close ?? null
+      lastClose: rows[rows.length - 1]?.close ?? null,
+      pullbackContinuation: null
     };
   }
 
@@ -397,6 +515,7 @@ export function recentPriceAction(candles = [], profile = 'MEDIO') {
       ? 'SELL'
       : null;
   const metrics = analystMetrics(rows, profile);
+  const pullbackContinuation = detectPullbackContinuation(rows);
 
   let buy = 0, sell = 0;
   const reasons = [];
@@ -410,6 +529,14 @@ export function recentPriceAction(candles = [], profile = 'MEDIO') {
   if (rejection === 'BUY') { buy += 28; reasons.push('Rejeição compradora confirmada na formação atual'); }
   if (rejection === 'SELL') { sell += 28; reasons.push('Rejeição vendedora confirmada na formação atual'); }
 
+  if (pullbackContinuation.qualified) {
+    if (pullbackContinuation.direction === 'BUY') buy += 18;
+    if (pullbackContinuation.direction === 'SELL') sell += 18;
+    reasons.push(pullbackContinuation.reason);
+  } else if (pullbackContinuation.observed && pullbackContinuation.reason) {
+    reasons.push(pullbackContinuation.reason);
+  }
+
   const powerDiff = metrics.buyPower - metrics.sellPower;
   if (powerDiff >= 12) reasons.push(`Poder comprador ${Math.round(metrics.buyPower)}% domina o vendedor`);
   if (powerDiff <= -12) reasons.push(`Poder vendedor ${Math.round(metrics.sellPower)}% domina o comprador`);
@@ -417,6 +544,7 @@ export function recentPriceAction(candles = [], profile = 'MEDIO') {
   if (metrics.momentumDirection === 'SELL' && metrics.momentumScore >= 45) reasons.push('Momentum recente favorece baixa');
 
   let direction = buy === sell ? majority : buy > sell ? 'BUY' : 'SELL';
+  if (!direction && pullbackContinuation.qualified) direction = pullbackContinuation.direction;
   let score = Math.max(buy, sell);
   if (agreement >= .6) score += 10;
   if (avgBody >= .48) score += 8;
@@ -432,7 +560,8 @@ export function recentPriceAction(candles = [], profile = 'MEDIO') {
   if (metrics.lossOfStrength >= 72 && !breakout && !rejection) {
     reasons.push('A vela atual perdeu força; confirmação exige continuidade');
   }
-  const decisiveLocalSetup = !!breakout || !!rejection || (continuationDirection && continuationScore >= 65);
+  const decisiveLocalSetup = !!breakout || !!rejection || (continuationDirection && continuationScore >= 65)
+    || (pullbackContinuation.qualified && pullbackContinuation.direction === direction);
   if (lateral && !decisiveLocalSetup) { score = Math.min(score, 54); direction = null; reasons.push('Mercado lateral nas últimas velas'); }
   if (doji && !rejection) { score = Math.min(score, 48); direction = null; reasons.push('Doji sem confirmação'); }
   if (tiny >= Math.ceil(rows.length * .6) && agreement < .75 && !decisiveLocalSetup) { score = Math.min(score, 56); direction = null; reasons.push('Compressão: aguardando rompimento'); }
@@ -468,6 +597,7 @@ export function recentPriceAction(candles = [], profile = 'MEDIO') {
     resistance,
     averageRange,
     lastClose: last.close,
+    pullbackContinuation,
     reasons
   };
 }
@@ -506,6 +636,7 @@ function professionalContextScore(recent = {}, indicators = {}, thresholds = get
   const rejection = recent.rejection === direction
     && Number(metrics.rejectionStrength || 0) >= thresholds.rejectionStrength;
   const continuation = recent.continuationDirection === direction && continuationScore >= 60;
+  const pullbackContinuation = recent.pullbackContinuation?.qualified === true && recent.pullbackContinuation?.direction === direction;
   const momentumAligned = metrics.momentumDirection === direction && momentumScore >= 45;
   const nearKeyLevel = distanceToLevel <= 0.75;
   const strongCandle = Number(metrics.currentStrength || 0) >= thresholds.candleStrength;
@@ -516,18 +647,21 @@ function professionalContextScore(recent = {}, indicators = {}, thresholds = get
   else if (agreement >= .55) structure += 6;
   if (momentumAligned) structure += momentumScore >= 70 ? 8 : momentumScore >= 55 ? 6 : 4;
   if (continuation) structure += 5;
+  if (pullbackContinuation) structure += 5;
   structure = clamp(structure, 0, 25);
 
   let location = 0;
   if (nearKeyLevel) location += distanceToLevel <= .4 ? 10 : 7;
   if (breakout) location += 10;
   if (rejection) location += 8;
+  if (pullbackContinuation) location += 8;
   location = clamp(location, 0, 20);
 
   let trigger = 0;
   if (breakout) trigger += 10;
   if (rejection) trigger += 10;
   if (continuation) trigger += 8;
+  if (pullbackContinuation) trigger += 8;
   if (strongCandle) trigger += 5;
   trigger = clamp(trigger, 0, 25);
 
@@ -537,6 +671,7 @@ function professionalContextScore(recent = {}, indicators = {}, thresholds = get
   else if (directionalPower >= 52) momentum += 3;
   if (momentumAligned) momentum += momentumScore >= 65 ? 5 : 3;
   if (continuation) momentum += 3;
+  if (pullbackContinuation) momentum += 2;
   momentum = clamp(momentum, 0, 15);
 
   let indicatorScore = 0;
@@ -552,10 +687,11 @@ function professionalContextScore(recent = {}, indicators = {}, thresholds = get
   if (!recent.lateral) quality += 2;
   if (!recent.doji) quality += 1;
   if (Number(metrics.lossOfStrength || 0) < 55) quality += 2;
+  if (pullbackContinuation && recent.pullbackContinuation?.notStretched) quality += 1;
   quality = clamp(quality, 0, 5);
 
-  const positionReady = (breakout || rejection || nearKeyLevel) && location >= policy.minimumLocation;
-  const triggerReady = (breakout || rejection || continuation) && trigger >= policy.minimumTrigger;
+  const positionReady = (breakout || rejection || nearKeyLevel || pullbackContinuation) && location >= policy.minimumLocation;
+  const triggerReady = (breakout || rejection || continuation || pullbackContinuation) && trigger >= policy.minimumTrigger;
   const contextReady = structure >= policy.minimumStructure && positionReady;
   const score = clamp(structure + location + trigger + momentum + indicatorScore + quality);
   const reasons = [
@@ -577,6 +713,8 @@ function professionalContextScore(recent = {}, indicators = {}, thresholds = get
     breakout,
     rejection,
     continuation,
+    pullbackContinuation,
+    pullbackPatternScore: Number(recent.pullbackContinuation?.score || 0),
     momentumAligned,
     nearKeyLevel,
     distanceToLevel: Number.isFinite(distanceToLevel) ? distanceToLevel : null,
@@ -652,6 +790,7 @@ export function analyzeCandles(candles = [], indicatorCandles = candles, profile
     analytics: {
       ...(recent.metrics || {}),
       ...levelAnalytics,
+      pullbackContinuation: recent.pullbackContinuation || null,
       continuationDirection: recent.continuationDirection || null,
       continuationScore: Number(recent.continuationScore || 0),
       rsi: indicators.rsi?.value ?? null,

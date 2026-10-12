@@ -11,11 +11,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Package extension source
+      - name: Read extension version
+        id: version
         run: |
-          rm -rf .git .github
-          zip -r ai-trading-scanner-v0.11.69.zip . -x "backend/node_modules/*" "*.zip"
+          VERSION=$(node -e 'const fs=require("fs");process.stdout.write(JSON.parse(fs.readFileSync("manifest.json","utf8")).version)')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - name: Prepare installable extension folder
+        run: |
+          rm -rf dist/ai-trading-scanner-extension
+          mkdir -p dist/ai-trading-scanner-extension
+          cp manifest.json dist/ai-trading-scanner-extension/manifest.json
+          cp -R src dist/ai-trading-scanner-extension/src
+          test -f dist/ai-trading-scanner-extension/manifest.json
+          test -f dist/ai-trading-scanner-extension/src/background-entry.js
+          node -e 'const fs=require("fs");const m=JSON.parse(fs.readFileSync("dist/ai-trading-scanner-extension/manifest.json","utf8"));if(!m.version||!m.side_panel?.default_path)process.exit(1)'
       - uses: actions/upload-artifact@v4
         with:
-          name: ai-trading-scanner-v0.11.69
-          path: ai-trading-scanner-v0.11.69.zip
+          name: ai-trading-scanner-v${{ steps.version.outputs.version }}-extension
+          path: dist/ai-trading-scanner-extension/
+          if-no-files-found: error
+          retention-days: 30

@@ -16,23 +16,31 @@ test('manifest enables native notifications and offscreen audio without changing
   assert.match(read('src/background-entry.js'), /background-system-alerts\.js/);
 });
 
-test('system alerts are limited to M1 60s pre-signal and final decision windows with per-candle dedupe', () => {
+test('system alerts support both matched M1/60s and M5/300s with per-candle dedupe', () => {
   const source = read('src/background-system-alerts.js');
-  assert.match(source, /decision\.timeReady !== true \|\| decision\.expirationReady !== true/);
-  assert.match(source, /decision\.timeframe.*M1/);
-  assert.match(source, /decision\.actualExpiration.*60s/);
-  assert.match(source, /seconds > 10/);
-  assert.match(source, /POSSIBLE_BUY/);
-  assert.match(source, /seconds <= 0 \|\| seconds > 30/);
-  assert.match(source, /ui === 'ENTER_BUY'/);
-  assert.match(source, /ui === 'ENTER_SELL'/);
-  assert.match(source, /'AGUARDAR'/);
+  const qualification = read('src/core/signal-alert-qualification.js');
+  assert.match(source, /import \{ qualifiedDecision, explainDecisionAlertEligibility \} from '\.\/core\/signal-alert-qualification\.js'/);
+  assert.match(source, /const event = qualifiedDecision\(state\)/);
   assert.match(source, /atsSystemAlertLedgerV1/);
   assert.match(source, /claimCycleStage/);
+  assert.match(source, /async function releaseCycleStage\(cycleKey, stage\)/);
+  assert.match(source, /if \(!delivered\) await releaseCycleStage\(event\.cycleKey, event\.stage\)/);
   assert.match(source, /chrome\.notifications\.create/);
   assert.match(source, /chrome\.sidePanel\.open/);
-});
 
+  assert.match(qualification, /M1: '60s', M5: '300s'/);
+  assert.match(qualification, /decision\.timeReady !== true\) reason =/);
+  assert.match(qualification, /decision\.expirationReady !== true\) reason =/);
+  assert.match(qualification, /seconds > 10/);
+  assert.match(qualification, /POSSIBLE_BUY/);
+  assert.match(qualification, /POSSIBLE_SELL/);
+  assert.match(qualification, /const alertWindow = patternQualified \? \(timeframe === 'M5' \? 120 : 45\) : 30/);
+  assert.match(qualification, /seconds > alertWindow\) reason = patternQualified/);
+  assert.match(qualification, /seconds <= 0\) reason = 'Countdown ausente ou vela já encerrada\.'/);
+  assert.match(qualification, /ui === 'ENTER_BUY'/);
+  assert.match(qualification, /ui === 'ENTER_SELL'/);
+  assert.match(qualification, /if \(!confirmedBuy && !confirmedSell\) reason =/);
+});
 test('notification and sound preferences persist in the existing sidepanel preferences store', () => {
   const html = read('src/sidepanel/index.html');
   const app = read('src/sidepanel/app-v2.js');

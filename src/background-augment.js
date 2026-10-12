@@ -4,7 +4,7 @@ import { applyFocus as reportMarketFocus, applyFeed as reportMarketFeed } from '
 import { storageLocalGet } from './services/chrome-compat.js';
 
 const allowedTransports = new Set(['ws', 'fetch', 'xhr', 'rendered', 'worker', 'sharedworker', 'broadcast', 'serviceworker', 'window']);
-const quotes = new Set(['USDT','USDC','USD','EUR','GBP','JPY','AUD','CAD','CHF','NZD','BRL','BTC','ETH']);
+const quotes = new Set(['USDT','USDC','USD','EUR','GBP','JPY','AUD','CAD','CHF','NZD','BRL','BTC','ETH','XOF','XAF','MXN','ZAR','SEK','NOK','DKK','TRY','PLN','RUB','SGD','HKD','CNY','INR','THB','KRW','TWD','IDR','MYR','PHP','SAR','AED','CZK','HUF','ILS','CLP','COP','ARS','EGP','NGN','PKR','QAR','RON','UAH','VND','MAD','ISK']);
 const focusedAssets = new Map();
 let lastRun = 0;
 const num = v => v == null || v === '' ? null : Number.isFinite(Number(v)) ? Number(v) : null;

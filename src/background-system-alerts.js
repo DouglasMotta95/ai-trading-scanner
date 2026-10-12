@@ -1,5 +1,7 @@
-import { readScannerState } from './services/scanner-state-atomic.js';
+import { readScannerState, updateScannerState } from './services/scanner-state-atomic.js';
 import { storageLocalGet, storageSessionGet, storageSessionSet, tabsUpdate } from './services/chrome-compat.js';
+import { qualifiedDecision, explainDecisionAlertEligibility } from './core/signal-alert-qualification.js';
+import { updateDecisionAuditDelivery } from './core/decision-audit.js';
 
 const PREF_KEY = 'atsScannerUiPreferences';
 const LEDGER_KEY = 'atsSystemAlertLedgerV1';
@@ -25,48 +27,6 @@ function normalizePrefs(raw = {}) {
 async function refreshPrefs() {
   const stored = await storageLocalGet(PREF_KEY).catch(() => ({}));
   prefs = normalizePrefs(stored?.[PREF_KEY] || {});
-}
-
-function qualifiedDecision(state = {}) {
-  const decision = state.professionalDecision || {};
-  const seconds = num(decision.secondsRemaining);
-  const cycleKey = clean(decision.cycleKey);
-
-  if (state.scanner !== 'scanning' || state.connection !== 'online') return null;
-  if (decision.timeReady !== true || decision.expirationReady !== true) return null;
-  if (clean(decision.timeframe).toUpperCase() !== 'M1') return null;
-  if (clean(decision.actualExpiration).toLowerCase() !== '60s') return null;
-  if (!cycleKey || seconds == null || seconds <= 0 || seconds > 30) return null;
-
-  const ui = clean(decision.uiState).toUpperCase();
-  const direction = clean(decision.direction).toUpperCase();
-
-  if (seconds > 10) {
-    if (!['POSSIBLE_BUY', 'POSSIBLE_SELL'].includes(ui) || !['BUY', 'SELL'].includes(direction)) return null;
-    return {
-      stage: 'pre',
-      cycleKey,
-      seconds,
-      label: direction === 'BUY' ? 'COMPRA' : 'VENDA',
-      title: 'Pré-sinal',
-      message: 'Possível ' + (direction === 'BUY' ? 'COMPRA' : 'VENDA') + ' — ' + clean(state.asset || 'ATIVO') + ' M1'
-    };
-  }
-
-  const finalLabel = ui === 'ENTER_BUY' && direction === 'BUY'
-    ? 'COMPRA'
-    : ui === 'ENTER_SELL' && direction === 'SELL'
-      ? 'VENDA'
-      : 'AGUARDAR';
-
-  return {
-    stage: 'final',
-    cycleKey,
-    seconds,
-    label: finalLabel,
-    title: 'Decisão',
-    message: finalLabel + ' — ' + clean(state.asset || 'ATIVO')
-  };
 }
 
 function hashKey(value = '') {
@@ -100,6 +60,21 @@ async function claimCycleStage(cycleKey, stage) {
 
   await storageSessionSet({ [LEDGER_KEY]: compact }).catch(() => {});
   return true;
+}
+
+async function releaseCycleStage(cycleKey, stage) {
+  const stored = await storageSessionGet(LEDGER_KEY).catch(() => ({}));
+  const rows = Array.isArray(stored?.[LEDGER_KEY]) ? stored[LEDGER_KEY] : [];
+  const field = stage + 'At';
+  let changed = false;
+  const updated = rows.map(row => {
+    if (row?.cycleKey !== cycleKey || !row[field]) return row;
+    changed = true;
+    const next = { ...row };
+    delete next[field];
+    return next;
+  }).filter(row => row && (row.preAt || row.finalAt));
+  if (changed) await storageSessionSet({ [LEDGER_KEY]: updated }).catch(() => {});
 }
 
 function createNotification(id, options) {
@@ -162,17 +137,110 @@ async function playAlertSound(stage) {
   }
 }
 
+async function recordDeliveryAudit(state = {}, stage = null, delivery = {}) {
+  const stateAudit = state.decisionAudit || {};
+  const stateLatest = stateAudit.latest || null;
+  const cycleKey = clean(state.professionalDecision?.cycleKey || stateLatest?.cycleKey || '');
+  if (!stateLatest || !stateLatest.id || (cycleKey && stateLatest.cycleKey !== cycleKey)) return;
+  const proposed = {
+    ...delivery,
+    stage: stage || delivery.stage || null,
+    auditId: stateLatest.id,
+    attempted: delivery.attempted === true,
+    at: Number(delivery.at || Date.now())
+  };
+  const prior = stateLatest.delivery || {};
+  if (prior.auditId === proposed.auditId
+    && prior.stage === proposed.stage
+    && prior.status === proposed.status
+    && prior.reason === proposed.reason
+    && prior.notification === proposed.notification
+    && prior.sound === proposed.sound) return;
+
+  await updateScannerState(current => {
+    const audit = current.decisionAudit || {};
+    const latest = audit.latest || null;
+    const inHistory = Array.isArray(audit.events) && audit.events.some(row => row?.id === stateLatest.id);
+    if (!latest || (latest.id !== stateLatest.id && !inHistory)) return current;
+    const target = latest.id === stateLatest.id ? latest : audit.events.find(row => row?.id === stateLatest.id);
+    const currentDelivery = target?.delivery || {};
+    if (currentDelivery.auditId === proposed.auditId
+      && currentDelivery.stage === proposed.stage
+      && currentDelivery.status === proposed.status
+      && currentDelivery.reason === proposed.reason
+      && currentDelivery.notification === proposed.notification
+      && currentDelivery.sound === proposed.sound) return current;
+    return {
+      ...current,
+      decisionAudit: updateDecisionAuditDelivery(audit, { id: stateLatest.id, cycleKey: stateLatest.cycleKey }, proposed)
+    };
+  }).catch(() => {});
+}
+
+function terminalDeliveryForSameAudit(state = {}, stage = null) {
+  const latest = state.decisionAudit?.latest || {};
+  const delivery = latest.delivery || {};
+  if (!latest.id || delivery.auditId !== latest.id || (stage && delivery.stage !== stage)) return false;
+  return ['attempting','delivered','failed','disabled','deduplicated','not_eligible'].includes(delivery.status);
+}
+
 async function dispatchForState(state = {}) {
+  const eligibility = explainDecisionAlertEligibility(state);
   const event = qualifiedDecision(state);
-  if (!event) return;
+  const latest = state.decisionAudit?.latest || {};
+  const existingDelivery = latest.delivery || {};
+
+  if (!event) {
+    if (latest.id && !terminalDeliveryForSameAudit(state, existingDelivery.stage || null)) {
+      await recordDeliveryAudit(state, null, {
+        status: 'not_eligible',
+        reason: eligibility.reason,
+        attempted: false,
+        notification: 'not_attempted',
+        sound: 'not_attempted'
+      });
+    }
+    return;
+  }
+
+  if (terminalDeliveryForSameAudit(state, event.stage)) return;
 
   const notificationsEnabled = prefs.notificationsEnabled !== false;
   const soundEnabled = prefs.alertLevel !== 'off';
-  if (!notificationsEnabled && !soundEnabled) return;
-  if (!(await claimCycleStage(event.cycleKey, event.stage))) return;
+  if (!notificationsEnabled && !soundEnabled) {
+    await recordDeliveryAudit(state, event.stage, {
+      status: 'disabled',
+      reason: 'Notificações e som estão desativados nas preferências.',
+      attempted: false,
+      notification: 'disabled',
+      sound: 'disabled'
+    });
+    return;
+  }
 
+  if (!(await claimCycleStage(event.cycleKey, event.stage))) {
+    await recordDeliveryAudit(state, event.stage, {
+      status: 'deduplicated',
+      reason: 'Este estágio da vela já foi registrado; alerta duplicado evitado.',
+      attempted: false,
+      notification: 'deduplicated',
+      sound: 'deduplicated'
+    });
+    return;
+  }
+
+  await recordDeliveryAudit(state, event.stage, {
+    status: 'attempting',
+    reason: 'Sinal elegível; tentando entregar notificação e/ou som.',
+    attempted: true,
+    notification: notificationsEnabled ? 'attempting' : 'disabled',
+    sound: soundEnabled ? 'attempting' : 'disabled'
+  });
+
+  let notificationDelivered = false;
+  let soundDelivered = false;
   if (notificationsEnabled) {
-    await createNotification(notificationId(event, state), {
+    notificationDelivered = await createNotification(notificationId(event, state), {
       type: 'basic',
       iconUrl: chrome.runtime.getURL(ICON_PATH),
       title: event.title,
@@ -180,8 +248,19 @@ async function dispatchForState(state = {}) {
       priority: event.stage === 'final' ? 2 : 1
     });
   }
+  if (soundEnabled) soundDelivered = await playAlertSound(event.stage);
+  const delivered = notificationDelivered || soundDelivered;
 
-  if (soundEnabled) await playAlertSound(event.stage);
+  if (!delivered) await releaseCycleStage(event.cycleKey, event.stage);
+  await recordDeliveryAudit(state, event.stage, {
+    status: delivered ? 'delivered' : 'failed',
+    reason: delivered
+      ? 'Alerta entregue por pelo menos um canal.'
+      : 'Falha nos dois canais de saída; estágio liberado para nova tentativa em um ciclo atualizado.',
+    attempted: true,
+    notification: !notificationsEnabled ? 'disabled' : notificationDelivered ? 'delivered' : 'failed',
+    sound: !soundEnabled ? 'disabled' : soundDelivered ? 'delivered' : 'failed'
+  });
 }
 
 function queueState(state = {}) {

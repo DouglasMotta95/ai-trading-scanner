@@ -45,18 +45,48 @@
 
   function applyGuard() {
     const state = latestState || {};
-    const actual = normExp(state.platformControls?.observed?.expiration || '');
-    const fresh = Number(state.platformControls?.checkedAt || 0) > 0 && Date.now() - Number(state.platformControls.checkedAt) < 7000;
-    const expirationEl = document.getElementById('expiration');
-    if (expirationEl && actual) expirationEl.textContent = label(actual);
+    const controls = state.platformControls || {};
+    const observed = controls.observed || {};
+    const required = requiredExpiration(state);
+    const decision = state.professionalDecision || {};
+    const guard = state.diagnostics?.expirationGuard || {};
+    const source = clean(observed.sourceByField?.expiration || observed.source || controls.expirationSource || '');
+    const manualSource = ['user-declared', 'user-declared-match'].includes(source);
+    const declared = normExp(controls.userDeclaredExpiration || (manualSource ? observed.expiration : '') || '');
+    const actual = normExp(controls.realExpiration || (manualSource ? '' : observed.expiration) || '');
+    const realAt = Number(controls.realExpirationAt || (!manualSource ? observed.observedAt?.expiration : 0) || 0);
+    const realFresh = !!actual && realAt > 0 && Date.now() - realAt >= 0 && Date.now() - realAt < 15000
+      && source !== 'user-declared' && source !== 'user-declared-match';
+    const guardAt = Number(guard.at || 0);
+    const guardFresh = guardAt > 0 && Date.now() - guardAt >= 0 && Date.now() - guardAt < 10000;
+    const conflictingReal = realFresh && actual !== required;
+    const decisionAt = Number(decision.updatedAt || 0);
+    const operational = declared === required
+      && decision.expirationReady === true
+      && normExp(decision.actualExpiration || '') === required
+      && decisionAt > 0
+      && Date.now() - decisionAt >= 0
+      && Date.now() - decisionAt < 4000
+      && !conflictingReal
+      && !(guardFresh && guard.divergence === true);
 
-    if (!actual || !fresh) {
+    const expirationEl = document.getElementById('expiration');
+    if (expirationEl && (actual || declared)) expirationEl.textContent = label(actual || declared);
+
+    if (operational) {
       status.className = 'expiration-guard-status warn';
-      status.textContent = 'AGUARDANDO EXPIRAÇÃO REAL DA CASATRADE — entrada bloqueada.';
+      status.textContent = `MODO OPERACIONAL: ${label(required)} informada e compatível; leitura direta indisponível. Os demais gates de ativo, relógio e padrão continuam obrigatórios.`;
       return;
     }
 
-    const required = requiredExpiration(state);
+    if (!actual || !realFresh || source === 'user-declared' || source === 'user-declared-match') {
+      status.className = 'expiration-guard-status warn';
+      status.textContent = declared === required
+        ? `EXPIRAÇÃO ${label(required)} INFORMADA — aguardando sincronização do guard operacional; a leitura direta continua pendente.`
+        : 'AGUARDANDO EXPIRAÇÃO REAL DA CASATRADE — entrada bloqueada.';
+      return;
+    }
+
     const differs = !!required && actual !== required;
     status.className = `expiration-guard-status ${differs ? 'warn' : 'ok'}`;
     status.textContent = differs

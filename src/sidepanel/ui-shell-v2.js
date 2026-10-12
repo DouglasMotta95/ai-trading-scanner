@@ -210,6 +210,7 @@ function ensureOperationalPulseUi() {
       .operational-pulse-grid div{padding:10px;border-radius:12px;background:#0b1c2b;border:1px solid #17344a;text-align:center}
       .operational-pulse-grid small{display:block;color:#6f8ea5;font-size:9px;letter-spacing:.06em}.operational-pulse-grid b{display:block;margin-top:3px;font-size:18px}
       .operational-blocker{margin:10px 0 0;padding:10px 11px;border-radius:12px;background:#091723;color:#9bb4c6;font-size:11px;line-height:1.45}
+      .decision-audit{margin-top:11px;padding-top:10px;border-top:1px solid #17344a}.decision-audit-head{display:flex;justify-content:space-between;gap:8px;align-items:center;margin-bottom:7px}.decision-audit-head b{font-size:10px;letter-spacing:.08em;color:#bed2e0}.decision-audit-head span{font-size:9px;color:#7491a5}.decision-audit-row{padding:8px 9px;border:1px solid #142c40;background:#091724;border-radius:9px;margin-top:6px}.decision-audit-row small{display:block;color:#7593a8;font-size:9px;letter-spacing:.05em;margin-bottom:3px}.decision-audit-row b{font-size:11px;color:#d4e6f0;font-weight:650;line-height:1.4;white-space:pre-wrap;overflow-wrap:anywhere}.decision-audit-row.warn b{color:#efc56e}.decision-audit-row.ok b{color:#74d8b2}.decision-audit-history{max-height:110px;overflow:auto;margin-top:7px;padding:7px 9px;border-radius:8px;background:#06101a;color:#708ca0;font-size:9px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}
       .operational-blocker strong{color:#dcebf6}.operational-backend{display:block;margin-top:7px;color:#69879b;font-size:9px;letter-spacing:.05em}.operational-backend.ok{color:#72d7b2}.operational-backend.warn{color:#e0b66c}.version-notice{margin:8px 0 0;padding:9px 11px;border:1px solid #6b5220;border-radius:12px;background:#1a160b;color:#f5d98b;display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:10px}
       .version-notice button{border:1px solid #80682b;background:#2a220e;color:#ffe6a0;border-radius:9px;padding:7px 9px;font-weight:700}
     `;
@@ -228,6 +229,15 @@ function ensureOperationalPulseUi() {
     </div>
     <p id="currentBlocker" class="operational-blocker"><strong>STATUS:</strong> aguardando dados do scanner.</p>
     <small id="backendPulse" class="operational-backend">BACKEND: aguardando heartbeat</small>
+    <section class="decision-audit" aria-live="polite">
+      <div class="decision-audit-head"><b>RASTRO DA DECISÃO</b><span id="decisionAuditUpdated">sem registro</span></div>
+      <div class="decision-audit-row"><small>1 · SCORE E DIREÇÃO</small><b id="auditScoreDirection">Aguardando decisão.</b></div>
+      <div class="decision-audit-row"><small>2 · PADRÃO E GATILHO</small><b id="auditPatternTrigger">Ainda sem leitura técnica.</b></div>
+      <div id="auditBlockerRow" class="decision-audit-row warn"><small>3 · BLOQUEADOR EXATO</small><b id="auditBlocker">Aguardando dados.</b></div>
+      <div class="decision-audit-row"><small>4 · PRAZO E VELA-ALVO</small><b id="auditTiming">Relógio não confirmado.</b></div>
+      <div id="auditDeliveryRow" class="decision-audit-row"><small>5 · NOTIFICAÇÃO / ENTREGA</small><b id="auditDelivery">Sem tentativa registrada.</b></div>
+      <div id="decisionAuditHistory" class="decision-audit-history">O histórico de decisões aparecerá aqui.</div>
+    </section>
   `;
   decision.insertAdjacentElement('afterend', root);
   return root;
@@ -261,6 +271,63 @@ function renderOperationalPulse(state = {}) {
   if ($('funnelMode')) {
     const plan = clean(license.planLabel || license.plan || '').toUpperCase();
     $('funnelMode').textContent = [normalizeConfirmationMode(state?.analystPreferences?.confirmationMode), plan].filter(Boolean).join(' • ');
+  }
+
+  const audit = state.decisionAudit || {};
+  const latestAudit = audit.latest || null;
+  const auditTime = value => {
+    const at = Number(value || 0);
+    return at > 0 ? new Date(at).toLocaleTimeString('pt-BR', { hour12: false }) : '—';
+  };
+  const statusLabel = value => ({
+    pending: 'PENDENTE', not_eligible: 'NÃO ELEGÍVEL', attempting: 'TENTANDO ENTREGAR',
+    delivered: 'ENTREGUE', failed: 'FALHOU', disabled: 'DESATIVADO', deduplicated: 'DUPLICADO BLOQUEADO',
+    not_attempted: 'NÃO TENTADO', attempting_sound: 'TENTANDO', '—': '—'
+  }[clean(value)] || clean(value || '—').toUpperCase());
+  if ($('decisionAuditUpdated')) $('decisionAuditUpdated').textContent = latestAudit ? auditTime(latestAudit.at) : 'sem registro';
+  if ($('auditScoreDirection')) {
+    const s = latestAudit?.scoreDirection || {};
+    $('auditScoreDirection').textContent = latestAudit
+      ? `${s.score ?? 0}/100 • ${clean(s.direction || 'SEM DIREÇÃO')} • poder=${s.power == null ? '—' : Math.round(s.power)} • confluência=${s.confluence ?? 0}`
+      : 'Aguardando decisão.';
+  }
+  if ($('auditPatternTrigger')) {
+    const p = latestAudit?.pattern || {};
+    $('auditPatternTrigger').textContent = latestAudit
+      ? `${clean(p.name || 'Padrão em avaliação')} • padrão=${p.qualified ? 'QUALIFICADO' : p.observed ? 'OBSERVADO' : 'NÃO CONFIRMADO'}${p.score == null ? '' : ' (' + Math.round(p.score) + '/100)'} • esticado=${p.notStretched ? 'não' : p.observed ? 'sim/sem confirmação' : '—'} • espaço=${p.roomToLevel == null ? '—' : p.roomToLevel.toFixed(2) + '× faixa média'} • contexto=${p.contextReady ? 'OK' : 'pendente'} • gatilho=${p.triggerReady ? 'OK' : 'pendente'}`
+      : 'Ainda sem leitura técnica.';
+  }
+  if ($('auditBlocker')) {
+    $('auditBlocker').textContent = latestAudit
+      ? latestAudit.blockerReason || 'Nenhum bloqueio registrado; decisão liberada.'
+      : 'Aguardando dados.';
+    $('auditBlockerRow')?.classList.toggle('ok', !!latestAudit && !latestAudit.blockerReason);
+    $('auditBlockerRow')?.classList.toggle('warn', !latestAudit || !!latestAudit.blockerReason);
+  }
+  if ($('auditTiming')) {
+    const t = latestAudit?.timing || {};
+    const target = Number(t.targetAt || 0);
+    const targetText = target > 0 ? new Date(target).toLocaleTimeString('pt-BR', { hour12: false }) : '—';
+    $('auditTiming').textContent = latestAudit
+      ? `${clean(latestAudit.timeframe || '—')} • expiração=${clean(latestAudit.expiration || '—')} • restante=${t.secondsRemaining == null ? '—' : t.secondsRemaining + 's'} • alvo=${targetText} • relógio=${t.timeReady ? 'OK' : 'BLOQUEADO'} • expiração=${t.expirationReady ? 'OK' : 'BLOQUEADA'}`
+      : 'Relógio não confirmado.';
+  }
+  if ($('auditDelivery')) {
+    const d = latestAudit?.delivery || {};
+    $('auditDelivery').textContent = latestAudit
+      ? `${statusLabel(d.status)} • estágio=${clean(d.stage || '—')} • notificação=${statusLabel(d.notification)} • som=${statusLabel(d.sound)} • tentado=${d.attempted ? 'sim' : 'não'}${d.reason ? '\n' + d.reason : ''}`
+      : 'Sem tentativa registrada.';
+    $('auditDeliveryRow')?.classList.toggle('ok', d.status === 'delivered');
+    $('auditDeliveryRow')?.classList.toggle('warn', ['failed','not_eligible','disabled'].includes(d.status));
+  }
+  if ($('decisionAuditHistory')) {
+    const history = Array.isArray(audit.events) ? audit.events.slice(-6).reverse() : [];
+    $('decisionAuditHistory').textContent = history.length
+      ? history.map(row => {
+          const s = row.scoreDirection || {}, d = row.delivery || {};
+          return `${auditTime(row.at)} • ${clean(row.timeframe || '—')} • ${Math.round(Number(s.score || 0))}/100 ${clean(s.direction || '—')} • ${clean(row.decision?.uiState || '—')} • ${statusLabel(d.status)} • ${clean(row.blockerReason || 'sem bloqueio')}`;
+        }).join('\n')
+      : 'O histórico de decisões aparecerá aqui.';
   }
 
   const backend = $('backendPulse');
@@ -452,11 +519,26 @@ function renderShell(state = {}) {
     if (expirationSelect.value !== storedValue) expirationSelect.value = storedValue;
   }
   if (expirationStatus) {
+    const modeSync = state.platformControls?.autoModeSync || state.diagnostics?.platformModeSync || {};
+    const modeSyncAge = Date.now() - Number(modeSync.at || 0);
+    const modeSyncFresh = modeSync.at > 0 && modeSyncAge >= 0 && modeSyncAge < 30000;
+    const activeMode = clean(state.analystPreferences?.operationMode || 'M1').toUpperCase() === 'M5' ? 'M5' : 'M1';
+    const requiredExpiration = activeMode === 'M5' ? '300s' : '60s';
+    const clockMode = clean(state.diagnostics?.marketClock?.timeframe || state.analysisTimeframe || state.timeframe).toUpperCase();
+    const guardVerified = state.diagnostics?.expirationGuard?.verified === true
+      && clean(state.diagnostics?.expirationGuard?.actual || state.platformControls?.realExpiration || '') === requiredExpiration;
+    const liveModeAligned = clockMode === activeMode && guardVerified;
     expirationStatus.textContent = expirationDivergence
       ? clean(expirationGuard.reason || 'Divergência entre a leitura real e o valor informado.')
-      : expirationSource === 'user-declared'
-        ? 'informada por você, não verificada'
-        : '';
+      : modeSyncFresh && liveModeAligned
+        ? `Modo ${activeMode} confirmado pelo relógio e pela expiração reais da CasaTrade.`
+        : modeSyncFresh && modeSync.verified
+          ? `Scanner em ${activeMode}: controles ajustados e relidos; aguardando confirmação do relógio real da CasaTrade.`
+          : modeSyncFresh
+            ? `Scanner em ${activeMode}, mas a CasaTrade não confirmou timeframe + expiração. ${clean(modeSync.reason || 'Ajuste os controles no gráfico; entradas continuam bloqueadas.')}`
+            : expirationSource === 'user-declared'
+              ? 'informada por você, não verificada'
+              : '';
   }
 
   const expirationDiagnostic = $('copyExpirationDiagnostic');
@@ -711,6 +793,17 @@ function expirationDiagnosticText(response = {}) {
       }).join('\n')
     : '- Nenhum dos últimos ciclos registrou direção candidata.';
 
+  const auditRows = Array.isArray(lastState?.decisionAudit?.events) ? lastState.decisionAudit.events.slice(-40) : [];
+  const latestAudit = lastState?.decisionAudit?.latest || null;
+  const decisionAuditLines = [
+    latestAudit ? `Latest: ${new Date(Number(latestAudit.at || 0)).toISOString()} | ${clean(latestAudit.asset || '—')} | ${clean(latestAudit.timeframe || '—')} | ${Math.round(Number(latestAudit.scoreDirection?.score || 0))}/100 | direção=${clean(latestAudit.scoreDirection?.direction || '—')} | decisão=${clean(latestAudit.decision?.uiState || '—')}` : 'Sem diagnóstico de decisão.',
+    latestAudit ? `Padrão=${clean(latestAudit.pattern?.name || '—')} | qualificado=${latestAudit.pattern?.qualified === true} | scorePadrão=${Number(latestAudit.pattern?.score || 0)} | nãoEsticado=${latestAudit.pattern?.notStretched === true} | espaço=${latestAudit.pattern?.roomToLevel ?? '—'} | contexto=${latestAudit.pattern?.contextReady === true} | gatilho=${latestAudit.pattern?.triggerReady === true}` : '',
+    latestAudit ? `Bloqueador=${clean(latestAudit.blockerReason || 'nenhum')} | checks=${(latestAudit.checks || []).map(row => `${row.key}=${row.ok ? 'OK' : 'PENDENTE'}(${clean(row.detail)})`).join('; ')}` : '',
+    latestAudit ? `Prazo: tf=${clean(latestAudit.timeframe || '—')} exp=${clean(latestAudit.expiration || '—')} segundos=${latestAudit.timing?.secondsRemaining ?? '—'} alvo=${latestAudit.timing?.targetAt ? new Date(Number(latestAudit.timing.targetAt)).toISOString() : '—'} relógio=${latestAudit.timing?.timeReady === true} expiraçãoOK=${latestAudit.timing?.expirationReady === true}` : '',
+    latestAudit ? `Entrega: status=${clean(latestAudit.delivery?.status || '—')} etapa=${clean(latestAudit.delivery?.stage || '—')} notificação=${clean(latestAudit.delivery?.notification || '—')} som=${clean(latestAudit.delivery?.sound || '—')} tentado=${latestAudit.delivery?.attempted === true} motivo=${clean(latestAudit.delivery?.reason || '—')}` : '',
+    '',
+    ...auditRows.map(row => `[${new Date(Number(row.at || 0)).toISOString()}] ${clean(row.cycleKey || '—')} | score=${Number(row.scoreDirection?.score || 0)} | direção=${clean(row.scoreDirection?.direction || '—')} | decisão=${clean(row.decision?.uiState || '—')} | bloqueio=${clean(row.blockerReason || 'nenhum')} | entrega=${clean(row.delivery?.status || '—')} (${clean(row.delivery?.reason || '—')})`)
+  ];
   return [
     'AI Trading Scanner — diagnóstico de leitura de expiração',
     `Frames examinados: ${Number(response.frameCount || response.frames?.length || 0)}`,
@@ -772,7 +865,10 @@ function expirationDiagnosticText(response = {}) {
     networkDiagnosticLines,
     '',
     '7. BLOQUEIO DO CANDIDATO',
-    candidateBlockerLines
+    candidateBlockerLines,
+    '',
+    '8. RASTRO COMPLETO DA DECISÃO E ENTREGA DO SINAL',
+    decisionAuditLines.join('\n')
   ].join('\n');
 }
 

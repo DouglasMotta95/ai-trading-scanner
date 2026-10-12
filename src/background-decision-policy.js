@@ -1,5 +1,6 @@
 import { readScannerState, updateScannerState } from './services/scanner-state-atomic.js';
 import { getThresholds, getOperationMode, getSignalPolicy } from './core/analysis.js';
+import { buildDecisionAudit, appendDecisionAudit } from './core/decision-audit.js';
 
 // Product policy layer. The technical engine can keep collecting evidence with an
 // estimated clock, but the user-facing decision is never promoted while CasaTrade
@@ -203,7 +204,19 @@ export function CasaTradeExpiration(state = {}, timeframe = null) {
     };
   }
   if (!realFresh) {
-    const manual = normExp(controls.userDeclaredExpiration || guardActual || '');
+    const observedExpirationSource = text(
+      controls.observed?.sourceByField?.expiration
+        || controls.observed?.source
+        || controls.expirationSource
+        || ''
+    );
+    const observedManual = ['user-declared', 'user-declared-match'].includes(observedExpirationSource)
+      ? normExp(controls.observed?.expiration || '')
+      : null;
+    const guardManual = guardFresh && ['user-declared', 'user-declared-match'].includes(guardSource)
+      ? guardActual
+      : null;
+    const manual = normExp(controls.userDeclaredExpiration || observedManual || guardManual || '');
     const manualMatches = !!manual && manual === operationMode.expiration
       && (!liveTf || liveTf === operationMode.timeframe);
     if (manualMatches) {
@@ -298,6 +311,7 @@ function confluence(signal = {}, direction = null, thresholds = getThresholds())
   if (text(a.rejectionDirection).toUpperCase() === direction && Number(a.rejectionStrength || 0) >= thresholds.rejectionStrength) factors.push('rejeição');
   if (text(a.continuationDirection).toUpperCase() === direction && Number(a.continuationScore || 0) >= 60) factors.push('continuação');
   if (text(a.momentumDirection).toUpperCase() === direction && Number(a.momentumScore || 0) >= 45) factors.push('momentum');
+  if (a.pullbackContinuation?.qualified === true && a.pullbackContinuation?.direction === direction) factors.push('pullback sem esticamento');
   const setup = text(signal.setup).toLowerCase();
   if (/romp|breakout|support|resist|suporte|resistência|resistencia/.test(setup)) factors.push('estrutura');
   if (a.professional?.contextReady === true) factors.push('contexto');
@@ -341,6 +355,12 @@ function baseDecision(state = {}) {
   const cycle = cycleKey(state, signal);
   const factors = confluence(signal, direction, pref.thresholds);
   const signalPolicy = getSignalPolicy(pref.sensitivityProfile);
+  const pullbackPattern = signal.analytics?.pullbackContinuation || {};
+  const pullbackCandidate = pullbackPattern.qualified === true
+    && pullbackPattern.direction === direction
+    && pullbackPattern.notStretched === true
+    && Number(pullbackPattern.roomToLevel) >= 0.35
+    && Number(pullbackPattern.score) >= 80;
   // The selected rhythm changes selectivity, but never bypasses context + trigger.
   const additionalConfluenceReady = factors.count >= signalPolicy.minimumConfluence;
   const possibleScore = signalPolicy.possibleScore;
@@ -385,6 +405,9 @@ function baseDecision(state = {}) {
     timeSource: time.source || null,
     timeframe: time.timeframe || normTf(state.analysisTimeframe || state.timeframe),
     secondsRemaining: time.secondsRemaining ?? num(state.diagnostics?.marketClock?.secondsRemaining),
+    pullbackContinuation: signal.analytics?.pullbackContinuation || null,
+    patternConfidence: Number(signal.analytics?.pullbackContinuation?.score || 0),
+    earlyPatternCandidate: pullbackCandidate,
     marketIdentityReady: identity.ready,
     marketIdentityReason: identity.reason || null,
     updatedAt: now
@@ -426,6 +449,34 @@ function baseDecision(state = {}) {
   }
 
   const seconds = Number(time.secondsRemaining);
+  const anticipationWindow = pref.operationMode === 'M5' ? 120 : 45;
+  const directionalPowerForPattern = Number(direction === 'BUY' ? signal.analytics?.buyPower : direction === 'SELL' ? signal.analytics?.sellPower : 0) || 0;
+  const globalScoreForPattern = Number(signal.analysisScore ?? signal.score ?? 0) || 0;
+  if (pullbackCandidate
+    && identity.ready
+    && direction
+    && globalScoreForPattern >= 45
+    && directionalPowerForPattern >= 52
+    && time.ready
+    && expiration.ready
+    && Number.isFinite(seconds)
+    && seconds > entryWindowSeconds
+    && seconds <= anticipationWindow) {
+    const side = direction === 'BUY' ? 'COMPRA' : 'VENDA';
+    const room = Number(pullbackPattern.roomToLevel);
+    const confidence = Math.round(Number(pullbackPattern.score || 0));
+    return {
+      ...common,
+      uiState: direction === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL',
+      direction,
+      actionable: false,
+      alert: 'discrete',
+      possibleSince: Number(state.professionalDecision?.possibleSince || now),
+      patternConfidence: confidence,
+      earlyPatternCandidate: true,
+      reason: `${side} — PADRÃO DE PULLBACK + RETOMADA (${confidence}/100) • possível entrada na próxima vela • ${room.toFixed(1)}× faixa média até o nível contrário • ${seconds}s restantes; confirmação final ainda necessária.`
+    };
+  }
   if (!Number.isFinite(seconds) || seconds > preSignalWindowSeconds) {
     return { ...common, uiState: 'BUILDING_PATTERN', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: `Analisando a vela ${pref.operation.timeframe} atual. O pré-sinal abre por volta de ${preSignalWindowSeconds}s restantes.` };
   }
@@ -468,7 +519,18 @@ function baseDecision(state = {}) {
     return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, holdRemainingMs: 0, reason: 'AGUARDAR — tendência/contexto, região e gatilho ainda não estão confirmados juntos.' };
   }
 
-  if (!technicalCandidate || !direction || score < possibleScore || !mandatoryPowerReady || !additionalConfluenceReady) {
+  const patternAnalytics = signal.analytics || {};
+  const patternIndependentConfirmation =
+    (text(patternAnalytics.momentumDirection).toUpperCase() === direction && Number(patternAnalytics.momentumScore || 0) >= 40)
+    || (text(patternAnalytics.continuationDirection).toUpperCase() === direction && Number(patternAnalytics.continuationScore || 0) >= 50)
+    || (text(patternAnalytics.rejectionDirection).toUpperCase() === direction && Number(patternAnalytics.rejectionStrength || 0) >= thresholds.rejectionStrength)
+    || Number(patternAnalytics.currentStrength || 0) >= thresholds.candleStrength;
+  const pullbackFinalCandidate = pullbackCandidate
+    && !!direction
+    && globalScoreForPattern >= 64
+    && directionalPowerForPattern >= 55
+    && patternIndependentConfirmation;
+  if ((!technicalCandidate || !direction || score < possibleScore || !mandatoryPowerReady || !additionalConfluenceReady) && !pullbackFinalCandidate) {
     if (previousCandidateSameCycle
       && direction === previousDirection
       && score >= Math.max(58, thresholds.possibleScore)
@@ -499,9 +561,7 @@ function baseDecision(state = {}) {
     : technicalSinceValid ? technicalPossibleSince : now;
   const heldFor = Math.max(0, now - possibleSince);
   const candidateFinalReady = !!direction
-    && score >= finalScore
-    && finalPowerReady
-    && additionalConfluenceReady
+    && ((score >= finalScore && finalPowerReady && additionalConfluenceReady) || pullbackFinalCandidate)
     && professionalContextReady
     && professionalTriggerReady;
   const priorFinalHits = sameCandidate && previous.direction === direction
@@ -609,6 +669,9 @@ function signature(value = {}) {
     possibleSince: value.possibleSince || null,
     holdRemainingBucket: value.holdRemainingMs == null ? null : Math.ceil(Number(value.holdRemainingMs) / 250),
     finalCandidateHits: value.finalCandidateHits || 0,
+    pullbackContinuation: value.pullbackContinuation?.qualified === true ? value.pullbackContinuation.direction : null,
+    patternConfidence: value.patternConfidence || 0,
+    earlyPatternCandidate: !!value.earlyPatternCandidate,
     reason: value.reason || ''
   });
 }
@@ -617,13 +680,27 @@ let writing = false;
 async function evaluate(state = {}) {
   if (writing) return;
   const decision = baseDecision(state);
-  if (signature(decision) === signature(state.professionalDecision || {})) return;
+  const decisionChanged = signature(decision) !== signature(state.professionalDecision || {});
+  const auditRow = buildDecisionAudit(state, decision);
+  const auditNext = appendDecisionAudit(state.decisionAudit || {}, auditRow, 40);
+  const auditChanged = auditNext !== (state.decisionAudit || null);
+  if (!decisionChanged && !auditChanged) return;
+
   writing = true;
   try {
     await updateScannerState(current => {
       const next = baseDecision(current);
-      if (signature(next) === signature(current.professionalDecision || {})) return current;
-      return { ...current, professionalDecision: next };
+      const updateDecision = signature(next) !== signature(current.professionalDecision || {});
+      const row = buildDecisionAudit(current, next);
+      const oldAudit = current.decisionAudit || {};
+      const audit = appendDecisionAudit(oldAudit, row, 40);
+      const updateAudit = audit !== oldAudit;
+      if (!updateDecision && !updateAudit) return current;
+      return {
+        ...current,
+        ...(updateDecision ? { professionalDecision: next } : {}),
+        ...(updateAudit ? { decisionAudit: audit } : {})
+      };
     });
   } finally {
     writing = false;

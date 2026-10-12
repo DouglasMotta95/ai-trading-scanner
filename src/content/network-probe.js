@@ -17,7 +17,7 @@
   const TYPE_KEYS = ['type', 'instrumentType', 'instrument_type', 'mode', 'optionType', 'option_type'];
   const CANDLE_CONTAINER = /candle|candles|kline|klines|ohlc|bars|history|chart/i;
   const QUOTE_CONTAINER = /quote|quotes|tick|ticks|price|prices|market|symbols|assets|instruments/i;
-  const COMMON_QUOTES = ['USDT', 'USDC', 'USD', 'EUR', 'GBP', 'JPY', 'AUD', 'CAD', 'CHF', 'NZD', 'BRL', 'BTC', 'ETH'];
+  const COMMON_QUOTES = ['USDT', 'USDC', 'USD', 'EUR', 'GBP', 'JPY', 'AUD', 'CAD', 'CHF', 'NZD', 'BRL', 'BTC', 'ETH', 'XOF', 'XAF', 'MXN', 'ZAR', 'SEK', 'NOK', 'DKK', 'TRY', 'PLN', 'RUB', 'SGD', 'HKD', 'CNY', 'INR', 'THB', 'KRW', 'TWD', 'IDR', 'MYR', 'PHP', 'SAR', 'AED', 'CZK', 'HUF', 'ILS', 'CLP', 'COP', 'ARS', 'EGP', 'NGN', 'PKR', 'QAR', 'RON', 'UAH', 'VND', 'MAD', 'ISK'];
 
   const stats = {
     messages: { ws: 0, fetch: 0, xhr: 0 },

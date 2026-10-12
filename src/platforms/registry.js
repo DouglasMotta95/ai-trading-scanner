@@ -62,7 +62,7 @@ export function canonicalAsset(value = '') {
     .replace(/\/{2,}/g, '/');
 
   if (!s.includes('/')) {
-    const quotes = ['USDT','USDC','USD','EUR','GBP','JPY','AUD','CAD','CHF','NZD','BRL','BTC','ETH'];
+    const quotes = ['USDT','USDC','USD','EUR','GBP','JPY','AUD','CAD','CHF','NZD','BRL','BTC','ETH','XOF','XAF','MXN','ZAR','SEK','NOK','DKK','TRY','PLN','RUB','SGD','HKD','CNY','INR','THB','KRW','TWD','IDR','MYR','PHP','SAR','AED','CZK','HUF','ILS','CLP','COP','ARS','EGP','NGN','PKR','QAR','RON','UAH','VND','MAD','ISK'];
     const quote = quotes.find(x => s.length > x.length && s.endsWith(x));
     if (quote) s = `${s.slice(0, -quote.length)}/${quote}`;
     else if (/^[A-Z]{6}$/.test(s)) s = `${s.slice(0, 3)}/${s.slice(3)}`;

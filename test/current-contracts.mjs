@@ -6,13 +6,64 @@ export const read = path => fs.readFileSync(new URL('../' + path, import.meta.ur
 const manifest = () => JSON.parse(read('manifest.json'));
 
 export function registerBuildContracts(label='build') {
-  test(label + ': current extension package is the v0.11.89 runtime-authority-no-evidence-block build', () => {
+  test(label + ': current extension package is the v0.12.7-score-expiration-gate-reconciliation build', () => {
     const m = manifest();
     assert.equal(m.manifest_version, 3);
-    assert.equal(m.version, '0.11.89');
-    assert.equal(m.version_name, '0.11.89-runtime-authority-no-evidence-block');
+    assert.equal(m.version, '0.12.7');
+    assert.equal(m.version_name, '0.12.7-score-expiration-gate-reconciliation');
     assert.equal(m.background?.service_worker, 'src/background-entry.js');
     assert.equal(m.side_panel?.default_path, 'src/sidepanel/index.html');
+  });
+  test(label + ': decision audit module and five live audit fields are wired', () => {
+    const m = manifest();
+    const audit = read('src/core/decision-audit.js');
+    const policy = read('src/background-decision-policy.js');
+    const alerts = read('src/background-system-alerts.js');
+    const panel = read('src/sidepanel/ui-shell-v2.js');
+    assert.ok(m.background?.service_worker === 'src/background-entry.js');
+    assert.match(policy, /buildDecisionAudit/);
+    assert.match(policy, /appendDecisionAudit/);
+    assert.match(alerts, /explainDecisionAlertEligibility/);
+    assert.match(alerts, /updateDecisionAuditDelivery/);
+    for (const id of ['auditScoreDirection','auditPatternTrigger','auditBlocker','auditTiming','auditDelivery']) assert.ok(panel.includes(id), 'missing audit field ' + id);
+    assert.match(audit, /blockerReason/);
+    assert.match(audit, /targetAt/);
+  });
+  test(label + ': technical score remains visible while final entry timing stays separately gated', () => {
+    const display = read('src/sidepanel/signal-guidance-ui.js');
+    const gates = read('src/core/decision-display.js');
+    assert.match(display, /return canShowTechnicalAnalysis\(\{ marketReady: marketReady\(state\) \}\)/);
+    assert.match(display, /selectTechnicalScore\(/);
+    assert.doesNotMatch(display, /return marketReady\(state\) && timingReady\(state\)/);
+    assert.match(display, /timingBlockReason\(state\)/);
+    assert.match(display, /Entrada bloqueada:/);
+    assert.match(gates, /export function canShowFinalEntry/);
+    assert.match(gates, /timingReady === true/);
+    assert.match(gates, /expirationReady === true/);
+  });
+  test(label + ': mode conflict and clock blocks do not early-return before technical score', () => {
+    const app = read('src/sidepanel/app-v2.js');
+    const start = app.indexOf('function decisionModel(state = {})');
+    const end = app.indexOf('function setText(', start);
+    assert.ok(start >= 0 && end > start, 'decisionModel function exists');
+    const model = app.slice(start, end);
+    assert.match(model, /const alignmentBlock = alignment\.conflict/);
+    assert.doesNotMatch(model, /if \(alignment\.conflict\)\s*\{\s*const tf =/);
+    assert.match(model, /const scoreCandidates = \[technical\.analysisScore, technical\.score, p\.score\]/);
+    assert.match(model, /const timeReady = !alignment\.conflict && entryTimeReady\(state\)/);
+    assert.match(model, /const blocked = timeReady \? '' : alignmentBlock \|\| entryBlockReason\(state\)/);
+  });
+  test(label + ': active asset changes reset stale signal and do not reuse previous candle history', () => {
+    const bg = read('src/background.js');
+    const transition = read('src/core/active-asset-transition.js');
+    assert.match(bg, /activeAssetTransitionNeeded\(state\)/);
+    assert.match(bg, /clearStaleAssetDecision\(current\)/);
+    assert.match(bg, /activeAssetCandles\(state, asset\)/);
+    assert.match(bg, /hasActiveHistory/);
+    assert.match(transition, /transitionTarget === target/);
+    assert.match(transition, /signal: null/);
+    assert.match(transition, /professionalDecision: null/);
+    assert.match(transition, /candleAsset && candleAsset !== target/);
   });
   test(label + ': current CasaTrade readers are packaged', () => {
     const files = manifest().content_scripts.flatMap(row => row.js || []);
@@ -44,7 +95,7 @@ export function registerMarketContracts(label='market') {
     const background = read('src/background.js');
     const market = read('src/background-market-session.js');
     assert.match(background, /Single owner of technical analysis/);
-    assert.match(background, /processSnapshot\(snapshot, current\)/);
+    assert.match(background, /processSnapshot\(snapshot, analysisInput\)/);
     assert.doesNotMatch(market, /processSnapshot\(/);
   });
 }
@@ -211,19 +262,32 @@ export function registerStableEntryClockContracts(label='stable-entry-clock') {
 }
 
 export function registerEntryRolloverContracts(label='entry-rollover') {
+  test(label + ': qualified pullback candidates publish before the generic final window', () => {
+    const orchestrator = read('src/core/orchestrator.js');
+    const policy = read('src/background-decision-policy.js');
+    const alerts = read('src/core/signal-alert-qualification.js');
+    assert.match(orchestrator, /export function qualifiesEarlyPattern/);
+    assert.match(orchestrator, /earlyPatternActive/);
+    assert.match(orchestrator, /pre: 90, decision: 30, skip: 2, duration, timeframe/);
+    assert.match(policy, /earlyPatternCandidate: true/);
+    assert.match(policy, /seconds <= anticipationWindow/);
+    assert.match(alerts, /timeframe === 'M5' \? 120 : 45/);
+    assert.match(alerts, /Padrão para a próxima vela/);
+  });
+
   test(label + ': entry window is aligned across decision layers', () => {
     const policy = read('src/background-decision-policy.js');
     const orchestrator = read('src/core/orchestrator.js');
     assert.match(policy, /pref\.operationMode === 'M1'[\s\S]*?\? 15/);
     assert.match(policy, /pref\.operationMode === 'M5'[\s\S]*?\? 20/);
     assert.match(orchestrator, /pre: 30, decision: 15, skip: 1, duration, timeframe/);
-    assert.match(orchestrator, /pre: 30, decision: 20, skip: 2, duration, timeframe/);
+    assert.match(orchestrator, /pre: 90, decision: 30, skip: 2, duration, timeframe/);
   });
 
   test(label + ': M1 and M5 final windows leave enough time to confirm the next candle', () => {
     const orchestrator = read('src/core/orchestrator.js');
     assert.match(orchestrator, /pre: 30, decision: 15, skip: 1, duration, timeframe/);
-    assert.match(orchestrator, /pre: 30, decision: 20, skip: 2, duration, timeframe/);
+    assert.match(orchestrator, /pre: 90, decision: 30, skip: 2, duration, timeframe/);
   });
   test(label + ': confirmed entry survives the exact candle boundary without losing the cycle', () => {
     const policy = read('src/background-decision-policy.js');
@@ -260,8 +324,13 @@ export function registerControlEvidenceAuthorityContracts(label='control-evidenc
     const panel = read('src/sidepanel/app-v2.js');
     assert.match(panel, /function freshCasaTradeControlEvidence/);
     assert.match(panel, /source === 'casatrade-expiration-probe-v3'/);
-    assert.match(panel, /const liveTf = control\?\.timeframe \|\| null/);
-    assert.match(panel, /const liveExp = control\?\.expiration \|\| null/);
+    assert.match(panel, /observed\.sourceByField\?\.\[field\]/);
+    assert.match(panel, /observed\.frameIds\?\.\[field\]/);
+    assert.match(panel, /const frameBound = Number\.isFinite\(frameId\)/);
+    const controls = read('src/background-platform-controls.js');
+    assert.match(controls, /frameId: Number\(sender\.frameId \|\| 0\)/);
+    assert.match(controls, /next\.sourceByField\[field\] = incomingSource/);
+    assert.match(controls, /next\.frameIds\[field\] =/);
   });
 }
 
@@ -328,7 +397,7 @@ export function registerVideo15290Contracts(label='video-15290') {
     const controls = read('src/background-platform-controls.js');
     const panel = read('src/sidepanel/app-v2.js');
     assert.match(controls, /now - realExpirationAt < 15000/);
-    assert.match(panel, /Date\.now\(\) - realAt < 15000/);
+    assert.match(panel, /now - realAt < 15000/);
   });
   test(label + ': exact countdown UI rolls over from an immutable candle boundary', () => {
     const panel = read('src/sidepanel/app-v2.js');

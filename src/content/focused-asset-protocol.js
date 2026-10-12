@@ -10,7 +10,7 @@
   const sendMessage = globalThis.__ATS_SEND_MESSAGE__;
   if (typeof sendMessage !== 'function') return;
 
-  const quotes = new Set(['USDT','USDC','USD','EUR','GBP','JPY','AUD','CAD','CHF','NZD','BRL','BTC','ETH']);
+  const quotes = new Set(['USDT','USDC','USD','EUR','GBP','JPY','AUD','CAD','CHF','NZD','BRL','BTC','ETH','XOF','XAF','MXN','ZAR','SEK','NOK','DKK','TRY','PLN','RUB','SGD','HKD','CNY','INR','THB','KRW','TWD','IDR','MYR','PHP','SAR','AED','CZK','HUF','ILS','CLP','COP','ARS','EGP','NGN','PKR','QAR','RON','UAH','VND','MAD','ISK']);
   const aliases = new Map([
     ['TRON', 'TRX/USD'], ['TRX', 'TRX/USD'], ['EURO', 'EUR/USD'], ['EUR', 'EUR/USD'],
     ['BITCOIN', 'BTC/USD'], ['BTC', 'BTC/USD'], ['ETHEREUM', 'ETH/USD'], ['ETH', 'ETH/USD']
@@ -22,7 +22,7 @@
     const otc = /(?:\(|\b|[_-])OTC(?:\)|\b)?/i.test(raw);
     const direct = raw.match(/\b([A-Z0-9]{2,20})\s*[\/_-]\s*([A-Z0-9]{2,12})/i);
     if (direct && quotes.has(direct[2])) return `${direct[1]}/${direct[2]}${otc ? ' (OTC)' : ''}`;
-    const compact = raw.replace(/\(\s*OTC\s*\)|\bOTC\b/gi, '').replace(/\s+/g, '').match(/^([A-Z0-9]{2,20})(USDT|USDC|USD|EUR|GBP|JPY|AUD|CAD|CHF|NZD|BRL|BTC|ETH)$/);
+    const compact = raw.replace(/\(\s*OTC\s*\)|\bOTC\b/gi, '').replace(/\s+/g, '').match(/^([A-Z0-9]{2,20})(USDT|USDC|USD|EUR|GBP|JPY|AUD|CAD|CHF|NZD|BRL|BTC|ETH|XOF|XAF|MXN|ZAR|SEK|NOK|DKK|TRY|PLN|RUB|SGD|HKD|CNY|INR|THB|KRW|TWD|IDR|MYR|PHP|SAR|AED|CZK|HUF|ILS|CLP|COP|ARS|EGP|NGN|PKR|QAR|RON|UAH|VND|MAD|ISK)$/);
     if (compact) return `${compact[1]}/${compact[2]}${otc ? ' (OTC)' : ''}`;
     const bare = raw.replace(/\(\s*OTC\s*\)|\bOTC\b/gi, '').trim();
     const alias = aliases.get(bare);

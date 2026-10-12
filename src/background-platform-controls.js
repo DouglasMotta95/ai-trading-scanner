@@ -1,6 +1,8 @@
 import { updateScannerState } from './services/scanner-state-atomic.js';
 import { getThresholds, getOperationMode } from './core/analysis.js';
 import { clearUserDeclaredExpirationState } from './background-market-session.js';
+import { resetOrchestrator } from './core/orchestrator.js';
+import { operationModeForExpiration, trustedModeFromObservedControls } from './core/operation-mode-sync.js';
 
 const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
 const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
@@ -68,7 +70,9 @@ function mergeObserved(previous = {}, incoming = {}, previousExpirationSource = 
     timeframe: previous.timeframe ?? null,
     source: incoming.source || previous.source || 'casatrade-ui-v2',
     observedAt: { ...(previous.observedAt || {}) },
-    confidence: { ...oldConfidence }
+    confidence: { ...oldConfidence },
+    sourceByField: { ...(previous.sourceByField || {}) },
+    frameIds: { ...(previous.frameIds || {}) }
   };
   for (const field of ['amount', 'expiration', 'timeframe']) {
     const value = incoming[field];
@@ -94,6 +98,8 @@ function mergeObserved(previous = {}, incoming = {}, previousExpirationSource = 
       next[field] = value;
       next.confidence[field] = score;
       next.observedAt[field] = incomingAt || Date.now();
+      next.sourceByField[field] = incomingSource;
+      next.frameIds[field] = Number.isFinite(Number(incoming.frameId)) ? Number(incoming.frameId) : null;
     }
   }
   return next;
@@ -101,6 +107,121 @@ function mergeObserved(previous = {}, incoming = {}, previousExpirationSource = 
 
 const USER_DECLARED_EXPIRATIONS = new Set(['5s','15s','30s','60s','300s']);
 const USER_DECLARED_FRESH_OFFSET_MS = 10 * 365 * 24 * 60 * 60 * 1000;
+
+const UI_PREF_KEY = 'atsScannerUiPreferences';
+
+async function persistUiOperationMode(operationMode) {
+  try {
+    const stored = await chrome.storage.local.get(UI_PREF_KEY);
+    const current = stored?.[UI_PREF_KEY] || {};
+    await chrome.storage.local.set({ [UI_PREF_KEY]: { ...current, operationMode } });
+  } catch {}
+}
+
+function sendApplyToFrame(tabId, frameId, preferences) {
+  return new Promise(resolve => {
+    let settled = false;
+    const finish = response => {
+      if (settled) return;
+      settled = true;
+      try { void chrome.runtime?.lastError; } catch {}
+      resolve(response || null);
+    };
+    try {
+      const message = { type: 'ATS_PLATFORM_APPLY', preferences };
+      const returned = chrome.tabs.sendMessage(tabId, message, { frameId }, finish);
+      if (returned && typeof returned.then === 'function') returned.then(finish).catch(() => finish(null));
+    } catch {
+      finish(null);
+    }
+  });
+}
+
+async function applyCasaTradeMode(state = {}, timeframe = 'M1', source = 'mode-change', preferredFrameId = null) {
+  const operation = getOperationMode(timeframe);
+  const tabId = Number(state.targetTabId || state.diagnostics?.target?.tabId || 0);
+  const observed = state.platformControls?.observed || {};
+  const focus = state.diagnostics?.focusedAsset || {};
+  const frameCandidates = [
+    preferredFrameId,
+    observed.frameIds?.timeframe,
+    observed.frameIds?.expiration,
+    state.platformControls?.frameId,
+    focus.frameId,
+    0
+  ].map(value => Number(value)).filter(value => Number.isInteger(value) && value >= 0);
+  const frames = [...new Set(frameCandidates)];
+  const attempts = [];
+  const fieldMatched = { timeframe: false, expiration: false };
+  const fieldApplied = { timeframe: false, expiration: false };
+  const fieldFrame = { timeframe: null, expiration: null };
+
+  // CasaTrade may expose the chart toolbar and the expiration widget in
+  // different frames. Apply and verify each control independently; requiring
+  // both controls to be present in one frame falsely reports failure forever.
+  if (tabId > 0 && chrome.tabs?.sendMessage) {
+    for (const field of ['timeframe', 'expiration']) {
+      const desired = field === 'timeframe' ? operation.timeframe : operation.expiration;
+      for (const frameId of frames) {
+        const response = await sendApplyToFrame(tabId, frameId, { [field]: desired });
+        const matched = response?.matched?.[field] === true;
+        const applied = response?.applied?.[field] === true;
+        attempts.push({ frameId, field, responded: !!response, applied, matched, before: response?.before?.[field] || null, after: response?.after?.[field] || null, error: response?.error || null });
+        if (matched) {
+          fieldMatched[field] = true;
+          fieldApplied[field] = applied;
+          fieldFrame[field] = frameId;
+          break;
+        }
+      }
+    }
+  }
+
+  const verified = fieldMatched.timeframe && fieldMatched.expiration;
+  const telemetry = {
+    source,
+    timeframe: operation.timeframe,
+    expiration: operation.expiration,
+    attempted: tabId > 0 && attempts.length > 0,
+    verified,
+    matched: { ...fieldMatched },
+    applied: { ...fieldApplied },
+    fieldFrame: { ...fieldFrame },
+    tabId: tabId || null,
+    attempts,
+    reason: verified
+      ? 'Timeframe e expiração ajustados e relidos, cada um no frame que contém seu controle.'
+      : tabId > 0
+        ? `Sincronização parcial: timeframe=${fieldMatched.timeframe ? 'confirmado' : 'não confirmado'}; expiração=${fieldMatched.expiration ? 'confirmada' : 'não confirmada'}. A entrada permanece bloqueada até ambos coincidirem.`
+        : 'Modo alterado no scanner; conecte a aba da CasaTrade para sincronizar os controles.',
+    at: Date.now()
+  };
+  const updated = await updateScannerState(current => ({
+    ...current,
+    platformControls: { ...(current.platformControls || {}), autoModeSync: telemetry },
+    diagnostics: { ...(current.diagnostics || {}), platformModeSync: telemetry }
+  })).catch(() => state);
+  return { state: updated, telemetry };
+}
+
+function resetSignalStateForModeSwitch(state = {}) {
+  return {
+    ...state,
+    signal: null,
+    professionalDecision: null,
+    decisionCycle: null,
+    candidateBlockerTrace: [],
+    diagnostics: {
+      ...(state.diagnostics || {}),
+      platformModeSync: {
+        ...(state.diagnostics?.platformModeSync || {}),
+        transitionPending: true,
+        at: Date.now()
+      }
+    }
+  };
+}
+
 
 function expLabel(value = '') {
   const exp = normExp(value);
@@ -296,13 +417,16 @@ function analystPrefs(state = {}, message = {}) {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === 'ATS_SET_ANALYST_PREFERENCES') {
+    let modeChanged = false;
+    let selectedMode = 'M1';
     updateScannerState(state => {
       const currentMode = getOperationMode(state.analystPreferences?.operationMode || 'M1');
       const nextPreferences = analystPrefs(state, message);
       const nextMode = getOperationMode(nextPreferences.operationMode);
-      const base = currentMode.timeframe !== nextMode.timeframe
-        ? clearUserDeclaredExpirationState(state)
-        : state;
+      selectedMode = nextMode.timeframe;
+      modeChanged = currentMode.timeframe !== nextMode.timeframe;
+      let base = modeChanged ? clearUserDeclaredExpirationState(state) : state;
+      if (modeChanged) base = resetSignalStateForModeSwitch(base);
       const now = Date.now();
       const nextControls = {
         ...(base.platformControls || {}),
@@ -315,7 +439,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         platformControls: nextControls
       };
     })
-      .then(state => sendResponse({ ok: true, analystPreferences: state.analystPreferences, state }))
+      .then(async state => {
+        if (modeChanged) {
+          try { resetOrchestrator(); } catch {}
+          await persistUiOperationMode(selectedMode);
+          const applied = await applyCasaTradeMode(state, selectedMode, 'scanner-mode-selection');
+          state = applied.state;
+        }
+        sendResponse({ ok: true, analystPreferences: state.analystPreferences, state, modeSync: state.platformControls?.autoModeSync || null });
+      })
       .catch(error => sendResponse({ ok: false, error: String(error?.message || error) }));
     return true;
   }
@@ -339,17 +471,29 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return false;
     }
 
+    const mappedMode = operationModeForExpiration(declared);
+    let modeChanged = false;
+    let selectedMode = 'M1';
     updateScannerState(state => {
-      const now = Date.now();
-      const previousControls = state.platformControls || {};
+      const currentMode = getOperationMode(state.analystPreferences?.operationMode || 'M1');
+      const nextMode = getOperationMode(mappedMode?.timeframe || currentMode.timeframe);
+      selectedMode = nextMode.timeframe;
+      modeChanged = currentMode.timeframe !== nextMode.timeframe;
+
+      let base = modeChanged ? clearUserDeclaredExpirationState(state) : state;
+      if (modeChanged) base = resetSignalStateForModeSwitch(base);
+      const previousControls = base.platformControls || {};
       const previousObserved = previousControls.observed || {};
       const currentSource = clean(previousControls.expirationSource || previousObserved.source || '');
+      const now = Date.now();
       const seededState = {
-        ...state,
+        ...base,
+        analystPreferences: analystPrefs(base, { operationMode: nextMode.timeframe }),
         platformControls: {
           ...previousControls,
           userDeclaredExpiration: declared,
-          userDeclaredAt: now
+          userDeclaredAt: now,
+          modeSyncRequested: modeChanged ? { timeframe: nextMode.timeframe, expiration: nextMode.expiration, source: 'user-expiration-selection', at: now } : previousControls.modeSyncRequested || null
         }
       };
       const resolved = applyExpirationAuthority(seededState, previousObserved, currentSource);
@@ -377,23 +521,52 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         },
         diagnostics: resolved.diagnostics
       };
-    }).then(state => sendResponse({
-      ok: true,
-      state,
-      expirationGuard: state.diagnostics?.expirationGuard || null
-    })).catch(error => sendResponse({ ok: false, error: String(error?.message || error) }));
+    }).then(async state => {
+      let modeSync = state.platformControls?.autoModeSync || null;
+      if (mappedMode) {
+        if (modeChanged) {
+          try { resetOrchestrator(); } catch {}
+          await persistUiOperationMode(selectedMode);
+        }
+        const applied = await applyCasaTradeMode(state, selectedMode, 'user-expiration-selection');
+        state = applied.state;
+        modeSync = applied.telemetry;
+      }
+      sendResponse({
+        ok: true,
+        state,
+        expirationGuard: state.diagnostics?.expirationGuard || null,
+        modeSync,
+        analystPreferences: state.analystPreferences || null
+      });
+    }).catch(error => sendResponse({ ok: false, error: String(error?.message || error) }));
     return true;
   }
 
   if (message?.type !== 'ATS_PLATFORM_CONTROLS_OBSERVED') return false;
   if (!trusted(sender)) { sendResponse({ ok: false, error: 'untrusted_sender' }); return false; }
   const tabId = Number(sender.tab?.id || 0);
-  const incoming = safeObserved(message.snapshot || {});
+  const incoming = {
+    ...safeObserved(message.snapshot || {}),
+    // Values from different CasaTrade frames are merged independently. Keep the
+    // sender frame on every field so the panel can reject hidden/stale-frame modes.
+    frameId: Number(sender.frameId || 0)
+  };
 
+  const observedMode = trustedModeFromObservedControls(incoming, Date.now());
+  let autoModeChanged = false;
+  let selectedMode = null;
   updateScannerState(state => {
     if (Number(state.targetTabId || 0) && Number(state.targetTabId) !== tabId) return state;
 
-    const previousControls = state.platformControls || {};
+    const currentMode = getOperationMode(state.analystPreferences?.operationMode || 'M1');
+    const nextMode = observedMode && observedMode.timeframe !== currentMode.timeframe ? observedMode : null;
+    autoModeChanged = !!nextMode;
+    selectedMode = nextMode?.timeframe || currentMode.timeframe;
+
+    let base = nextMode ? clearUserDeclaredExpirationState(state) : state;
+    if (nextMode) base = resetSignalStateForModeSwitch(base);
+    const previousControls = base.platformControls || {};
     const previous = previousControls.observed || {};
     const previousExpirationSource = clean(previousControls.expirationSource || previous.source || '');
     const observedRaw = mergeObserved(previous, incoming, previousExpirationSource);
@@ -409,7 +582,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     const seededState = {
-      ...state,
+      ...base,
+      ...(nextMode ? { analystPreferences: analystPrefs(base, { operationMode: nextMode.timeframe }) } : {}),
       platformControls: {
         ...previousControls,
         realExpiration,
@@ -423,7 +597,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       : previousExpirationSource;
     const resolved = applyExpirationAuthority(seededState, observedRaw, incomingExpirationSource);
 
-    const oldTf = normTf(state.analysisTimeframe || state.timeframe);
+    const oldTf = normTf(base.analysisTimeframe || base.timeframe);
     const timeframeChanged = !!oldTf && !!resolved.reliableTf && oldTf !== resolved.reliableTf;
     if (timeframeChanged) {
       resolved.diagnostics.timeframeTransition = {
@@ -454,15 +628,34 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         aligned: resolved.ready,
         realExpiration: resolved.authority.realExpiration || realExpiration || null,
         realExpirationAt: resolved.authority.realExpirationAt || realExpirationAt || 0,
-        realExpirationSource: resolved.authority.realExpirationSource || realExpirationSource || ''
+        realExpirationSource: resolved.authority.realExpirationSource || realExpirationSource || '',
+        ...(nextMode ? {
+          modeSyncRequested: {
+            timeframe: nextMode.timeframe,
+            expiration: nextMode.expiration,
+            source: 'observed-casatrade-expiration',
+            at: Date.now()
+          }
+        } : {})
       },
       diagnostics: resolved.diagnostics
     };
-  }).then(state => sendResponse({
-    ok: true,
-    platformControls: state.platformControls,
-    expirationGuard: state.diagnostics?.expirationGuard || null,
-    analystPreferences: state.analystPreferences || null
-  })).catch(error => sendResponse({ ok: false, error: String(error?.message || error) }));
+  }).then(async state => {
+    if (autoModeChanged && selectedMode) {
+      try { resetOrchestrator(); } catch {}
+      await persistUiOperationMode(selectedMode);
+      const applied = await applyCasaTradeMode(state, selectedMode, 'observed-casatrade-expiration', incoming.frameId);
+      state = applied.state;
+    }
+    sendResponse({
+      ok: true,
+      state,
+      platformControls: state.platformControls,
+      expirationGuard: state.diagnostics?.expirationGuard || null,
+      analystPreferences: state.analystPreferences || null,
+      modeSync: state.platformControls?.autoModeSync || null
+    });
+  }).catch(error => sendResponse({ ok: false, error: String(error?.message || error) }));
+
   return true;
 });

@@ -3,7 +3,7 @@
   window.__ATS_QUADCODE_FEED_PROBE_V2__ = true;
 
   const SOURCE = 'ATS_NETWORK_PROBE';
-  const QUOTES = ['USDT','USDC','USD','EUR','GBP','JPY','AUD','CAD','CHF','NZD','BRL','BTC','ETH'];
+  const QUOTES = ['USDT','USDC','USD','EUR','GBP','JPY','AUD','CAD','CHF','NZD','BRL','BTC','ETH','XOF','XAF','MXN','ZAR','SEK','NOK','DKK','TRY','PLN','RUB','SGD','HKD','CNY','INR','THB','KRW','TWD','IDR','MYR','PHP','SAR','AED','CZK','HUF','ILS','CLP','COP','ARS','EGP','NGN','PKR','QAR','RON','UAH','VND','MAD','ISK'];
   const SENSITIVE = /ssid|token|auth|cookie|session|password|secret|bearer|csrf|api[-_]?key|credential|authorization/i;
   const ASSET_KEYS = ['symbol','symbolName','symbol_name','asset','assetName','asset_name','instrument','instrumentName','instrument_name','ticker','pair','marketSymbol','underlying'];
   const ACTIVE_ID_KEYS = ['active_id','activeId','asset_id','assetId'];
@@ -79,7 +79,7 @@
 
   function assetFromText(value = '') {
     const text = clean(value).toUpperCase();
-    const direct = text.match(/\b[A-Z0-9]{2,16}\s*[\/_-]\s*(?:USDT|USDC|USD|EUR|GBP|JPY|AUD|CAD|CHF|NZD|BRL|BTC|ETH)(?:\s*\(\s*OTC\s*\)|[_-]?OTC)?/i);
+    const direct = text.match(/\b[A-Z0-9]{2,16}\s*[\/_-]\s*(?:USDT|USDC|USD|EUR|GBP|JPY|AUD|CAD|CHF|NZD|BRL|BTC|ETH|XOF|XAF|MXN|ZAR|SEK|NOK|DKK|TRY|PLN|RUB|SGD|HKD|CNY|INR|THB|KRW|TWD|IDR|MYR|PHP|SAR|AED|CZK|HUF|ILS|CLP|COP|ARS|EGP|NGN|PKR|QAR|RON|UAH|VND|MAD|ISK)(?:\s*\(\s*OTC\s*\)|[_-]?OTC)?/i);
     if (direct) return canonicalAsset(direct[0]);
     const compact = text.match(/\b[A-Z]{6}(?:[_-]?OTC)?\b/i);
     return compact ? canonicalAsset(compact[0]) : '';

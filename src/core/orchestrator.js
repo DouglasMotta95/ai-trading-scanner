@@ -51,7 +51,7 @@ function decisionWindows(snapshot = {}, signal = {}, thresholds = getThresholds(
     return { pre: 30, decision: 15, skip: 1, duration, timeframe };
   }
   if (timeframe === 'M5') {
-    return { pre: 30, decision: 20, skip: 2, duration, timeframe };
+    return { pre: 90, decision: 30, skip: 2, duration, timeframe };
   }
 
   // Longer/shorter candles keep proportional windows.
@@ -88,6 +88,8 @@ function confirmationModeOf(state = {}) {
 function highConfidenceEvidence(signal = {}, direction = null, thresholds = getThresholds()) {
   const analytics = signal.analytics || {};
   const currentStrength = Number(analytics.currentStrength || 0);
+  const pattern = analytics.pullbackContinuation || {};
+  const pullbackContinuation = pattern.qualified === true && pattern.direction === direction && pattern.notStretched === true && Number(pattern.roomToLevel) >= 0.35 && Number(pattern.score) >= 80;
   const rejectionStrength = Number(analytics.rejectionStrength || 0);
   const continuationScore = Number(analytics.continuationScore || 0);
   const momentumScore = Number(analytics.momentumScore || 0);
@@ -98,10 +100,11 @@ function highConfidenceEvidence(signal = {}, direction = null, thresholds = getT
   if (analytics.continuationDirection === direction && continuationScore >= 60) evidence.push('continuação');
   if (analytics.momentumDirection === direction && momentumScore >= 45) evidence.push('momentum');
   if (currentStrength >= Math.max(60, thresholds.candleStrength)) evidence.push('força');
+  if (pullbackContinuation) evidence.push('pullback sem esticamento');
   return evidence;
 }
 
-function decisionQuality(signal = {}, direction = null, thresholds = getThresholds(), confirmationMode = 'SIMPLES') {
+export function decisionQuality(signal = {}, direction = null, thresholds = getThresholds(), confirmationMode = 'SIMPLES') {
   const mode = clean(confirmationMode).toUpperCase() === 'EXIGENTE' ? 'EXIGENTE' : 'SIMPLES';
   const score = Number(signal.analysisScore ?? signal.score ?? 0);
   const analytics = signal.analytics || {};
@@ -115,6 +118,8 @@ function decisionQuality(signal = {}, direction = null, thresholds = getThreshol
   const continuation = analytics.continuationDirection === direction && continuationScore >= 55;
   const momentum = analytics.momentumDirection === direction && momentumScore >= 40;
   const strongCandle = currentStrength >= thresholds.candleStrength;
+  const pattern = analytics.pullbackContinuation || {};
+  const pullbackContinuation = pattern.qualified === true && pattern.direction === direction && pattern.notStretched === true && Number(pattern.roomToLevel) >= 0.35 && Number(pattern.score) >= 80;
   const rejection = directionalRejection && rejectionStrength >= thresholds.rejectionStrength;
   const regime = String(signal.regime?.type || '').toLowerCase();
   const evidence = highConfidenceEvidence(signal, direction, thresholds);
@@ -123,6 +128,11 @@ function decisionQuality(signal = {}, direction = null, thresholds = getThreshol
     && score >= finalScore
     && power >= HIGH_CONFIDENCE.finalPower
     && evidence.length >= HIGH_CONFIDENCE.minimumEvidence;
+  // A fully-qualified, non-extended pullback has its own final path: still
+  // require independent directional confirmation plus power/score floors,
+  // but don't demand the generic 70/60 gate if this specific setup is sound.
+  const patternIndependentConfirmation = rejection || continuation || momentum || strongCandle;
+  const pullbackFinalReady = !!direction && pullbackContinuation && score >= 64 && power >= 55 && patternIndependentConfirmation;
   const commonReason = !direction
     ? 'sem direção'
     : score < finalScore
@@ -154,13 +164,18 @@ function decisionQuality(signal = {}, direction = null, thresholds = getThreshol
         name: 'força da vela',
         ok: strongCandle,
         reason: `currentStrength ${Math.round(currentStrength)} ${strongCandle ? '>=' : '<'} ${thresholds.candleStrength}`
+      },
+      {
+        name: 'pullback sem esticamento',
+        ok: pullbackContinuation,
+        reason: `pullback qualificado na direção ${direction}=${pullbackContinuation}`
       }
     ];
     const matched = setups.find(item => item.ok) || null;
     return {
       // SIMPLES no longer bypasses setup quality: every final signal must have
       // high score, directional power and at least two independent confirmations.
-      qualifies: commonReady,
+      qualifies: commonReady || pullbackFinalReady,
       setup: matched ? matched.name : evidence.join(' + ') || 'alta confiança',
       checks: setups,
       mode,
@@ -181,6 +196,11 @@ function decisionQuality(signal = {}, direction = null, thresholds = getThreshol
           name: 'continuação confirmada no range',
           ok: power >= 55 && score >= 64 && continuation && momentum,
           reason: `power>=55=${power >= 55} | score>=64=${score >= 64} | continuação>=55=${continuation} | momentum>=40=${momentum}`
+        },
+        {
+          name: 'pullback sem esticamento no range',
+          ok: pullbackFinalReady && (momentum || continuation || rejection),
+          reason: `score>=64=${score >= 64} | power>=55=${power >= 55} | pullback=${pullbackContinuation} | confirmação independente=${momentum || continuation || rejection}`
         }
       ]
     : [
@@ -203,9 +223,14 @@ function decisionQuality(signal = {}, direction = null, thresholds = getThreshol
           name: 'confluência forte',
           ok: power >= 48 && score >= 68 && momentum && (strongCandle || continuation),
           reason: `power>=48=${power >= 48} | score>=68=${score >= 68} | momentum=${momentum} | força/continuação=${strongCandle || continuation}`
+        },
+        {
+          name: 'pullback sem esticamento',
+          ok: pullbackFinalReady && (momentum || continuation || rejection),
+          reason: `score>=64=${score >= 64} | power>=55=${power >= 55} | pullback=${pullbackContinuation} | confirmação independente=${momentum || continuation || rejection}`
         }
       ];
-  const matched = commonReady ? setups.find(item => item.ok) || null : null;
+  const matched = commonReady ? setups.find(item => item.ok) || null : pullbackFinalReady ? setups.find(item => item.name === 'pullback sem esticamento' && item.ok) || null : null;
   return {
     qualifies: !!matched,
     setup: matched?.name || null,
@@ -216,8 +241,26 @@ function decisionQuality(signal = {}, direction = null, thresholds = getThreshol
   };
 }
 
+export function qualifiesEarlyPattern(signal = {}, direction = null, score = 0) {
+  const pattern = signal.analytics?.pullbackContinuation || {};
+  if (pattern.qualified !== true || pattern.direction !== direction) return false;
+  if (pattern.notStretched !== true || Number(pattern.roomToLevel) < 0.35 || Number(pattern.score) < 80) return false;
+  const analytics = signal.analytics || {};
+  const power = Number(direction === 'BUY' ? analytics.buyPower : analytics.sellPower) || 0;
+  // The structured pattern itself contains several independent candle-structure
+  // checks. Use a moderate floor for the early heads-up; final-entry gates remain
+  // separate and strict.
+  return Number(score) >= 45 && power >= 52;
+}
+
+export function anticipationWindowSeconds(timeframe = 'M1') {
+  const tf = clean(timeframe).toUpperCase();
+  return tf === 'M5' ? 120 : tf === 'M1' ? 45 : Math.max(15, Math.min(120, timeframeMs(tf) / 1000 * 0.25));
+}
+
 function possibleQuality(signal = {}, direction = null, score = 0, thresholds = getThresholds()) {
   const possibleScore = Math.max(HIGH_CONFIDENCE.possibleScore, thresholds.possibleScore);
+  if (qualifiesEarlyPattern(signal, direction, score)) return true;
   if (!direction || Number(score) < possibleScore) return false;
   const analytics = signal.analytics || {};
   const power = Number(direction === 'BUY' ? analytics.buyPower : analytics.sellPower) || 0;
@@ -336,7 +379,13 @@ function waitSignal(signal, reason) {
 function possibleSignal(signal, windows, direction, score) {
   const seconds = Math.max(0, Math.ceil(Number(signal.secondsRemaining || 0)));
   const side = direction === 'BUY' ? 'COMPRA' : 'VENDA';
-  const reason = `${side} — ALTA CONFIANÇA • PRÉ-SINAL • ${seconds}s — aguardando a janela final.`;
+  const pattern = signal.analytics?.pullbackContinuation || {};
+  const patternReady = qualifiesEarlyPattern(signal, direction, score);
+  const room = Number(pattern.roomToLevel);
+  const patternReason = patternReady
+    ? `${side} — PADRÃO DE PULLBACK + RETOMADA (${Math.round(Number(pattern.score || 0))}/100) • possível entrada na próxima vela • ${room.toFixed(1)}× a faixa média até o nível contrário • ${seconds}s restantes; aguardar a confirmação final.`
+    : null;
+  const reason = patternReason || `${side} — PRÉ-SINAL • ${seconds}s — aguardando a janela final.`;
   return {
     ...signal,
     state: 'WATCH', direction, diagnosis: direction,
@@ -462,7 +511,8 @@ export function processSnapshot(snapshot = {}, state = {}) {
   const direction = directionOf(signal);
   const analytics = signal.analytics || {};
   const power = Number(direction === 'BUY' ? analytics.buyPower : analytics.sellPower) || 0;
-  const rawPossible = possibleQuality(signal, direction, score, thresholds);
+  const earlyPattern = qualifiesEarlyPattern(signal, direction, score);
+  const rawPossible = earlyPattern || possibleQuality(signal, direction, score, thresholds);
   const quality = decisionQuality(signal, direction, thresholds, confirmationMode);
   const technicalFinal = signal.state === 'CONFIRM' || ['ENTER_BUY', 'ENTER_SELL'].includes(clean(signal.uiState).toUpperCase());
   let candidateBlockerTrace = upsertCandidateBlockerTrace(state, {
@@ -515,7 +565,9 @@ export function processSnapshot(snapshot = {}, state = {}) {
     };
   }
 
-  if (secondsRemaining > windows.pre) {
+  const earlyPatternWindow = anticipationWindowSeconds(signal.timeframe || snapshot.analysisTimeframe || snapshot.timeframe || 'M1');
+  const earlyPatternActive = earlyPattern && secondsRemaining <= earlyPatternWindow;
+  if (secondsRemaining > windows.pre && !earlyPatternActive) {
     const nextSignal = signal.state === 'WATCH' || signal.provisional ? buildingSignal(signal, windows) : signal;
     if (clean(nextSignal?.uiState).toUpperCase() === 'WAIT' || nextSignal?.state === 'NO_TRADE') {
       candidateBlockerTrace = markCandidateWait(candidateBlockerTrace, key, secondsRemaining, nextSignal.reason);
@@ -523,7 +575,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
     return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: nextSignal, decisionCycle: { ...cycle }, candidateBlockerTrace };
   }
   if (secondsRemaining > windows.decision) {
-    const nextSignal = canShowPossible ? possibleSignal(signal, windows, possibleDirection, score) : signal;
+    const nextSignal = (canShowPossible || earlyPatternActive) ? possibleSignal(signal, windows, possibleDirection || direction, score) : signal;
     if (clean(nextSignal?.uiState).toUpperCase() === 'WAIT' || nextSignal?.state === 'NO_TRADE') {
       candidateBlockerTrace = markCandidateWait(candidateBlockerTrace, key, secondsRemaining, nextSignal.reason);
     }

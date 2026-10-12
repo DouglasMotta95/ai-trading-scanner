@@ -8,7 +8,7 @@ export function canonicalMarket(value = '') {
   const direct = stripped.match(/\b([A-Z0-9]{2,20})\s*[\/_-]\s*([A-Z0-9]{2,12})/i);
   if (direct) return `${direct[1]}/${direct[2]}${otc ? ' (OTC)' : ''}`;
   const compact = stripped.replace(/[^A-Z0-9]/g, '');
-  for (const quote of ['USDT','USDC','USD','EUR','GBP','JPY','CAD','AUD','CHF','NZD','BRL','BTC','ETH']) {
+  for (const quote of ['USDT','USDC','USD','EUR','GBP','JPY','AUD','CAD','CHF','NZD','BRL','BTC','ETH','XOF','XAF','MXN','ZAR','SEK','NOK','DKK','TRY','PLN','RUB','SGD','HKD','CNY','INR','THB','KRW','TWD','IDR','MYR','PHP','SAR','AED','CZK','HUF','ILS','CLP','COP','ARS','EGP','NGN','PKR','QAR','RON','UAH','VND','MAD','ISK']) {
     if (!compact.endsWith(quote) || compact.length <= quote.length + 1) continue;
     const base = compact.slice(0, -quote.length);
     if (/^[A-Z0-9]{2,12}$/.test(base)) return `${base}/${quote}${otc ? ' (OTC)' : ''}`;
