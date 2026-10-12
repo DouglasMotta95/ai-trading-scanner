@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.11.98 — Consolidated M1/M5 signal notifications
+
+### Signal delivery correction
+- Found a hard-coded notification restriction to M1/60s. M5 could be analyzed and shown in the panel but would not trigger the browser notification path.
+- Added a pure, unit-tested qualification helper for both valid operating pairs: M1 + 60s and M5 + 300s.
+- Pre-signal notifications require a matching POSSIBLE_BUY/POSSIBLE_SELL and direction. Final notifications require matching ENTER_BUY/ENTER_SELL; AGUARDAR can no longer create a misleading final notification.
+- Notifications still require connected/scanning state, confirmed clock and expiration gates, a cycle key, and the intended final timing window.
+
+### Previous corrections included
+- Fix false generic mode-conflict banner CSS.
+- Recognize XOF/XAF in focused visual, alias, protocol and market-session parsing paths.
+- Preserve focus-frame provenance, signal display stability and exact clock/expiration safeguards.
+
+### Release condition
+- Release a single consolidated package only after all tests and packaging succeed. Browser-level live CasaTrade signal delivery still needs real-environment verification.
+
+---
+
 ## 0.11.97 — Final consolidated recovery for videos 20728/20730/20734/20737
 
 ### Additional gap found before release
