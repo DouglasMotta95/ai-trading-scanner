@@ -544,10 +544,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     frameId: Number(sender.frameId || 0)
   };
 
+  const observedMode = trustedModeFromObservedControls(incoming, Date.now());
+  let autoModeChanged = false;
+  let selectedMode = null;
   updateScannerState(state => {
     if (Number(state.targetTabId || 0) && Number(state.targetTabId) !== tabId) return state;
 
-    const previousControls = state.platformControls || {};
+    const currentMode = getOperationMode(state.analystPreferences?.operationMode || 'M1');
+    const nextMode = observedMode && observedMode.timeframe !== currentMode.timeframe ? observedMode : null;
+    autoModeChanged = !!nextMode;
+    selectedMode = nextMode?.timeframe || currentMode.timeframe;
+
+    let base = nextMode ? clearUserDeclaredExpirationState(state) : state;
+    if (nextMode) base = resetSignalStateForModeSwitch(base);
+    const previousControls = base.platformControls || {};
     const previous = previousControls.observed || {};
     const previousExpirationSource = clean(previousControls.expirationSource || previous.source || '');
     const observedRaw = mergeObserved(previous, incoming, previousExpirationSource);
@@ -563,7 +573,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     const seededState = {
-      ...state,
+      ...base,
+      ...(nextMode ? { analystPreferences: analystPrefs(base, { operationMode: nextMode.timeframe }) } : {}),
       platformControls: {
         ...previousControls,
         realExpiration,
@@ -577,7 +588,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       : previousExpirationSource;
     const resolved = applyExpirationAuthority(seededState, observedRaw, incomingExpirationSource);
 
-    const oldTf = normTf(state.analysisTimeframe || state.timeframe);
+    const oldTf = normTf(base.analysisTimeframe || base.timeframe);
     const timeframeChanged = !!oldTf && !!resolved.reliableTf && oldTf !== resolved.reliableTf;
     if (timeframeChanged) {
       resolved.diagnostics.timeframeTransition = {
@@ -608,15 +619,34 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         aligned: resolved.ready,
         realExpiration: resolved.authority.realExpiration || realExpiration || null,
         realExpirationAt: resolved.authority.realExpirationAt || realExpirationAt || 0,
-        realExpirationSource: resolved.authority.realExpirationSource || realExpirationSource || ''
+        realExpirationSource: resolved.authority.realExpirationSource || realExpirationSource || '',
+        ...(nextMode ? {
+          modeSyncRequested: {
+            timeframe: nextMode.timeframe,
+            expiration: nextMode.expiration,
+            source: 'observed-casatrade-expiration',
+            at: Date.now()
+          }
+        } : {})
       },
       diagnostics: resolved.diagnostics
     };
-  }).then(state => sendResponse({
-    ok: true,
-    platformControls: state.platformControls,
-    expirationGuard: state.diagnostics?.expirationGuard || null,
-    analystPreferences: state.analystPreferences || null
-  })).catch(error => sendResponse({ ok: false, error: String(error?.message || error) }));
+  }).then(async state => {
+    if (autoModeChanged && selectedMode) {
+      try { resetOrchestrator(); } catch {}
+      await persistUiOperationMode(selectedMode);
+      const applied = await applyCasaTradeMode(state, selectedMode, 'observed-casatrade-expiration', incoming.frameId);
+      state = applied.state;
+    }
+    sendResponse({
+      ok: true,
+      state,
+      platformControls: state.platformControls,
+      expirationGuard: state.diagnostics?.expirationGuard || null,
+      analystPreferences: state.analystPreferences || null,
+      modeSync: state.platformControls?.autoModeSync || null
+    });
+  }).catch(error => sendResponse({ ok: false, error: String(error?.message || error) }));
+
   return true;
 });
