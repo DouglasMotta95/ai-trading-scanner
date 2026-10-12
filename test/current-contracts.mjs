@@ -123,8 +123,9 @@ export function registerTimeContracts(label='time') {
 
   test(label + ': panel never fabricates a countdown', () => {
     const panel = read('src/sidepanel/app-v2.js');
-    assert.match(panel, /if \(!exactClockReady\(state\)\) return null/);
-    assert.match(panel, /setText\('timeSyncStatus', exact \? 'EXATO • CASATRADE' : 'PENDENTE'\)/);
+    assert.match(panel, /function runningCountdownAvailable\(state = \{\}\)/);
+    assert.match(panel, /setText\('timeSyncStatus', exact \? 'EXATO • CASATRADE' : runningCountdownAvailable\(state\) \? 'OPERACIONAL • CONTAGEM ATIVA' : 'PENDENTE'\)/);
+    assert.match(panel, /Nenhuma fonte utilizável de countdown da vela está disponível/);
     assert.doesNotMatch(panel, /COUNTDOWN ESTIMADO/);
   });
   test(label + ': active operation mode is a single M1 or M5 authority', () => {
@@ -149,10 +150,10 @@ export function registerControlReaderContracts(label='control-reader') {
 export function registerExpirationContracts(label='expiration') {
   test(label + ': real CasaTrade expiration supersedes and invalidates manual fallback', () => {
     const controls = read('src/background-platform-controls.js');
-    assert.match(controls, /const invalidatedDeclared = realFresh && declared \? declared : null/);
-    assert.match(controls, /const effectiveDeclared = invalidatedDeclared \? null : declared/);
-    assert.match(controls, /userDeclaredExpiration: resolved\.authority\.invalidatedDeclared \? null/);
-    assert.match(controls, /manualInvalidated: authority\.invalidatedDeclared \|\| null/);
+    assert.match(controls, /const invalidatedDeclared = null/);
+    assert.match(controls, /const effectiveDeclared = declared \|\| null/);
+    assert.match(controls, /const manualAccepted = !!declared[\s\S]*declared === operationMode\.expiration/);
+    assert.match(controls, /userDeclaredExpiration: seededState\.platformControls\.userDeclaredExpiration/);
   });
   test(label + ': expiration is an execution gate for the active M1\/M5 mode', () => {
     const policy = read('src/background-decision-policy.js');
@@ -403,7 +404,7 @@ export function registerVideo15290Contracts(label='video-15290') {
     const panel = read('src/sidepanel/app-v2.js');
     assert.match(panel, /const closeAt = num\(clock\.closeAt\) \?\? num\(clock\.candleCloseAt\)/);
     assert.match(panel, /boundaryCurrent/);
-    assert.match(panel, /if \(!exactClockReady\(state\)\) return null/);
+    assert.match(panel, /function runningCountdownAvailable\(state = \{\}\)/);
   });
   test(label + ': automatic refresh preserves an owned live session through a brief reader gap', () => {
     const control = read('src/background-control.js');
@@ -432,6 +433,7 @@ export function registerVideo15292Contracts(label='video-15292') {
     const policy = read('src/background-decision-policy.js');
     const panel = read('src/sidepanel/app-v2.js');
     const controlHandler = read('src/background-control.js');
+    assert.match(controls, /const manualAccepted = !!declared/);
     assert.match(controls, /operationalFallback = !authority\.realFresh/);
     assert.match(policy, /source: 'user-declared'/);
     assert.match(policy, /ready: true/);
