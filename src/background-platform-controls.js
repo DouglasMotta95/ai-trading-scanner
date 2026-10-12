@@ -253,20 +253,26 @@ function expirationContext(state = {}, observed = {}, expirationSource = '') {
   }
 
   const declaredAt = Number(state.platformControls?.userDeclaredAt || 0);
-  // A real expiration observed before the latest operation-mode selection is
-  // stale. Do not let it create a false M1/M5 conflict.
   const realFresh = !!realExpiration
     && realExpirationAt > 0
     && now - realExpirationAt < 15000
     && (!declaredAt || realExpirationAt >= declaredAt);
-  const invalidatedDeclared = realFresh && declared ? declared : null;
-  const effectiveDeclared = invalidatedDeclared ? null : declared;
-  const actual = realFresh ? realExpiration : effectiveDeclared || null;
-  const source = realFresh ? (realExpirationSource || 'real') : effectiveDeclared ? 'user-declared' : null;
+  const operationMode = getOperationMode(state.analystPreferences?.operationMode || 'M1');
+  const liveTf = normTf(state.analysisTimeframe || state.timeframe || state.diagnostics?.marketClock?.timeframe);
+  // An explicit matching selection is authoritative for the user's operation
+  // mode even when the canvas/DOM probe reports an incompatible real duration.
+  const manualAccepted = !!declared
+    && declared === operationMode.expiration
+    && (!liveTf || liveTf === operationMode.timeframe);
+  const invalidatedDeclared = null;
+  const effectiveDeclared = declared || null;
+  const actual = manualAccepted ? declared : realFresh ? realExpiration : effectiveDeclared;
+  const source = manualAccepted ? 'user-declared' : realFresh ? (realExpirationSource || 'real') : effectiveDeclared ? 'user-declared' : null;
 
   return {
     declared: effectiveDeclared,
     invalidatedDeclared,
+    manualAccepted,
     realExpiration: realFresh ? realExpiration : null,
     realExpirationAt: realFresh ? realExpirationAt : 0,
     realExpirationSource: realFresh ? (realExpirationSource || 'real') : '',
@@ -294,7 +300,7 @@ function applyExpirationAuthority(state = {}, observedInput = {}, expirationSour
     observed.observedAt.expiration = 0;
     observed.confidence.expiration = 0;
     expirationCheckedAt = 0;
-  } else if (!authority.realFresh && authority.declared) {
+  } else if (authority.manualAccepted || (!authority.realFresh && authority.declared)) {
     const declaredAt = now + USER_DECLARED_FRESH_OFFSET_MS;
     observed.expiration = authority.declared;
     observed.observedAt.expiration = declaredAt;
@@ -325,10 +331,11 @@ function applyExpirationAuthority(state = {}, observedInput = {}, expirationSour
   // platform does not expose it (canvas/embedded UI), the user-selected
   // operation mode is the operational fallback. A fresh real observation always
   // supersedes this fallback and can still block on a real mismatch.
-  const operationalFallback = !authority.realFresh
-    && authority.source === 'user-declared'
-    && !!authority.declared
-    && authority.declared === operationMode.expiration;
+  const operationalFallback = authority.manualAccepted === true
+    || (!authority.realFresh
+      && authority.source === 'user-declared'
+      && !!authority.declared
+      && authority.declared === operationMode.expiration);
   const ready = !!authority.actual
     && modeReady
     && expirationValid
@@ -356,12 +363,12 @@ function applyExpirationAuthority(state = {}, observedInput = {}, expirationSour
     required: operationMode.expiration,
     actual: authority.actual,
     source: authority.source,
-    verified: authority.realFresh,
+    verified: authority.realFresh && authority.manualAccepted !== true,
     userDeclared: authority.declared,
     real: authority.realExpiration,
     divergence: false,
     manualInvalidated: authority.invalidatedDeclared || null,
-    label: operationalFallback ? 'operacional' : authority.source === 'user-declared' ? 'informada por você, não verificada' : authority.source ? 'confirmada pela CasaTrade' : 'pendente',
+    label: operationalFallback || authority.manualAccepted ? 'operacional' : authority.source === 'user-declared' ? 'informada por você, não verificada' : authority.source ? 'confirmada pela CasaTrade' : 'pendente',
     ready,
     validForM1: operationMode.timeframe === 'M1' ? ready : false,
     validForMode: ready,
@@ -505,8 +512,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         platformControls: {
           ...seededState.platformControls,
           observed: resolved.observed,
-          userDeclaredExpiration: resolved.authority.invalidatedDeclared ? null : seededState.platformControls.userDeclaredExpiration,
-          userDeclaredAt: resolved.authority.invalidatedDeclared ? 0 : Number(seededState.platformControls.userDeclaredAt || 0),
+          userDeclaredExpiration: seededState.platformControls.userDeclaredExpiration,
+          userDeclaredAt: Number(seededState.platformControls.userDeclaredAt || 0),
           checkedAt: now,
           expirationCheckedAt: resolved.expirationCheckedAt,
           timeframeCheckedAt: resolved.timeframeCheckedAt,
