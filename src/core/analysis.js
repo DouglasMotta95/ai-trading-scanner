@@ -543,8 +543,16 @@ export function recentPriceAction(candles = [], profile = 'MEDIO') {
   if (metrics.momentumDirection === 'BUY' && metrics.momentumScore >= 45) reasons.push('Momentum recente favorece alta');
   if (metrics.momentumDirection === 'SELL' && metrics.momentumScore >= 45) reasons.push('Momentum recente favorece baixa');
 
+  const candidateContinuationScore = clamp(agreement * 45 + metrics.momentumScore * .3 + metrics.currentStrength * .25);
   let direction = buy === sell ? majority : buy > sell ? 'BUY' : 'SELL';
+  // A local trigger is stronger than a weak lateral/doji label. Preserve its
+  // direction when the aggregate scores tie or the trend majority is absent.
+  if (!direction && breakout) direction = breakout;
+  if (!direction && rejection) direction = rejection;
   if (!direction && pullbackContinuation.qualified) direction = pullbackContinuation.direction;
+  if (!direction && metrics.momentumDirection && metrics.momentumDirection === last.direction && candidateContinuationScore >= 60) {
+    direction = metrics.momentumDirection;
+  }
   let score = Math.max(buy, sell);
   if (agreement >= .6) score += 10;
   if (avgBody >= .48) score += 8;
@@ -560,10 +568,11 @@ export function recentPriceAction(candles = [], profile = 'MEDIO') {
   if (metrics.lossOfStrength >= 72 && !breakout && !rejection) {
     reasons.push('A vela atual perdeu força; confirmação exige continuidade');
   }
-  const decisiveLocalSetup = !!breakout || !!rejection || (continuationDirection && continuationScore >= 65)
-    || (pullbackContinuation.qualified && pullbackContinuation.direction === direction);
+  const decisiveLocalSetup = !!breakout || !!rejection || (continuationDirection && continuationScore >= 60)
+    || (pullbackContinuation.qualified && pullbackContinuation.direction === direction)
+    || (!!direction && direction === last.direction && metrics.momentumDirection === direction && candidateContinuationScore >= 60);
   if (lateral && !decisiveLocalSetup) { score = Math.min(score, 54); direction = null; reasons.push('Mercado lateral nas últimas velas'); }
-  if (doji && !rejection) { score = Math.min(score, 48); direction = null; reasons.push('Doji sem confirmação'); }
+  if (doji && !decisiveLocalSetup) { score = Math.min(score, 48); direction = null; reasons.push('Doji sem confirmação'); }
   if (tiny >= Math.ceil(rows.length * .6) && agreement < .75 && !decisiveLocalSetup) { score = Math.min(score, 56); direction = null; reasons.push('Compressão: aguardando rompimento'); }
   if (lateral && decisiveLocalSetup) reasons.push('Mercado lateral, mas com gatilho local confirmado');
   score = clamp(score);
