@@ -651,6 +651,17 @@ function baseDecision(state = {}) {
   };
 }
 
+function operationSignature(value = null) {
+  if (!value) return '';
+  return JSON.stringify({
+    id: value.id || null, status: value.status || null, asset: value.asset || null,
+    timeframe: value.timeframe || null, direction: value.direction || null,
+    targetStart: Number(value.targetStart || 0), targetEnd: Number(value.targetEnd || 0),
+    candleOpenPrice: value.candleOpenPrice ?? null, candleClosePrice: value.candleClosePrice ?? null,
+    result: value.result || null, resolvedAt: value.resolvedAt || null
+  });
+}
+
 function signature(value = {}) {
   return JSON.stringify({
     uiState: value.uiState || null,
@@ -714,7 +725,7 @@ async function evaluate(state = {}) {
       const oldAudit = current.decisionAudit || {};
       const audit = appendDecisionAudit(oldAudit, row, 40);
       const updateAudit = audit !== oldAudit;
-      const updateOperation = JSON.stringify(nextOperation) !== JSON.stringify(current.activeSignalOperation || null);
+      const updateOperation = operationSignature(nextOperation) !== operationSignature(current.activeSignalOperation || null);
       if (!updateDecision && !updateAudit && !updateOperation) return current;
       return {
         ...current,
