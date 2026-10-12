@@ -342,6 +342,12 @@ function baseDecision(state = {}) {
   const cycle = cycleKey(state, signal);
   const factors = confluence(signal, direction, pref.thresholds);
   const signalPolicy = getSignalPolicy(pref.sensitivityProfile);
+  const pullbackPattern = signal.analytics?.pullbackContinuation || {};
+  const pullbackCandidate = pullbackPattern.qualified === true
+    && pullbackPattern.direction === direction
+    && pullbackPattern.notStretched === true
+    && Number(pullbackPattern.roomToLevel) >= 0.35
+    && Number(pullbackPattern.score) >= 80;
   // The selected rhythm changes selectivity, but never bypasses context + trigger.
   const additionalConfluenceReady = factors.count >= signalPolicy.minimumConfluence;
   const possibleScore = signalPolicy.possibleScore;
@@ -386,6 +392,9 @@ function baseDecision(state = {}) {
     timeSource: time.source || null,
     timeframe: time.timeframe || normTf(state.analysisTimeframe || state.timeframe),
     secondsRemaining: time.secondsRemaining ?? num(state.diagnostics?.marketClock?.secondsRemaining),
+    pullbackContinuation: signal.analytics?.pullbackContinuation || null,
+    patternConfidence: Number(signal.analytics?.pullbackContinuation?.score || 0),
+    earlyPatternCandidate: pullbackCandidate,
     marketIdentityReady: identity.ready,
     marketIdentityReason: identity.reason || null,
     updatedAt: now
@@ -427,6 +436,34 @@ function baseDecision(state = {}) {
   }
 
   const seconds = Number(time.secondsRemaining);
+  const anticipationWindow = pref.operationMode === 'M5' ? 120 : 45;
+  const directionalPowerForPattern = Number(direction === 'BUY' ? signal.analytics?.buyPower : direction === 'SELL' ? signal.analytics?.sellPower : 0) || 0;
+  const globalScoreForPattern = Number(signal.analysisScore ?? signal.score ?? 0) || 0;
+  if (pullbackCandidate
+    && identity.ready
+    && direction
+    && globalScoreForPattern >= 45
+    && directionalPowerForPattern >= 52
+    && time.ready
+    && expiration.ready
+    && Number.isFinite(seconds)
+    && seconds > entryWindowSeconds
+    && seconds <= anticipationWindow) {
+    const side = direction === 'BUY' ? 'COMPRA' : 'VENDA';
+    const room = Number(pullbackPattern.roomToLevel);
+    const confidence = Math.round(Number(pullbackPattern.score || 0));
+    return {
+      ...common,
+      uiState: direction === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL',
+      direction,
+      actionable: false,
+      alert: 'discrete',
+      possibleSince: Number(state.professionalDecision?.possibleSince || now),
+      patternConfidence: confidence,
+      earlyPatternCandidate: true,
+      reason: `${side} — PADRÃO DE PULLBACK + RETOMADA (${confidence}/100) • possível entrada na próxima vela • ${room.toFixed(1)}× faixa média até o nível contrário • ${seconds}s restantes; confirmação final ainda necessária.`
+    };
+  }
   if (!Number.isFinite(seconds) || seconds > preSignalWindowSeconds) {
     return { ...common, uiState: 'BUILDING_PATTERN', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: `Analisando a vela ${pref.operation.timeframe} atual. O pré-sinal abre por volta de ${preSignalWindowSeconds}s restantes.` };
   }
@@ -610,6 +647,9 @@ function signature(value = {}) {
     possibleSince: value.possibleSince || null,
     holdRemainingBucket: value.holdRemainingMs == null ? null : Math.ceil(Number(value.holdRemainingMs) / 250),
     finalCandidateHits: value.finalCandidateHits || 0,
+    pullbackContinuation: value.pullbackContinuation?.qualified === true ? value.pullbackContinuation.direction : null,
+    patternConfidence: value.patternConfidence || 0,
+    earlyPatternCandidate: !!value.earlyPatternCandidate,
     reason: value.reason || ''
   });
 }
