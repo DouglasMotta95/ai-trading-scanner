@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.12.0 — Pattern-aware pullback continuation
+
+### Analysis from video 20791
+- The chart shows a short-term bullish recovery with several advancing candles, but the scanner remained around 47–48/100 and did not label a setup. The visible chart was near an upper price/resistance area, so the correct behavior is to identify the potential structure while not promoting a late buy into nearby resistance.
+- The prior analyzer primarily scored candle majority, strong body, breakout, and rejection. It did not explicitly score a pullback followed by resumption with higher low/high, non-extended trigger candle and measurable room to the opposing swing level.
+
+### Changes
+- Add a symmetric bullish/bearish pullback-continuation detector using the real OHLC candles.
+- Add explicit quality checks for higher low/high, resumption in the intended direction, candle range/body versus recent average range, cumulative displacement, and room to the nearest opposing swing.
+- Expose the pattern and its blocker reason in analysis output. If it is too stretched or too close to resistance/support, remain WAIT and explain why rather than forcing an entry.
+- Let a qualified pattern contribute to professional context, trigger, confluence and signal confirmation in the existing analysis pipeline.
+- It remains supporting evidence, not a standalone trade command: the system still requires the appropriate score/power, repeated confirmation, active chart identity, exact clock, matching expiration and final entry gates.
+- Add regression tests for bullish and bearish patterns, insufficient room, stretched candles, and integration into professional context.
+
+### Previous consolidated fixes retained
+- Unified XOF/XAF recognition across visual, alias, protocol, fallback, network/worker/canvas, inspector and market normalizers.
+- Fixed false mode-conflict banner CSS and mode-evidence frame provenance.
+- M1+60s and M5+300s notification qualification, with retry if both sound and notification channels fail.
+- Direct installable package workflow with manifest at archive root.
+
+### Release condition
+- Share the single consolidated extension only after the full test suite and packaging workflow pass. Test success does not substitute for live CasaTrade chart validation, and this update does not guarantee trading outcomes.
+
+---
+
 ## 0.11.99 — Full reader consistency and signal alert retry
 
 ### Full audit found remaining asset-reader gaps
