@@ -61,6 +61,21 @@ async function claimCycleStage(cycleKey, stage) {
   return true;
 }
 
+async function releaseCycleStage(cycleKey, stage) {
+  const stored = await storageSessionGet(LEDGER_KEY).catch(() => ({}));
+  const rows = Array.isArray(stored?.[LEDGER_KEY]) ? stored[LEDGER_KEY] : [];
+  const field = stage + 'At';
+  let changed = false;
+  const updated = rows.map(row => {
+    if (row?.cycleKey !== cycleKey || !row[field]) return row;
+    changed = true;
+    const next = { ...row };
+    delete next[field];
+    return next;
+  }).filter(row => row && (row.preAt || row.finalAt));
+  if (changed) await storageSessionSet({ [LEDGER_KEY]: updated }).catch(() => {});
+}
+
 function createNotification(id, options) {
   return new Promise(resolve => {
     if (!chrome.notifications?.create) return resolve(false);
@@ -130,8 +145,9 @@ async function dispatchForState(state = {}) {
   if (!notificationsEnabled && !soundEnabled) return;
   if (!(await claimCycleStage(event.cycleKey, event.stage))) return;
 
+  let delivered = false;
   if (notificationsEnabled) {
-    await createNotification(notificationId(event, state), {
+    delivered = await createNotification(notificationId(event, state), {
       type: 'basic',
       iconUrl: chrome.runtime.getURL(ICON_PATH),
       title: event.title,
@@ -140,7 +156,12 @@ async function dispatchForState(state = {}) {
     });
   }
 
-  if (soundEnabled) await playAlertSound(event.stage);
+  if (soundEnabled) delivered = (await playAlertSound(event.stage)) || delivered;
+
+  // Reserve the candle-stage first to prevent duplicates. If neither the native
+  // notification nor the sound channel actually delivered, release the stage so
+  // a later state update can retry within the same candle.
+  if (!delivered) await releaseCycleStage(event.cycleKey, event.stage);
 }
 
 function queueState(state = {}) {
