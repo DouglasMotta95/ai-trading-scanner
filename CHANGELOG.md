@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.12.2 — Automatic expiration/timeframe mode synchronization
+
+### Problem observed in screenshot 20832
+- The CasaTrade expiration was set to 5 minutes, but the scanner remained in M1 and continued showing a 16-second M1 countdown.
+- The panel's manual expiration field only stored `userDeclaredExpiration`; it did not change `analystPreferences.operationMode` or apply the corresponding timeframe to the selected CasaTrade chart. This left M1 clock + 5-minute expiration mismatched, so analysis and signals were blocked.
+
+### Corrections
+- Selecting a canonical 5-minute expiration now changes the scanner operation mode to M5; selecting 1 minute changes it to M1.
+- A fresh, high-confidence `casatrade-expiration-probe-v3` observation also updates the canonical operation mode when the user changes expiration directly on CasaTrade.
+- On mode change, the extension attempts to set both the chart timeframe and expiration through the existing platform-sync control writer, then rereads both controls and records whether they matched.
+- Persists the auto-selected mode in the sidepanel preference store so a panel reload does not silently revert to M1.
+- Clears the previous signal/decision cycle during a mode transition to prevent M1 signals from leaking into M5.
+- The panel now distinguishes controls-applied from real runtime confirmation. If the control write cannot be verified, it explains the mismatch and continues blocking entries until the exact CasaTrade clock and expiration agree.
+
+### Safety and tests
+- Automatic synchronization changes only timeframe/expiration controls; it does not click BUY/SELL or execute trades.
+- Short expirations (5/15/30 seconds) do not silently map to M1/M5.
+- Added unit and integration-contract tests for canonical mapping, trusted-source/freshness requirements, automatic control application and readback.
+- No release until extension syntax, all tests and direct-install package workflow pass.
+
+---
+
 ## 0.12.1 — Proactive pattern alerts and bounded pullback entries
 
 ### Goal from user feedback
