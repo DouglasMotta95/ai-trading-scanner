@@ -82,8 +82,8 @@ export function buildDecisionAudit(state = {}, decision = {}, now = Date.now()) 
       continuationScore: numberOrNull(analytics.continuationScore),
       momentumDirection: upper(analytics.momentumDirection || '') || null,
       momentumScore: numberOrNull(analytics.momentumScore),
-      contextReady: decision.professionalContextReady === true || professional.contextReady === true,
-      triggerReady: decision.professionalTriggerReady === true || professional.triggerReady === true
+      contextReady: typeof decision.professionalContextReady === 'boolean' ? decision.professionalContextReady : professional.contextReady === true,
+      triggerReady: typeof decision.professionalTriggerReady === 'boolean' ? decision.professionalTriggerReady : professional.triggerReady === true
     },
     checks, blocker,
     decision: { uiState, actionable, technicalUiState: upper(signal.uiState || signal.state || '—'), finalCandidateHits: finalHits, holdRemainingMs: Number(decision.holdRemainingMs || 0) },
