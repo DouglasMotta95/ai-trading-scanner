@@ -97,13 +97,15 @@ export function getExpirationReadiness(state = {}, now = Date.now()) {
     && realFresh
     && candidate.value === required
     && guard.verified === true;
-  const operationalCandidate = manualAccepted && !conflict;
+  const operationalCandidate = manualAccepted && !conflict && !verified;
   const operational = operationalCandidate || (policyReady && !realFresh && !conflict && !!declared && declared === required);
   const ready = verified || operational;
   const actual = manualAccepted ? declared : realFresh ? candidate.value : declared || normExp(decision.actualExpiration || '');
 
   let reason;
-  if (manualAccepted) {
+  if (verified) {
+    reason = `Expiração ${required} confirmada pela CasaTrade.`;
+  } else if (manualAccepted) {
     reason = operationMode.timeframe === 'M1'
       ? 'EXPIRAÇÃO MANUAL ACEITA – usando 1 min'
       : 'EXPIRAÇÃO MANUAL ACEITA – usando 5 min';
