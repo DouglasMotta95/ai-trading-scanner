@@ -51,7 +51,7 @@ function decisionWindows(snapshot = {}, signal = {}, thresholds = getThresholds(
     return { pre: 30, decision: 15, skip: 1, duration, timeframe };
   }
   if (timeframe === 'M5') {
-    return { pre: 30, decision: 20, skip: 2, duration, timeframe };
+    return { pre: 90, decision: 30, skip: 2, duration, timeframe };
   }
 
   // Longer/shorter candles keep proportional windows.
@@ -234,8 +234,26 @@ function decisionQuality(signal = {}, direction = null, thresholds = getThreshol
   };
 }
 
+function qualifiesEarlyPattern(signal = {}, direction = null, score = 0) {
+  const pattern = signal.analytics?.pullbackContinuation || {};
+  if (pattern.qualified !== true || pattern.direction !== direction) return false;
+  if (pattern.notStretched !== true || Number(pattern.roomToLevel) < 0.35 || Number(pattern.score) < 80) return false;
+  const analytics = signal.analytics || {};
+  const power = Number(direction === 'BUY' ? analytics.buyPower : analytics.sellPower) || 0;
+  // The structured pattern itself contains several independent candle-structure
+  // checks. Use a moderate floor for the early heads-up; final-entry gates remain
+  // separate and strict.
+  return Number(score) >= 45 && power >= 52;
+}
+
+function anticipationWindowSeconds(timeframe = 'M1') {
+  const tf = clean(timeframe).toUpperCase();
+  return tf === 'M5' ? 120 : tf === 'M1' ? 45 : Math.max(15, Math.min(120, timeframeMs(tf) / 1000 * 0.25));
+}
+
 function possibleQuality(signal = {}, direction = null, score = 0, thresholds = getThresholds()) {
   const possibleScore = Math.max(HIGH_CONFIDENCE.possibleScore, thresholds.possibleScore);
+  if (qualifiesEarlyPattern(signal, direction, score)) return true;
   if (!direction || Number(score) < possibleScore) return false;
   const analytics = signal.analytics || {};
   const power = Number(direction === 'BUY' ? analytics.buyPower : analytics.sellPower) || 0;
@@ -354,7 +372,13 @@ function waitSignal(signal, reason) {
 function possibleSignal(signal, windows, direction, score) {
   const seconds = Math.max(0, Math.ceil(Number(signal.secondsRemaining || 0)));
   const side = direction === 'BUY' ? 'COMPRA' : 'VENDA';
-  const reason = `${side} — ALTA CONFIANÇA • PRÉ-SINAL • ${seconds}s — aguardando a janela final.`;
+  const pattern = signal.analytics?.pullbackContinuation || {};
+  const patternReady = qualifiesEarlyPattern(signal, direction, score);
+  const room = Number(pattern.roomToLevel);
+  const patternReason = patternReady
+    ? `${side} — PADRÃO DE PULLBACK + RETOMADA (${Math.round(Number(pattern.score || 0))}/100) • possível entrada na próxima vela • ${room.toFixed(1)}× a faixa média até o nível contrário • ${seconds}s restantes; aguardar a confirmação final.`
+    : null;
+  const reason = patternReason || `${side} — PRÉ-SINAL • ${seconds}s — aguardando a janela final.`;
   return {
     ...signal,
     state: 'WATCH', direction, diagnosis: direction,
@@ -480,7 +504,8 @@ export function processSnapshot(snapshot = {}, state = {}) {
   const direction = directionOf(signal);
   const analytics = signal.analytics || {};
   const power = Number(direction === 'BUY' ? analytics.buyPower : analytics.sellPower) || 0;
-  const rawPossible = possibleQuality(signal, direction, score, thresholds);
+  const earlyPattern = qualifiesEarlyPattern(signal, direction, score);
+  const rawPossible = earlyPattern || possibleQuality(signal, direction, score, thresholds);
   const quality = decisionQuality(signal, direction, thresholds, confirmationMode);
   const technicalFinal = signal.state === 'CONFIRM' || ['ENTER_BUY', 'ENTER_SELL'].includes(clean(signal.uiState).toUpperCase());
   let candidateBlockerTrace = upsertCandidateBlockerTrace(state, {
@@ -533,7 +558,9 @@ export function processSnapshot(snapshot = {}, state = {}) {
     };
   }
 
-  if (secondsRemaining > windows.pre) {
+  const earlyPatternWindow = anticipationWindowSeconds(signal.timeframe || snapshot.analysisTimeframe || snapshot.timeframe || 'M1');
+  const earlyPatternActive = earlyPattern && secondsRemaining <= earlyPatternWindow;
+  if (secondsRemaining > windows.pre && !earlyPatternActive) {
     const nextSignal = signal.state === 'WATCH' || signal.provisional ? buildingSignal(signal, windows) : signal;
     if (clean(nextSignal?.uiState).toUpperCase() === 'WAIT' || nextSignal?.state === 'NO_TRADE') {
       candidateBlockerTrace = markCandidateWait(candidateBlockerTrace, key, secondsRemaining, nextSignal.reason);
@@ -541,7 +568,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
     return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: nextSignal, decisionCycle: { ...cycle }, candidateBlockerTrace };
   }
   if (secondsRemaining > windows.decision) {
-    const nextSignal = canShowPossible ? possibleSignal(signal, windows, possibleDirection, score) : signal;
+    const nextSignal = (canShowPossible || earlyPatternActive) ? possibleSignal(signal, windows, possibleDirection || direction, score) : signal;
     if (clean(nextSignal?.uiState).toUpperCase() === 'WAIT' || nextSignal?.state === 'NO_TRADE') {
       candidateBlockerTrace = markCandidateWait(candidateBlockerTrace, key, secondsRemaining, nextSignal.reason);
     }
