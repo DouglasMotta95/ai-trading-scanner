@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.11.99 — Full reader consistency and signal alert retry
+
+### Full audit found remaining asset-reader gaps
+- v0.11.98 had fixed the main visual, alias and protocol readers but still left the fallback/recovery readers and parsing adapters with short currency allowlists: Quetta fallback bridge, network/worker/canvas probes, standalone instrument probe, opaque-frame recovery, CasaTrade data inspector, background augment, platform registry and core market-session guard.
+- All these paths now use the same extended XOF/XAF and common-quote coverage. This matters because a rejected symbol in a fallback path could leave focus, feed, price or candle history unconfirmed even when one parser recognized it.
+- Added a source-wide regression test ensuring every listed active/fallback reader keeps XOF and XAF support; added runtime checks for the core guard and platform registry normalizers.
+
+### Signal delivery retry
+- The alert pipeline previously reserved a candle stage before trying notification/sound delivery and never released it on total failure. If Chrome rejected the first notification and audio was unavailable, the same candle could not retry.
+- The stage is now released when both output channels fail, preserving deduplication on successful delivery and allowing a later state update to retry.
+
+### All prior fixes retained
+- Generic false mode-conflict banner respects the HTML hidden state.
+- Mode comparison preserves per-field source/frame provenance.
+- Pre-signal display stability stays presentation-only.
+- M1+60s and M5+300s notification qualification remains gated by online state, exact clock, confirmed expiration, matching direction and the final decision state. No automatic trading is enabled.
+
+### Release condition
+- Share one consolidated package only after the full CI suite and packaging pass. Runtime validation still must confirm the extension connects to the selected CasaTrade chart and sends signals in the actual browser.
+
+---
+
 ## 0.11.98 — Consolidated M1/M5 signal notifications
 
 ### Signal delivery correction
