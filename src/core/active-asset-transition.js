@@ -57,6 +57,8 @@ export function activeAssetCandles(state = {}, asset = state.asset || '') {
   if (key && Array.isArray(history[key])) return history[key];
   const candleAsset = marketId(state.currentCandle?.asset || '');
   const signalAsset = marketId(state.signal?.asset || '');
+  const transitionTarget = marketId(state.diagnostics?.activeAssetTransition?.to || '');
+  if (transitionTarget === target && (!candleAsset || candleAsset !== target)) return [];
   if (candleAsset && candleAsset !== target) return [];
   if (signalAsset && signalAsset !== target) return [];
   return Array.isArray(state.candles) ? state.candles : [];
