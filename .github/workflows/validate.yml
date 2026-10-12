@@ -1,7 +1,7 @@
 name: Validate extension
 on:
   push:
-    branches: [main]
+    branches: [main, fix/v01210-operation-lock-results]
   pull_request:
 jobs:
   validate:
@@ -27,6 +27,8 @@ jobs:
         run: find apps/admin-dashboard -name '*.js' -print0 | xargs -0 -n1 node --check
       - name: Syntax check customer portal
         run: find apps/customer-portal -name '*.js' -print0 | xargs -0 -n1 node --check
+      - name: Expiration/countdown/profile regression tests
+        run: node --test test/expiration-readiness.test.mjs test/signal-frequency-profiles.test.mjs test/video-20728-stability.test.mjs
       - name: Signal operation lifecycle tests
         run: node --test tests/signal-operation.test.mjs
       - name: Core unit tests
