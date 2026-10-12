@@ -29,6 +29,18 @@ export function registerBuildContracts(label='build') {
     assert.match(audit, /blockerReason/);
     assert.match(audit, /targetAt/);
   });
+  test(label + ': technical score remains visible while final entry timing stays separately gated', () => {
+    const display = read('src/sidepanel/signal-guidance-ui.js');
+    const gates = read('src/core/decision-display.js');
+    assert.match(display, /return canShowTechnicalAnalysis\(\{ marketReady: marketReady\(state\) \}\)/);
+    assert.match(display, /selectTechnicalScore\(/);
+    assert.doesNotMatch(display, /return marketReady\(state\) && timingReady\(state\)/);
+    assert.match(display, /timingBlockReason\(state\)/);
+    assert.match(display, /Entrada bloqueada:/);
+    assert.match(gates, /export function canShowFinalEntry/);
+    assert.match(gates, /timingReady === true/);
+    assert.match(gates, /expirationReady === true/);
+  });
   test(label + ': current CasaTrade readers are packaged', () => {
     const files = manifest().content_scripts.flatMap(row => row.js || []);
     for (const required of ['src/content/focused-asset-v2.js','src/content/embedded-feed-bridge.js','src/content/market-cycle-clock-v4.js','src/content/casatrade-expiration-probe.js','src/content/account-metrics-observer.js','src/content/trade-handoff-v2.js']) assert.ok(files.includes(required), 'missing ' + required);
