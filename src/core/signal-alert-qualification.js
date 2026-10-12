@@ -27,11 +27,18 @@ export function qualifiedDecision(state = {}) {
   const cycleKey = clean(decision.cycleKey);
   const timeframe = normTimeframe(decision.timeframe);
   const expiration = normExpiration(decision.actualExpiration);
+  const pattern = decision.pullbackContinuation || state.signal?.analytics?.pullbackContinuation || {};
+  const patternQualified = pattern.qualified === true
+    && pattern.direction === clean(decision.direction).toUpperCase()
+    && pattern.notStretched === true
+    && Number(pattern.score) >= 80
+    && Number(pattern.roomToLevel) >= 0.35;
 
   if (state.scanner !== 'scanning' || state.connection !== 'online') return null;
   if (decision.timeReady !== true || decision.expirationReady !== true) return null;
   if (!timeframe || expiration !== MODE_EXPIRATION[timeframe]) return null;
-  if (!cycleKey || seconds == null || seconds <= 0 || seconds > 30) return null;
+  const alertWindow = patternQualified ? (timeframe === 'M5' ? 120 : 45) : 30;
+  if (!cycleKey || seconds == null || seconds <= 0 || seconds > alertWindow) return null;
 
   const ui = clean(decision.uiState).toUpperCase();
   const direction = clean(decision.direction).toUpperCase();
@@ -47,8 +54,10 @@ export function qualifiedDecision(state = {}) {
       seconds,
       label: side,
       timeframe,
-      title: 'Pré-sinal',
-      message: 'Possível ' + side + ' — ' + clean(state.asset || 'ATIVO') + ' ' + timeframe
+      title: patternQualified ? 'Padrão para a próxima vela' : 'Pré-sinal',
+      message: patternQualified
+        ? side + ' na próxima vela — pullback/retomada ' + Math.round(Number(pattern.score || 0)) + '/100, sem esticamento; espaço ' + Number(pattern.roomToLevel).toFixed(1) + '× faixa média — ' + clean(state.asset || 'ATIVO') + ' ' + timeframe
+        : 'Possível ' + side + ' — ' + clean(state.asset || 'ATIVO') + ' ' + timeframe
     };
   }
 
