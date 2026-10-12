@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.12.4 — Decision audit: score, pattern, blocker, timing and delivery
+
+### Purpose
+- Make every score-80-without-entry case diagnosable from the actual live decision flow, not from a screenshot alone.
+- Persist a bounded 40-event audit history on scanner state; refresh the current countdown without adding a new historical event for every sub-second poll.
+
+### Five-part audit now visible in the panel
+1. **Score and direction:** overall score, technical direction even when the policy is still waiting, directional power and confluence.
+2. **Pattern and trigger:** identified/qualified pullback, pattern score, stretch/room measures, context and trigger readiness, rejection/continuation/momentum evidence.
+3. **Exact blocker:** active gate reason (market identity, exact clock, expiration/mode, context, trigger, confirmation/hold or final decision).
+4. **Candle deadline:** asset/timeframe/expiration, seconds remaining, target candle time and clock/expiration readiness.
+5. **Signal delivery:** notification eligibility reason, stage, whether attempted, and separate native-notification/sound results (delivered, failed, disabled, deduplicated or not eligible).
+
+### Wiring
+- Background decision-policy records live per-cycle audit changes using `buildDecisionAudit` and `appendDecisionAudit`.
+- The notification worker explains why each signal is eligible or not; it records actual delivery outcomes and updates the matching historical cycle event.
+- The panel displays the five fields and a short recent history. The copyable technical diagnostic now includes the same audit trace for support/replay.
+- Added pure unit tests for audit creation, bounded history, delivery updates and alert eligibility explanations; added integration contract tests for the live pipeline.
+
+### Safety
+- This update does not loosen entry criteria or auto-execute trades. It improves observability to separate technical non-qualification, safety blockers and notification failures.
+- One package should be installed only after full validation and direct ZIP packaging succeed.
+
+---
+
 ## 0.12.3 — Frame-aware CasaTrade mode synchronization
 
 ### Fix from video 20837
