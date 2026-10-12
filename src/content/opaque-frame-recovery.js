@@ -11,7 +11,7 @@
 
   const clean = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
   const fold = value => clean(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
-  const QUOTES = new Set(['USDT','USDC','USD','EUR','GBP','JPY','AUD','CAD','CHF','NZD','BRL','BTC','ETH']);
+  const QUOTES = new Set(['USDT','USDC','USD','EUR','GBP','JPY','AUD','CAD','CHF','NZD','BRL','BTC','ETH','XOF','XAF','MXN','ZAR','SEK','NOK','DKK','TRY','PLN','RUB','SGD','HKD','CNY','INR','THB','KRW','TWD','IDR','MYR','PHP','SAR','AED','CZK','HUF','ILS','CLP','COP','ARS','EGP','NGN','PKR','QAR','RON','UAH','VND','MAD','ISK']);
   const ALIASES = new Map([
     ['TRON','TRX/USD'],['TRX','TRX/USD'],['EURO','EUR/USD'],['EUR','EUR/USD'],
     ['BITCOIN','BTC/USD'],['BTC','BTC/USD'],['ETHEREUM','ETH/USD'],['ETH','ETH/USD'],
@@ -34,7 +34,7 @@
       const re = new RegExp(`(^|[^A-Z0-9])${label.replace(/ /g, '\\s+')}([^A-Z0-9]|$)`);
       if (re.test(stripped)) return `${pair}${otc ? ' (OTC)' : ''}`;
     }
-    const compact = stripped.replace(/\s+/g, '').match(/^([A-Z0-9]{2,16})(USDT|USDC|USD|EUR|GBP|JPY|AUD|CAD|CHF|NZD|BRL|BTC|ETH)$/);
+    const compact = stripped.replace(/\s+/g, '').match(/^([A-Z0-9]{2,16})(USDT|USDC|USD|EUR|GBP|JPY|AUD|CAD|CHF|NZD|BRL|BTC|ETH|XOF|XAF|MXN|ZAR|SEK|NOK|DKK|TRY|PLN|RUB|SGD|HKD|CNY|INR|THB|KRW|TWD|IDR|MYR|PHP|SAR|AED|CZK|HUF|ILS|CLP|COP|ARS|EGP|NGN|PKR|QAR|RON|UAH|VND|MAD|ISK)$/);
     return compact ? `${compact[1]}/${compact[2]}${otc ? ' (OTC)' : ''}` : '';
   }
 
