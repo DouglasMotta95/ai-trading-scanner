@@ -60,30 +60,30 @@ const THRESHOLD_PROFILES = Object.freeze({
 
 const SIGNAL_POLICIES = Object.freeze({
   RIGIDO: Object.freeze({
-    possibleScore: 64,
-    finalScore: 74,
-    possiblePower: 60,
-    finalPower: 63,
-    minimumConfluence: 3,
+    possibleScore: 58,
+    finalScore: 62,
+    possiblePower: 45,
+    finalPower: 45,
+    minimumConfluence: 2,
     minimumStructure: 13,
     minimumLocation: 10,
     minimumTrigger: 10
   }),
   MEDIO: Object.freeze({
-    possibleScore: 56,
-    finalScore: 66,
-    possiblePower: 56,
-    finalPower: 59,
+    possibleScore: 52,
+    finalScore: 55,
+    possiblePower: 45,
+    finalPower: 45,
     minimumConfluence: 2,
     minimumStructure: 10,
     minimumLocation: 7,
     minimumTrigger: 8
   }),
   SOLTO: Object.freeze({
-    possibleScore: 50,
-    finalScore: 60,
-    possiblePower: 52,
-    finalPower: 55,
+    possibleScore: 45,
+    finalScore: 50,
+    possiblePower: 45,
+    finalPower: 45,
     minimumConfluence: 2,
     minimumStructure: 8,
     minimumLocation: 7,
@@ -200,11 +200,11 @@ export function waitingFor(recent = {}, direction = null, score = 0, profile = '
     });
 
     const power = Number(buy ? metrics.buyPower : metrics.sellPower) || 0;
-    if (power < 50) add({
+    if (power < 45) add({
       type: 'power', direction: chosenDirection,
       label: `Poder ${buy ? 'comprador' : 'vendedor'}`, level: null,
-      current: power, required: 50, gap: (50 - power) / 50,
-      text: `Aguardando poder ${buy ? 'comprador' : 'vendedor'} atingir 50% (agora ${Math.round(power)}%).`
+      current: power, required: 45, gap: (45 - power) / 45,
+      text: `Aguardando poder ${buy ? 'comprador' : 'vendedor'} atingir 45% (agora ${Math.round(power)}%).`
     });
 
     const strength = Number(metrics.currentStrength || 0);
