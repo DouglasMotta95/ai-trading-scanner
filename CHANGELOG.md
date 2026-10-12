@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.11.96 — Consolidated fix for videos 20728/20730/20734/20737
+
+### Corrections included in this one build
+- Preserve v0.11.92/0.11.93 pre-signal display stability and focused-frame provenance for CasaTrade mode evidence.
+- Preserve the v0.11.94 CSS rule that actually hides the generic mode-conflict banner when it is not active.
+- Preserve v0.11.95's broader quote whitelist in the chart-scoped focused-asset reader.
+- **Also fix the second independent reader** (`focused-asset-alias-bridge.js`), whose shorter quote whitelist still rejected `USD/XOF (OTC)` and `USD/XAF (OTC)`. That gap could keep focus publication from occurring even after the first parser had been patched.
+- Add regression coverage for both readers parsing `USD/XOF (OTC)`, `USD/XAF (OTC)` and `EUR/USD (OTC)` while retaining ambiguity safeguards.
+
+### Verification
+- This build does not relax the chart-focus, exact-clock, expiration or technical-entry checks.
+- Automated validation and packaging are required before sharing the single consolidated package; live CasaTrade validation remains a separate step.
+
+---
+
 ## 0.11.95 — Video 20737: recognize USD/XOF OTC focus
 
 ### Problema observado
