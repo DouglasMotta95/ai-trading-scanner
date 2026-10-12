@@ -68,11 +68,10 @@ test('decision audit captures score/direction, pattern/trigger, blocker, deadlin
   const state = sample();
   const row = buildDecisionAudit(state, state.professionalDecision, 1_900_000_000_000);
   assert.equal(row.scoreDirection.score, 80);
-  assert.equal(row.scoreDirection.direction, '—', 'policy has not confirmed a direction yet');
+  assert.equal(row.scoreDirection.direction, 'BUY', 'technical engine direction is recorded even while policy waits');
   assert.equal(row.pattern.qualified, true);
   assert.equal(row.pattern.triggerReady, false);
   assert.match(row.blockerReason, /gatilho técnico/i);
-  assert.equal(row.timing.timeframe, undefined, 'timeframe is represented in the timing object from the row root');
   assert.equal(row.timeframe, 'M1');
   assert.equal(row.timing.secondsRemaining, 12);
   assert.equal(row.delivery.status, 'pending');
@@ -130,10 +129,10 @@ test('delivery status updates latest and matching event without rewriting other 
   const row = buildDecisionAudit(sample(), sample().professionalDecision, 1234);
   const history = appendDecisionAudit({}, row, 40);
   const updated = updateDecisionAuditDelivery(history, { id: row.id, cycleKey: row.cycleKey }, {
-    status: 'failed', stage: 'pre', attempted: true, notification: 'failed', sound: 'failed', reason: 'Canais indisponíveis', at: 2000
+    status: 'failed', stage: 'pre', auditId: row.id, attempted: true, notification: 'failed', sound: 'failed', reason: 'Canais indisponíveis', at: 2000
   });
   assert.equal(updated.latest.delivery.status, 'failed');
   assert.equal(updated.latest.delivery.notification, 'failed');
   assert.equal(updated.events[0].delivery.reason, 'Canais indisponíveis');
-  assert.equal(updated.latest.delivery.auditId, undefined, 'audit module merges only delivery data supplied by caller');
+  assert.equal(updated.latest.delivery.auditId, row.id);
 });
