@@ -1054,9 +1054,12 @@ function render(state = {}) {
   try {
     renderUnsafe(state);
   } catch (error) {
-    // A display-only exception must not leave the side panel blank. Keep the
-    // document visible, restore the latest retained state, and expose a small
-    // recovery banner instead of hiding the whole interface.
+    // Try the last successfully retained state first; a malformed new payload
+    // must not erase the last usable display.
+    try {
+      if (lastRenderedState && lastRenderedState !== state) renderUnsafe(lastRenderedState);
+    } catch {}
+    // A display-only exception must not leave the side panel blank.
     try {
       document.documentElement.classList.add('ats-ui-recovery');
       document.body.style.visibility = 'visible';
