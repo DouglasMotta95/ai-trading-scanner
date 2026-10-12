@@ -83,7 +83,7 @@
     if (match) return `${match[1]}/${match[2]}${otc ? ' (OTC)' : ''}`;
 
     const compact = stripped.replace(/[^A-Z0-9]/g, '');
-    const quotes = ['USDT','USD','EUR','GBP','JPY','CAD','AUD','CHF','NZD','BTC','ETH'];
+    const quotes = ['USDT','USDC','USD','EUR','GBP','JPY','AUD','CAD','CHF','NZD','BRL','BTC','ETH','XOF','XAF','MXN','ZAR','SEK','NOK','DKK','TRY','PLN','RUB','SGD','HKD','CNY','INR','THB','KRW','TWD','IDR','MYR','PHP','SAR','AED','CZK','HUF','ILS','CLP','COP','ARS','EGP','NGN','PKR','QAR','RON','UAH','VND','MAD','ISK'];
     for (const quote of quotes) {
       if (!compact.endsWith(quote) || compact.length <= quote.length + 1) continue;
       const base = compact.slice(0, -quote.length);
