@@ -20,8 +20,9 @@ const isManualSource = value => MANUAL_SOURCES.has(clean(value).toLowerCase());
 /**
  * Read the central decision policy's expiration result consistently across the
  * analysis card and manual-entry handoff. A manual value is operational fallback
- * only when the policy approved it, it matches M1/M5, and no fresh conflicting
- * live expiration or active divergence is present.
+ * when the operator explicitly declares a value matching the active timeframe.
+ * Manual acceptance is independent from delayed verification metadata; the direct
+ * CasaTrade read continues in parallel and is diagnostic rather than a deadlock.
  */
 export function getExpirationReadiness(state = {}, now = Date.now()) {
   const operationMode = getOperationMode(state.analystPreferences?.operationMode || 'M1');
@@ -68,7 +69,15 @@ export function getExpirationReadiness(state = {}, now = Date.now()) {
   const guardSource = clean(guard.source || '');
   const observedManual = isManualSource(observedFieldSource) ? observedValue : null;
   const guardManual = guardFresh && isManualSource(guardSource) ? normExp(guard.actual || '') : null;
-  const declared = normExp(controls.userDeclaredExpiration || observedManual || guardManual || '');
+  const declared = normExp(
+    controls.userDeclaredExpiration
+      || state.executionPreferences?.expiration
+      || state.analystPreferences?.preferredExpiration
+      || guard.userDeclared
+      || observedManual
+      || guardManual
+      || ''
+  );
 
   const liveTf = clean(state.analysisTimeframe || state.timeframe || state.diagnostics?.marketClock?.timeframe).toUpperCase();
   const manualAccepted = !!declared
