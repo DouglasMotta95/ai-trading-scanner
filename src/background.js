@@ -970,20 +970,29 @@ function observeState(state = {}) {
     const marker = state.diagnostics?.activeAssetTransition || {};
     const alreadyCleared = sameMarket(marker.to || '', state.asset)
       && Number(marker.clearedAt || 0) > 0;
-    if (!alreadyCleared && !assetResetInFlight) {
-      assetResetInFlight = true;
-      updateScannerState(current => clearStaleAssetDecision(current))
-        .then(nextState => {
-          if (nextState) {
-            try { resetOrchestrator(); } catch {}
-            lastInputSignature = '';
-            lastMarketKey = '';
-          }
-        })
-        .catch(() => {})
-        .finally(() => { assetResetInFlight = false; });
+    if (!alreadyCleared) {
+      if (!assetResetInFlight) {
+        assetResetInFlight = true;
+        updateScannerState(current => clearStaleAssetDecision(current))
+          .then(nextState => {
+            if (nextState) {
+              try { resetOrchestrator(); } catch {}
+              lastInputSignature = '';
+              lastMarketKey = '';
+            }
+          })
+          .catch(() => {})
+          .finally(() => { assetResetInFlight = false; });
+      }
+      return;
     }
-    return;
+    // If currentCandle still has the prior asset tag but separately keyed history
+    // for the focused asset is available, analyze that history and replace the
+    // stale currentCandle. Without keyed history, wait for a new tagged candle.
+    const history = state.marketHistory || {};
+    const hasActiveHistory = Object.keys(history).some(key => sameMarket(key, state.asset)
+      && Array.isArray(history[key]) && history[key].length >= 2);
+    if (!hasActiveHistory) return;
   }
   const snapshot = consolidatedSnapshot(state);
   if (!snapshot) return;
