@@ -17,8 +17,9 @@ test('manual execution does not expire a valid observed expiration after an arbi
   assert.match(body, /clock\.verified !== true/);
   assert.match(body, /clockBoundToFocus\(clock, focus\)/);
   assert.match(readiness, /const policyReady = decisionFresh/);
-  assert.match(readiness, /const operational = policyReady && operationalCandidate/);
-  assert.match(readiness, /const conflict = divergence \|\| \(realFresh && candidate\.value !== required\)/);
+  assert.match(readiness, /const operationalCandidate = manualAccepted && !conflict/);
+  assert.match(readiness, /const operational = operationalCandidate \|\|/);
+  assert.match(readiness, /const conflict = !manualAccepted && \(divergence/);
 });
 
 test('pre-signal stability remains display-only and bounded', () => {
@@ -36,4 +37,28 @@ test('manifest and package versions identify the stability patch consistently', 
   assert.equal(manifest.version, '0.12.11');
   assert.equal(pkg.version, manifest.version);
   assert.equal(manifest.version_name, '0.12.11-expiration-countdown-profile-fix');
+});
+
+
+test('video 20942: manual M1 expiration and running countdown cannot deadlock the decision', () => {
+  const readiness = read('src/core/expiration-readiness.js');
+  const policy = read('src/background-decision-policy.js');
+  const panel = read('src/sidepanel/app-v2.js');
+  assert.match(readiness, /const conflict = !manualAccepted/);
+  assert.match(policy, /EXPIRAÇÃO MANUAL ACEITA – usando 1 min/);
+  assert.match(panel, /if \\(manual === operation\\.expiration && \\(!currentTf \\|\\| currentTf === operation\\.timeframe\\)\\)/);
+  assert.match(policy, /observedCloseAt != null \\? observedCloseAt - tfMs/);
+  assert.match(panel, /observedCloseAt != null \\? observedCloseAt - tfMs/);
+});
+
+test('asset switch retains global expiration selection and the market-keyed candle cache', () => {
+  const session = read('src/background-market-session.js');
+  assert.match(session, /const sessionBase = state;/);
+  assert.match(session, /marketHistory: sessionBase\\.marketHistory \\|\\| \\{\\}/);
+});
+
+test('white-panel recovery has a storage-backed visible emergency view', () => {
+  const recovery = read('src/sidepanel/boot-guard.js');
+  assert.match(recovery, /atsPanelEmergencyFallback/);
+  assert.match(recovery, /scannerState/);
 });
