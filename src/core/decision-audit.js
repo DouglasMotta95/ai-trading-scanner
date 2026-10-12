@@ -52,9 +52,6 @@ export function buildDecisionAudit(state = {}, decision = {}, now = Date.now()) 
     { key: 'estabilidade', ok: finalHits >= 2 || actionable, detail: `${finalHits} confirmações finais acumuladas.` },
     { key: 'prazo', ok: secondsRemaining != null && secondsRemaining > 0, detail: secondsRemaining == null ? 'Countdown indisponível.' : `${secondsRemaining}s restantes.` }
   ];
-  const deliveryEligible = ['POSSIBLE_BUY','POSSIBLE_SELL','ENTER_BUY','ENTER_SELL'].includes(uiState)
-    && !!direction && decision.timeReady === true && decision.expirationReady === true
-    && numberOrNull(secondsRemaining) != null && Number(secondsRemaining) > 0;
   const bucket = secondsRemaining == null ? 'na' : Math.floor(Number(secondsRemaining) / 5);
   const signature = JSON.stringify({
     cycleKey, uiState, direction, score: Math.round(score), blocker,
@@ -100,8 +97,8 @@ export function buildDecisionAudit(state = {}, decision = {}, now = Date.now()) 
     },
     blockerReason: blocker,
     delivery: {
-      status: deliveryEligible ? 'pending' : 'not_eligible',
-      reason: deliveryEligible ? 'Aguardando resultado do módulo de notificação.' : blocker || 'A decisão atual não gera alerta de entrada.',
+      status: 'pending',
+      reason: 'Aguardando que o módulo de notificação avalie elegibilidade e canais de saída.',
       attempted: false, notification: 'not_attempted', sound: 'not_attempted', at: null
     }
   };
@@ -111,7 +108,17 @@ export function appendDecisionAudit(previous = {}, row = {}, maxEvents = 40) {
   if (!row?.id || !row?.signature) return previous || { latest: null, events: [] };
   const latest = previous?.latest || null;
   const same = latest?.signature === row.signature;
-  if (same) return previous;
+  if (same) {
+    // Refresh the live countdown once it changes by a second, but keep the
+    // event history transition-based and preserve the asynchronous delivery result.
+    if (Number(latest?.timing?.secondsRemaining) === Number(row?.timing?.secondsRemaining)
+      && latest?.delivery?.status === row?.delivery?.status) return previous;
+    return {
+      ...previous,
+      latest: { ...row, delivery: latest?.delivery || row.delivery },
+      updatedAt: row.at
+    };
+  }
   const events = Array.isArray(previous?.events) ? previous.events : [];
   return {
     latest: row,
