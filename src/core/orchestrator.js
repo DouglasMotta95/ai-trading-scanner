@@ -4,7 +4,7 @@ import {
   serializeCompletedDecisions as legacySerializeCompletedDecisions,
   restoreCompletedDecisions as legacyRestoreCompletedDecisions
 } from './orchestrator-legacy.js';
-import { getThresholds } from './analysis.js';
+import { getThresholds, getSignalPolicy } from './analysis.js';
 
 // Price action/indicators remain in the legacy analyst. This wrapper owns exactly
 // one bounded decision for each target candle: ENTER BUY, ENTER SELL or WAIT.
@@ -17,11 +17,11 @@ const wrapperCompletedDecisions = new Map();
 const WRAPPER_ROW_PREFIX = 'wrapper-cycle:';
 
 const HIGH_CONFIDENCE = Object.freeze({
-  possibleScore: 60,
-  finalScore: 70,
-  possiblePower: 58,
-  finalPower: 60,
-  minimumEvidence: 2
+  possibleScore: 52,
+  finalScore: 55,
+  possiblePower: 45,
+  finalPower: 45,
+  minimumEvidence: 1
 });
 
 const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
@@ -123,11 +123,14 @@ export function decisionQuality(signal = {}, direction = null, thresholds = getT
   const rejection = directionalRejection && rejectionStrength >= thresholds.rejectionStrength;
   const regime = String(signal.regime?.type || '').toLowerCase();
   const evidence = highConfidenceEvidence(signal, direction, thresholds);
-  const finalScore = Math.max(HIGH_CONFIDENCE.finalScore, thresholds.confirmScore);
-  const commonReady = !!direction
+  const profilePolicy = getSignalPolicy(thresholds.profile);
+  const finalScore = profilePolicy.finalScore;
+  // The selected profile is the real execution threshold, not merely a label.
+  // A clear direction plus directional power >=45 and the profile score floor
+  // are sufficient; optional evidence is still recorded for diagnostics.
+  const commonReady = ['BUY', 'SELL'].includes(direction)
     && score >= finalScore
-    && power >= HIGH_CONFIDENCE.finalPower
-    && evidence.length >= HIGH_CONFIDENCE.minimumEvidence;
+    && power >= 45;
   // A fully-qualified, non-extended pullback has its own final path: still
   // require independent directional confirmation plus power/score floors,
   // but don't demand the generic 70/60 gate if this specific setup is sound.
@@ -259,16 +262,14 @@ export function anticipationWindowSeconds(timeframe = 'M1') {
 }
 
 function possibleQuality(signal = {}, direction = null, score = 0, thresholds = getThresholds()) {
-  const possibleScore = Math.max(HIGH_CONFIDENCE.possibleScore, thresholds.possibleScore);
-  if (qualifiesEarlyPattern(signal, direction, score)) return true;
-  if (!direction || Number(score) < possibleScore) return false;
+  const profilePolicy = getSignalPolicy(thresholds.profile);
+  const possibleScore = profilePolicy.possibleScore;
+  if (!['BUY', 'SELL'].includes(direction) || Number(score) < possibleScore) return false;
   const analytics = signal.analytics || {};
   const power = Number(direction === 'BUY' ? analytics.buyPower : analytics.sellPower) || 0;
-  if (power < HIGH_CONFIDENCE.possiblePower) return false;
-  if (highConfidenceEvidence(signal, direction, thresholds).length < HIGH_CONFIDENCE.minimumEvidence) return false;
-  const stableDirection = clean(signal.stability?.possibleDirection).toUpperCase();
-  const publishedDirection = clean(signal.direction).toUpperCase();
-  return stableDirection === direction || (signal.state === 'WATCH' && publishedDirection === direction);
+  // Do not apply the old fixed 58% power gate on top of the active profile.
+  // Exactly 45 is valid and must not be rejected.
+  return power >= 45;
 }
 
 function possibleWithHysteresis(cycle, allowed, direction, at) {
@@ -582,16 +583,27 @@ export function processSnapshot(snapshot = {}, state = {}) {
     return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: nextSignal, decisionCycle: { ...cycle }, candidateBlockerTrace };
   }
 
-  if (signal.state === 'CONFIRM' && ['BUY', 'SELL'].includes(signal.direction) && quality.qualifies) {
+  const profilePolicy = getSignalPolicy(thresholds.profile);
+  const profileFinalReady = ['BUY', 'SELL'].includes(direction)
+    && score >= profilePolicy.finalScore
+    && power >= 45;
+  if (profileFinalReady || (signal.state === 'CONFIRM' && ['BUY', 'SELL'].includes(signal.direction) && quality.qualifies)) {
     cycle.locked = 'ENTER';
-    cycle.direction = signal.direction;
+    cycle.direction = direction || signal.direction;
     cycle.score = Math.max(score, Number(signal.score || 0));
     cycle.setup = signal.setup || quality.setup || null;
-    cycle.reason = signal.reason;
+    cycle.reason = `${cycle.direction === 'BUY' ? 'COMPRA' : 'VENDA'} — DECISÃO FINAL • perfil ${thresholds.profile} • score ${Math.round(score)}/100 • poder ${Math.round(power)}% (mínimo 45%). Entrada manual na próxima vela.`;
     cycle.decidedAt = at;
     cycles.set(key, cycle);
     const trace = appendTrace(state, { key, targetStart: cycle.targetStart, decision: 'ENTER', direction: cycle.direction, score: cycle.score, setup: cycle.setup, reason: cycle.reason, decidedAt: at });
-    return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, decisionCycle: { ...cycle }, decisionTrace: trace, candidateBlockerTrace };
+    return {
+      ...result,
+      lastConfirmed: rolledLastConfirmed || result.lastConfirmed,
+      signal: enterSignal(signal, cycle, cycle.direction, cycle.score, cycle.reason),
+      decisionCycle: { ...cycle },
+      decisionTrace: trace,
+      candidateBlockerTrace
+    };
   }
 
   const stable = observeDecision(cycle, direction, quality.qualifies, at);
