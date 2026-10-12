@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.12.7 — Stabilize live score display and reconcile expiration gates
+
+### Findings from video 20924
+- The score stabilizer already existed, but its candle key preferred the raw live-candle timestamp over the stable CasaTrade candle boundary. Tick-level timestamps caused the stabilizer to reset repeatedly, so values such as 61 → 40 → 14 → 4 → 73 could still appear directly.
+- The technical card and final-entry funnel used different expiration rules. The central policy could accept a matching, explicitly declared operational fallback when no fresh conflicting platform observation existed, while the technical guidance card insisted on direct DOM verification unconditionally and showed a contradictory blocker.
+- The manual-entry handoff also checked only `platformControls.observed.expiration`, so a policy-approved operational fallback could be rejected again at the last gate.
+
+### Fixes
+- Added a pure score-stability helper that keys smoothing by the authoritative candle open/close boundary (or a timeframe-bucketed candle timestamp), not an unrounded live tick timestamp.
+- The score shown in the panel is now visibly labelled **SCORE ESTÁVEL** and smoothed only for display. Raw analysis, candidate qualification, the final decision, and entry authorization remain unchanged.
+- Added one shared expiration-readiness evaluator for the guidance card and manual-intent gate. A matching user-declared value is considered **operational fallback**, not real verification, only when the central decision policy has approved it and no fresh conflicting live expiration or active divergence exists.
+- The primary technical guidance, legacy expiration panel and manual-intent path now describe or consume that same operational state, rather than independently overriding one another.
+- A fresh CasaTrade mismatch, a stale exact clock, asset/frame mismatch, a missing technical final decision, or a false actionable flag still blocks entry.
+
+### Safety
+- Operational fallback is never relabelled as “verified by CasaTrade”.
+- Score smoothing is display-only and cannot create a BUY/SELL signal.
+- No automatic trade execution was added.
+
+---
+
 ## 0.12.6 — Restore technical decisions and refresh analysis on asset switch
 
 ### Findings from video 20859
