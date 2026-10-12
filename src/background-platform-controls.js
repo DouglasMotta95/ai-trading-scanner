@@ -462,17 +462,29 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return false;
     }
 
+    const mappedMode = operationModeForExpiration(declared);
+    let modeChanged = false;
+    let selectedMode = 'M1';
     updateScannerState(state => {
-      const now = Date.now();
-      const previousControls = state.platformControls || {};
+      const currentMode = getOperationMode(state.analystPreferences?.operationMode || 'M1');
+      const nextMode = getOperationMode(mappedMode?.timeframe || currentMode.timeframe);
+      selectedMode = nextMode.timeframe;
+      modeChanged = currentMode.timeframe !== nextMode.timeframe;
+
+      let base = modeChanged ? clearUserDeclaredExpirationState(state) : state;
+      if (modeChanged) base = resetSignalStateForModeSwitch(base);
+      const previousControls = base.platformControls || {};
       const previousObserved = previousControls.observed || {};
       const currentSource = clean(previousControls.expirationSource || previousObserved.source || '');
+      const now = Date.now();
       const seededState = {
-        ...state,
+        ...base,
+        analystPreferences: analystPrefs(base, { operationMode: nextMode.timeframe }),
         platformControls: {
           ...previousControls,
           userDeclaredExpiration: declared,
-          userDeclaredAt: now
+          userDeclaredAt: now,
+          modeSyncRequested: modeChanged ? { timeframe: nextMode.timeframe, expiration: nextMode.expiration, source: 'user-expiration-selection', at: now } : previousControls.modeSyncRequested || null
         }
       };
       const resolved = applyExpirationAuthority(seededState, previousObserved, currentSource);
@@ -500,11 +512,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         },
         diagnostics: resolved.diagnostics
       };
-    }).then(state => sendResponse({
-      ok: true,
-      state,
-      expirationGuard: state.diagnostics?.expirationGuard || null
-    })).catch(error => sendResponse({ ok: false, error: String(error?.message || error) }));
+    }).then(async state => {
+      let modeSync = state.platformControls?.autoModeSync || null;
+      if (mappedMode) {
+        if (modeChanged) {
+          try { resetOrchestrator(); } catch {}
+          await persistUiOperationMode(selectedMode);
+        }
+        const applied = await applyCasaTradeMode(state, selectedMode, 'user-expiration-selection');
+        state = applied.state;
+        modeSync = applied.telemetry;
+      }
+      sendResponse({
+        ok: true,
+        state,
+        expirationGuard: state.diagnostics?.expirationGuard || null,
+        modeSync,
+        analystPreferences: state.analystPreferences || null
+      });
+    }).catch(error => sendResponse({ ok: false, error: String(error?.message || error) }));
     return true;
   }
 
