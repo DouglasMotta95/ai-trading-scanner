@@ -1,6 +1,7 @@
 import { readScannerState, updateScannerState } from './services/scanner-state-atomic.js';
 import { getThresholds, getOperationMode, getSignalPolicy } from './core/analysis.js';
 import { buildDecisionAudit, appendDecisionAudit } from './core/decision-audit.js';
+import { createActiveSignalOperation, reconcileActiveSignalOperation, signalOperationHolds, operationDecision, sameOperationMarket } from './core/signal-operation.js';
 
 // Product policy layer. The technical engine can keep collecting evidence with an
 // estimated clock, but the user-facing decision is never promoted while CasaTrade
@@ -413,6 +414,13 @@ function baseDecision(state = {}) {
     updatedAt: now
   };
 
+  const activeOperation = reconcileActiveSignalOperation(state.activeSignalOperation, state.signalHistory || [], now);
+  if (signalOperationHolds(activeOperation)
+    && sameOperationMarket(activeOperation.asset, state.asset)
+    && clean(activeOperation.timeframe).toUpperCase() === clean(time.timeframe || pref.operationMode).toUpperCase()) {
+    return operationDecision(state, activeOperation, now, common);
+  }
+
   const rolloverEntryActive = persistedCycle.locked === 'ENTER'
     && ['BUY','SELL'].includes(persistedDirection)
     && sameMarket(persistedAsset, state.asset)
@@ -684,22 +692,35 @@ async function evaluate(state = {}) {
   const auditRow = buildDecisionAudit(state, decision);
   const auditNext = appendDecisionAudit(state.decisionAudit || {}, auditRow, 40);
   const auditChanged = auditNext !== (state.decisionAudit || null);
-  if (!decisionChanged && !auditChanged) return;
+  const proposedOperation = createActiveSignalOperation(state, decision, Date.now());
+  const operationMissing = !!proposedOperation
+    && (!state.activeSignalOperation || state.activeSignalOperation.id !== proposedOperation.id);
+  const operationNeedsReconcile = !!state.activeSignalOperation
+    && state.activeSignalOperation.status !== 'COMPLETED';
+  if (!decisionChanged && !auditChanged && !operationMissing && !operationNeedsReconcile) return;
 
   writing = true;
   try {
     await updateScannerState(current => {
       const next = baseDecision(current);
+      const now = Date.now();
+      const reconciledOperation = reconcileActiveSignalOperation(current.activeSignalOperation, current.signalHistory || [], now);
+      const createdOperation = createActiveSignalOperation(current, next, now);
+      const nextOperation = signalOperationHolds(reconciledOperation)
+        ? reconciledOperation
+        : (createdOperation || reconciledOperation || current.activeSignalOperation || null);
       const updateDecision = signature(next) !== signature(current.professionalDecision || {});
       const row = buildDecisionAudit(current, next);
       const oldAudit = current.decisionAudit || {};
       const audit = appendDecisionAudit(oldAudit, row, 40);
       const updateAudit = audit !== oldAudit;
-      if (!updateDecision && !updateAudit) return current;
+      const updateOperation = JSON.stringify(nextOperation) !== JSON.stringify(current.activeSignalOperation || null);
+      if (!updateDecision && !updateAudit && !updateOperation) return current;
       return {
         ...current,
         ...(updateDecision ? { professionalDecision: next } : {}),
-        ...(updateAudit ? { decisionAudit: audit } : {})
+        ...(updateAudit ? { decisionAudit: audit } : {}),
+        ...(updateOperation ? { activeSignalOperation: nextOperation } : {})
       };
     });
   } finally {
