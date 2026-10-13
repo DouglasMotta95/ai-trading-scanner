@@ -40,9 +40,9 @@ test('video 20730 fix increments package version and leaves execution gates pres
   const manifest = JSON.parse(read('manifest.json'));
   const pkg = JSON.parse(read('package.json'));
   const panel = read('src/sidepanel/app-v2.js');
-  assert.equal(manifest.version, '0.12.12');
+  assert.equal(manifest.version, '0.12.13');
   assert.equal(pkg.version, manifest.version);
-  assert.equal(manifest.version_name, '0.12.12-unified-profile-gates');
+  assert.equal(manifest.version_name, '0.12.13-audited-release-portal-sync');
   assert.match(panel, /const timeReady = !alignment\.conflict && entryTimeReady\(state\)/);
   assert.match(panel, /const canBuy = !alignment\.conflict && model\.actionable/);
 });
