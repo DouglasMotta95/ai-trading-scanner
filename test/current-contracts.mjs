@@ -154,8 +154,8 @@ export function registerExpirationContracts(label='expiration') {
   test(label + ': real CasaTrade expiration supersedes and invalidates manual fallback', () => {
     const controls = read('src/background-platform-controls.js');
     assert.match(controls, /const invalidatedDeclared = realFresh && declared \? declared : null/);
-    assert.match(controls, /const effectiveDeclared = declared \|\| null/);
-    assert.match(controls, /const manualAccepted = !!declared[\s\S]*declared === operationMode\.expiration/);
+    assert.match(controls, /const effectiveDeclared = invalidatedDeclared \? null : declared/);
+    assert.match(controls, /const manualAccepted = !realFresh && !!declared[\s\S]*declared === operationMode\.expiration/);
     assert.match(controls, /userDeclaredExpiration: seededState\.platformControls\.userDeclaredExpiration/);
   });
   test(label + ': expiration is an execution gate for the active M1\/M5 mode', () => {
@@ -437,7 +437,7 @@ export function registerVideo15292Contracts(label='video-15292') {
     const panel = read('src/sidepanel/app-v2.js');
     const controlHandler = read('src/background-control.js');
     assert.match(controls, /const manualAccepted = !realFresh && !!declared/);
-    assert.match(controls, /operationalFallback = !authority\.realFresh/);
+    assert.match(controls, /const operationalFallback = authority\.manualAccepted === true\s*\|\|\s*\(!authority\.realFresh/);
     assert.match(policy, /source: 'user-declared'/);
     assert.match(policy, /ready: true/);
     assert.match(policy, /verified: false/);
@@ -453,7 +453,7 @@ export function registerVideo15292Contracts(label='video-15292') {
     assert.match(control, /realExpirationAt: realExpiration \? now/);
     assert.match(control, /realExpirationSource: realExpiration \? 'background-direct-dom'/);
     assert.match(control, /liveAuthority: !!realExpiration/);
-    assert.match(control, /userDeclaredExpiration: realExpiration \? null/);
+    assert.match(control, /userDeclaredExpiration: realExpiration \? null : \(/);
   });
 
   test(label + ': responsive expiration reader accepts label/value in either DOM order', () => {
@@ -552,7 +552,7 @@ export function registerEntrySyncFallbackContracts(label='entry-sync-fallback') 
   test(label + ': selected operation mode seeds a user declaration for canvas expiration fallback', () => {
     const controls = read('src/background-platform-controls.js');
     assert.match(controls, /userDeclaredExpiration: nextMode\.expiration/);
-    assert.match(controls, /const operationalFallback = !authority\.realFresh/);
+    assert.match(controls, /const operationalFallback = authority\.manualAccepted === true\s*\|\|\s*\(!authority\.realFresh/);
     assert.match(controls, /authority\.source === 'user-declared'/);
     assert.match(controls, /const ready = !!authority\.actual/);
   });
