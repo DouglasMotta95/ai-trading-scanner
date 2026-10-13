@@ -5,6 +5,7 @@ import {
   restoreCompletedDecisions as legacyRestoreCompletedDecisions
 } from './orchestrator-legacy.js';
 import { getThresholds, getSignalPolicy } from './analysis.js';
+import { evaluateProfileEntryGate } from './profile-entry-gates.js';
 
 // Price action/indicators remain in the legacy analyst. This wrapper owns exactly
 // one bounded decision for each target candle: ENTER BUY, ENTER SELL or WAIT.
@@ -263,14 +264,11 @@ export function anticipationWindowSeconds(timeframe = 'M1') {
 }
 
 function possibleQuality(signal = {}, direction = null, score = 0, thresholds = getThresholds()) {
-  const profilePolicy = getSignalPolicy(thresholds.profile);
-  const possibleScore = profilePolicy.possibleScore;
-  if (!['BUY', 'SELL'].includes(direction) || Number(score) < possibleScore) return false;
   const analytics = signal.analytics || {};
-  const power = Number(direction === 'BUY' ? analytics.buyPower : analytics.sellPower) || 0;
-  // Do not apply the old fixed 58% power gate on top of the active profile.
-  // Exactly 45 is valid and must not be rejected.
-  return power >= 45;
+  return evaluateProfileEntryGate({
+    profile: thresholds.profile, direction, score,
+    buyPower: analytics.buyPower, sellPower: analytics.sellPower
+  }).candidate;
 }
 
 function possibleWithHysteresis(cycle, allowed, direction, at) {
@@ -584,10 +582,11 @@ export function processSnapshot(snapshot = {}, state = {}) {
     return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: nextSignal, decisionCycle: { ...cycle }, candidateBlockerTrace };
   }
 
-  const profilePolicy = getSignalPolicy(thresholds.profile);
-  const profileFinalReady = ['BUY', 'SELL'].includes(direction)
-    && score >= profilePolicy.finalScore
-    && power >= 45;
+  const profileFinalReady = evaluateProfileEntryGate({
+    profile: thresholds.profile, direction, score,
+    buyPower: analytics.buyPower, sellPower: analytics.sellPower,
+    secondsRemaining, timeframe: windows.timeframe
+  }).finalEligible;
   if (profileFinalReady || (signal.state === 'CONFIRM' && ['BUY', 'SELL'].includes(signal.direction) && quality.qualifies)) {
     cycle.locked = 'ENTER';
     cycle.direction = direction || signal.direction;
