@@ -35,6 +35,7 @@ const ui = {
 function setText(node, value) { if (node) node.textContent = value; }
 function setTop(text, cls = '') {
   if (!topStatus) return;
+  topStatus.hidden = false;
   topStatus.textContent = text;
   topStatus.className = `badge ${cls}`.trim();
 }
@@ -106,7 +107,7 @@ function render(state = {}) {
 
   if (ai.status === 'error') {
     card.classList.add('error');
-    setTop('IA INDISPONÍVEL', 'warn');
+    if (topStatus) topStatus.hidden = true;
     setText(title, 'GEMINI TEMPORARIAMENTE INDISPONÍVEL');
     setText(badge, 'NEUTRA');
     if (badge) badge.className = 'badge warn';
