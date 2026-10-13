@@ -496,7 +496,7 @@ function baseDecision(state = {}) {
   const ui = text(signal.uiState).toUpperCase();
   const cycle = cycleKey(state, signal);
   const displayScore = decisionScoreStabilizer.update({ key: cycle, rawScore: score, ready: identity.ready && rows.length >= 2, at: now });
-  const profileGate = evaluateProfileEntryGate({ profile: pref.sensitivityProfile, direction, score, buyPower: signal.analytics?.buyPower, sellPower: signal.analytics?.sellPower, secondsRemaining: time.secondsRemaining, timeframe: pref.operationMode });
+  const profileGate = evaluateProfileEntryGate({ profile: pref.sensitivityProfile, direction, score, buyPower: signal.analytics?.buyPower, sellPower: signal.analytics?.sellPower, analytics: signal.analytics, secondsRemaining: time.secondsRemaining, timeframe: pref.operationMode });
   const sessionConnected = state.connection === 'online';
   const factors = confluence(signal, direction, pref.thresholds);
   const signalPolicy = getSignalPolicy(pref.sensitivityProfile);
