@@ -51,7 +51,7 @@ function decisionWindows(snapshot = {}, signal = {}, thresholds = getThresholds(
     return { pre: 30, decision: 10, skip: 1, duration, timeframe };
   }
   if (timeframe === 'M5') {
-    return { pre: 90, decision: 15, skip: 1, duration, timeframe };
+    return { pre: 30, decision: 15, skip: 1, duration, timeframe };
   }
 
   // Longer/shorter candles keep proportional windows.
@@ -258,7 +258,8 @@ export function qualifiesEarlyPattern(signal = {}, direction = null, score = 0) 
 
 export function anticipationWindowSeconds(timeframe = 'M1') {
   const tf = clean(timeframe).toUpperCase();
-  return tf === 'M5' ? 120 : tf === 'M1' ? 45 : Math.max(15, Math.min(120, timeframeMs(tf) / 1000 * 0.25));
+  // Keep the sensitivity profile's possible-signal window aligned across M1/M5.
+  return tf === 'M5' || tf === 'M1' ? 30 : Math.max(15, Math.min(30, timeframeMs(tf) / 1000 * 0.25));
 }
 
 function possibleQuality(signal = {}, direction = null, score = 0, thresholds = getThresholds()) {
