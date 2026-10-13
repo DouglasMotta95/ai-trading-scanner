@@ -341,7 +341,9 @@ export function fastLiveDecision(signal = {}, context = {}) {
   if (!q.strong) {
     const retained = recentCandidate(key, direction, at, score, possibleScore);
     const heldHits = observe(key, direction, false, at);
-    if (retained && seconds > finalWindowSeconds && seconds <= preSignalWindowSeconds) {
+    // A display hold is only valid while the candidate still satisfies the
+    // profile gate; never preserve POSSÍVEL after directional power drops below 45.
+    if (retained && directCandidateReady && seconds > finalWindowSeconds && seconds <= preSignalWindowSeconds) {
       return possibleHeld(signal, retained.direction, score, seconds);
     }
     if (seconds <= finalWindowSeconds && heldHits > 0) {
