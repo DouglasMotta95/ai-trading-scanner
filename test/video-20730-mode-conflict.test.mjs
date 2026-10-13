@@ -43,6 +43,6 @@ test('video 20730 fix increments package version and leaves execution gates pres
   assert.equal(manifest.version, '0.12.12');
   assert.equal(pkg.version, manifest.version);
   assert.equal(manifest.version_name, '0.12.12-unified-profile-gates');
-  assert.match(panel, /if \(!exactClockReady\(state\)\) return false/);
+  assert.match(panel, /const timeReady = !alignment\.conflict && entryTimeReady\(state\)/);
   assert.match(panel, /const canBuy = !alignment\.conflict && model\.actionable/);
 });
