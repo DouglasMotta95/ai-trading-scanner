@@ -121,12 +121,13 @@ function stabilizeDirection(key, rawDirection, at, score) {
   return { direction: old.stable, transitioning: true, from: old.stable, to: rawDirection, hits: pendingHits };
 }
 
-function rememberCandidate(key, direction, score, at) {
+function rememberCandidate(key, direction, score, at, power = 0) {
   if (!direction || !Number.isFinite(score) || !Number.isFinite(at)) return;
   const old = candidateTrackers.get(key);
   candidateTrackers.set(key, {
     direction,
     score,
+    power: Number(power || 0),
     at,
     since: old?.direction === direction ? Number(old.since || at) : at
   });
@@ -302,7 +303,7 @@ export function fastLiveDecision(signal = {}, context = {}) {
   const q = quality(signal, direction, thresholds, confirmationMode, signalPolicy);
   const profileGate = evaluateProfileEntryGate({
     profile: thresholds.profile, direction, score,
-    buyPower: signal.analytics?.buyPower, sellPower: signal.analytics?.sellPower,
+    buyPower: signal.analytics?.buyPower, sellPower: signal.analytics?.sellPower, analytics: signal.analytics,
     secondsRemaining: seconds, timeframe: operationMode.timeframe
   });
   const directionalPower = profileGate.power;
@@ -313,18 +314,20 @@ export function fastLiveDecision(signal = {}, context = {}) {
   // actual signal volume while preserving direction stabilization and the
   // two-hit rule before a final entry.
   if (directCandidateReady && seconds > finalWindowSeconds) {
-    rememberCandidate(key, direction, score, at);
+    const recent = recentCandidate(key, direction, at, score, possibleScore);
+    rememberCandidate(key, direction, score, at, directionalPower);
     const directQuality = { strong: true, power: directionalPower, reasons: ['score', 'direção', 'poder direcional'], setup: signal.setup || 'critério do perfil atingido' };
     observe(key, direction, false, at);
+    if (recent && Number(recent.power || 0) - directionalPower >= 5) return possibleHeld(signal, direction, score, seconds);
     return possible(signal, direction, score, seconds, directQuality);
   }
   if (directCandidateReady && profileGate.finalEligible) {
-    rememberCandidate(key, direction, score, at);
+    rememberCandidate(key, direction, score, at, directionalPower);
     const directQuality = { strong: true, power: directionalPower, reasons: ['score final', 'direção', 'poder direcional'], setup: signal.setup || 'critério final do perfil atingido' };
-    // The profile score + clear direction + power>=45 are the final contract.
-    // Do not delay a qualifying M1/M5 decision for an extra polling hit.
-    trackers.set(key, { direction, hits: FAST_DECISION.confirmHits, at, weakHits: 0 });
-    return enter(signal, direction, score, seconds, directQuality);
+    const hits = observe(key, direction, true, at);
+    // Profile gate decides eligibility; a second stable observation confirms timing.
+    if (hits >= FAST_DECISION.confirmHits) return enter(signal, direction, score, seconds, directQuality);
+    return possible(signal, direction, score, seconds, directQuality);
   }
 
   if (directCandidateReady && seconds <= finalWindowSeconds) {
@@ -348,7 +351,7 @@ export function fastLiveDecision(signal = {}, context = {}) {
     return waitFinal(signal, score, `confiança insuficiente: poder ${Math.round(q.power)}/${signalPolicy.possiblePower}, confluências ${q.reasons.length}/${signalPolicy.minimumConfluence}`);
   }
 
-  rememberCandidate(key, direction, score, at);
+  rememberCandidate(key, direction, score, at, directionalPower);
 
   if (seconds > finalWindowSeconds) {
     observe(key, direction, false, at);
