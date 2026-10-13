@@ -143,6 +143,21 @@ export function waitingFor(recent = {}, direction = null, score = 0, profile = '
   const chosenDirection = ['BUY', 'SELL'].includes(direction) ? direction : null;
   const lastClose = finite(recent.lastClose);
   const avgRange = Math.max(1e-12, finite(recent.averageRange) || Math.abs(Number(recent.resistance || 0) - Number(recent.support || 0)) || 1);
+  const profilePolicy = getSignalPolicy(thresholds.profile);
+  if (chosenDirection) {
+    const directionalPower = Number(chosenDirection === 'BUY' ? metrics.buyPower : metrics.sellPower) || 0;
+    if (Number(score) >= profilePolicy.possibleScore && directionalPower >= 45) {
+      const side = chosenDirection === 'BUY' ? 'COMPRA' : 'VENDA';
+      const finalReady = Number(score) >= profilePolicy.finalScore;
+      return {
+        type: 'profile_candidate', direction: chosenDirection, label: 'Critério do perfil',
+        level: null, current: Number(score) || 0, required: profilePolicy.finalScore,
+        text: finalReady
+          ? 'Critério final do perfil ' + thresholds.profile + ' atingido para ' + side + '; aguarda somente a janela final e o relógio válido.'
+          : 'POSSÍVEL ' + side + ' liberado pelo perfil ' + thresholds.profile + ' (score ' + Math.round(Number(score) || 0) + ', poder ' + Math.round(directionalPower) + '%); decisão final exige score ' + profilePolicy.finalScore + '/100 na janela final.'
+      };
+    }
+  }
   const candidates = [];
   const add = candidate => {
     if (!candidate || !Number.isFinite(Number(candidate.gap))) return;
@@ -226,17 +241,17 @@ export function waitingFor(recent = {}, direction = null, score = 0, profile = '
     });
   }
 
-  const targetScore = Number(score) < thresholds.possibleScore
-    ? thresholds.possibleScore
-    : Number(score) < thresholds.confirmScore
-      ? thresholds.confirmScore
+  const targetScore = Number(score) < profilePolicy.possibleScore
+    ? profilePolicy.possibleScore
+    : Number(score) < profilePolicy.finalScore
+      ? profilePolicy.finalScore
       : null;
   if (targetScore != null) add({
     type: targetScore === thresholds.possibleScore ? 'possible_score' : 'confirm_score',
     direction: chosenDirection, label: 'Força do padrão', level: null,
     current: Number(score) || 0, required: targetScore,
     gap: Math.max(0, targetScore - Number(score || 0)) / targetScore,
-    text: `Aguardando força do padrão atingir ${targetScore}/100 (agora ${Math.round(Number(score) || 0)}/100).`
+    text: 'Aguardando limiar do perfil ' + thresholds.profile + ' atingir ' + targetScore + '/100 (agora ' + Math.round(Number(score) || 0) + '/100).'
   });
 
   if ((recent.lateral || (recent.reasons || []).some(reason => /compressão/i.test(String(reason)))) && candidates.length) {
