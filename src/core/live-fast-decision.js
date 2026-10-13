@@ -1,4 +1,5 @@
 import { getThresholds, getOperationMode, getSignalPolicy } from './analysis.js';
+import { evaluateProfileEntryGate } from './profile-entry-gates.js';
 const clean = value => String(value ?? '').trim();
 const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
 
@@ -299,8 +300,13 @@ export function fastLiveDecision(signal = {}, context = {}) {
   }
   const direction = stabilized.direction;
   const q = quality(signal, direction, thresholds, confirmationMode, signalPolicy);
-  const directionalPower = Number(direction === 'BUY' ? signal.analytics?.buyPower : signal.analytics?.sellPower) || 0;
-  const directCandidateReady = !!direction && score >= signalPolicy.possibleScore && directionalPower >= 45;
+  const profileGate = evaluateProfileEntryGate({
+    profile: thresholds.profile, direction, score,
+    buyPower: signal.analytics?.buyPower, sellPower: signal.analytics?.sellPower,
+    secondsRemaining: seconds, timeframe: operationMode.timeframe
+  });
+  const directionalPower = profileGate.power;
+  const directCandidateReady = profileGate.candidate;
 
   // The primary score+direction+power gate is independent from the optional
   // professional-context accelerator. This makes the selected profiles govern
@@ -312,13 +318,21 @@ export function fastLiveDecision(signal = {}, context = {}) {
     observe(key, direction, false, at);
     return possible(signal, direction, score, seconds, directQuality);
   }
-  if (directCandidateReady && seconds <= finalWindowSeconds && score >= signalPolicy.finalScore) {
+  if (directCandidateReady && profileGate.finalEligible) {
     rememberCandidate(key, direction, score, at);
     const directQuality = { strong: true, power: directionalPower, reasons: ['score final', 'direção', 'poder direcional'], setup: signal.setup || 'critério final do perfil atingido' };
     // The profile score + clear direction + power>=45 are the final contract.
     // Do not delay a qualifying M1/M5 decision for an extra polling hit.
     trackers.set(key, { direction, hits: FAST_DECISION.confirmHits, at, weakHits: 0 });
     return enter(signal, direction, score, seconds, directQuality);
+  }
+
+  if (directCandidateReady && seconds <= finalWindowSeconds) {
+    const finalHint = 'score final ' + signalPolicy.finalScore + '/100 ainda não alcançado; mantido POSSÍVEL sem liberação de entrada.';
+    return possible(signal, direction, score, seconds, {
+      strong: true, power: directionalPower,
+      reasons: ['score do perfil', 'direção', 'poder direcional'], setup: finalHint
+    });
   }
 
   if (!q.strong) {
