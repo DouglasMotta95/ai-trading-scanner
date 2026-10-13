@@ -9,7 +9,7 @@ const numberOrNull = value => value == null || value === '' || !Number.isFinite(
  */
 export function evaluateProfileEntryGate({
   profile = 'MEDIO', direction = null, score = 0, buyPower = 0, sellPower = 0,
-  power = null, secondsRemaining = null, timeframe = 'M1'
+  power = null, secondsRemaining = null, timeframe = 'M1', analytics = {}
 } = {}) {
   const policy = getSignalPolicy(profile);
   const side = clean(direction);
@@ -19,13 +19,22 @@ export function evaluateProfileEntryGate({
   const operation = getOperationMode(timeframe);
   const finalWindowSeconds = operation.timeframe === 'M5' ? 15 : 10;
   const validDirection = side === 'BUY' || side === 'SELL';
-  const candidate = validDirection && numericScore >= policy.possibleScore && directionalPower >= 45;
+  const opposite = side === 'BUY' ? 'SELL' : 'BUY';
+  // Direction is not clear when two independent, strong signals point the other way.
+  // This conflict check is not an additional confluence minimum.
+  const opposingEvidence = [
+    clean(analytics.momentumDirection) === opposite && Number(analytics.momentumScore || 0) >= 70,
+    clean(analytics.continuationDirection) === opposite && Number(analytics.continuationScore || 0) >= 70,
+    clean(analytics.rejectionDirection) === opposite && Number(analytics.rejectionStrength || 0) >= 70
+  ].filter(Boolean).length;
+  const directionClear = validDirection && opposingEvidence < 2;
+  const candidate = directionClear && numericScore >= policy.possibleScore && directionalPower >= 45;
   const inPreparationWindow = seconds != null && seconds > 0 && seconds <= 30;
   const inFinalWindow = seconds != null && seconds > 0 && seconds <= finalWindowSeconds;
   const finalEligible = candidate && numericScore >= policy.finalScore && inFinalWindow;
   return {
     profile: policy.profile, direction: validDirection ? side : null, score: numericScore, power: directionalPower,
     possibleScore: policy.possibleScore, finalScore: policy.finalScore, finalWindowSeconds,
-    candidate, inPreparationWindow, inFinalWindow, finalEligible
+    opposingEvidence, directionClear, candidate, inPreparationWindow, inFinalWindow, finalEligible
   };
 }
