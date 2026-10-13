@@ -34,9 +34,13 @@ test('asset or timeframe switch clears every operational field that could leak t
   const start = market.indexOf('function resetForSession');
   const end = market.indexOf('\nfunction clockRecord', start);
   const reset = market.slice(start, end);
-  for (const field of ['price: null','candles: []','currentCandle: null','marketHistory: {}','signal: null','lastConfirmed: null','tradeIntent: null','lastSeen: null']) {
+  for (const field of ['price: null','candles: []','currentCandle: null','signal: null','lastConfirmed: null','tradeIntent: null','lastSeen: null']) {
     assert.ok(reset.includes(field), `missing reset field: ${field}`);
   }
+  assert.match(reset, /const cachedTargetHistory = sessionBase\.marketHistory/);
+  assert.match(reset, /const nextMarketHistory = Array\.isArray\(cachedTargetHistory\) \? \{ \[toAsset\]: cachedTargetHistory \} : \{\}/);
+  assert.match(reset, /marketHistory: nextMarketHistory/);
+  assert.doesNotMatch(reset, /marketHistory: state\.marketHistory/);
   assert.match(reset, /marketClock: null/);
   assert.doesNotMatch(reset, /resetOrchestrator\(\)/);
 
