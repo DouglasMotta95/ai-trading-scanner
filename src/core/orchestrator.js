@@ -511,8 +511,9 @@ export function processSnapshot(snapshot = {}, state = {}) {
   const direction = directionOf(signal);
   const analytics = signal.analytics || {};
   const power = Number(direction === 'BUY' ? analytics.buyPower : analytics.sellPower) || 0;
-  const earlyPattern = qualifiesEarlyPattern(signal, direction, score);
-  const rawPossible = earlyPattern || possibleQuality(signal, direction, score, thresholds);
+  const profileCandidate = evaluateProfileEntryGate({ profile: thresholds.profile, direction, score, buyPower: analytics.buyPower, sellPower: analytics.sellPower, secondsRemaining, timeframe: windows.timeframe });
+  const earlyPattern = profileCandidate.candidate && qualifiesEarlyPattern(signal, direction, score);
+  const rawPossible = profileCandidate.candidate && (earlyPattern || possibleQuality(signal, direction, score, thresholds));
   const quality = decisionQuality(signal, direction, thresholds, confirmationMode);
   const technicalFinal = signal.state === 'CONFIRM' || ['ENTER_BUY', 'ENTER_SELL'].includes(clean(signal.uiState).toUpperCase());
   let candidateBlockerTrace = upsertCandidateBlockerTrace(state, {
@@ -587,7 +588,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
     buyPower: analytics.buyPower, sellPower: analytics.sellPower,
     secondsRemaining, timeframe: windows.timeframe
   }).finalEligible;
-  if (profileFinalReady || (signal.state === 'CONFIRM' && ['BUY', 'SELL'].includes(signal.direction) && quality.qualifies)) {
+  if (profileFinalReady) {
     cycle.locked = 'ENTER';
     cycle.direction = direction || signal.direction;
     cycle.score = Math.max(score, Number(signal.score || 0));
