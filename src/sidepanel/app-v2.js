@@ -1,5 +1,6 @@
 const $ = id => document.getElementById(id);
 const PREF_KEY = 'atsScannerUiPreferences';
+const UI_PROFILE_LIMITS = Object.freeze({ RIGIDO: Object.freeze({ possible: 58, final: 62 }), MEDIO: Object.freeze({ possible: 52, final: 55 }), SOLTO: Object.freeze({ possible: 45, final: 50 }) });
 const DEFAULT_PREFS = Object.freeze({
   overlayEnabled: false,
   possibleSoundEnabled: false,
@@ -607,7 +608,7 @@ function entryBlockReason(state = {}) {
 
   const clockTf = normTf(clock.timeframe || state.analysisTimeframe || state.timeframe || operation.timeframe);
   if (clockTf !== operation.timeframe) return `AJUSTE O TIMEFRAME DA CASATRADE PARA ${operation.timeframe}`;
-  return 'ENTRADA AINDA NÃO LIBERADA';
+  return 'AGUARDANDO CONFIRMAÇÃO DO GATE DE DECISÃO';
 }
 
 function gateKind(state = {}) {
@@ -689,7 +690,9 @@ function decisionModel(state = {}) {
   const ui = String(p.uiState || technical.uiState || '').toUpperCase();
   const technicalUi = String(technical.uiState || '').toUpperCase();
   const direction = String(p.direction || technical.direction || technical.analysisDirection || '').toUpperCase();
-  const scoreCandidates = [technical.analysisScore, technical.score, p.score]
+  const candidateStates = ['POSSIBLE_BUY','POSSIBLE_SELL','ENTER_BUY','ENTER_SELL'];
+  const pIsCandidate = candidateStates.includes(ui);
+  const scoreCandidates = (pIsCandidate ? [p.score, p.rawScore, technical.analysisScore, technical.score] : [technical.analysisScore, technical.score, p.rawScore, p.score])
     .map(value => value == null || value === '' ? null : Number(value))
     .filter(value => value != null && Number.isFinite(value))
     .map(value => Math.max(0, Math.min(100, value)));
@@ -705,9 +708,20 @@ function decisionModel(state = {}) {
   const blocked = timeReady ? '' : alignmentBlock || entryBlockReason(state);
 
   if (!timeReady) {
-    const possibleUi = ['POSSIBLE_BUY','POSSIBLE_SELL','ENTER_BUY','ENTER_SELL'].includes(ui)
-      ? ui
-      : ['POSSIBLE_BUY','POSSIBLE_SELL','ENTER_BUY','ENTER_SELL'].includes(technicalUi) ? technicalUi : '';
+    const operationLimits = UI_PROFILE_LIMITS[String(state.analystPreferences?.sensitivityProfile || prefs.sensitivityProfile || 'MEDIO').toUpperCase()] || UI_PROFILE_LIMITS.MEDIO;
+    const technicalScore = num(technical.analysisScore ?? technical.score ?? p.rawScore ?? p.score) ?? 0;
+    const candidateDirection = String(p.direction || technical.direction || technical.analysisDirection || '').toUpperCase();
+    const candidatePower = Number(candidateDirection === 'BUY' ? technical.analytics?.buyPower : candidateDirection === 'SELL' ? technical.analytics?.sellPower : 0) || 0;
+    const expirationAccepted = expirationTimingCompatible(expirationObservation(state), operation);
+    const profileCandidate = ['BUY','SELL'].includes(candidateDirection)
+      && technicalScore >= operationLimits.possible
+      && candidatePower >= 45
+      && state.connection === 'online'
+      && !alignment.conflict
+      && expirationAccepted;
+    const possibleUi = candidateStates.includes(ui) ? ui
+      : candidateStates.includes(technicalUi) ? technicalUi
+      : profileCandidate ? 'POSSIBLE_' + candidateDirection : '';
     const possibleDirection = possibleUi.includes('BUY') ? 'BUY' : possibleUi.includes('SELL') ? 'SELL' : null;
     if (possibleDirection) {
       const side = possibleDirection === 'BUY' ? 'COMPRA' : 'VENDA';
