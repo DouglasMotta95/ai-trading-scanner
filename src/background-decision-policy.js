@@ -1,4 +1,6 @@
 import { readScannerState, updateScannerState } from './services/scanner-state-atomic.js';
+import { createScoreStabilizer } from './core/score-stability.js';
+import { evaluateProfileEntryGate } from './core/profile-entry-gates.js';
 import { getThresholds, getOperationMode, getSignalPolicy } from './core/analysis.js';
 import { buildDecisionAudit, appendDecisionAudit } from './core/decision-audit.js';
 import { createActiveSignalOperation, reconcileActiveSignalOperation, signalOperationHolds, operationDecision, sameOperationMarket } from './core/signal-operation.js';
@@ -13,6 +15,7 @@ const ROLLOVER_ENTRY_GRACE_MS = 6500;
 const CANDIDATE_JITTER_GRACE_MS = 5000;
 const FINAL_CANDIDATE_HITS = 2;
 const DEFAULT_PREFS = Object.freeze({ mode: 'NORMAL', geminiEnabled: true, sensitivityProfile: 'MEDIO', confirmationMode: 'SIMPLES', operationMode: 'M1', preferredExpiration: null });
+const decisionScoreStabilizer = createScoreStabilizer({ alpha: 0.2, sampleIntervalMs: 650, maxPointsPerSecond: 8, maxGapMs: 12000 });
 
 
 
@@ -492,6 +495,9 @@ function baseDecision(state = {}) {
   const score = Number(signal.analysisScore ?? signal.score ?? 0) || 0;
   const ui = text(signal.uiState).toUpperCase();
   const cycle = cycleKey(state, signal);
+  const displayScore = decisionScoreStabilizer.update({ key: cycle, rawScore: score, ready: identity.ready && rows.length >= 2, at: now });
+  const profileGate = evaluateProfileEntryGate({ profile: pref.sensitivityProfile, direction, score, buyPower: signal.analytics?.buyPower, sellPower: signal.analytics?.sellPower, secondsRemaining: time.secondsRemaining, timeframe: pref.operationMode });
+  const sessionConnected = state.connection === 'online';
   const factors = confluence(signal, direction, pref.thresholds);
   const signalPolicy = getSignalPolicy(pref.sensitivityProfile);
   const pullbackPattern = signal.analytics?.pullbackContinuation || {};
@@ -501,18 +507,17 @@ function baseDecision(state = {}) {
     && Number(pullbackPattern.roomToLevel) >= 0.35
     && Number(pullbackPattern.score) >= 80;
   // The selected rhythm changes selectivity, but never bypasses context + trigger.
-  const additionalConfluenceReady = factors.count >= signalPolicy.minimumConfluence;
-  const possibleScore = signalPolicy.possibleScore;
-  const finalScore = signalPolicy.finalScore;
+  const possibleScore = profileGate.possibleScore;
+  const finalScore = profileGate.finalScore;
   const entryWindowSeconds = pref.operationMode === 'M1'
     ? 10
     : pref.operationMode === 'M5'
       ? 15
       : pref.thresholds.entryWindowSeconds;
   const preSignalWindowSeconds = 30;
-  const directionalPower = Number(direction === 'BUY' ? signal.analytics?.buyPower : signal.analytics?.sellPower) || 0;
-  const mandatoryPowerReady = directionalPower >= signalPolicy.possiblePower;
-  const finalPowerReady = directionalPower >= signalPolicy.finalPower;
+  const directionalPower = profileGate.power;
+  const mandatoryPowerReady = directionalPower >= 45;
+  const finalPowerReady = directionalPower >= 45;
   const technicalCandidate = ['POSSIBLE_BUY', 'POSSIBLE_SELL', 'ENTER_BUY', 'ENTER_SELL'].includes(ui);
   const technicalFinal = ['ENTER_BUY', 'ENTER_SELL'].includes(ui);
   const professional = signal.analytics?.professional || {};
@@ -531,7 +536,8 @@ function baseDecision(state = {}) {
     confirmationMode: pref.confirmationMode,
     holdSeconds: pref.holdSeconds,
     cycleKey: cycle,
-    score,
+    score: displayScore,
+    rawScore: score,
     confluence: factors.count,
     factors: factors.factors,
     professionalContextReady,
@@ -591,7 +597,21 @@ function baseDecision(state = {}) {
     return { ...common, uiState: 'BUILDING_PATTERN', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: 'Montando o padrão com as velas reais da CasaTrade.' };
   }
   if (!time.ready) {
-    return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: `AGUARDAR — ${time.reason}` };
+    const canKeepProfileCandidate = profileGate.candidate && sessionConnected && identity.ready && focusReady(state) && expiration.ready;
+    if (canKeepProfileCandidate) {
+      const previousCandidate = state.professionalDecision || {};
+      const sameCandidate = previousCandidate.cycleKey === cycle && previousCandidate.direction === direction
+        && ['POSSIBLE_BUY','POSSIBLE_SELL','ENTER_BUY','ENTER_SELL'].includes(text(previousCandidate.uiState).toUpperCase());
+      const side = direction === 'BUY' ? 'COMPRA' : 'VENDA';
+      return {
+        ...common, uiState: direction === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL', direction,
+        actionable: false, alert: 'silent',
+        possibleSince: sameCandidate && Number(previousCandidate.possibleSince || 0) > 0 ? Number(previousCandidate.possibleSince) : now,
+        holdRemainingMs: 0,
+        reason: 'POSSÍVEL ' + side + ' — perfil ' + pref.sensitivityProfile + ' atingido (score ' + Math.round(score) + ', poder ' + Math.round(directionalPower) + '%); aguardando sincronização do countdown (' + time.reason + ').'
+      };
+    }
+    return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: 'AGUARDAR — ' + time.reason };
   }
 
   const seconds = Number(time.secondsRemaining);
@@ -600,9 +620,8 @@ function baseDecision(state = {}) {
   // engine may still label the sample WAIT/NO_TRADE while professional
   // context indicators catch up; a clear direction, score, power, matching
   // session, exact countdown and accepted expiration are the mandatory gate.
-  const basicProfileCandidate = !!direction
-    && score >= possibleScore
-    && directionalPower >= 45
+  const basicProfileCandidate = profileGate.candidate
+    && sessionConnected
     && identity.ready
     && time.ready
     && expiration.ready
@@ -650,15 +669,10 @@ function baseDecision(state = {}) {
     }
     return {
       ...common,
-      uiState: 'WAIT',
-      direction: null,
-      actionable: false,
-      alert: 'silent',
-      possibleSince: null,
-      finalCandidateHits: 0,
-      holdRemainingMs: 0,
-      reason: 'AGUARDAR — score ' + Math.round(score) + '/' + finalScore
-        + ' abaixo do limiar final do perfil ' + pref.sensitivityProfile + '.'
+      uiState: direction === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL',
+      direction, actionable: false, alert: 'silent', possibleSince,
+      finalCandidateHits: 0, holdRemainingMs: 0,
+      reason: 'POSSÍVEL ' + side + ' — perfil atingido; aguardando score final ' + finalScore + '/100 na janela de decisão.'
     };
   }
 
@@ -743,10 +757,10 @@ function baseDecision(state = {}) {
     && globalScoreForPattern >= 64
     && directionalPowerForPattern >= 55
     && patternIndependentConfirmation;
-  if ((!technicalCandidate || !direction || score < possibleScore || !mandatoryPowerReady || !additionalConfluenceReady) && !pullbackFinalCandidate) {
+  if ((!direction || score < possibleScore || !mandatoryPowerReady) && !pullbackFinalCandidate) {
     if (previousCandidateSameCycle
       && direction === previousDirection
-      && score >= Math.max(58, thresholds.possibleScore)
+      && score >= Math.max(0, possibleScore - 8)
       && Number(signal.analytics?.[direction === 'BUY' ? 'buyPower' : 'sellPower'] || 0) >= 45
       && seconds > 0) {
       return {
@@ -774,9 +788,7 @@ function baseDecision(state = {}) {
     : technicalSinceValid ? technicalPossibleSince : now;
   const heldFor = Math.max(0, now - possibleSince);
   const candidateFinalReady = !!direction
-    && ((score >= finalScore && finalPowerReady && additionalConfluenceReady) || pullbackFinalCandidate)
-    && professionalContextReady
-    && professionalTriggerReady;
+    && ((score >= finalScore && finalPowerReady) || pullbackFinalCandidate);
   const priorFinalHits = sameCandidate && previous.direction === direction
     ? Number(previous.finalCandidateHits || 0)
     : 0;
@@ -880,6 +892,7 @@ function signature(value = {}) {
     holdSeconds: value.holdSeconds || null,
     cycleKey: value.cycleKey || null,
     score: value.score || 0,
+    rawScore: value.rawScore || 0,
     confluence: value.confluence || 0,
     factors: value.factors || [],
     timeReady: !!value.timeReady,
