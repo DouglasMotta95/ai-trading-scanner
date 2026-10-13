@@ -99,11 +99,11 @@ test('keeps high-confidence POSSIBLE visible while the second final hit is pendi
   assert.equal(r.direction, 'SELL');
 });
 
-test('keeps M1 as POSSIBLE before the 5 second final window', () => {
+test('keeps M1 as POSSIBLE before the 10 second final window', () => {
   resetFastLiveDecision();
-  const signal = base({ score: 74, analysisScore: 74, secondsRemaining: 6 });
+  const signal = base({ score: 74, analysisScore: 74, secondsRemaining: 11 });
   const first = fastLiveDecision(signal, { asset: 'AUD/CAD (OTC)', timeframe: 'M1', serverTime: 150000 });
-  const second = fastLiveDecision(signal, { asset: 'AUD/CAD (OTC)', timeframe: 'M1', serverTime: 151000 });
+  const second = fastLiveDecision({ ...signal, secondsRemaining: 10 }, { asset: 'AUD/CAD (OTC)', timeframe: 'M1', serverTime: 151000 });
   assert.equal(first.uiState, 'POSSIBLE_SELL');
   assert.equal(second.uiState, 'POSSIBLE_SELL');
   assert.notEqual(second.state, 'CONFIRM');
