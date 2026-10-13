@@ -153,7 +153,7 @@ export function waitingFor(recent = {}, direction = null, score = 0, profile = '
         type: 'profile_candidate', direction: chosenDirection, label: 'Critério do perfil',
         level: null, current: Number(score) || 0, required: profilePolicy.finalScore,
         text: finalReady
-          ? 'Critério final do perfil ' + thresholds.profile + ' atingido para ' + side + '; aguarda somente a janela final e o relógio válido.'
+          ? 'Aguardando janela final e relógio válido — critério final do perfil ' + thresholds.profile + ' atingido para ' + side + '.'
           : 'POSSÍVEL ' + side + ' liberado pelo perfil ' + thresholds.profile + ' (score ' + Math.round(Number(score) || 0) + ', poder ' + Math.round(directionalPower) + '%); decisão final exige score ' + profilePolicy.finalScore + '/100 na janela final.'
       };
     }
