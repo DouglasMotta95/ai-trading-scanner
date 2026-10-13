@@ -21,7 +21,8 @@
 <div class="bg-grid"></div>
 <header class="site-header">
   <a class="brand" href="/"><span>ATS</span><div><b>AI TRADING</b><small>SMART MARKET SCANNER</small></div></a>
-  <nav><a href="#como">Como funciona</a><a href="#recursos">Recursos</a><a href="#diagnostico">Diagnóstico</a><a href="#planos">Planos</a><a href="#plataformas">Plataformas</a></nav>
+  <button id="mobileNavToggle" class="mobile-nav-toggle" type="button" aria-label="Abrir menu" aria-expanded="false" aria-controls="siteNav">☰</button>
+  <nav id="siteNav" aria-label="Navegação principal"><a href="#como">Como funciona</a><a href="#recursos">Recursos</a><a href="#diagnostico">Diagnóstico</a><a href="#planos">Planos</a><a href="#plataformas">Plataformas</a></nav>
   <div class="header-actions"><a id="supportTop" class="ghost" target="_blank" rel="noopener">Suporte</a><button id="accountBtn" class="primary">ENTRAR</button></div>
 </header>
 
@@ -57,15 +58,18 @@
       <article><span>⚡</span><h3>M1 e M5</h3><p>Perfis operacionais separados, com timeframe e expiração alinhados ao modo ativo.</p></article>
       <article><span>◎</span><h3>Bloqueio explicado</h3><p>Score, poder, hold e evidência técnica aparecem no diagnóstico e no estado operacional.</p></article>
       <article><span>⇄</span><h3>Troca de ativo protegida</h3><p>O estado do ativo anterior é limpo para evitar mistura de preço, OHLC e sinais.</p></article>
-      <article><span>◉</span><h3>Feed validado</h3><p>Leitura por DOM, controles e feed estruturado da própria sessão da plataforma.</p></article>
-      <article><span>✓</span><h3>WIN / LOSS observado</h3><p>O scanner salva a cotação da nova vela e compara o resultado após a expiração.</p></article>
+      <article><span>◉</span><h3>Origem dos dados</h3><p>Diagnóstico distingue leituras diretas, fallback declarado e dados que ainda precisam ser confirmados.</p></article>
+      <article><span>✓</span><h3>Registro de resultado</h3><p>Guarda os preços observados para comparação depois da expiração, sem tratar isso como garantia de resultado.</p></article>
       <article><span>🔒</span><h3>Controle de licença</h3><p>Conta, plano, dispositivo, trial e conexão por código temporário em um único ecossistema.</p></article>
+      <article><span>↗</span><h3>Score estável</h3><p>Reduz oscilações visuais dentro da mesma vela sem alterar o score bruto nem criar uma direção artificial.</p></article>
+      <article><span>⌁</span><h3>Histórico de decisão</h3><p>Reúne score, padrão, bloqueio, relógio e entrega de alerta para investigar o que ocorreu.</p></article>
+      <article><span>◈</span><h3>Perfis de análise</h3><p>Critérios de perfil ficam centralizados para evitar regras concorrentes entre o pré-sinal e a decisão final.</p></article>
     </div>
     <p class="showcase-note">O ATS é uma ferramenta de apoio à análise. A entrada financeira continua manual e não há promessa de lucro ou taxa de acerto.</p>
   </section>
 
   <section id="diagnostico" class="section diagnostic-section">
-    <div class="section-title"><span class="eyebrow">TRANSPARÊNCIA OPERACIONAL • v0.12.12</span><h2>O scanner precisa explicar quando espera — e por quê.</h2><p>Leitura de mercado, critérios técnicos e autorização final são etapas diferentes. Uma contagem estimada ou expiração informada não deve aparecer como confirmação real.</p></div>
+    <div class="section-title"><span class="eyebrow">TRANSPARÊNCIA OPERACIONAL • v0.12.13</span><h2>O scanner precisa explicar quando espera — e por quê.</h2><p>Leitura de mercado, critérios técnicos e autorização final são etapas diferentes. Uma contagem estimada ou expiração informada não deve aparecer como confirmação real.</p></div>
     <div class="diagnostic-panel">
       <div class="diagnostic-panel-main"><div class="diagnostic-panel-header"><div><span class="eyebrow">CHECKLIST DE CONFIABILIDADE</span><h3>Antes de liberar uma decisão</h3></div><span class="demo-tag">EXEMPLO</span></div>
         <div class="diagnostic-list"><div class="diagnostic-row"><span class="diagnostic-icon">01</span><div><b>Ativo e gráfico em foco</b><small>Preço, velas e histórico precisam pertencer ao ativo atual.</small></div><span class="diagnostic-state">VALIDAR</span></div>
