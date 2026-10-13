@@ -54,7 +54,8 @@ test('video 20942: manual M1 expiration and running countdown cannot deadlock th
 test('asset switch retains global expiration selection and the market-keyed candle cache', () => {
   const session = read('src/background-market-session.js');
   assert.match(session, /const sessionBase = state;/);
-  assert.ok(session.includes('marketHistory: sessionBase.marketHistory || {}'));
+  assert.ok(session.includes('marketHistory: nextMarketHistory'));
+  assert.ok(session.includes('Array.isArray(cachedTargetHistory) ? { [toAsset]: cachedTargetHistory } : {}'));
 });
 
 test('white-panel recovery has a storage-backed visible emergency view', () => {
