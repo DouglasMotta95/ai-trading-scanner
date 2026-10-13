@@ -1,0 +1,13 @@
+AI TRADING SCANNER v0.12.13 — INSTALAÇÃO
+
+1. Extraia o ZIP para uma pasta permanente.
+2. No Chrome, abra chrome://extensions. No Edge, abra edge://extensions.
+3. Ative o Modo do desenvolvedor.
+4. Clique em “Carregar sem compactação” e selecione a pasta que contém manifest.json.
+5. Na CasaTrade, confira visualmente o ativo, timeframe (M1/M5), expiração e relógio antes de considerar um sinal.
+
+IMPORTANTE
+- Esta é a build consolidada desta revisão; não há necessidade de instalar ZIPs intermediários.
+- Se a extensão já foi carregada sem compactação pela mesma pasta, atualize os arquivos nessa pasta e use “Recarregar” quando caminho e ID forem compatíveis. Evite remover/reinstalar sem necessidade.
+- A autorização de entrada continua manual. A extensão não executa ordens automaticamente nem garante lucro.
+- Testes automatizados passam, mas não substituem uma sessão real da CasaTrade.
