@@ -49,7 +49,7 @@ export function registerBuildContracts(label='build') {
     const model = app.slice(start, end);
     assert.match(model, /const alignmentBlock = alignment\.conflict/);
     assert.doesNotMatch(model, /if \(alignment\.conflict\)\s*\{\s*const tf =/);
-    assert.match(model, /const scoreCandidates = \[technical\.analysisScore, technical\.score, p\.score\]/);
+    assert.match(model, /const candidateStates = \['POSSIBLE_BUY','POSSIBLE_SELL','ENTER_BUY','ENTER_SELL'\]/);\n    assert.match(model, /const scoreCandidates = \(pIsCandidate \?/);
     assert.match(model, /const timeReady = !alignment\.conflict && entryTimeReady\(state\)/);
     assert.match(model, /const blocked = timeReady \? '' : alignmentBlock \|\| entryBlockReason\(state\)/);
   });
