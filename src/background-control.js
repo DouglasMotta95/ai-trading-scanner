@@ -774,8 +774,8 @@ async function probePlatformControlsDirect(tabId) {
       platformControls: {
         ...(state.platformControls || {}),
         observed,
-        userDeclaredExpiration: previousControls.userDeclaredExpiration || null,
-        userDeclaredAt: Number(previousControls.userDeclaredAt || 0),
+        userDeclaredExpiration: realExpiration ? null : (previousControls.userDeclaredExpiration || null),
+        userDeclaredAt: realExpiration ? 0 : Number(previousControls.userDeclaredAt || 0),
         checkedAt: now,
         expirationCheckedAt: exp?.expiration ? now : Number(state.platformControls?.expirationCheckedAt || 0),
         timeframeCheckedAt: tf?.timeframe ? now : Number(state.platformControls?.timeframeCheckedAt || 0),
