@@ -53,9 +53,11 @@ test('large score jumps are smoothed within a candle and raw score returns on ro
   assert.equal(smoother.update({ key: 'EUR/USD|M1|2', rawScore: 73, ready: true, at: 2950 }), 73);
 });
 
-test('score stabilizer resets when technical data is not market-ready', () => {
+test('score stabilizer holds last score over a transient not-ready sample in the same candle', () => {
   const smoother = createScoreStabilizer();
   smoother.update({ key: 'EUR/USD|M1|1', rawScore: 61, ready: true, at: 1000 });
-  assert.equal(smoother.update({ key: 'EUR/USD|M1|1', rawScore: 0, ready: false, at: 1650 }), 0);
-  assert.equal(smoother.update({ key: 'EUR/USD|M1|1', rawScore: 4, ready: true, at: 2300 }), 4);
+  assert.equal(smoother.update({ key: 'EUR/USD|M1|1', rawScore: 0, ready: false, at: 1650 }), 61);
+  const recovered = smoother.update({ key: 'EUR/USD|M1|1', rawScore: 4, ready: true, at: 2300 });
+  assert.ok(recovered < 61 && recovered > 50);
+  assert.equal(smoother.update({ key: 'EUR/USD|M1|2', rawScore: 4, ready: false, at: 2950 }), 0);
 });
