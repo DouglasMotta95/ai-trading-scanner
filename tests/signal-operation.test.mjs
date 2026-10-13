@@ -2,6 +2,7 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import { getSignalPolicy, getThresholds } from '../src/core/analysis.js';
 import { decisionQuality } from '../src/core/orchestrator.js';
+import { evaluateProfileEntryGate } from '../src/core/profile-entry-gates.js';
 import assert from 'node:assert/strict';
 import {
   createActiveSignalOperation,
@@ -73,7 +74,7 @@ test('signal outcome is graded by target candle open-to-close only after close',
   assert.equal(closed.rows[0].outcomeBasis, 'target_candle_open_close');
 });
 
-test('v0.12.11 profile thresholds control actual final decision; power exactly 45 is accepted', () => {
+test('v0.12.12 shared profile gate controls actual final eligibility; power exactly 45 is accepted', () => {
   const cases = [
     ['RIGIDO', 58, 62],
     ['MEDIO', 52, 55],
@@ -85,9 +86,12 @@ test('v0.12.11 profile thresholds control actual final decision; power exactly 4
     assert.equal(policy.finalScore, finalScore);
     assert.equal(policy.possiblePower, 45);
     assert.equal(policy.finalPower, 45);
-    const signal = { analysisScore: finalScore, score: finalScore, analytics: { buyPower: 45, sellPower: 20 } };
-    const result = decisionQuality(signal, 'BUY', getThresholds(profile), 'SIMPLES');
-    assert.equal(result.qualifies, true, profile + ' final threshold must pass at power=45');
+    const result = evaluateProfileEntryGate({
+      profile, direction: 'BUY', score: finalScore, buyPower: 45,
+      secondsRemaining: 10, timeframe: 'M1'
+    });
+    assert.equal(result.candidate, true, profile + ' candidate must pass at power=45');
+    assert.equal(result.finalEligible, true, profile + ' final threshold must pass at power=45');
   }
 });
 
