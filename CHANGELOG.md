@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.12.13 — versão unificada, portal responsivo e release auditada
+
+### Ajustes desta revisão
+- A API e o endpoint de download agora derivam a versão do `manifest.json` efetivamente empacotado, ignorando uma variável `EXTENSION_LATEST_VERSION` desatualizada.
+- Corrigido o desalinhamento entre a versão anunciada no portal e a extensão distribuída.
+- Adicionado `backend/.env.example` com valores de exemplo e sem credenciais reais.
+- O portal preserva o painel de diagnóstico, identifica claramente conteúdo ilustrativo, melhora a navegação em celulares, adiciona foco visível e respeita preferência por movimento reduzido.
+- Incluídos testes de regressão para metadados do release, consistência API/download e navegação/acessibilidade do portal.
+
+### Validação
+- Testes automatizados, sintaxe JavaScript/MJS, manifesto e integridade do ZIP são verificados no artefato local de distribuição.
+- A suíte automatizada não substitui uma sessão real com o feed/conta CasaTrade e não certifica rentabilidade.
+
+---
+
 ## 0.12.12 — Unified profile gates and operational synchronization
 
 ### Correções e validações
