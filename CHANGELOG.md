@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.12.12 — Unified profile gates and operational synchronization
+
+### Correções e validações
+- Centraliza os limites por perfil para candidato POSSÍVEL e decisão final, usando direção clara, score, poder e janela de entrada coerentes.
+- Estabiliza o score durante o ciclo de uma vela, segura oscilações transitórias do feed e reinicia o estado na nova vela ou na troca de ativo. A estabilização não cria sinal nem substitui os critérios técnicos.
+- Faz a leitura real e atual de expiração da CasaTrade prevalecer sobre o fallback manual. A expiração declarada pode ser usada apenas como fallback operacional, nunca como confirmação real, e somente quando ativo, foco, timeframe e countdown estão alinhados.
+- Reforça o bloqueio de sinais até o fechamento da vela-alvo e mantém o histórico/velas isolados por ativo para evitar reutilização de preço/OHLC do símbolo anterior.
+- Inclui cobertura de regressão direcionada aos problemas reportados no vídeo 20942, aos gates compartilhados, à estabilidade do score e à recuperação visual do painel.
+- Alinha a versão reportada pelo backend e pelo portal de clientes com a versão 0.12.12 da extensão.
+
+### Segurança e limites
+- A operação financeira continua manual. Nenhuma ordem BUY/SELL é enviada automaticamente.
+- Uma expiração informada pelo usuário não é rotulada como verificada pela CasaTrade; divergências reais continuam bloqueando a entrada.
+- Scores e sinais não garantem lucro, acerto ou resultado futuro.
+
+---
+
 ## 0.12.7 — Stabilize live score display and reconcile expiration gates
 
 ### Findings from video 20924
