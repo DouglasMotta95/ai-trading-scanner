@@ -261,13 +261,15 @@ function expirationContext(state = {}, observed = {}, expirationSource = '') {
   const liveTf = normTf(state.analysisTimeframe || state.timeframe || state.diagnostics?.marketClock?.timeframe);
   // An explicit matching selection is authoritative for the user's operation
   // mode even when the canvas/DOM probe reports an incompatible real duration.
-  const manualAccepted = !!declared
+  // A fresh direct CasaTrade observation outranks the manual fallback.
+  // Use the declaration only while no real control reading is available.
+  const manualAccepted = !realFresh && !!declared
     && declared === operationMode.expiration
     && (!liveTf || liveTf === operationMode.timeframe);
-  const invalidatedDeclared = null;
-  const effectiveDeclared = declared || null;
-  const actual = manualAccepted ? declared : realFresh ? realExpiration : effectiveDeclared;
-  const source = manualAccepted ? 'user-declared' : realFresh ? (realExpirationSource || 'real') : effectiveDeclared ? 'user-declared' : null;
+  const invalidatedDeclared = realFresh && declared ? declared : null;
+  const effectiveDeclared = invalidatedDeclared ? null : declared || null;
+  const actual = realFresh ? realExpiration : manualAccepted ? declared : effectiveDeclared;
+  const source = realFresh ? (realExpirationSource || 'real') : manualAccepted ? 'user-declared' : effectiveDeclared ? 'user-declared' : null;
 
   return {
     declared: effectiveDeclared,
