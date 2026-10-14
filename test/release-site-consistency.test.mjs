@@ -27,10 +27,10 @@ test('manifest, packages and API source share the actual extension version', () 
   const rootPackage = JSON.parse(read('package.json'));
   const backendPackage = JSON.parse(read('backend/package.json'));
   const server = read('backend/src/server.js');
-  assert.equal(manifest.version, '0.12.13');
+  assert.equal(manifest.version, '0.12.15');
   assert.equal(rootPackage.version, manifest.version);
   assert.equal(backendPackage.version, manifest.version);
-  assert.equal(manifest.version_name, '0.12.13-audited-release-portal-sync');
+  assert.equal(manifest.version_name, '0.12.15-android-startup-clock-recovery');
   assert.match(server, /EXTENSION_MANIFEST\.version/);
   assert.doesNotMatch(server, /EXTENSION_LATEST_VERSION \|\|/);
 });
