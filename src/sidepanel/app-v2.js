@@ -111,6 +111,31 @@ function marketDataReady(state = {}) {
     && rows.length >= 2;
 }
 
+// Display-only continuity for a just-opened side panel on Android/tablet. A
+// content-script heartbeat can be throttled while the side panel is foregrounded;
+// when the previously confirmed session, live market data and every asset key still
+// agree, keep showing that analysis instead of flashing ATUALIZANDO ATIVO. This
+// grace never authorizes an entry: background-decision-policy keeps its fresh-focus
+// and exact-clock checks as the execution authority.
+function stableConfirmedMarketDisplay(state = {}, now = Date.now()) {
+  const session = sessionInfo(state);
+  const focus = state.diagnostics?.focusedAsset || {};
+  const asset = marketId(state.asset || '');
+  const focusAt = Number(focus.at || 0);
+  const lastSeen = Number(state.lastSeen || 0);
+  const candles = Array.isArray(state.candles) ? state.candles : [];
+  const signal = state.signal || {};
+  if (!asset || state.connection !== 'online' || session.dataReady !== true || session.transitioning === true) return false;
+  if (!sameMarket(session.confirmedAsset, asset) || !sameMarket(session.asset, asset)) return false;
+  if (!sameMarket(focus.asset, asset) || focus.reliable !== true || focus.chartScoped !== true || focus.trustedChartFrame !== true) return false;
+  if (!(focusAt > 0 && now - focusAt >= 0 && now - focusAt <= 15000)) return false;
+  if (!(lastSeen > 0 && now - lastSeen >= 0 && now - lastSeen <= 9000)) return false;
+  if (signal.asset && !sameMarket(signal.asset, asset)) return false;
+  if (state.currentCandle?.asset && !sameMarket(state.currentCandle.asset, asset)) return false;
+  if (num(state.price) == null || candles.filter(row => [row?.open,row?.high,row?.low,row?.close].every(value => num(value) != null)).length < 2) return false;
+  return true;
+}
+
 function marketIdentityReady(state = {}) {
   const session = sessionInfo(state);
   const focus = state.diagnostics?.focusedAsset || {};
@@ -625,10 +650,11 @@ function gateKind(state = {}) {
 
 function decisionModel(state = {}) {
   if (!activeLicense(state)) return { uiState: 'WAIT', title: 'AGUARDAR', text: 'AGUARDAR', sub: 'Ative o acesso para iniciar a leitura.', tone: 'waiting', reason: 'Aguardando licença ativa.', score: 0, actionable: false };
-  if (!marketIdentityReady(state)) return { uiState: 'ANALYZING_MARKET', title: 'ATUALIZANDO ATIVO', text: 'AGUARDAR', sub: 'Bloqueio de segurança: confirmando que gráfico, sessão, velas e sinal pertencem ao mesmo ativo.', tone: 'waiting', reason: 'Ativo técnico divergiu do gráfico atual da CasaTrade.', score: 0, actionable: false };
+  const stableDisplay = stableConfirmedMarketDisplay(state);
+  if (!marketIdentityReady(state) && !stableDisplay) return { uiState: 'ANALYZING_MARKET', title: 'ATUALIZANDO ATIVO', text: 'AGUARDAR', sub: 'Bloqueio de segurança: confirmando que gráfico, sessão, velas e sinal pertencem ao mesmo ativo.', tone: 'waiting', reason: 'Ativo técnico divergiu do gráfico atual da CasaTrade.', score: 0, actionable: false };
   const pending = transitionAsset(state);
-  if (pending && !marketDataReady(state)) return { uiState: 'ANALYZING_MARKET', title: 'ATUALIZANDO ATIVO', text: `ATUALIZANDO PARA ${pending}`, sub: 'Limpando dados anteriores e confirmando preço + velas do novo ativo.', tone: 'waiting', reason: 'Troca de ativo em validação.', score: 0, actionable: false };
-  if (!marketDataReady(state) || !focusReady(state)) return { uiState: 'ANALYZING_MARKET', title: 'AGUARDAR', text: 'AGUARDAR', sub: 'Confirmando ativo, preço e velas reais.', tone: 'waiting', reason: 'Identificando o gráfico atual da CasaTrade.', score: 0, actionable: false };
+  if (pending && !marketDataReady(state) && !stableDisplay) return { uiState: 'ANALYZING_MARKET', title: 'ATUALIZANDO ATIVO', text: `ATUALIZANDO PARA ${pending}`, sub: 'Limpando dados anteriores e confirmando preço + velas do novo ativo.', tone: 'waiting', reason: 'Troca de ativo em validação.', score: 0, actionable: false };
+  if ((!marketDataReady(state) || !focusReady(state)) && !stableDisplay) return { uiState: 'ANALYZING_MARKET', title: 'AGUARDAR', text: 'AGUARDAR', sub: 'Confirmando ativo, preço e velas reais.', tone: 'waiting', reason: 'Identificando o gráfico atual da CasaTrade.', score: 0, actionable: false };
 
   const trackedOperation = state.activeSignalOperation || null;
   if (trackedOperation && trackedOperation.status !== 'COMPLETED'
@@ -704,7 +730,8 @@ function decisionModel(state = {}) {
     .replace(/\s{2,}/g, ' ')
     .replace(/^\s*[•·-]\s*/, '')
     .trim() || 'Aguardando confluência técnica.';
-  const timeReady = !alignment.conflict && entryTimeReady(state);
+  // Display grace may preserve analysis, but never upgrades entry readiness; a live, fresh chart focus is still mandatory.
+  const timeReady = !alignment.conflict && focusReady(state) && entryTimeReady(state);
   const blocked = timeReady ? '' : alignmentBlock || entryBlockReason(state);
 
   if (!timeReady) {
@@ -924,7 +951,8 @@ function renderUnsafe(state = {}) {
   const pending = transitionAsset(state);
   const session = sessionInfo(state);
   const panelFocusFresh = focusConfirmedThisPanel(state);
-  const freshMarket = marketDataReady(state) && focusReady(state) && sameMarket(state.diagnostics?.focusedAsset?.asset, state.asset);
+  const stableDisplayMarket = stableConfirmedMarketDisplay(state);
+  const freshMarket = (marketDataReady(state) && focusReady(state) || stableDisplayMarket) && sameMarket(state.diagnostics?.focusedAsset?.asset, state.asset);
   const visibleAsset = freshMarket ? marketId(state.asset || session.confirmedAsset) : '';
   const bootAwaitingFocus = !!state.targetTabId && !panelFocusFresh;
 
