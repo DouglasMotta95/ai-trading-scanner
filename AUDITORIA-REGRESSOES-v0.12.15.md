@@ -12,9 +12,9 @@ A conta aparece ATIVA, o ativo selecionado é USD/CHF (OTC), o modo visível é 
 
 ## Validação
 - Suíte local: 558 testes aprovados, 0 falhas.
-- 231 arquivos JavaScript/MJS passaram por node --check na cópia de trabalho.
-- 31 referências do manifesto conferidas, sem caminhos ausentes.
-- ZIP deve ser extraído e testado limpo depois da geração.
+- 232 arquivos JavaScript/MJS passaram por node --check na cópia de trabalho.
+- 41 referências do manifesto conferidas, sem caminhos ausentes.
+- Os dois ZIPs foram extraídos/testados: 558/558 passaram na extração limpa do ZIP-fonte; 232 verificações de sintaxe passaram; unzip -t aprovou ambos. O ZIP instalável contém manifest.json na raiz com versão 0.12.15.
 
 ## Limite importante
 Não foi possível abrir uma sessão interativa com o feed real da CasaTrade nesta validação. Se a plataforma não expuser tempo de vela verificável, o scanner continuará bloqueando a ação em vez de inventar countdown. Não há garantia de operação vencedora ou de renda.
