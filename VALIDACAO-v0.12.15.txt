@@ -1,0 +1,12 @@
+AI TRADING SCANNER v0.12.15 — RESUMO DE VALIDAÇÃO
+Data: 14/10/2026
+
+- npm test: 558 aprovados, 0 falhas na cópia fonte.
+- node --check: validar novamente após extração limpa.
+- manifest.json: versão 0.12.15; 31 referências validadas na cópia fonte.
+- Continuidade visual: janela restrita a sessão confirmada e mesmo ativo, apenas para renderização; não libera entrada.
+- Status de relógio: só confirmado com amostra disponível, válida e recente.
+- Leitor de relógio solicita uma nova leitura quando falta foco/timeframe; não adivinha tempo.
+- Execução continua manual.
+
+Limitação: nenhuma sessão interativa com o feed real CasaTrade foi executada. A validação automatizada não comprova comportamento de produção nem rentabilidade.
