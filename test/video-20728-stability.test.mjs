@@ -34,9 +34,9 @@ test('pre-signal stability remains display-only and bounded', () => {
 test('manifest and package versions identify the stability patch consistently', () => {
   const manifest = JSON.parse(read('manifest.json'));
   const pkg = JSON.parse(read('package.json'));
-  assert.equal(manifest.version, '0.12.13');
+  assert.equal(manifest.version, '0.12.15');
   assert.equal(pkg.version, manifest.version);
-  assert.equal(manifest.version_name, '0.12.13-audited-release-portal-sync');
+  assert.equal(manifest.version_name, '0.12.15-android-startup-clock-recovery');
 });
 
 
