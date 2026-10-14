@@ -1,4 +1,4 @@
-AI TRADING SCANNER v0.12.13 — INSTALAÇÃO
+AI TRADING SCANNER v0.12.15 — INSTALAÇÃO
 
 1. Extraia o ZIP para uma pasta permanente.
 2. No Chrome, abra chrome://extensions. No Edge, abra edge://extensions.
