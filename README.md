@@ -2,9 +2,11 @@
 
 Extensão Chrome/Edge Manifest V3 + backend Node para leitura e análise de mercado. A CasaTrade é a primeira integração real; captura, normalização, análise, risco e interface permanecem desacoplados por adapters para suportar outras plataformas.
 
-## Versão atual — 0.12.13
+## Versão atual — 0.12.15
 
-A versão 0.12.13 unifica os gates de perfil para candidatos e decisões finais, estabiliza a pontuação dentro do ciclo de cada vela, mantém a expiração real da CasaTrade como fonte autoritativa e permite fallback manual somente quando modo, relógio e ativo estão alinhados. Também reforça o ciclo de decisão por vela e o isolamento de dados após a troca de ativo. A extensão continua com execução manual: não envia ordens automaticamente e não promete lucro ou taxa de acerto.
+A versão 0.12.15 preserva os gates unificados e corrige a continuidade visual durante pausas transitórias de foco no tablet. O cabeçalho só declara countdown real confirmado quando a amostra é utilizável; o leitor solicita nova leitura de foco/controles quando a aquisição do relógio fica parada. A tolerância adicional é apenas visual; a autorização continua exigindo foco fresco, expiração e relógio válidos.
+
+A versão 0.12.15 unifica os gates de perfil para candidatos e decisões finais, estabiliza a pontuação dentro do ciclo de cada vela, mantém a expiração real da CasaTrade como fonte autoritativa e permite fallback manual somente quando modo, relógio e ativo estão alinhados. Também reforça o ciclo de decisão por vela e o isolamento de dados após a troca de ativo. A extensão continua com execução manual: não envia ordens automaticamente e não promete lucro ou taxa de acerto.
 
 Fluxo principal do produto:
 
