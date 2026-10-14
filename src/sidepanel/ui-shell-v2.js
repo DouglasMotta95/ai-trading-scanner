@@ -178,13 +178,16 @@ function exactClockReady(state = {}) {
   if (!baseHandshake(state)) return false;
   const focus = state.diagnostics?.focusedAsset || null;
   const clock = state.diagnostics?.marketClock || null;
-  if (!(clock?.verified === true && clock?.available !== false && clock?.role === 'candle-close')) return false;
+  if (!(clock?.verified === true && clock?.available === true && clock?.role === 'candle-close')) return false;
   if (!EXACT_CLOCK_SOURCES.has(clean(clock?.source))) return false;
   if (!sameMarket(clock?.asset, state.asset) || !clockBoundToFocus(clock, focus)) return false;
   const timeframe = clean(clock?.timeframe || state.analysisTimeframe || state.timeframe).toUpperCase();
-  const freshSample = Number(clock?.at || 0) > 0 && Date.now() - Number(clock.at) < CLOCK_FRESH_MS;
+  const duration = timeframe === 'M5' ? 300 : 60;
+  const remaining = Number(clock?.secondsRemaining);
+  if (!Number.isFinite(remaining) || remaining < 0 || remaining > duration + 2) return false;
+  const freshSample = Number(clock?.at || 0) > 0 && Date.now() - Number(clock.at) >= 0 && Date.now() - Number(clock.at) < CLOCK_FRESH_MS;
   const boundary = clockBoundaryCurrent(clock, Date.now(), timeframe);
-  return (freshSample || boundary) && (Number.isFinite(Number(clock?.secondsRemaining)) || boundary);
+  return freshSample || boundary;
 }
 
 function operationRequirement(state = {}) {
