@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.12.15 — recuperação de foco/clock no tablet e continuidade visual segura
+
+- Uma pausa transitória no heartbeat não substitui a tela por ATUALIZANDO ATIVO quando sessão, feed, preço, velas, foco e sinal ainda confirmam o mesmo ativo. Tolerância somente visual/análise; não autoriza entrada.
+- Cabeçalho só afirma “countdown e expiração reais confirmados” quando clock está explicitamente disponível, com origem aceita, segundos válidos e amostra fresca ou dentro do limite atual da vela.
+- Se foco ou timeframe não puderem ser lidos, o leitor pede nova varredura de foco/controles; não infere timeframe nem fabrica countdown a partir da expiração manual.
+- Testes de regressão cobrem gap de heartbeat, divergência real, transição, dados antigos e consistência do status de clock.
+
+Limite: nenhuma sessão interativa do feed real CasaTrade foi executada nesta validação.
+
+---
+
 ## 0.12.13 — versão unificada, portal responsivo e release auditada
 
 ### Ajustes desta revisão
