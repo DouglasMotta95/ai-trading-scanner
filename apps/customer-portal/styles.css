@@ -6,7 +6,7 @@
 @media(max-width:900px){.product-flow{grid-template-columns:repeat(2,1fr)}.feature-grid{grid-template-columns:repeat(2,1fr)}}@media(max-width:620px){.product-flow,.feature-grid{grid-template-columns:1fr}}
 
 
-/* v0.12.13 public-site polish: accessible mobile navigation and demo clarity */
+/* v0.12.15 public-site polish: accessible mobile navigation and demo clarity */
 .mobile-nav-toggle{display:none;align-items:center;justify-content:center;width:42px;height:42px;border:1px solid #29425d;border-radius:12px;background:#0b1725;color:#eaf6ff;font-size:20px;cursor:pointer}
 .mobile-nav-toggle:focus-visible,.site-header a:focus-visible,.primary:focus-visible,.secondary:focus-visible,.ghost:focus-visible{outline:3px solid #7cebd0;outline-offset:3px}
 @media(max-width:900px){
