@@ -43,6 +43,6 @@ test('video 20730 fix increments package version and leaves execution gates pres
   assert.equal(manifest.version, '0.12.15');
   assert.equal(pkg.version, manifest.version);
   assert.equal(manifest.version_name, '0.12.15-android-startup-clock-recovery');
-  assert.match(panel, /const timeReady = !alignment\.conflict && entryTimeReady\(state\)/);
+  assert.match(panel, /const timeReady = !alignment\.conflict && focusReady\(state\) && entryTimeReady\(state\)/);
   assert.match(panel, /const canBuy = !alignment\.conflict && model\.actionable/);
 });
