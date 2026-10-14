@@ -347,7 +347,15 @@
       const state = response?.state || null;
       if (!state?.license || !['active','valid'].includes(String(state.license.status || '').toLowerCase())) return;
       const focus = state.diagnostics?.focusedAsset || null;
-      if (!focus?.asset || focus.reliable !== true || focus.chartScoped !== true || focus.trustedChartFrame !== true) return;
+      const focusAge = Number(focus?.at || 0) > 0 ? Date.now() - Number(focus.at) : Infinity;
+      if (!focus?.asset || focus.reliable !== true || focus.chartScoped !== true || focus.trustedChartFrame !== true || focusAge < 0 || focusAge > 4200) {
+        // The foreground Android side panel can outlive a throttled embedded
+        // frame heartbeat. Ask the visible chart and controls readers to refresh;
+        // stale focus must never authorize a clock sample.
+        try { globalThis.__ATS_FORCE_FOCUS_SCAN__?.(); } catch {}
+        try { globalThis.__ATS_FORCE_PLATFORM_SYNC_READ__?.(); } catch {}
+        return;
+      }
       const sameFocusFrame = String(focus.frameHost || '').toLowerCase() === host;
       const casaControlFrame = casaHost(host) && window === window.top;
       if (!sameFocusFrame && !casaControlFrame) return;
@@ -356,7 +364,14 @@
       const expirationFresh = expirationAt > 0 && Date.now() - expirationAt < 7000;
       const controlsFresh = Number(state.platformControls?.checkedAt || 0) > 0 && Date.now() - Number(state.platformControls.checkedAt) < 5000;
       const cycleTf = liveCycleTf(state, controlsFresh) || structuredFeedTf(state, focus);
-      if (!cycleTf) return;
+      if (!cycleTf) {
+        // Do not silently stop clock acquisition when a tablet control is not
+        // semantically readable. Refresh the real selectors; do not infer M1/M5
+        // from the user's expiration and do not publish an estimated clock.
+        try { globalThis.__ATS_FORCE_PLATFORM_SYNC_READ__?.(); } catch {}
+        try { globalThis.__ATS_FORCE_FOCUS_SCAN__?.(); } catch {}
+        return;
+      }
       const expiration = expirationFresh ? clean(state.platformControls?.observed?.expiration || '') || null : null;
       const domClock = verifiedDomCountdown(cycleTf);
       const freshClock = freshExactClock(state, focus, cycleTf);
