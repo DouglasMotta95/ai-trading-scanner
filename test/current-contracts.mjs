@@ -51,7 +51,7 @@ export function registerBuildContracts(label='build') {
     assert.doesNotMatch(model, /if \(alignment\.conflict\)\s*\{\s*const tf =/);
     assert.match(model, /const candidateStates = \['POSSIBLE_BUY','POSSIBLE_SELL','ENTER_BUY','ENTER_SELL'\]/);
     assert.match(model, /const scoreCandidates = \(pIsCandidate \?/);
-    assert.match(model, /const timeReady = !alignment\.conflict && entryTimeReady\(state\)/);
+    assert.match(model, /const timeReady = !alignment\.conflict && focusReady\(state\) && entryTimeReady\(state\)/);
     assert.match(model, /const blocked = timeReady \? '' : alignmentBlock \|\| entryBlockReason\(state\)/);
   });
   test(label + ': active asset changes reset stale signal and do not reuse previous candle history', () => {
