@@ -74,7 +74,7 @@ test('signal outcome is graded by target candle open-to-close only after close',
   assert.equal(closed.rows[0].outcomeBasis, 'target_candle_open_close');
 });
 
-test('v0.12.15 shared profile gate controls actual final eligibility; power exactly 45 is accepted', () => {
+test('v0.12.16 shared profile gate controls actual final eligibility; power exactly 45 is accepted', () => {
   const cases = [
     ['RIGIDO', 58, 62],
     ['MEDIO', 52, 55],
