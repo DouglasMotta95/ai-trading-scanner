@@ -63,12 +63,12 @@ test('Gemini outage is secondary and the Radar respects a primary candidate', ()
   assert.doesNotMatch(radar, /Nenhuma oportunidade com histórico suficiente e qualidade mínima agora/);
 });
 
-test('v0.12.15 identifies the release and preserves manual operation', () => {
+test('v0.12.16 identifies the release and preserves manual operation', () => {
   const manifest = JSON.parse(read('manifest.json'));
   const pkg = JSON.parse(read('package.json'));
-  assert.equal(manifest.version, '0.12.15');
+  assert.equal(manifest.version, '0.12.16');
   assert.equal(pkg.version, manifest.version);
-  assert.equal(manifest.version_name, '0.12.15-android-startup-clock-recovery');
+  assert.equal(manifest.version_name, '0.12.16-same-host-frame-clock-binding');
   assert.match(read('src/background-decision-policy.js'), /Entrada MANUAL na próxima vela/);
   assert.match(read('src/sidepanel/index.html'), /SEM EXECUÇÃO AUTOMÁTICA/);
 });
