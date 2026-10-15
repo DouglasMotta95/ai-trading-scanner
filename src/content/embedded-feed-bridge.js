@@ -20,6 +20,17 @@
     return direct ? `${direct[1]}/${direct[2]}${otc ? ' (OTC)' : ''}` : '';
   };
   const sameMarket = (a, b) => !!marketId(a) && marketId(a) === marketId(b);
+  const casaHost = value => value === 'casatrade.com' || value.endsWith('.casatrade.com')
+    || value === 'casatrade.io' || value.endsWith('.casatrade.io');
+  function clockFrameBinding(focus = {}, currentHost = host, isTopFrame = window === window.top) {
+    const focusedHost = String(focus.frameHost || '').toLowerCase().replace(/\.$/, '');
+    const senderHost = String(currentHost || '').toLowerCase().replace(/\.$/, '');
+    const hostMatches = !!focusedHost && focusedHost === senderHost;
+    const sameFocusFrame = hostMatches && (!isTopFrame || Number(focus.frameId) === 0);
+    const casaControlFrame = casaHost(senderHost) && isTopFrame;
+    return { sameFocusFrame, casaControlFrame, allowed: sameFocusFrame || casaControlFrame,
+      crossFrameControl: casaControlFrame && !sameFocusFrame };
+  }
   const normalizeTime = value => {
     let time = Number(value);
     if (!Number.isFinite(time)) return null;
@@ -225,6 +236,8 @@
   async function publishCandleBoundaryClock(payload = {}, state = {}, focus = null, candidate = null) {
     const boundary = structuredCandleBoundary(payload, state, focus, candidate);
     if (!boundary) return false;
+    const frameBinding = clockFrameBinding(focus);
+    if (!frameBinding.allowed) return false;
     const now = Date.now();
     if (now - lastClockSentAt < 300) return true;
     lastClockSentAt = now;
@@ -246,7 +259,10 @@
         ? 'Fechamento confirmado pela vela atual do estado ao vivo'
         : 'Fechamento confirmado pela vela atual do feed estruturado',
       clockToken: `${boundary.secondsRemaining}s`,
-      confidence: 94, frameHost: host, at: now
+      confidence: 94, frameHost: host,
+      crossFrameControl: frameBinding.crossFrameControl,
+      boundFocusFrameId: Number(focus.frameId),
+      boundFocusFrameHost: String(focus.frameHost || '').toLowerCase(), at: now
     });
     return true;
   }
@@ -306,6 +322,8 @@
           const elapsed = ((serverTime % durationMs) + durationMs) % durationMs;
           let secondsRemaining = Math.ceil((durationMs - elapsed) / 1000);
           if (!Number.isFinite(secondsRemaining) || secondsRemaining <= 0 || secondsRemaining > duration) secondsRemaining = duration;
+          const frameBinding = clockFrameBinding(focus);
+          if (!frameBinding.allowed) return;
           lastClockSentAt = now;
           feedDiagnostic.marketClockV2Sent += 1;
           await sendMessage({
@@ -314,7 +332,10 @@
             available: true, verified: true, clockRole: 'candle-close',
             clockSource: 'network-server-cycle', clockMode: 'structured-server-time',
             clockText: 'Tempo do servidor confirmado pelo feed estruturado', clockToken: `${secondsRemaining}s`,
-            confidence: Math.min(99, Math.max(55, confidence)), frameHost: host, at: now
+            confidence: Math.min(99, Math.max(55, confidence)), frameHost: host,
+            crossFrameControl: frameBinding.crossFrameControl,
+            boundFocusFrameId: Number(focus.frameId),
+            boundFocusFrameHost: String(focus.frameHost || '').toLowerCase(), at: now
           });
           return;
         }
