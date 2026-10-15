@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.12.16 — vínculo do clock em frames com o mesmo host
+
+- Corrigida a comparação que tratava hostname igual como se significasse o mesmo frame. Em tablet, o shell superior pode usar frameId 0 enquanto o gráfico focado está em um iframe do mesmo host; o clock era enviado sem crossFrameControl e rejeitado pelo background.
+- A leitura exata enviada pelo shell agora é explicitamente vinculada ao frameId/frameHost focado. O background continua validando a ligação e rejeita qualquer amostra sem vínculo ao gráfico ativo.
+- O leitor aceita um clock válido de controle superior quando ele está vinculado exatamente ao frame focado, evitando que uma leitura exata válida seja tratada como clock ausente.
+- A mesma correção cobre a contagem do canvas e o feed estruturado quando originados pelo shell superior.
+- Incluídos testes de regressão para frame superior/iframe de mesmo hostname e relógio cross-frame vinculado.
+
+Limite: testes de código não substituem uma sessão interativa da CasaTrade.
+
+---
+
 ## 0.12.15 — recuperação de foco/clock no tablet e continuidade visual segura
 
 - Uma pausa transitória no heartbeat não substitui a tela por ATUALIZANDO ATIVO quando sessão, feed, preço, velas, foco e sinal ainda confirmam o mesmo ativo. Tolerância somente visual/análise; não autoriza entrada.
