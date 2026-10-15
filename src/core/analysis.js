@@ -60,30 +60,30 @@ const THRESHOLD_PROFILES = Object.freeze({
 
 const SIGNAL_POLICIES = Object.freeze({
   RIGIDO: Object.freeze({
-    possibleScore: 64,
-    finalScore: 74,
-    possiblePower: 60,
-    finalPower: 63,
-    minimumConfluence: 3,
+    possibleScore: 58,
+    finalScore: 62,
+    possiblePower: 45,
+    finalPower: 45,
+    minimumConfluence: 2,
     minimumStructure: 13,
     minimumLocation: 10,
     minimumTrigger: 10
   }),
   MEDIO: Object.freeze({
-    possibleScore: 56,
-    finalScore: 66,
-    possiblePower: 56,
-    finalPower: 59,
+    possibleScore: 52,
+    finalScore: 55,
+    possiblePower: 45,
+    finalPower: 45,
     minimumConfluence: 2,
     minimumStructure: 10,
     minimumLocation: 7,
     minimumTrigger: 8
   }),
   SOLTO: Object.freeze({
-    possibleScore: 50,
-    finalScore: 60,
-    possiblePower: 52,
-    finalPower: 55,
+    possibleScore: 45,
+    finalScore: 50,
+    possiblePower: 45,
+    finalPower: 45,
     minimumConfluence: 2,
     minimumStructure: 8,
     minimumLocation: 7,
@@ -143,6 +143,21 @@ export function waitingFor(recent = {}, direction = null, score = 0, profile = '
   const chosenDirection = ['BUY', 'SELL'].includes(direction) ? direction : null;
   const lastClose = finite(recent.lastClose);
   const avgRange = Math.max(1e-12, finite(recent.averageRange) || Math.abs(Number(recent.resistance || 0) - Number(recent.support || 0)) || 1);
+  const profilePolicy = getSignalPolicy(thresholds.profile);
+  if (chosenDirection) {
+    const directionalPower = Number(chosenDirection === 'BUY' ? metrics.buyPower : metrics.sellPower) || 0;
+    if (Number(score) >= profilePolicy.possibleScore && directionalPower >= 45) {
+      const side = chosenDirection === 'BUY' ? 'COMPRA' : 'VENDA';
+      const finalReady = Number(score) >= profilePolicy.finalScore;
+      return {
+        type: 'profile_candidate', direction: chosenDirection, label: 'Critério do perfil',
+        level: null, current: Number(score) || 0, required: profilePolicy.finalScore,
+        text: finalReady
+          ? 'Aguardando janela final e relógio válido — critério final do perfil ' + thresholds.profile + ' atingido para ' + side + '.'
+          : 'POSSÍVEL ' + side + ' liberado pelo perfil ' + thresholds.profile + ' (score ' + Math.round(Number(score) || 0) + ', poder ' + Math.round(directionalPower) + '%); decisão final exige score ' + profilePolicy.finalScore + '/100 na janela final.'
+      };
+    }
+  }
   const candidates = [];
   const add = candidate => {
     if (!candidate || !Number.isFinite(Number(candidate.gap))) return;
@@ -200,11 +215,11 @@ export function waitingFor(recent = {}, direction = null, score = 0, profile = '
     });
 
     const power = Number(buy ? metrics.buyPower : metrics.sellPower) || 0;
-    if (power < 50) add({
+    if (power < 45) add({
       type: 'power', direction: chosenDirection,
       label: `Poder ${buy ? 'comprador' : 'vendedor'}`, level: null,
-      current: power, required: 50, gap: (50 - power) / 50,
-      text: `Aguardando poder ${buy ? 'comprador' : 'vendedor'} atingir 50% (agora ${Math.round(power)}%).`
+      current: power, required: 45, gap: (45 - power) / 45,
+      text: `Aguardando poder ${buy ? 'comprador' : 'vendedor'} atingir 45% (agora ${Math.round(power)}%).`
     });
 
     const strength = Number(metrics.currentStrength || 0);
@@ -226,17 +241,17 @@ export function waitingFor(recent = {}, direction = null, score = 0, profile = '
     });
   }
 
-  const targetScore = Number(score) < thresholds.possibleScore
-    ? thresholds.possibleScore
-    : Number(score) < thresholds.confirmScore
-      ? thresholds.confirmScore
+  const targetScore = Number(score) < profilePolicy.possibleScore
+    ? profilePolicy.possibleScore
+    : Number(score) < profilePolicy.finalScore
+      ? profilePolicy.finalScore
       : null;
   if (targetScore != null) add({
     type: targetScore === thresholds.possibleScore ? 'possible_score' : 'confirm_score',
     direction: chosenDirection, label: 'Força do padrão', level: null,
     current: Number(score) || 0, required: targetScore,
     gap: Math.max(0, targetScore - Number(score || 0)) / targetScore,
-    text: `Aguardando força do padrão atingir ${targetScore}/100 (agora ${Math.round(Number(score) || 0)}/100).`
+    text: 'Aguardando limiar do perfil ' + thresholds.profile + ' atingir ' + targetScore + '/100 (agora ' + Math.round(Number(score) || 0) + '/100).'
   });
 
   if ((recent.lateral || (recent.reasons || []).some(reason => /compressão/i.test(String(reason)))) && candidates.length) {
@@ -543,8 +558,16 @@ export function recentPriceAction(candles = [], profile = 'MEDIO') {
   if (metrics.momentumDirection === 'BUY' && metrics.momentumScore >= 45) reasons.push('Momentum recente favorece alta');
   if (metrics.momentumDirection === 'SELL' && metrics.momentumScore >= 45) reasons.push('Momentum recente favorece baixa');
 
+  const candidateContinuationScore = clamp(agreement * 45 + metrics.momentumScore * .3 + metrics.currentStrength * .25);
   let direction = buy === sell ? majority : buy > sell ? 'BUY' : 'SELL';
+  // A local trigger is stronger than a weak lateral/doji label. Preserve its
+  // direction when the aggregate scores tie or the trend majority is absent.
+  if (!direction && breakout) direction = breakout;
+  if (!direction && rejection) direction = rejection;
   if (!direction && pullbackContinuation.qualified) direction = pullbackContinuation.direction;
+  if (!direction && metrics.momentumDirection && metrics.momentumDirection === last.direction && candidateContinuationScore >= 60) {
+    direction = metrics.momentumDirection;
+  }
   let score = Math.max(buy, sell);
   if (agreement >= .6) score += 10;
   if (avgBody >= .48) score += 8;
@@ -560,10 +583,11 @@ export function recentPriceAction(candles = [], profile = 'MEDIO') {
   if (metrics.lossOfStrength >= 72 && !breakout && !rejection) {
     reasons.push('A vela atual perdeu força; confirmação exige continuidade');
   }
-  const decisiveLocalSetup = !!breakout || !!rejection || (continuationDirection && continuationScore >= 65)
-    || (pullbackContinuation.qualified && pullbackContinuation.direction === direction);
+  const decisiveLocalSetup = !!breakout || !!rejection || (continuationDirection && continuationScore >= 60)
+    || (pullbackContinuation.qualified && pullbackContinuation.direction === direction)
+    || (!!direction && direction === last.direction && metrics.momentumDirection === direction && candidateContinuationScore >= 60);
   if (lateral && !decisiveLocalSetup) { score = Math.min(score, 54); direction = null; reasons.push('Mercado lateral nas últimas velas'); }
-  if (doji && !rejection) { score = Math.min(score, 48); direction = null; reasons.push('Doji sem confirmação'); }
+  if (doji && !decisiveLocalSetup) { score = Math.min(score, 48); direction = null; reasons.push('Doji sem confirmação'); }
   if (tiny >= Math.ceil(rows.length * .6) && agreement < .75 && !decisiveLocalSetup) { score = Math.min(score, 56); direction = null; reasons.push('Compressão: aguardando rompimento'); }
   if (lateral && decisiveLocalSetup) reasons.push('Mercado lateral, mas com gatilho local confirmado');
   score = clamp(score);

@@ -20,7 +20,7 @@ test('analysis exposes the exact recent breakout levels and structured waitingFo
   assert.equal(result.analytics.breakoutLow, 1.0990);
   assert.ok(result.waitingFor && typeof result.waitingFor === 'object');
   assert.match(result.waitingFor.text, /^Aguardando /);
-  assert.ok(['breakout','rejection','power','candle_strength','continuation','possible_score','confirm_score','stability'].includes(result.waitingFor.type));
+  assert.ok(['breakout','rejection','power','candle_strength','continuation','possible_score','confirm_score','stability','profile_candidate'].includes(result.waitingFor.type));
   const direct = waitingFor(result.recent, result.direction, result.score);
   assert.equal(direct.type, result.waitingFor.type);
 });

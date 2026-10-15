@@ -1,5 +1,60 @@
 # Changelog
 
+## 0.12.16 — vínculo do clock em frames com o mesmo host
+
+- Corrigida a comparação que tratava hostname igual como se significasse o mesmo frame. Em tablet, o shell superior pode usar frameId 0 enquanto o gráfico focado está em um iframe do mesmo host; o clock era enviado sem crossFrameControl e rejeitado pelo background.
+- A leitura exata enviada pelo shell agora é explicitamente vinculada ao frameId/frameHost focado. O background continua validando a ligação e rejeita qualquer amostra sem vínculo ao gráfico ativo.
+- O leitor aceita um clock válido de controle superior quando ele está vinculado exatamente ao frame focado, evitando que uma leitura exata válida seja tratada como clock ausente.
+- A mesma correção cobre a contagem do canvas e o feed estruturado quando originados pelo shell superior.
+- Incluídos testes de regressão para frame superior/iframe de mesmo hostname e relógio cross-frame vinculado.
+
+Limite: testes de código não substituem uma sessão interativa da CasaTrade.
+
+---
+
+## 0.12.15 — recuperação de foco/clock no tablet e continuidade visual segura
+
+- Uma pausa transitória no heartbeat não substitui a tela por ATUALIZANDO ATIVO quando sessão, feed, preço, velas, foco e sinal ainda confirmam o mesmo ativo. Tolerância somente visual/análise; não autoriza entrada.
+- Cabeçalho só afirma “countdown e expiração reais confirmados” quando clock está explicitamente disponível, com origem aceita, segundos válidos e amostra fresca ou dentro do limite atual da vela.
+- Se foco ou timeframe não puderem ser lidos, o leitor pede nova varredura de foco/controles; não infere timeframe nem fabrica countdown a partir da expiração manual.
+- Testes de regressão cobrem gap de heartbeat, divergência real, transição, dados antigos e consistência do status de clock.
+
+Limite: nenhuma sessão interativa do feed real CasaTrade foi executada nesta validação.
+
+---
+
+## 0.12.13 — versão unificada, portal responsivo e release auditada
+
+### Ajustes desta revisão
+- A API e o endpoint de download agora derivam a versão do `manifest.json` efetivamente empacotado, ignorando uma variável `EXTENSION_LATEST_VERSION` desatualizada.
+- Corrigido o desalinhamento entre a versão anunciada no portal e a extensão distribuída.
+- Adicionado `backend/.env.example` com valores de exemplo e sem credenciais reais.
+- O portal preserva o painel de diagnóstico, identifica claramente conteúdo ilustrativo, melhora a navegação em celulares, adiciona foco visível e respeita preferência por movimento reduzido.
+- Incluídos testes de regressão para metadados do release, consistência API/download e navegação/acessibilidade do portal.
+
+### Validação
+- Testes automatizados, sintaxe JavaScript/MJS, manifesto e integridade do ZIP são verificados no artefato local de distribuição.
+- A suíte automatizada não substitui uma sessão real com o feed/conta CasaTrade e não certifica rentabilidade.
+
+---
+
+## 0.12.12 — Unified profile gates and operational synchronization
+
+### Correções e validações
+- Centraliza os limites por perfil para candidato POSSÍVEL e decisão final, usando direção clara, score, poder e janela de entrada coerentes.
+- Estabiliza o score durante o ciclo de uma vela, segura oscilações transitórias do feed e reinicia o estado na nova vela ou na troca de ativo. A estabilização não cria sinal nem substitui os critérios técnicos.
+- Faz a leitura real e atual de expiração da CasaTrade prevalecer sobre o fallback manual. A expiração declarada pode ser usada apenas como fallback operacional, nunca como confirmação real, e somente quando ativo, foco, timeframe e countdown estão alinhados.
+- Reforça o bloqueio de sinais até o fechamento da vela-alvo e mantém o histórico/velas isolados por ativo para evitar reutilização de preço/OHLC do símbolo anterior.
+- Inclui cobertura de regressão direcionada aos problemas reportados no vídeo 20942, aos gates compartilhados, à estabilidade do score e à recuperação visual do painel.
+- Alinha a versão reportada pelo backend e pelo portal de clientes com a versão 0.12.12 da extensão.
+
+### Segurança e limites
+- A operação financeira continua manual. Nenhuma ordem BUY/SELL é enviada automaticamente.
+- Uma expiração informada pelo usuário não é rotulada como verificada pela CasaTrade; divergências reais continuam bloqueando a entrada.
+- Scores e sinais não garantem lucro, acerto ou resultado futuro.
+
+---
+
 ## 0.12.7 — Stabilize live score display and reconcile expiration gates
 
 ### Findings from video 20924

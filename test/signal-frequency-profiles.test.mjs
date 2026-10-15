@@ -18,8 +18,20 @@ test('signal rhythm profiles are materially different', () => {
   assert.ok(balanced.possibleScore < selective.possibleScore);
   assert.ok(frequent.finalScore < balanced.finalScore);
   assert.ok(balanced.finalScore < selective.finalScore);
-  assert.ok(frequent.finalPower < balanced.finalPower);
-  assert.ok(balanced.finalPower < selective.finalPower);
+  assert.equal(frequent.possiblePower, 45);
+  assert.equal(balanced.possiblePower, 45);
+  assert.equal(selective.possiblePower, 45);
+  assert.equal(frequent.finalPower, 45);
+  assert.equal(balanced.finalPower, 45);
+  assert.equal(selective.finalPower, 45);
+  assert.deepEqual(
+    [frequent.possibleScore, balanced.possibleScore, selective.possibleScore],
+    [45, 52, 58]
+  );
+  assert.deepEqual(
+    [frequent.finalScore, balanced.finalScore, selective.finalScore],
+    [50, 55, 62]
+  );
   assert.ok(frequent.minimumStructure < balanced.minimumStructure);
   assert.ok(balanced.minimumStructure < selective.minimumStructure);
 });

@@ -11,6 +11,7 @@ let assetRadarSnapshot = { rows: [] };
 let liveEnabled = true;
 let lastRadarSignature = '';
 let lastRenderedAt = 0;
+const RADAR_PROFILE_LIMITS = Object.freeze({ RIGIDO: Object.freeze({ possible: 58, final: 62 }), MEDIO: Object.freeze({ possible: 52, final: 55 }), SOLTO: Object.freeze({ possible: 45, final: 50 }) });
 
 function marketId(value) {
   const raw = clean(value).toUpperCase();
@@ -333,6 +334,37 @@ function renderTf(id, assessment) {
     : `${labelDirection(assessment.direction)} • ${assessment.reasons[0] || 'leitura estável'}`;
 }
 
+function primaryEngineCandidate(state = {}) {
+  const decision = state.professionalDecision || {};
+  const signal = state.signal || {};
+  const operation = state.activeSignalOperation || null;
+  const profile = clean(state.analystPreferences?.sensitivityProfile || 'MEDIO').toUpperCase();
+  const limits = RADAR_PROFILE_LIMITS[profile] || RADAR_PROFILE_LIMITS.MEDIO;
+  const currentAsset = marketId(state.asset);
+  const focusedAsset = marketId(state.diagnostics?.focusedAsset?.asset || '');
+  const sessionAsset = marketId(state.diagnostics?.marketSession?.confirmedAsset || '');
+  const isSameAsset = sourceAsset => !!currentAsset && currentAsset === marketId(sourceAsset)
+    && (!focusedAsset || focusedAsset === currentAsset)
+    && (!sessionAsset || sessionAsset === currentAsset);
+  const activeDirection = clean(operation?.direction).toUpperCase();
+  if (operation && operation.status !== 'COMPLETED' && ['BUY','SELL'].includes(activeDirection)) {
+    const sourceAsset = clean(operation.asset || state.asset);
+    return {
+      direction: activeDirection,
+      score: Number(operation.score ?? decision.rawScore ?? decision.score ?? signal.analysisScore ?? signal.score ?? 0) || 0,
+      power: 45, profile, sourceAsset, sameActiveAsset: isSameAsset(sourceAsset),
+      ui: 'OPERATION_ACTIVE_' + activeDirection, activeOperation: true
+    };
+  }
+  const ui = clean(decision.uiState).toUpperCase();
+  const direction = clean(decision.direction || signal.direction || signal.analysisDirection).toUpperCase();
+  const score = Number(decision.rawScore ?? decision.score ?? signal.analysisScore ?? signal.score ?? 0) || 0;
+  const power = Number(direction === 'BUY' ? signal.analytics?.buyPower : direction === 'SELL' ? signal.analytics?.sellPower : 0) || 0;
+  const sourceAsset = clean(decision.cycleKey).split('|')[0] || clean(signal.asset || state.asset);
+  const candidate = ['BUY','SELL'].includes(direction) && score >= limits.possible && power >= 45;
+  return candidate ? { direction, score, power, profile, sourceAsset, sameActiveAsset: isSameAsset(sourceAsset) && decision.marketIdentityReady !== false, ui, activeOperation: false } : null;
+}
+
 function renderRadar(state = {}, force = false) {
   if (!ensureUi()) return;
   const history = histories(state);
@@ -347,6 +379,8 @@ function renderRadar(state = {}, force = false) {
 
   const radar = scanMarket(state);
   const current = radar.current;
+  const primary = primaryEngineCandidate(state);
+  const primaryActive = primary && primary.sameActiveAsset && state.connection === 'online';
   document.getElementById('radarCoverage').textContent = `${radar.analyses.length} ativo${radar.analyses.length === 1 ? '' : 's'} com histórico`;
 
   const summary = document.getElementById('radarSummary');
@@ -361,17 +395,28 @@ function renderRadar(state = {}, force = false) {
     const mismatch = current.recommendation !== 'AGUARDAR' && current.currentTf && current.recommendation !== current.currentTf;
     const recommendation = current.recommendation === 'AGUARDAR' ? 'AGUARDAR' : `RADAR: MELHOR CENÁRIO ${current.recommendation}`;
     const reason = best ? [labelDirection(best.direction), ...(best.reasons || [])].join(' • ') : 'sem leitura suficiente';
-    const modeNote = mismatch
-      ? ` • Modo técnico ativo: ${current.currentTf}. O Radar não troca o modo automaticamente.`
-      : '';
-    summary.innerHTML = `<strong>${current.asset} • ${recommendation}</strong><p>${reason}${modeNote}</p>`;
+    const modeNote = mismatch ? ' • Modo técnico ativo: ' + current.currentTf + '. O Radar não troca o modo automaticamente.' : '';
+    if (primaryActive) {
+      const mainSide = primary.direction === 'BUY' ? 'COMPRA' : 'VENDA';
+      const headline = primary.activeOperation ? 'OPERAÇÃO EM ACOMPANHAMENTO' : 'MOTOR TÉCNICO';
+      summary.innerHTML = '<strong>' + current.asset + ' • ' + headline + ': ' + mainSide + ' ' + Math.round(primary.score) + '/100</strong><p>Perfil ' + primary.profile + ' e poder ' + Math.round(primary.power) + '%. O Radar é complementar e não invalida o sinal principal. Leitura própria: ' + recommendation + ' — ' + reason + modeNote + '</p>';
+    } else if (primary && !primary.sameActiveAsset) {
+      const mainSide = primary.direction === 'BUY' ? 'COMPRA' : 'VENDA';
+      summary.innerHTML = '<strong>' + current.asset + ' • ' + recommendation + '</strong><p>' + reason + modeNote + ' • O motor registrou ' + mainSide + ' ' + Math.round(primary.score) + '/100 em ' + primary.sourceAsset + '; esse sinal não é aplicado ao ativo atual porque a identidade ainda precisa coincidir.</p>';
+    } else {
+      summary.innerHTML = '<strong>' + current.asset + ' • ' + recommendation + '</strong><p>' + reason + modeNote + '</p>';
+    }
   }
 
   const list = document.getElementById('radarOpportunities');
   const top = radar.analyses.filter(item => item.best && item.best.quality >= 55).slice(0, 4);
   list.innerHTML = top.length
-    ? top.map(item => `<div class="radar-row"><span><b>${item.asset}</b><small>${labelDirection(item.best.direction)}</small></span><b>${item.recommendation}</b><small>${item.best.quality}/100</small></div>`).join('')
-    : '<p class="radar-empty">Nenhuma oportunidade com histórico suficiente e qualidade mínima agora.</p>';
+    ? top.map(item => '<div class="radar-row"><span><b>' + item.asset + '</b><small>' + labelDirection(item.best.direction) + '</small></span><b>' + item.recommendation + '</b><small>' + item.best.quality + '/100</small></div>').join('')
+    : primaryActive
+      ? '<p class="radar-empty">' + (primary.activeOperation ? 'Operação em acompanhamento' : 'Motor principal') + ': ' + (primary.direction === 'BUY' ? 'COMPRA' : 'VENDA') + ' ' + Math.round(primary.score) + '/100 (perfil ' + primary.profile + '). O Radar é complementar, não invalida este estado.</p>'
+      : primary && !primary.sameActiveAsset
+        ? '<p class="radar-empty">Sem oportunidade independente suficiente no ativo atual. O último sinal (' + (primary.direction === 'BUY' ? 'COMPRA' : 'VENDA') + ' ' + Math.round(primary.score) + '/100) pertence a ' + primary.sourceAsset + '; confirme a identidade do ativo antes de reutilizá-lo.</p>'
+        : '<p class="radar-empty">Nenhuma oportunidade independente com histórico suficiente e qualidade mínima agora.</p>';
   syncLiveButton();
 }
 

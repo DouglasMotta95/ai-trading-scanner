@@ -774,7 +774,7 @@ async function probePlatformControlsDirect(tabId) {
       platformControls: {
         ...(state.platformControls || {}),
         observed,
-        userDeclaredExpiration: realExpiration ? null : previousControls.userDeclaredExpiration || null,
+        userDeclaredExpiration: realExpiration ? null : (previousControls.userDeclaredExpiration || null),
         userDeclaredAt: realExpiration ? 0 : Number(previousControls.userDeclaredAt || 0),
         checkedAt: now,
         expirationCheckedAt: exp?.expiration ? now : Number(state.platformControls?.expirationCheckedAt || 0),
@@ -816,6 +816,21 @@ async function recoverLicense(state = {}, force = false) {
   }
 
   const error = validated?.error || state.license?.error || 'license_required';
+  const currentLicense = state.license || {};
+  const currentExpiryRaw = currentLicense.expiresAt;
+  let currentExpiry = null;
+  if (currentExpiryRaw != null && currentExpiryRaw !== '') {
+    currentExpiry = Number(currentExpiryRaw);
+    if (Number.isFinite(currentExpiry) && currentExpiry > 0) {
+      if (currentExpiry < 1e12) currentExpiry *= 1000;
+    } else currentExpiry = Date.parse(String(currentExpiryRaw));
+  }
+  const currentStillValid = activeLicense(currentLicense)
+    && (!currentExpiryRaw || (Number.isFinite(currentExpiry) && currentExpiry > Date.now()));
+  const transientFailure = ['backend_unreachable','network_error','timeout','request_timeout'].includes(clean(error).toLowerCase());
+  if (transientFailure && currentStillValid) {
+    return { ...currentLicense, status: 'active', error, syncPending: true };
+  }
   return {
     ...(state.license || DEFAULT_LICENSE),
     ...(validated?.license || {}),
@@ -1022,10 +1037,16 @@ function exactTradeReady(state = {}) {
   const operationMode = getOperationMode(state.analystPreferences?.operationMode || 'M1');
   const expiration = getExpirationReadiness(state);
   if (professional.timeReady !== true || professional.expirationReady !== true || professional.actionable !== true) return false;
-  if (clock.verified !== true || clock.available === false || clock.role !== 'candle-close' || !EXACT_CLOCK_SOURCES.has(clean(clock.source))) return false;
-  if (Date.now() - Number(clock.at || 0) >= 3000) return false;
+  if (clock.available === false || clock.role !== 'candle-close') return false;
+  const clockAt = Number(clock.at || 0);
+  const clockAge = Date.now() - clockAt;
+  if (!(clockAt > 0 && clockAge >= 0 && clockAge < 3000)) return false;
   if (!sameAsset(clock.asset, state.asset) || !sameAsset(focus.asset, state.asset)) return false;
   if (!clockBoundToFocus(clock, focus)) return false;
+  const clockTf = normTf(clock.timeframe || state.analysisTimeframe || state.timeframe);
+  const remaining = num(clock.secondsRemaining);
+  if (clockTf !== operationMode.timeframe || remaining == null
+    || remaining < 0 || remaining > operationMode.durationSeconds + 1) return false;
   if (!expiration.ready || expiration.actual !== operationMode.expiration) return false;
   return true;
 }
@@ -1035,12 +1056,16 @@ async function manualIntent(direction = '') {
   if (!['BUY', 'SELL'].includes(direction)) return { ok: false, error: 'invalid_direction' };
   const state = await readScannerState();
   if (!activeLicense(state.license)) return { ok: false, error: 'license_required', state };
-  const signalDirection = String(state.signal?.direction || '').toUpperCase();
+  const signalDirection = String(state.signal?.direction || state.signal?.analysisDirection || '').toUpperCase();
   const confirmed = state.signal?.state === 'CONFIRM' || ['ENTER_BUY', 'ENTER_SELL'].includes(String(state.signal?.uiState || ''));
-  if (!confirmed || signalDirection !== direction) return { ok: false, error: 'signal_not_confirmed', state };
 
   const professional = state.professionalDecision || {};
   const expectedUi = direction === 'BUY' ? 'ENTER_BUY' : 'ENTER_SELL';
+  const professionalConfirmed = professional.uiState === expectedUi
+    && professional.direction === direction
+    && professional.actionable === true;
+  if (signalDirection !== direction || (!confirmed && !professionalConfirmed)) return { ok: false, error: 'signal_not_confirmed', state };
+
   if (professional.uiState !== expectedUi || professional.direction !== direction || professional.actionable !== true) {
     return { ok: false, error: 'professional_signal_not_confirmed', state };
   }

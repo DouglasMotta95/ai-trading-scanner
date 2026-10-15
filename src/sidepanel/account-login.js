@@ -122,11 +122,40 @@ import { storageLocalGet, storageLocalSet, storageLocalRemove, runtimeSendMessag
   }
 
 
+  let lastActiveLicenseAt = 0;
+  let lastActiveLicensePlan = '';
+  const UI_LICENSE_GRACE_MS = 5 * 60 * 1000;
   function activeLicenseState(state = {}) {
-    const status = String(state?.license?.status || '').toLowerCase();
-    return ['active','valid'].includes(status)
-      || state?.license?.devMode === true
-      || String(state?.license?.plan || '').toUpperCase() === 'OWNER_DEV';
+    const license = state?.license || {};
+    const status = String(license.status || '').toLowerCase();
+    const plan = String(license.plan || license.planLabel || '').toUpperCase();
+    const active = ['active','valid'].includes(status)
+      || license.devMode === true
+      || plan === 'OWNER_DEV';
+    if (active) {
+      lastActiveLicenseAt = Date.now();
+      lastActiveLicensePlan = String(license.planLabel || license.plan || 'Acesso ativo');
+      try {
+        localStorage.setItem('atsLastActiveLicenseUI', JSON.stringify({
+          at: lastActiveLicenseAt, plan: lastActiveLicensePlan
+        }));
+      } catch {}
+      return true;
+    }
+
+    const error = String(license.error || state?.diagnostics?.access?.error || '').toLowerCase();
+    const authoritative = ['license_not_found','license_inactive','license_expired','device_limit_reached','device_locked'].includes(error);
+    if (authoritative) return false;
+
+    try {
+      const saved = JSON.parse(localStorage.getItem('atsLastActiveLicenseUI') || 'null');
+      if (saved?.at && Date.now() - Number(saved.at) >= 0
+        && Date.now() - Number(saved.at) <= UI_LICENSE_GRACE_MS) {
+        lastActiveLicenseAt = Number(saved.at);
+        lastActiveLicensePlan = String(saved.plan || 'Acesso ativo');
+      }
+    } catch {}
+    return lastActiveLicenseAt > 0 && Date.now() - lastActiveLicenseAt <= UI_LICENSE_GRACE_MS;
   }
 
   function syncCompactAccount(state = {}) {
@@ -141,7 +170,7 @@ import { storageLocalGet, storageLocalSet, storageLocalRemove, runtimeSendMessag
     const text = $('#licenseText');
     const health = $('#licenseHealth');
     if (active) {
-      const plan = String(state.license?.planLabel || state.license?.plan || 'ACESSO ATIVO').trim();
+      const plan = String(state.license?.planLabel || state.license?.plan || lastActiveLicensePlan || 'ACESSO ATIVO').trim();
       if (title) title.textContent = 'CONTA ATIVA';
       if (health) { health.textContent = 'ATIVA'; health.className = 'badge ok'; }
       if (text) text.textContent = plan + ' • acesso sincronizado neste aparelho.';

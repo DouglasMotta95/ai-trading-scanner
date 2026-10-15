@@ -6,7 +6,12 @@ import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const VERSION = '0.11.47';
+const ROOT_DIR = path.resolve(__dirname, '../..');
+const ROOT_PACKAGE = (() => { try { return JSON.parse(fs.readFileSync(path.join(ROOT_DIR, 'package.json'), 'utf8')); } catch { return {}; } })();
+const EXTENSION_MANIFEST = (() => { try { return JSON.parse(fs.readFileSync(path.join(ROOT_DIR, 'manifest.json'), 'utf8')); } catch { return {}; } })();
+// The API and downloadable extension must advertise the version actually packaged at the repository root.
+// Do not trust a stale EXTENSION_LATEST_VERSION environment override: the download endpoint builds from this manifest.
+const VERSION = String(process.env.APP_VERSION || EXTENSION_MANIFEST.version || ROOT_PACKAGE.version || '0.12.16').trim();
 const PORT = Number(process.env.PORT || 8787);
 const API_KEY = process.env.ATS_API_KEY || '';
 const ADMIN_KEY = process.env.ATS_ADMIN_KEY || API_KEY;
@@ -44,8 +49,8 @@ const PUBLIC_BASE_URL = String(process.env.PUBLIC_BASE_URL || '').replace(/\/$/,
 const CASA_TRADE_URL = String(process.env.CASA_TRADE_URL || '').trim();
 const SUPPORT_WHATSAPP = String(process.env.SUPPORT_WHATSAPP || '5535991429262').replace(/\D/g, '');
 const EXTENSION_DOWNLOAD_URL = String(process.env.EXTENSION_DOWNLOAD_URL || '').trim();
-const EXTENSION_LATEST_VERSION = String(process.env.EXTENSION_LATEST_VERSION || '0.11.47').trim();
-const EXTENSION_ROOT = path.resolve(__dirname, '../..');
+const EXTENSION_LATEST_VERSION = String(EXTENSION_MANIFEST.version || ROOT_PACKAGE.version || '0.12.16').trim();
+const EXTENSION_ROOT = ROOT_DIR;
 let extensionZipCache = null;
 const SALES_PRICES = {
   starter: Number(process.env.SALES_STARTER_PRICE || 79.90),

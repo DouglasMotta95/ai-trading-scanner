@@ -1,6 +1,9 @@
 import { readScannerState, updateScannerState } from './services/scanner-state-atomic.js';
+import { createScoreStabilizer } from './core/score-stability.js';
+import { evaluateProfileEntryGate } from './core/profile-entry-gates.js';
 import { getThresholds, getOperationMode, getSignalPolicy } from './core/analysis.js';
 import { buildDecisionAudit, appendDecisionAudit } from './core/decision-audit.js';
+import { createActiveSignalOperation, reconcileActiveSignalOperation, signalOperationHolds, operationDecision, sameOperationMarket } from './core/signal-operation.js';
 
 // Product policy layer. The technical engine can keep collecting evidence with an
 // estimated clock, but the user-facing decision is never promoted while CasaTrade
@@ -12,6 +15,7 @@ const ROLLOVER_ENTRY_GRACE_MS = 6500;
 const CANDIDATE_JITTER_GRACE_MS = 5000;
 const FINAL_CANDIDATE_HITS = 2;
 const DEFAULT_PREFS = Object.freeze({ mode: 'NORMAL', geminiEnabled: true, sensitivityProfile: 'MEDIO', confirmationMode: 'SIMPLES', operationMode: 'M1', preferredExpiration: null });
+const decisionScoreStabilizer = createScoreStabilizer({ alpha: 0.2, sampleIntervalMs: 650, maxPointsPerSecond: 8, maxGapMs: 12000 });
 
 
 
@@ -90,12 +94,60 @@ function focusReady(state = {}) {
     && Date.now() - Number(focus.at) < FOCUS_FRESH_MS;
 }
 
+export function runningCasaTradeCountdown(state = {}, expectedTimeframe = null, now = Date.now()) {
+  const clock = state.diagnostics?.marketClock || null;
+  if (!clock || clock.available === false) return null;
+  const operationMode = getOperationMode(state.analystPreferences?.operationMode || expectedTimeframe || state.analysisTimeframe || state.timeframe || 'M1');
+  const expectedTf = normTf(expectedTimeframe || operationMode.timeframe) || operationMode.timeframe;
+  const clockTf = normTf(clock.timeframe || expectedTf || state.analysisTimeframe || state.timeframe);
+  const asset = marketId(state.asset || '');
+  const focus = state.diagnostics?.focusedAsset || {};
+  if (!asset || (clock.asset && !sameMarket(clock.asset, asset))) return null;
+  if (focus.asset && !sameMarket(focus.asset, asset)) return null;
+  if (clockTf && clockTf !== expectedTf) return null;
+
+  const seconds = num(clock.secondsRemaining);
+  const at = Number(clock.at || 0);
+  const age = at > 0 ? now - at : Infinity;
+  const tfMs = getOperationMode(clockTf || expectedTf).durationSeconds * 1000;
+  const observedOpenAt = num(clock.openAt) ?? num(clock.candleOpenAt);
+  const observedCloseAt = num(clock.closeAt) ?? num(clock.candleCloseAt);
+  const openAt = observedOpenAt ?? (observedCloseAt != null ? observedCloseAt - tfMs : null);
+  const closeAt = observedCloseAt ?? (observedOpenAt != null ? observedOpenAt + tfMs : null);
+  const boundaryCurrent = closeAt != null && openAt != null
+    && now >= openAt - 2000 && now <= closeAt + 1500
+    && closeAt - now <= tfMs + 1500;
+  const freshRunningCountdown = at > 0 && age >= -1500 && age < 6500
+    && seconds != null && seconds >= 0 && seconds <= tfMs / 1000 + 2;
+  if (!boundaryCurrent && !freshRunningCountdown) return null;
+
+  const remaining = boundaryCurrent
+    ? Math.max(0, (closeAt - now) / 1000)
+    : Math.max(0, seconds - Math.max(0, age / 1000));
+  return {
+    ready: true,
+    timeframe: expectedTf,
+    secondsRemaining: remaining,
+    source: text(clock.source || (clock.verified === true ? 'casatrade-exact-clock' : 'casatrade-running-countdown')),
+    operationalFallback: clock.verified !== true || !EXACT_CLOCK_SOURCES.has(text(clock.source)),
+    operationMode: expectedTf,
+    projectedFromExact: clock.verified === true && age > 250,
+    rolloverGrace: false,
+    candleOpenAt: openAt,
+    candleCloseAt: closeAt
+  };
+}
+
 export function exactCasaTradeTime(state = {}) {
   const focus = state.diagnostics?.focusedAsset || null;
   const clock = state.diagnostics?.marketClock || null;
-  if (!focusReady(state)) return { ready: false, reason: 'Ativo/gráfico ainda não confirmado.' };
-
   const operationMode = getOperationMode(state.analystPreferences?.operationMode || 'M1');
+  // A live, asset-bound candle countdown is usable even while its frame/source
+  // verification metadata catches up. The user can see the CasaTrade countdown;
+  // do not hold the decision engine in PENDENTE solely because metadata lags.
+  const operationalCountdown = runningCasaTradeCountdown(state, operationMode.timeframe);
+  if (operationalCountdown) return operationalCountdown;
+  if (!focusReady(state)) return { ready: false, reason: 'Ativo/gráfico ainda não confirmado.' };
   const persistedCycle = state.decisionCycle || {};
   const persistedTarget = num(persistedCycle.targetStart);
   const persistedDirection = text(persistedCycle.direction).toUpperCase();
@@ -120,11 +172,51 @@ export function exactCasaTradeTime(state = {}) {
       candleCloseAt: persistedTarget + operationMode.durationSeconds * 1000
     };
   }
-  if (!clock) return { ready: false, reason: 'Relógio exato da vela ainda não foi confirmado.' };
-  if (clock.available === false || clock.verified !== true || clock.role !== 'candle-close') {
+  if (!clock) return { ready: false, reason: 'Nenhuma fonte de tempo da vela está disponível.' };
+
+  // The focused CasaTrade frame can publish a running candle countdown before
+  // its source-verification metadata catches up. Use that fresh, frame-bound
+  // candle clock; do not report PENDENTE when seconds are actually available.
+  const liveTfFallback = normTf(clock.timeframe || state.analysisTimeframe || state.timeframe);
+  const clockAtFallback = Number(clock.at || 0);
+  const clockAgeFallback = clockAtFallback > 0 ? Date.now() - clockAtFallback : Infinity;
+  const rawRemainingFallback = num(clock.secondsRemaining);
+  const closeAtFallback = num(clock.closeAt) ?? num(clock.candleCloseAt);
+  const openAtFallback = num(clock.openAt) ?? num(clock.candleOpenAt);
+  const tfMsFallback = getOperationMode(liveTfFallback || operationMode.timeframe).durationSeconds * 1000;
+  const boundaryFallback = closeAtFallback != null && openAtFallback != null
+    && Date.now() >= openAtFallback - 2000 && Date.now() <= closeAtFallback + 1500
+    && closeAtFallback - Date.now() <= tfMsFallback + 1500;
+  const focusedCountdownAvailable = clock.available !== false
+    && clock.role === 'candle-close'
+    && sameMarket(clock.asset, state.asset)
+    && clockBoundToFocus(clock, focus)
+    && liveTfFallback === operationMode.timeframe
+    && (clockAgeFallback >= 0 && clockAgeFallback < CLOCK_FRESH_MS || boundaryFallback)
+    && (rawRemainingFallback != null && rawRemainingFallback >= 0 && rawRemainingFallback <= operationMode.durationSeconds + 1 || boundaryFallback);
+  if (focusedCountdownAvailable) {
+    const remaining = boundaryFallback
+      ? Math.max(0, (closeAtFallback - Date.now()) / 1000)
+      : Math.max(0, rawRemainingFallback - Math.max(0, clockAgeFallback / 1000));
+    return {
+      ready: true,
+      timeframe: liveTfFallback,
+      secondsRemaining: remaining,
+      source: text(clock.source || 'focused-casatrade-countdown'),
+      operationMode: operationMode.timeframe,
+      projectedFromExact: clockAgeFallback > 250,
+      rolloverGrace: false,
+      candleOpenAt: openAtFallback,
+      candleCloseAt: closeAtFallback
+    };
+  }
+
+  if (clock.available === false || clock.role !== 'candle-close') {
     return { ready: false, reason: 'Relógio exato da vela ainda não foi confirmado.' };
   }
-  if (!EXACT_CLOCK_SOURCES.has(text(clock.source))) return { ready: false, reason: 'Fonte de tempo não autoritativa.' };
+  if (clock.verified !== true || !EXACT_CLOCK_SOURCES.has(text(clock.source))) {
+    return { ready: false, reason: 'Nenhuma fonte confiável de countdown da vela está disponível.' };
+  }
   if (!sameMarket(clock.asset, state.asset)) return { ready: false, reason: 'Relógio pertence a outro ativo.' };
   if (!clockBoundToFocus(clock, focus)) return { ready: false, reason: 'Relógio ainda não foi vinculado ao gráfico ativo.' };
   const clockAt = Number(clock.at || 0);
@@ -191,7 +283,31 @@ export function CasaTradeExpiration(state = {}, timeframe = null) {
   const observedSource = text(controls.realExpirationSource || controls.expirationSource || controls.observed?.source || '');
   const actual = realFresh ? realExpiration : guardActual || null;
   const source = realFresh ? (text(controls.realExpirationSource) || 'casatrade-observed') : guardSource || '';
-  const liveTf = normTf(timeframe || state.analysisTimeframe || state.timeframe);
+  const liveTf = normTf(timeframe || state.diagnostics?.marketClock?.timeframe || state.analysisTimeframe || state.timeframe);
+  const observedExpirationSource = text(controls.observed?.sourceByField?.expiration || controls.observed?.source || '').toLowerCase();
+  const manualRaw = controls.userDeclaredExpiration
+    || state.executionPreferences?.expiration
+    || state.analystPreferences?.preferredExpiration
+    || (['user-declared', 'user-declared-match'].includes(observedExpirationSource) ? controls.observed?.expiration : '')
+    || (['user-declared', 'user-declared-match'].includes(guardSource.toLowerCase()) ? guard.actual : '')
+    || guard.userDeclared
+    || '';
+  const declaredManual = normExp(manualRaw);
+  const manualModeMatch = !!declaredManual
+    && declaredManual === operationMode.expiration
+    && (!liveTf || liveTf === operationMode.timeframe);
+  if (manualModeMatch) {
+    return {
+      ready: true,
+      actual: declaredManual,
+      required: operationMode.expiration,
+      source: 'user-declared',
+      verified: false,
+      reason: operationMode.timeframe === 'M1'
+        ? 'EXPIRAÇÃO MANUAL ACEITA – usando 1 min'
+        : 'EXPIRAÇÃO MANUAL ACEITA – usando 5 min'
+    };
+  }
 
   if (guardDivergence) {
     return {
@@ -279,26 +395,52 @@ function completeCandles(state = {}) {
 function marketIdentity(state = {}, signal = {}) {
   const expected = marketId(state.asset || '');
   const focus = marketId(state.diagnostics?.focusedAsset?.asset || '');
-  const confirmed = marketId(state.diagnostics?.marketSession?.confirmedAsset || '');
+  const session = state.diagnostics?.marketSession || {};
+  const confirmed = marketId(session.confirmedAsset || '');
   const signalAsset = marketId(signal.asset || '');
   const candleAsset = marketId(state.currentCandle?.asset || '');
-  if (!expected || !focus || !confirmed) {
+  const transitionMatches = session.transitioning === true
+    && sameMarket(session.pendingAsset || session.asset || '', expected)
+    && focus === expected;
+  if (!expected || !focus || (!confirmed && !transitionMatches)) {
     return { ready: false, reason: 'Ativo visual, sessão e feed ainda não foram confirmados juntos.' };
   }
-  const rows = [focus, confirmed, signalAsset, candleAsset].filter(Boolean);
+  const rows = [focus, signalAsset, candleAsset, ...(transitionMatches ? [] : [confirmed])].filter(Boolean);
   const mismatch = rows.find(value => value !== expected);
   if (mismatch) {
     return { ready: false, reason: `Bloqueio de segurança: gráfico ${focus || '—'}, sessão ${confirmed || '—'} e sinal ${signalAsset || expected} não pertencem ao mesmo ativo.` };
   }
-  return { ready: true, asset: expected };
+  return { ready: true, asset: expected, transitionGrace: transitionMatches && confirmed !== expected };
 }
 
 function signalDirection(signal = {}) {
   const ui = text(signal.uiState).toUpperCase();
   if (ui.includes('BUY')) return 'BUY';
   if (ui.includes('SELL')) return 'SELL';
-  const direction = text(signal.analysisDirection || signal.direction).toUpperCase();
-  return ['BUY', 'SELL'].includes(direction) ? direction : null;
+  const direct = text(signal.analysisDirection || signal.direction || signal.analytics?.professional?.direction || '').toUpperCase();
+  if (['BUY', 'SELL'].includes(direct)) return direct;
+  const a = signal.analytics || {};
+  const continuation = text(a.continuationDirection).toUpperCase();
+  const continuationReady = ['BUY','SELL'].includes(continuation) && Number(a.continuationScore || 0) >= 60;
+  const breakout = text(a.breakoutDirection || (['BUY', 'SELL'].includes(text(a.breakout).toUpperCase()) ? a.breakout : '')).toUpperCase();
+  if (['BUY','SELL'].includes(breakout)) return breakout;
+  const rejection = text(a.rejectionDirection).toUpperCase();
+  const rejectionPower = Math.max(
+    Number(a.rejectionStrength || 0) || 0,
+    Number(rejection === 'BUY' ? a.rejectionBuy : rejection === 'SELL' ? a.rejectionSell : 0) || 0
+  );
+  if (['BUY','SELL'].includes(rejection) && rejectionPower >= 45) return rejection;
+  if (continuationReady) return continuation;
+  if (a.pullbackContinuation?.qualified === true && ['BUY','SELL'].includes(text(a.pullbackContinuation.direction).toUpperCase())) {
+    return text(a.pullbackContinuation.direction).toUpperCase();
+  }
+  const localIsAmbiguous = signal.recent?.lateral === true || signal.recent?.doji === true
+    || a.lateral === true || a.doji === true
+    || /lateral|doji|compressão/i.test(text(signal.reason || a.opinion || ''));
+  if (localIsAmbiguous) return null;
+  const buyPower = Number(a.buyPower || 0), sellPower = Number(a.sellPower || 0);
+  if (Math.max(buyPower, sellPower) >= 45 && buyPower !== sellPower) return buyPower > sellPower ? 'BUY' : 'SELL';
+  return null;
 }
 
 function confluence(signal = {}, direction = null, thresholds = getThresholds()) {
@@ -306,7 +448,7 @@ function confluence(signal = {}, direction = null, thresholds = getThresholds())
   const a = signal.analytics || {};
   const factors = [];
   const power = Number(direction === 'BUY' ? a.buyPower : a.sellPower) || 0;
-  if (power >= 50) factors.push(direction === 'BUY' ? 'poder comprador' : 'poder vendedor');
+  if (power >= 45) factors.push(direction === 'BUY' ? 'poder comprador' : 'poder vendedor');
   if (Number(a.currentStrength || 0) >= thresholds.candleStrength) factors.push('força da vela');
   if (text(a.rejectionDirection).toUpperCase() === direction && Number(a.rejectionStrength || 0) >= thresholds.rejectionStrength) factors.push('rejeição');
   if (text(a.continuationDirection).toUpperCase() === direction && Number(a.continuationScore || 0) >= 60) factors.push('continuação');
@@ -353,6 +495,9 @@ function baseDecision(state = {}) {
   const score = Number(signal.analysisScore ?? signal.score ?? 0) || 0;
   const ui = text(signal.uiState).toUpperCase();
   const cycle = cycleKey(state, signal);
+  const displayScore = decisionScoreStabilizer.update({ key: cycle, rawScore: score, ready: identity.ready && rows.length >= 2, at: now });
+  const profileGate = evaluateProfileEntryGate({ profile: pref.sensitivityProfile, direction, score, buyPower: signal.analytics?.buyPower, sellPower: signal.analytics?.sellPower, analytics: signal.analytics, secondsRemaining: time.secondsRemaining, timeframe: pref.operationMode });
+  const sessionConnected = state.connection === 'online';
   const factors = confluence(signal, direction, pref.thresholds);
   const signalPolicy = getSignalPolicy(pref.sensitivityProfile);
   const pullbackPattern = signal.analytics?.pullbackContinuation || {};
@@ -362,18 +507,17 @@ function baseDecision(state = {}) {
     && Number(pullbackPattern.roomToLevel) >= 0.35
     && Number(pullbackPattern.score) >= 80;
   // The selected rhythm changes selectivity, but never bypasses context + trigger.
-  const additionalConfluenceReady = factors.count >= signalPolicy.minimumConfluence;
-  const possibleScore = signalPolicy.possibleScore;
-  const finalScore = signalPolicy.finalScore;
+  const possibleScore = profileGate.possibleScore;
+  const finalScore = profileGate.finalScore;
   const entryWindowSeconds = pref.operationMode === 'M1'
-    ? 15
+    ? 10
     : pref.operationMode === 'M5'
-      ? 20
+      ? 15
       : pref.thresholds.entryWindowSeconds;
   const preSignalWindowSeconds = 30;
-  const directionalPower = Number(direction === 'BUY' ? signal.analytics?.buyPower : signal.analytics?.sellPower) || 0;
-  const mandatoryPowerReady = directionalPower >= signalPolicy.possiblePower;
-  const finalPowerReady = directionalPower >= signalPolicy.finalPower;
+  const directionalPower = profileGate.power;
+  const mandatoryPowerReady = directionalPower >= 45;
+  const finalPowerReady = directionalPower >= 45;
   const technicalCandidate = ['POSSIBLE_BUY', 'POSSIBLE_SELL', 'ENTER_BUY', 'ENTER_SELL'].includes(ui);
   const technicalFinal = ['ENTER_BUY', 'ENTER_SELL'].includes(ui);
   const professional = signal.analytics?.professional || {};
@@ -392,7 +536,8 @@ function baseDecision(state = {}) {
     confirmationMode: pref.confirmationMode,
     holdSeconds: pref.holdSeconds,
     cycleKey: cycle,
-    score,
+    score: displayScore,
+    rawScore: score,
     confluence: factors.count,
     factors: factors.factors,
     professionalContextReady,
@@ -412,6 +557,13 @@ function baseDecision(state = {}) {
     marketIdentityReason: identity.reason || null,
     updatedAt: now
   };
+
+  const activeOperation = reconcileActiveSignalOperation(state.activeSignalOperation, state.signalHistory || [], now);
+  if (signalOperationHolds(activeOperation)
+    && sameOperationMarket(activeOperation.asset, state.asset)
+    && clean(activeOperation.timeframe).toUpperCase() === clean(time.timeframe || pref.operationMode).toUpperCase()) {
+    return operationDecision(state, activeOperation, now, common);
+  }
 
   const rolloverEntryActive = persistedCycle.locked === 'ENTER'
     && ['BUY','SELL'].includes(persistedDirection)
@@ -445,18 +597,91 @@ function baseDecision(state = {}) {
     return { ...common, uiState: 'BUILDING_PATTERN', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: 'Montando o padrão com as velas reais da CasaTrade.' };
   }
   if (!time.ready) {
-    return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: `AGUARDAR — ${time.reason}` };
+    const canKeepProfileCandidate = profileGate.candidate && sessionConnected && identity.ready && focusReady(state) && expiration.ready;
+    if (canKeepProfileCandidate) {
+      const previousCandidate = state.professionalDecision || {};
+      const sameCandidate = previousCandidate.cycleKey === cycle && previousCandidate.direction === direction
+        && ['POSSIBLE_BUY','POSSIBLE_SELL','ENTER_BUY','ENTER_SELL'].includes(text(previousCandidate.uiState).toUpperCase());
+      const side = direction === 'BUY' ? 'COMPRA' : 'VENDA';
+      return {
+        ...common, uiState: direction === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL', direction,
+        actionable: false, alert: 'silent',
+        possibleSince: sameCandidate && Number(previousCandidate.possibleSince || 0) > 0 ? Number(previousCandidate.possibleSince) : now,
+        holdRemainingMs: 0,
+        reason: 'POSSÍVEL ' + side + ' — perfil ' + pref.sensitivityProfile + ' atingido (score ' + Math.round(score) + ', poder ' + Math.round(directionalPower) + '%); aguardando sincronização do countdown (' + time.reason + ').'
+      };
+    }
+    return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, reason: 'AGUARDAR — ' + time.reason };
   }
 
   const seconds = Number(time.secondsRemaining);
+
+  // Profile thresholds are the primary signal-volume control. The technical
+  // engine may still label the sample WAIT/NO_TRADE while professional
+  // context indicators catch up; a clear direction, score, power, matching
+  // session, exact countdown and accepted expiration are the mandatory gate.
+  const basicProfileCandidate = profileGate.candidate
+    && sessionConnected
+    && identity.ready
+    && time.ready
+    && expiration.ready
+    && Number.isFinite(seconds)
+    && seconds > 0
+    && seconds <= preSignalWindowSeconds;
+  if (basicProfileCandidate) {
+    const previousProfile = state.professionalDecision || {};
+    const previousProfileUi = text(previousProfile.uiState).toUpperCase();
+    const sameProfileCandidate = previousProfile.cycleKey === cycle
+      && previousProfile.direction === direction
+      && ['POSSIBLE_BUY','POSSIBLE_SELL','ENTER_BUY','ENTER_SELL'].includes(previousProfileUi);
+    const possibleSince = sameProfileCandidate && Number(previousProfile.possibleSince || 0) > 0
+      ? Number(previousProfile.possibleSince) : now;
+    const side = direction === 'BUY' ? 'COMPRA' : 'VENDA';
+    if (seconds > entryWindowSeconds) {
+      return {
+        ...common,
+        uiState: direction === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL',
+        direction,
+        actionable: false,
+        alert: sameProfileCandidate ? 'silent' : 'discrete',
+        possibleSince,
+        finalCandidateHits: 0,
+        holdRemainingMs: 0,
+        reason: 'POSSÍVEL ' + side + ' — perfil ' + pref.sensitivityProfile
+          + ' atingido (score ' + Math.round(score) + ', poder ' + Math.round(directionalPower)
+          + '%). Expiração aceita; aguardando a janela final.'
+      };
+    }
+    if (score >= finalScore && directionalPower >= 45 && ['BUY', 'SELL'].includes(direction)) {
+      return {
+        ...common,
+        uiState: direction === 'BUY' ? 'ENTER_BUY' : 'ENTER_SELL',
+        direction,
+        actionable: true,
+        alert: 'strong',
+        possibleSince,
+        finalCandidateHits: 2,
+        holdRemainingMs: 0,
+        reason: side + ' — DECISÃO FINAL • perfil ' + pref.sensitivityProfile
+          + ' confirmado (score ' + Math.round(score) + ', poder ' + Math.round(directionalPower)
+          + '%). Entrada MANUAL na próxima vela.'
+      };
+    }
+    return {
+      ...common,
+      uiState: direction === 'BUY' ? 'POSSIBLE_BUY' : 'POSSIBLE_SELL',
+      direction, actionable: false, alert: 'silent', possibleSince,
+      finalCandidateHits: 0, holdRemainingMs: 0,
+      reason: 'POSSÍVEL ' + side + ' — perfil atingido; aguardando score final ' + finalScore + '/100 na janela de decisão.'
+    };
+  }
+
   const anticipationWindow = pref.operationMode === 'M5' ? 120 : 45;
-  const directionalPowerForPattern = Number(direction === 'BUY' ? signal.analytics?.buyPower : direction === 'SELL' ? signal.analytics?.sellPower : 0) || 0;
-  const globalScoreForPattern = Number(signal.analysisScore ?? signal.score ?? 0) || 0;
   if (pullbackCandidate
+    && profileGate.candidate
+    && sessionConnected
     && identity.ready
     && direction
-    && globalScoreForPattern >= 45
-    && directionalPowerForPattern >= 52
     && time.ready
     && expiration.ready
     && Number.isFinite(seconds)
@@ -519,22 +744,12 @@ function baseDecision(state = {}) {
     return { ...common, uiState: 'WAIT', direction: null, actionable: false, alert: 'silent', possibleSince: null, holdRemainingMs: 0, reason: 'AGUARDAR — tendência/contexto, região e gatilho ainda não estão confirmados juntos.' };
   }
 
-  const patternAnalytics = signal.analytics || {};
-  const patternIndependentConfirmation =
-    (text(patternAnalytics.momentumDirection).toUpperCase() === direction && Number(patternAnalytics.momentumScore || 0) >= 40)
-    || (text(patternAnalytics.continuationDirection).toUpperCase() === direction && Number(patternAnalytics.continuationScore || 0) >= 50)
-    || (text(patternAnalytics.rejectionDirection).toUpperCase() === direction && Number(patternAnalytics.rejectionStrength || 0) >= thresholds.rejectionStrength)
-    || Number(patternAnalytics.currentStrength || 0) >= thresholds.candleStrength;
-  const pullbackFinalCandidate = pullbackCandidate
-    && !!direction
-    && globalScoreForPattern >= 64
-    && directionalPowerForPattern >= 55
-    && patternIndependentConfirmation;
-  if ((!technicalCandidate || !direction || score < possibleScore || !mandatoryPowerReady || !additionalConfluenceReady) && !pullbackFinalCandidate) {
+
+  if (!direction || score < possibleScore || !mandatoryPowerReady) {
     if (previousCandidateSameCycle
       && direction === previousDirection
-      && score >= Math.max(58, thresholds.possibleScore)
-      && Number(signal.analytics?.[direction === 'BUY' ? 'buyPower' : 'sellPower'] || 0) >= 50
+      && score >= Math.max(0, possibleScore - 8)
+      && Number(signal.analytics?.[direction === 'BUY' ? 'buyPower' : 'sellPower'] || 0) >= 45
       && seconds > 0) {
       return {
         ...common,
@@ -561,9 +776,8 @@ function baseDecision(state = {}) {
     : technicalSinceValid ? technicalPossibleSince : now;
   const heldFor = Math.max(0, now - possibleSince);
   const candidateFinalReady = !!direction
-    && ((score >= finalScore && finalPowerReady && additionalConfluenceReady) || pullbackFinalCandidate)
-    && professionalContextReady
-    && professionalTriggerReady;
+    && score >= finalScore
+    && finalPowerReady;
   const priorFinalHits = sameCandidate && previous.direction === direction
     ? Number(previous.finalCandidateHits || 0)
     : 0;
@@ -643,6 +857,17 @@ function baseDecision(state = {}) {
   };
 }
 
+function operationSignature(value = null) {
+  if (!value) return '';
+  return JSON.stringify({
+    id: value.id || null, status: value.status || null, asset: value.asset || null,
+    timeframe: value.timeframe || null, direction: value.direction || null,
+    targetStart: Number(value.targetStart || 0), targetEnd: Number(value.targetEnd || 0),
+    candleOpenPrice: value.candleOpenPrice ?? null, candleClosePrice: value.candleClosePrice ?? null,
+    result: value.result || null, resolvedAt: value.resolvedAt || null
+  });
+}
+
 function signature(value = {}) {
   return JSON.stringify({
     uiState: value.uiState || null,
@@ -656,6 +881,7 @@ function signature(value = {}) {
     holdSeconds: value.holdSeconds || null,
     cycleKey: value.cycleKey || null,
     score: value.score || 0,
+    rawScore: value.rawScore || 0,
     confluence: value.confluence || 0,
     factors: value.factors || [],
     timeReady: !!value.timeReady,
@@ -684,22 +910,35 @@ async function evaluate(state = {}) {
   const auditRow = buildDecisionAudit(state, decision);
   const auditNext = appendDecisionAudit(state.decisionAudit || {}, auditRow, 40);
   const auditChanged = auditNext !== (state.decisionAudit || null);
-  if (!decisionChanged && !auditChanged) return;
+  const proposedOperation = createActiveSignalOperation(state, decision, Date.now());
+  const operationMissing = !!proposedOperation
+    && (!state.activeSignalOperation || state.activeSignalOperation.id !== proposedOperation.id);
+  const operationNeedsReconcile = !!state.activeSignalOperation
+    && state.activeSignalOperation.status !== 'COMPLETED';
+  if (!decisionChanged && !auditChanged && !operationMissing && !operationNeedsReconcile) return;
 
   writing = true;
   try {
     await updateScannerState(current => {
       const next = baseDecision(current);
+      const now = Date.now();
+      const reconciledOperation = reconcileActiveSignalOperation(current.activeSignalOperation, current.signalHistory || [], now);
+      const createdOperation = createActiveSignalOperation(current, next, now);
+      const nextOperation = signalOperationHolds(reconciledOperation)
+        ? reconciledOperation
+        : (createdOperation || reconciledOperation || current.activeSignalOperation || null);
       const updateDecision = signature(next) !== signature(current.professionalDecision || {});
       const row = buildDecisionAudit(current, next);
       const oldAudit = current.decisionAudit || {};
       const audit = appendDecisionAudit(oldAudit, row, 40);
       const updateAudit = audit !== oldAudit;
-      if (!updateDecision && !updateAudit) return current;
+      const updateOperation = operationSignature(nextOperation) !== operationSignature(current.activeSignalOperation || null);
+      if (!updateDecision && !updateAudit && !updateOperation) return current;
       return {
         ...current,
         ...(updateDecision ? { professionalDecision: next } : {}),
-        ...(updateAudit ? { decisionAudit: audit } : {})
+        ...(updateAudit ? { decisionAudit: audit } : {}),
+        ...(updateOperation ? { activeSignalOperation: nextOperation } : {})
       };
     });
   } finally {

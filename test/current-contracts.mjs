@@ -6,11 +6,11 @@ export const read = path => fs.readFileSync(new URL('../' + path, import.meta.ur
 const manifest = () => JSON.parse(read('manifest.json'));
 
 export function registerBuildContracts(label='build') {
-  test(label + ': current extension package is the v0.12.7-score-expiration-gate-reconciliation build', () => {
+  test(label + ': current extension package is the v0.12.16-same-host-frame-clock-binding build', () => {
     const m = manifest();
     assert.equal(m.manifest_version, 3);
-    assert.equal(m.version, '0.12.7');
-    assert.equal(m.version_name, '0.12.7-score-expiration-gate-reconciliation');
+    assert.equal(m.version, '0.12.16');
+    assert.equal(m.version_name, '0.12.16-same-host-frame-clock-binding');
     assert.equal(m.background?.service_worker, 'src/background-entry.js');
     assert.equal(m.side_panel?.default_path, 'src/sidepanel/index.html');
   });
@@ -49,8 +49,9 @@ export function registerBuildContracts(label='build') {
     const model = app.slice(start, end);
     assert.match(model, /const alignmentBlock = alignment\.conflict/);
     assert.doesNotMatch(model, /if \(alignment\.conflict\)\s*\{\s*const tf =/);
-    assert.match(model, /const scoreCandidates = \[technical\.analysisScore, technical\.score, p\.score\]/);
-    assert.match(model, /const timeReady = !alignment\.conflict && entryTimeReady\(state\)/);
+    assert.match(model, /const candidateStates = \['POSSIBLE_BUY','POSSIBLE_SELL','ENTER_BUY','ENTER_SELL'\]/);
+    assert.match(model, /const scoreCandidates = \(pIsCandidate \?/);
+    assert.match(model, /const timeReady = !alignment\.conflict && focusReady\(state\) && entryTimeReady\(state\)/);
     assert.match(model, /const blocked = timeReady \? '' : alignmentBlock \|\| entryBlockReason\(state\)/);
   });
   test(label + ': active asset changes reset stale signal and do not reuse previous candle history', () => {
@@ -89,7 +90,9 @@ export function registerMarketContracts(label='market') {
     const start = market.indexOf('function resetForSession');
     const end = market.indexOf('function clockRecord', start);
     const reset = market.slice(start, end);
-    for (const field of ['price: null','candles: []','marketHistory: {}','signal: null','professionalDecision: null','lastConfirmed: null','lastSeen: null']) assert.ok(reset.includes(field), 'missing reset field ' + field);
+    for (const field of ['price: null','candles: []','signal: null','professionalDecision: null','lastConfirmed: null','lastSeen: null']) assert.ok(reset.includes(field), 'missing reset field ' + field);
+    assert.match(reset, /marketHistory: nextMarketHistory/);
+    assert.match(reset, /const nextMarketHistory = Array\.isArray\(cachedTargetHistory\) \? \{ \[toAsset\]: cachedTargetHistory \} : \{\}/);
   });
   test(label + ': technical analysis has one runtime owner', () => {
     const background = read('src/background.js');
@@ -123,8 +126,9 @@ export function registerTimeContracts(label='time') {
 
   test(label + ': panel never fabricates a countdown', () => {
     const panel = read('src/sidepanel/app-v2.js');
-    assert.match(panel, /if \(!exactClockReady\(state\)\) return null/);
-    assert.match(panel, /setText\('timeSyncStatus', exact \? 'EXATO • CASATRADE' : 'PENDENTE'\)/);
+    assert.match(panel, /function runningCountdownAvailable\(state = \{\}\)/);
+    assert.match(panel, /setText\('timeSyncStatus', exact \? 'EXATO • CASATRADE' : runningCountdownAvailable\(state\) \? 'OPERACIONAL • CONTAGEM ATIVA' : 'PENDENTE'\)/);
+    assert.match(panel, /Nenhuma fonte utilizável de countdown da vela está disponível/);
     assert.doesNotMatch(panel, /COUNTDOWN ESTIMADO/);
   });
   test(label + ': active operation mode is a single M1 or M5 authority', () => {
@@ -151,8 +155,8 @@ export function registerExpirationContracts(label='expiration') {
     const controls = read('src/background-platform-controls.js');
     assert.match(controls, /const invalidatedDeclared = realFresh && declared \? declared : null/);
     assert.match(controls, /const effectiveDeclared = invalidatedDeclared \? null : declared/);
-    assert.match(controls, /userDeclaredExpiration: resolved\.authority\.invalidatedDeclared \? null/);
-    assert.match(controls, /manualInvalidated: authority\.invalidatedDeclared \|\| null/);
+    assert.match(controls, /const manualAccepted = !realFresh && !!declared[\s\S]*declared === operationMode\.expiration/);
+    assert.match(controls, /userDeclaredExpiration: seededState\.platformControls\.userDeclaredExpiration/);
   });
   test(label + ': expiration is an execution gate for the active M1\/M5 mode', () => {
     const policy = read('src/background-decision-policy.js');
@@ -403,7 +407,7 @@ export function registerVideo15290Contracts(label='video-15290') {
     const panel = read('src/sidepanel/app-v2.js');
     assert.match(panel, /const closeAt = num\(clock\.closeAt\) \?\? num\(clock\.candleCloseAt\)/);
     assert.match(panel, /boundaryCurrent/);
-    assert.match(panel, /if \(!exactClockReady\(state\)\) return null/);
+    assert.match(panel, /function runningCountdownAvailable\(state = \{\}\)/);
   });
   test(label + ': automatic refresh preserves an owned live session through a brief reader gap', () => {
     const control = read('src/background-control.js');
@@ -432,7 +436,8 @@ export function registerVideo15292Contracts(label='video-15292') {
     const policy = read('src/background-decision-policy.js');
     const panel = read('src/sidepanel/app-v2.js');
     const controlHandler = read('src/background-control.js');
-    assert.match(controls, /operationalFallback = !authority\.realFresh/);
+    assert.match(controls, /const manualAccepted = !realFresh && !!declared/);
+    assert.match(controls, /const operationalFallback = authority\.manualAccepted === true\s*\|\|\s*\(!authority\.realFresh/);
     assert.match(policy, /source: 'user-declared'/);
     assert.match(policy, /ready: true/);
     assert.match(policy, /verified: false/);
@@ -448,7 +453,7 @@ export function registerVideo15292Contracts(label='video-15292') {
     assert.match(control, /realExpirationAt: realExpiration \? now/);
     assert.match(control, /realExpirationSource: realExpiration \? 'background-direct-dom'/);
     assert.match(control, /liveAuthority: !!realExpiration/);
-    assert.match(control, /userDeclaredExpiration: realExpiration \? null/);
+    assert.match(control, /userDeclaredExpiration: realExpiration \? null : \(/);
   });
 
   test(label + ': responsive expiration reader accepts label/value in either DOM order', () => {
@@ -547,7 +552,7 @@ export function registerEntrySyncFallbackContracts(label='entry-sync-fallback') 
   test(label + ': selected operation mode seeds a user declaration for canvas expiration fallback', () => {
     const controls = read('src/background-platform-controls.js');
     assert.match(controls, /userDeclaredExpiration: nextMode\.expiration/);
-    assert.match(controls, /const operationalFallback = !authority\.realFresh/);
+    assert.match(controls, /const operationalFallback = authority\.manualAccepted === true\s*\|\|\s*\(!authority\.realFresh/);
     assert.match(controls, /authority\.source === 'user-declared'/);
     assert.match(controls, /const ready = !!authority\.actual/);
   });

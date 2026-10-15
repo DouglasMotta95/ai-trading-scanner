@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - fix/v01161-restore-top-license-clock
+      - fix/v01210-operation-lock-results
 
 jobs:
   package:
@@ -29,5 +30,19 @@ jobs:
         with:
           name: ai-trading-scanner-v${{ steps.version.outputs.version }}-extension
           path: dist/ai-trading-scanner-extension/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Prepare complete project package without Git internals
+        run: |
+          rm -rf dist/ai-trading-scanner-full-source
+          mkdir -p dist/ai-trading-scanner-full-source
+          rsync -a --exclude='.git/' --exclude='node_modules/' --exclude='dist/' --exclude='*.zip' --exclude='20942.mp4' ./ dist/ai-trading-scanner-full-source/
+          test -f dist/ai-trading-scanner-full-source/manifest.json
+          test -f dist/ai-trading-scanner-full-source/src/background-entry.js
+          test -f dist/ai-trading-scanner-full-source/backend/package.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ai-trading-scanner-v${{ steps.version.outputs.version }}-full-source
+          path: dist/ai-trading-scanner-full-source/
           if-no-files-found: error
           retention-days: 30

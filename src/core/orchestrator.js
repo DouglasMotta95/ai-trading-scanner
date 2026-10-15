@@ -4,7 +4,8 @@ import {
   serializeCompletedDecisions as legacySerializeCompletedDecisions,
   restoreCompletedDecisions as legacyRestoreCompletedDecisions
 } from './orchestrator-legacy.js';
-import { getThresholds } from './analysis.js';
+import { getThresholds, getSignalPolicy } from './analysis.js';
+import { evaluateProfileEntryGate } from './profile-entry-gates.js';
 
 // Price action/indicators remain in the legacy analyst. This wrapper owns exactly
 // one bounded decision for each target candle: ENTER BUY, ENTER SELL or WAIT.
@@ -17,11 +18,11 @@ const wrapperCompletedDecisions = new Map();
 const WRAPPER_ROW_PREFIX = 'wrapper-cycle:';
 
 const HIGH_CONFIDENCE = Object.freeze({
-  possibleScore: 60,
-  finalScore: 70,
-  possiblePower: 58,
-  finalPower: 60,
-  minimumEvidence: 2
+  possibleScore: 52,
+  finalScore: 55,
+  possiblePower: 45,
+  finalPower: 45,
+  minimumEvidence: 1
 });
 
 const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
@@ -48,10 +49,10 @@ function decisionWindows(snapshot = {}, signal = {}, thresholds = getThresholds(
   // latest CasaTrade price action. Leave a small late cutoff so the 2-hit
   // confirmation still has time to complete without publishing at the turn.
   if (timeframe === 'M1') {
-    return { pre: 30, decision: 15, skip: 1, duration, timeframe };
+    return { pre: 30, decision: 10, skip: 1, duration, timeframe };
   }
   if (timeframe === 'M5') {
-    return { pre: 90, decision: 30, skip: 2, duration, timeframe };
+    return { pre: 30, decision: 15, skip: 1, duration, timeframe };
   }
 
   // Longer/shorter candles keep proportional windows.
@@ -123,11 +124,15 @@ export function decisionQuality(signal = {}, direction = null, thresholds = getT
   const rejection = directionalRejection && rejectionStrength >= thresholds.rejectionStrength;
   const regime = String(signal.regime?.type || '').toLowerCase();
   const evidence = highConfidenceEvidence(signal, direction, thresholds);
-  const finalScore = Math.max(HIGH_CONFIDENCE.finalScore, thresholds.confirmScore);
-  const commonReady = !!direction
-    && score >= finalScore
-    && power >= HIGH_CONFIDENCE.finalPower
-    && evidence.length >= HIGH_CONFIDENCE.minimumEvidence;
+  const profilePolicy = getSignalPolicy(thresholds.profile);
+  const finalScore = profilePolicy.finalScore;
+  // The selected profile is the real execution threshold, not merely a label.
+  // A clear direction plus directional power >=45 and the profile score floor
+  // are sufficient; optional evidence is still recorded for diagnostics.
+  // Generic quality remains a diagnostic; the operational release gate is separate.
+  const commonReady = ['BUY', 'SELL'].includes(direction)
+    && score >= Math.max(70, Number(thresholds.confirmScore || 0))
+    && power >= 60;
   // A fully-qualified, non-extended pullback has its own final path: still
   // require independent directional confirmation plus power/score floors,
   // but don't demand the generic 70/60 gate if this specific setup is sound.
@@ -211,12 +216,12 @@ export function decisionQuality(signal = {}, direction = null, thresholds = getT
         },
         {
           name: 'continuação',
-          ok: power >= 50 && continuation,
-          reason: `power>=50=${power >= 50} | continuação direcional>=55=${continuation}`
+          ok: power >= 45 && continuation,
+          reason: `power>=45=${power >= 45} | continuação direcional>=55=${continuation}`
         },
         {
           name: 'momentum',
-          ok: power >= 50 && strongCandle && momentum,
+          ok: power >= 45 && strongCandle && momentum,
           reason: `power>=50=${power >= 50} | currentStrength>=${thresholds.candleStrength}=${strongCandle} | momentum direcional>=40=${momentum}`
         },
         {
@@ -255,36 +260,44 @@ export function qualifiesEarlyPattern(signal = {}, direction = null, score = 0) 
 
 export function anticipationWindowSeconds(timeframe = 'M1') {
   const tf = clean(timeframe).toUpperCase();
+  // Preserve the established early pattern-alert windows; final windows are separate.
   return tf === 'M5' ? 120 : tf === 'M1' ? 45 : Math.max(15, Math.min(120, timeframeMs(tf) / 1000 * 0.25));
 }
 
 function possibleQuality(signal = {}, direction = null, score = 0, thresholds = getThresholds()) {
-  const possibleScore = Math.max(HIGH_CONFIDENCE.possibleScore, thresholds.possibleScore);
-  if (qualifiesEarlyPattern(signal, direction, score)) return true;
-  if (!direction || Number(score) < possibleScore) return false;
   const analytics = signal.analytics || {};
-  const power = Number(direction === 'BUY' ? analytics.buyPower : analytics.sellPower) || 0;
-  if (power < HIGH_CONFIDENCE.possiblePower) return false;
-  if (highConfidenceEvidence(signal, direction, thresholds).length < HIGH_CONFIDENCE.minimumEvidence) return false;
-  const stableDirection = clean(signal.stability?.possibleDirection).toUpperCase();
-  const publishedDirection = clean(signal.direction).toUpperCase();
-  return stableDirection === direction || (signal.state === 'WATCH' && publishedDirection === direction);
+  return evaluateProfileEntryGate({
+    profile: thresholds.profile, direction, score,
+    buyPower: analytics.buyPower, sellPower: analytics.sellPower, analytics
+  }).candidate;
 }
 
 function possibleWithHysteresis(cycle, allowed, direction, at) {
   if (allowed && direction) {
-    cycle.possibleDirection = direction;
+    const previousDirection = cycle.possibleCandidateDirection || cycle.possibleDirection;
+    const previousAt = Number(cycle.possibleLastStrongAt || 0);
+    const sameStableCandidate = previousDirection === direction
+      && previousAt > 0 && at >= previousAt && at - previousAt <= DECISION_HIT_GAP_MS;
+    const strongHits = sameStableCandidate ? Number(cycle.possibleStrongHits || 1) + 1 : 1;
+    cycle.possibleCandidateDirection = direction;
+    cycle.possibleStrongHits = strongHits;
     cycle.possibleWeakHits = 0;
     cycle.possibleLastStrongAt = at;
-    return direction;
+    cycle.possibleDirection = strongHits >= 2 ? direction : null;
+    return cycle.possibleDirection;
   }
-  // One weak/throttled observation must not make POSSÍVEL disappear. Preserve
-  // the last confirmed candidate direction for one weak sample, then drop it
-  // only after a second consecutive weak observation.
-  if (!cycle.possibleDirection) return null;
+  // A single technical tick remains only a candidate. Once POSSÍVEL is stable,
+  // retain it through one weak sample and drop it after a second.
+  if (!cycle.possibleDirection) {
+    cycle.possibleCandidateDirection = null;
+    cycle.possibleStrongHits = 0;
+    return null;
+  }
   cycle.possibleWeakHits = Number(cycle.possibleWeakHits || 0) + 1;
   if (cycle.possibleWeakHits < POSSIBLE_DROP_HITS) return cycle.possibleDirection;
   cycle.possibleDirection = null;
+  cycle.possibleCandidateDirection = null;
+  cycle.possibleStrongHits = 0;
   cycle.possibleWeakHits = 0;
   return null;
 }
@@ -296,8 +309,9 @@ function seedCycle(key, snapshot, signal, state = {}) {
   if (!cycle) {
     cycle = {
       key, targetStart: targetStartOf(snapshot, signal), candidateDirection: null,
-      confirmHits: 0, lastHitAt: null, locked: null, direction: null, score: 0,
-      setup: null, reason: null, decidedAt: null, resolved: false
+      confirmHits: 0, lastHitAt: null, possibleDirection: null, possibleCandidateDirection: null,
+      possibleStrongHits: 0, possibleWeakHits: 0, possibleLastStrongAt: 0,
+      locked: null, direction: null, score: 0, setup: null, reason: null, decidedAt: null, resolved: false
     };
   }
   cycles.set(key, cycle);
@@ -511,8 +525,9 @@ export function processSnapshot(snapshot = {}, state = {}) {
   const direction = directionOf(signal);
   const analytics = signal.analytics || {};
   const power = Number(direction === 'BUY' ? analytics.buyPower : analytics.sellPower) || 0;
-  const earlyPattern = qualifiesEarlyPattern(signal, direction, score);
-  const rawPossible = earlyPattern || possibleQuality(signal, direction, score, thresholds);
+  const profileCandidate = evaluateProfileEntryGate({ profile: thresholds.profile, direction, score, buyPower: analytics.buyPower, sellPower: analytics.sellPower, analytics, secondsRemaining, timeframe: windows.timeframe });
+  const earlyPattern = profileCandidate.candidate && qualifiesEarlyPattern(signal, direction, score);
+  const rawPossible = profileCandidate.candidate && (earlyPattern || possibleQuality(signal, direction, score, thresholds));
   const quality = decisionQuality(signal, direction, thresholds, confirmationMode);
   const technicalFinal = signal.state === 'CONFIRM' || ['ENTER_BUY', 'ENTER_SELL'].includes(clean(signal.uiState).toUpperCase());
   let candidateBlockerTrace = upsertCandidateBlockerTrace(state, {
@@ -535,7 +550,7 @@ export function processSnapshot(snapshot = {}, state = {}) {
       setups: quality.checks || []
     },
     technicalFinal,
-    mandatoryPowerReady: power >= 50,
+    mandatoryPowerReady: power >= 45,
     secondsRemaining,
     updatedAt: at
   });
@@ -575,27 +590,25 @@ export function processSnapshot(snapshot = {}, state = {}) {
     return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: nextSignal, decisionCycle: { ...cycle }, candidateBlockerTrace };
   }
   if (secondsRemaining > windows.decision) {
-    const nextSignal = (canShowPossible || earlyPatternActive) ? possibleSignal(signal, windows, possibleDirection || direction, score) : signal;
+    const nextSignal = (canShowPossible || earlyPatternActive)
+      ? possibleSignal(signal, windows, possibleDirection || direction, score)
+      : rawPossible ? decidingSignal(signal, windows) : signal;
     if (clean(nextSignal?.uiState).toUpperCase() === 'WAIT' || nextSignal?.state === 'NO_TRADE') {
       candidateBlockerTrace = markCandidateWait(candidateBlockerTrace, key, secondsRemaining, nextSignal.reason);
     }
     return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, signal: nextSignal, decisionCycle: { ...cycle }, candidateBlockerTrace };
   }
 
-  if (signal.state === 'CONFIRM' && ['BUY', 'SELL'].includes(signal.direction) && quality.qualifies) {
-    cycle.locked = 'ENTER';
-    cycle.direction = signal.direction;
-    cycle.score = Math.max(score, Number(signal.score || 0));
-    cycle.setup = signal.setup || quality.setup || null;
-    cycle.reason = signal.reason;
-    cycle.decidedAt = at;
-    cycles.set(key, cycle);
-    const trace = appendTrace(state, { key, targetStart: cycle.targetStart, decision: 'ENTER', direction: cycle.direction, score: cycle.score, setup: cycle.setup, reason: cycle.reason, decidedAt: at });
-    return { ...result, lastConfirmed: rolledLastConfirmed || result.lastConfirmed, decisionCycle: { ...cycle }, decisionTrace: trace, candidateBlockerTrace };
-  }
-
-  const stable = observeDecision(cycle, direction, quality.qualifies, at);
-  if (quality.qualifies) cycle.setup = quality.setup;
+  const profileFinalReady = evaluateProfileEntryGate({
+    profile: thresholds.profile, direction, score,
+    buyPower: analytics.buyPower, sellPower: analytics.sellPower, analytics,
+    secondsRemaining, timeframe: windows.timeframe
+  }).finalEligible;
+  // Eligibility comes from the profile; a second stable observation confirms timing.
+  const finalObservationReady = profileFinalReady
+    || (signal.state === 'CONFIRM' && ['BUY', 'SELL'].includes(signal.direction) && quality.qualifies);
+  const stable = observeDecision(cycle, direction, finalObservationReady, at);
+  if (finalObservationReady) cycle.setup = quality.setup || signal.setup || 'critério do perfil';
   if (stable) {
     cycle.locked = 'ENTER';
     cycle.direction = direction;

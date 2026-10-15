@@ -311,11 +311,15 @@ export function resetForSession(state = {}, { asset, timeframe = null, info, rea
   const fromAsset = normAsset(state.asset || previous.confirmedAsset || previous.asset || state.diagnostics?.focusedAsset?.asset || '');
   const toAsset = normAsset(asset);
   const switched = !!fromAsset && !!toAsset && !sameMarket(fromAsset, toAsset);
-  // The existing market-session epoch is the asset-boundary authority.
-  // When that epoch advances because the confirmed market changed, any
-  // user-declared expiration belongs to the previous asset and must not cross
-  // into the new session.
-  const sessionBase = switched ? clearUserDeclaredExpirationState(state) : state;
+  // Expiration choice is an operator setting for the active timeframe, not an
+  // asset-scoped market observation. Preserve it across chart instrument switches.
+  const sessionBase = state;
+  // Reuse only an existing cache keyed to the newly focused symbol. Never carry
+  // the previous symbol's candle history into the new session.
+  const cachedTargetHistory = sessionBase.marketHistory && typeof sessionBase.marketHistory === 'object'
+    ? sessionBase.marketHistory[toAsset]
+    : null;
+  const nextMarketHistory = Array.isArray(cachedTargetHistory) ? { [toAsset]: cachedTargetHistory } : {};
   const switchLog = [
     ...(Array.isArray(state.diagnostics?.assetSwitchLog) ? state.diagnostics.assetSwitchLog : []),
     ...(switched ? [{
@@ -347,7 +351,8 @@ export function resetForSession(state = {}, { asset, timeframe = null, info, rea
     serverTime: null,
     candles: [],
     currentCandle: null,
-    marketHistory: {},
+    // Preserve only cached history for this exact target asset; stale symbols stay cleared.
+    marketHistory: nextMarketHistory,
     signal: null,
     professionalDecision: null,
     aiAudit: null,

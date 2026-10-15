@@ -11,6 +11,9 @@ const licenseActive = state => ['active', 'valid'].includes(String(state?.licens
 const FOCUS_FRESH_MS = 2600;
 const CLOCK_FRESH_MS = 2200;
 let integrityRepairing = false;
+let repeatedIssueKey = '';
+let repeatedIssueCount = 0;
+let repeatedIssueSince = 0;
 
 function normAsset(value = '') {
   const raw = clean(value).toUpperCase();
@@ -87,13 +90,36 @@ chrome.storage.onChanged.addListener(changes => {
   if (!changes.scannerState || integrityRepairing) return;
   const nextState = changes.scannerState.newValue || {};
   const issue = stateIntegrityIssue(nextState);
-  if (!issue) return;
+  if (!issue) {
+    repeatedIssueKey = '';
+    repeatedIssueCount = 0;
+    repeatedIssueSince = 0;
+    return;
+  }
 
-  // The integrity module never repairs market fields itself. It asks the owner
-  // to re-evaluate the current epoch; if a newer epoch already exists, the owner
-  // discards this delayed repair request.
+  const issueKey = [
+    issue.epoch, issue.reason, issue.focusAsset || '', issue.sessionAsset || '',
+    normAsset(nextState.asset || '')
+  ].join('|');
+  const now = Date.now();
+  if (issueKey !== repeatedIssueKey || now - repeatedIssueSince > 2500) {
+    repeatedIssueKey = issueKey;
+    repeatedIssueCount = 1;
+    repeatedIssueSince = now;
+    return;
+  }
+  repeatedIssueCount += 1;
+  // A single missed iframe/DOM observation is not a session failure. Require
+  // several consecutive matching failures before asking the owner to repair.
+  if (repeatedIssueCount < 3 || now - repeatedIssueSince < 350) return;
+
   integrityRepairing = true;
-  repairMarketSessionIntegrity(nextState).finally(() => { integrityRepairing = false; });
+  repairMarketSessionIntegrity(nextState).finally(() => {
+    integrityRepairing = false;
+    repeatedIssueKey = '';
+    repeatedIssueCount = 0;
+    repeatedIssueSince = 0;
+  });
 });
 
 async function injectIntegrityReaders(tabId) {

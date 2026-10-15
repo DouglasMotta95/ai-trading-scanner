@@ -21,6 +21,18 @@
     return direct ? `${direct[1]}/${direct[2]}${otc ? ' (OTC)' : ''}` : '';
   };
   const sameMarket = (a, b) => !!marketId(a) && marketId(a) === marketId(b);
+
+  // A same hostname does not imply the same frameId: a top-level chart shell can
+  // contain the actual chart in a same-host iframe. Explicitly bind shell clocks.
+  function clockFrameBinding(focus = {}, currentHost = host, isTopFrame = window === window.top) {
+    const focusedHost = String(focus.frameHost || '').toLowerCase().replace(/\.$/, '');
+    const senderHost = String(currentHost || '').toLowerCase().replace(/\.$/, '');
+    const hostMatches = !!focusedHost && focusedHost === senderHost;
+    const sameFocusFrame = hostMatches && (!isTopFrame || Number(focus.frameId) === 0);
+    const casaControlFrame = casaHost(senderHost) && isTopFrame;
+    return { sameFocusFrame, casaControlFrame, allowed: sameFocusFrame || casaControlFrame,
+      crossFrameControl: casaControlFrame && !sameFocusFrame };
+  }
   const normalizeTime = value => {
     let time = Number(value);
     if (!Number.isFinite(time)) return null;
@@ -220,8 +232,15 @@
     if (!['trader-dom-countdown', 'network-server-cycle'].includes(String(clock.source || ''))) return null;
     if (!sameMarket(clock.asset, focus.asset)) return null;
     if (tf(clock.timeframe) && cycleTf && tf(clock.timeframe) !== tf(cycleTf)) return null;
-    if (Number(clock.frameId) !== Number(focus.frameId)) return null;
-    if (String(clock.frameHost || '').toLowerCase() !== host) return null;
+    const directFrame = Number(clock.frameId) === Number(focus.frameId)
+      && String(clock.frameHost || '').toLowerCase() === String(focus.frameHost || '').toLowerCase()
+      && String(clock.frameHost || '').toLowerCase() === host;
+    const boundShellFrame = clock.crossFrameControl === true
+      && Number(clock.frameId) === 0
+      && Number(clock.boundFocusFrameId) === Number(focus.frameId)
+      && String(clock.boundFocusFrameHost || '').toLowerCase() === String(focus.frameHost || '').toLowerCase()
+      && casaHost(String(clock.frameHost || '').toLowerCase());
+    if (!directFrame && !boundShellFrame) return null;
     if (Date.now() - Number(clock.at || 0) >= 2300) return null;
     return clock;
   }
@@ -295,9 +314,9 @@
       const state = response?.state || null;
       const focus = state?.diagnostics?.focusedAsset || null;
       if (!focus?.asset || focus.reliable !== true || focus.chartScoped !== true || focus.trustedChartFrame !== true) return;
-      const sameFocusFrame = String(focus.frameHost || '').toLowerCase() === host;
-      const casaControlFrame = casaHost(host) && window === window.top;
-      if (!sameFocusFrame && !casaControlFrame) return;
+      const frameBinding = clockFrameBinding(focus);
+      const { sameFocusFrame, casaControlFrame } = frameBinding;
+      if (!frameBinding.allowed) return;
       if (lastCanvasAsset && lastCanvasAsset !== focus.asset) { lastCanvas = null; canvasVerifiedAt = 0; }
       lastCanvasAsset = focus.asset;
       const expirationAt = Number(state.platformControls?.expirationCheckedAt || state.platformControls?.observed?.observedAt?.expiration || 0);
@@ -324,7 +343,7 @@
         clockRole: 'candle-close', clockSource: 'trader-dom-countdown', clockMode: 'canvas-visible-countdown',
         clockText: clean(payload.text || `${seconds}s`), clockToken: clean(payload.text || `${seconds}s`), confidence: 99,
         frameHost: host,
-        crossFrameControl: casaControlFrame && !sameFocusFrame,
+        crossFrameControl: frameBinding.crossFrameControl,
         boundFocusFrameId: Number(focus.frameId),
         boundFocusFrameHost: String(focus.frameHost || '').toLowerCase(),
         at: Date.now()
@@ -347,16 +366,31 @@
       const state = response?.state || null;
       if (!state?.license || !['active','valid'].includes(String(state.license.status || '').toLowerCase())) return;
       const focus = state.diagnostics?.focusedAsset || null;
-      if (!focus?.asset || focus.reliable !== true || focus.chartScoped !== true || focus.trustedChartFrame !== true) return;
-      const sameFocusFrame = String(focus.frameHost || '').toLowerCase() === host;
-      const casaControlFrame = casaHost(host) && window === window.top;
-      if (!sameFocusFrame && !casaControlFrame) return;
+      const focusAge = Number(focus?.at || 0) > 0 ? Date.now() - Number(focus.at) : Infinity;
+      if (!focus?.asset || focus.reliable !== true || focus.chartScoped !== true || focus.trustedChartFrame !== true || focusAge < 0 || focusAge > 4200) {
+        // The foreground Android side panel can outlive a throttled embedded
+        // frame heartbeat. Ask the visible chart and controls readers to refresh;
+        // stale focus must never authorize a clock sample.
+        try { globalThis.__ATS_FORCE_FOCUS_SCAN__?.(); } catch {}
+        try { globalThis.__ATS_FORCE_PLATFORM_SYNC_READ__?.(); } catch {}
+        return;
+      }
+      const frameBinding = clockFrameBinding(focus);
+      const { sameFocusFrame, casaControlFrame } = frameBinding;
+      if (!frameBinding.allowed) return;
 
       const expirationAt = Number(state.platformControls?.expirationCheckedAt || state.platformControls?.observed?.observedAt?.expiration || 0);
       const expirationFresh = expirationAt > 0 && Date.now() - expirationAt < 7000;
       const controlsFresh = Number(state.platformControls?.checkedAt || 0) > 0 && Date.now() - Number(state.platformControls.checkedAt) < 5000;
       const cycleTf = liveCycleTf(state, controlsFresh) || structuredFeedTf(state, focus);
-      if (!cycleTf) return;
+      if (!cycleTf) {
+        // Do not silently stop clock acquisition when a tablet control is not
+        // semantically readable. Refresh the real selectors; do not infer M1/M5
+        // from the user's expiration and do not publish an estimated clock.
+        try { globalThis.__ATS_FORCE_PLATFORM_SYNC_READ__?.(); } catch {}
+        try { globalThis.__ATS_FORCE_FOCUS_SCAN__?.(); } catch {}
+        return;
+      }
       const expiration = expirationFresh ? clean(state.platformControls?.observed?.expiration || '') || null : null;
       const domClock = verifiedDomCountdown(cycleTf);
       const freshClock = freshExactClock(state, focus, cycleTf);
@@ -379,7 +413,7 @@
         clockRole: 'candle-close', clockSource: 'trader-dom-countdown',
         clockMode: domClock.chartScoped ? 'chart-geometry-exact' : 'dom-exact',
         clockText: domClock.text, clockToken: domClock.token, confidence: 99, frameHost: host,
-        crossFrameControl: casaControlFrame && !sameFocusFrame,
+        crossFrameControl: frameBinding.crossFrameControl,
         boundFocusFrameId: Number(focus.frameId),
         boundFocusFrameHost: String(focus.frameHost || '').toLowerCase(),
         at: Date.now()
@@ -390,7 +424,7 @@
         clockMode: 'structured-candle-boundary',
         clockText: `Vela CasaTrade • ${structuredBoundary.seconds}s`,
         clockToken: `${structuredBoundary.seconds}s`, confidence: 92, frameHost: host,
-        crossFrameControl: casaControlFrame && !sameFocusFrame,
+        crossFrameControl: frameBinding.crossFrameControl,
         boundFocusFrameId: Number(focus.frameId),
         boundFocusFrameHost: String(focus.frameHost || '').toLowerCase(),
         at: Date.now()
@@ -400,7 +434,7 @@
         clockRole: 'candle-close', clockSource: 'casatrade-clock-pending', clockMode: 'waiting-authoritative-clock',
         clockText: 'Aguardando countdown real da CasaTrade', clockToken: '',
         confidence: 0, frameHost: host,
-        crossFrameControl: casaControlFrame && !sameFocusFrame,
+        crossFrameControl: frameBinding.crossFrameControl,
         boundFocusFrameId: Number(focus.frameId),
         boundFocusFrameHost: String(focus.frameHost || '').toLowerCase(),
         at: Date.now()

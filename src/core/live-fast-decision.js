@@ -1,4 +1,5 @@
 import { getThresholds, getOperationMode, getSignalPolicy } from './analysis.js';
+import { evaluateProfileEntryGate } from './profile-entry-gates.js';
 const clean = value => String(value ?? '').trim();
 const num = value => value == null || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : null;
 
@@ -120,12 +121,13 @@ function stabilizeDirection(key, rawDirection, at, score) {
   return { direction: old.stable, transitioning: true, from: old.stable, to: rawDirection, hits: pendingHits };
 }
 
-function rememberCandidate(key, direction, score, at) {
+function rememberCandidate(key, direction, score, at, power = 0) {
   if (!direction || !Number.isFinite(score) || !Number.isFinite(at)) return;
   const old = candidateTrackers.get(key);
   candidateTrackers.set(key, {
     direction,
     score,
+    power: Number(power || 0),
     at,
     since: old?.direction === direction ? Number(old.since || at) : at
   });
@@ -238,9 +240,9 @@ export function fastLiveDecision(signal = {}, context = {}) {
   const operationMode = getOperationMode(context.operationMode || context.timeframe || 'M1');
   const preSignalWindowSeconds = 30;
   const finalWindowSeconds = operationMode.timeframe === 'M1'
-    ? 5
+    ? 10
     : operationMode.timeframe === 'M5'
-      ? 8
+      ? 15
       : thresholds.entryWindowSeconds;
   if (signal.uiState === 'ENTER_BUY' || signal.uiState === 'ENTER_SELL' || signal.state === 'CONFIRM') return signal;
 
@@ -299,11 +301,49 @@ export function fastLiveDecision(signal = {}, context = {}) {
   }
   const direction = stabilized.direction;
   const q = quality(signal, direction, thresholds, confirmationMode, signalPolicy);
+  const profileGate = evaluateProfileEntryGate({
+    profile: thresholds.profile, direction, score,
+    buyPower: signal.analytics?.buyPower, sellPower: signal.analytics?.sellPower, analytics: signal.analytics,
+    secondsRemaining: seconds, timeframe: operationMode.timeframe
+  });
+  const directionalPower = profileGate.power;
+  const directCandidateReady = profileGate.candidate;
+
+  // The primary score+direction+power gate is independent from the optional
+  // professional-context accelerator. This makes the selected profiles govern
+  // actual signal volume while preserving direction stabilization and the
+  // two-hit rule before a final entry.
+  if (directCandidateReady && seconds > finalWindowSeconds) {
+    const recent = recentCandidate(key, direction, at, score, possibleScore);
+    rememberCandidate(key, direction, score, at, directionalPower);
+    const directQuality = { strong: true, power: directionalPower, reasons: ['score', 'direção', 'poder direcional'], setup: signal.setup || 'critério do perfil atingido' };
+    observe(key, direction, false, at);
+    if (recent && Number(recent.power || 0) - directionalPower >= 5) return possibleHeld(signal, direction, score, seconds);
+    return possible(signal, direction, score, seconds, directQuality);
+  }
+  if (directCandidateReady && profileGate.finalEligible) {
+    rememberCandidate(key, direction, score, at, directionalPower);
+    const directQuality = { strong: true, power: directionalPower, reasons: ['score final', 'direção', 'poder direcional'], setup: signal.setup || 'critério final do perfil atingido' };
+    const hits = observe(key, direction, true, at);
+    // Profile gate decides eligibility; a second stable observation confirms timing.
+    if (hits >= FAST_DECISION.confirmHits) return enter(signal, direction, score, seconds, directQuality);
+    return possible(signal, direction, score, seconds, directQuality);
+  }
+
+  if (directCandidateReady && seconds <= finalWindowSeconds) {
+    const finalHint = 'score final ' + signalPolicy.finalScore + '/100 ainda não alcançado; mantido POSSÍVEL sem liberação de entrada.';
+    return possible(signal, direction, score, seconds, {
+      strong: true, power: directionalPower,
+      reasons: ['score do perfil', 'direção', 'poder direcional'], setup: finalHint
+    });
+  }
 
   if (!q.strong) {
     const retained = recentCandidate(key, direction, at, score, possibleScore);
     const heldHits = observe(key, direction, false, at);
-    if (retained && seconds > finalWindowSeconds && seconds <= preSignalWindowSeconds) {
+    // A display hold is only valid while the candidate still satisfies the
+    // profile gate; never preserve POSSÍVEL after directional power drops below 45.
+    if (retained && directCandidateReady && seconds > finalWindowSeconds && seconds <= preSignalWindowSeconds) {
       return possibleHeld(signal, retained.direction, score, seconds);
     }
     if (seconds <= finalWindowSeconds && heldHits > 0) {
@@ -313,7 +353,7 @@ export function fastLiveDecision(signal = {}, context = {}) {
     return waitFinal(signal, score, `confiança insuficiente: poder ${Math.round(q.power)}/${signalPolicy.possiblePower}, confluências ${q.reasons.length}/${signalPolicy.minimumConfluence}`);
   }
 
-  rememberCandidate(key, direction, score, at);
+  rememberCandidate(key, direction, score, at, directionalPower);
 
   if (seconds > finalWindowSeconds) {
     observe(key, direction, false, at);

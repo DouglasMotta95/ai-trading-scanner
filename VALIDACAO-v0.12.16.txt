@@ -1,0 +1,11 @@
+AI TRADING SCANNER v0.12.16 — RESUMO DE VALIDAÇÃO
+Evidência: vídeo 22033.mp4 (aprox. 98,8 segundos).
+
+- npm test: 563 pass, 0 fail.
+- node --check: 235 arquivos JavaScript/MJS aprovados.
+- manifest.json: versão 0.12.16; 31 referências, nenhuma ausente.
+- Causa tratada: relógio do shell superior com mesmo hostname era confundido com o frame do gráfico; mensagem exata era rejeitada por frameId divergente.
+- Correção: vínculo cross-frame explícito por frameId/frameHost e validação no background.
+- Execução permanece manual; countdown estimado não libera entrada.
+
+Limite: sem sessão interativa com a CasaTrade após a correção. Testes automatizados não certificam o comportamento em produção nem rentabilidade.

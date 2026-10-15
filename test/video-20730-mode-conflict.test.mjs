@@ -40,9 +40,9 @@ test('video 20730 fix increments package version and leaves execution gates pres
   const manifest = JSON.parse(read('manifest.json'));
   const pkg = JSON.parse(read('package.json'));
   const panel = read('src/sidepanel/app-v2.js');
-  assert.equal(manifest.version, '0.12.7');
+  assert.equal(manifest.version, '0.12.16');
   assert.equal(pkg.version, manifest.version);
-  assert.equal(manifest.version_name, '0.12.7-score-expiration-gate-reconciliation');
-  assert.match(panel, /if \(!exactClockReady\(state\)\) return false/);
+  assert.equal(manifest.version_name, '0.12.16-same-host-frame-clock-binding');
+  assert.match(panel, /const timeReady = !alignment\.conflict && focusReady\(state\) && entryTimeReady\(state\)/);
   assert.match(panel, /const canBuy = !alignment\.conflict && model\.actionable/);
 });

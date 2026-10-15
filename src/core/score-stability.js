@@ -77,14 +77,26 @@ export function createScoreStabilizer({
   }
 
   function update({ key = '', rawScore = 0, ready = false, at = Date.now() } = {}) {
-    if (ready !== true) {
+    const currentAt = Number.isFinite(Number(at)) ? Number(at) : Date.now();
+    const raw = Math.max(0, Math.min(100, Number(rawScore) || 0));
+    if (!key) {
+      if (previousScore != null && currentAt >= previousAt && currentAt - previousAt <= maxGapMs) return Math.round(previousScore);
       reset();
       return 0;
     }
-    const raw = Math.max(0, Math.min(100, Number(rawScore) || 0));
-    const currentAt = Number.isFinite(Number(at)) ? Number(at) : Date.now();
-    if (!key || key !== previousKey || previousScore == null || currentAt < previousAt
-      || currentAt - previousAt > maxGapMs) {
+    if (key !== previousKey) {
+      previousKey = key;
+      previousScore = ready === true ? raw : null;
+      previousAt = currentAt;
+      return ready === true ? Math.round(raw) : 0;
+    }
+    if (ready !== true) {
+      if (previousScore != null && currentAt >= previousAt && currentAt - previousAt <= maxGapMs) return Math.round(previousScore);
+      previousScore = null;
+      previousAt = currentAt;
+      return 0;
+    }
+    if (previousScore == null || currentAt < previousAt || currentAt - previousAt > maxGapMs) {
       previousKey = key;
       previousScore = raw;
       previousAt = currentAt;

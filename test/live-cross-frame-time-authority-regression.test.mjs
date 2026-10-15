@@ -8,8 +8,10 @@ test('exact CasaTrade clock may be bound from trusted top control frame to the f
   const reader = read('src/content/market-cycle-clock-v4.js');
   const session = read('src/background-market-session.js');
 
-  assert.match(reader, /const casaControlFrame = casaHost\(host\) && window === window\.top/);
-  assert.match(reader, /crossFrameControl: casaControlFrame && !sameFocusFrame/);
+  assert.match(reader, /function clockFrameBinding\(/);
+  assert.match(reader, /const sameFocusFrame = hostMatches && \(!isTopFrame \|\| Number\(focus\.frameId\) === 0\)/);
+  assert.match(reader, /crossFrameControl: frameBinding\.crossFrameControl/);
+  assert.match(reader, /const boundShellFrame = clock\.crossFrameControl === true/);
   assert.match(reader, /boundFocusFrameId: Number\(focus\.frameId\)/);
 
   assert.match(session, /const crossFrameControl = message\.crossFrameControl === true/);

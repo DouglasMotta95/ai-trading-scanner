@@ -84,13 +84,54 @@ async function persistConfirmationMode(value) {
   }
 }
 
+const LICENSE_UI_GRACE_MS = 5 * 60 * 1000;
+let lastActiveLicenseAt = 0;
+let lastActiveLicensePersistAt = 0;
 function activeLicense(state = {}) {
-  const status = clean(state?.license?.status).toLowerCase();
-  return ['active','valid'].includes(status)
-    || state?.license?.devMode === true
-    || clean(state?.license?.plan).toUpperCase() === 'OWNER_DEV'
+  const license = state?.license || {};
+  const status = clean(license.status).toLowerCase();
+  const plan = clean(license.plan || license.planLabel).toUpperCase();
+  const ownerDev = license?.devMode === true || plan === 'OWNER_DEV'
     || state?.diagnostics?.access?.ownerDev === true
     || state?.diagnostics?.access?.state === 'owner_dev';
+  const active = ['active','valid'].includes(status) || ownerDev;
+
+  let expiryValid = true;
+  if (license.expiresAt) {
+    let expiry = Number(license.expiresAt);
+    if (Number.isFinite(expiry) && expiry > 0) {
+      if (expiry < 1e12) expiry *= 1000;
+    } else expiry = Date.parse(String(license.expiresAt));
+    expiryValid = Number.isFinite(expiry) && expiry > Date.now();
+  }
+  if (active && expiryValid) {
+    const now = Date.now();
+    lastActiveLicenseAt = now;
+    if (now - lastActiveLicensePersistAt >= 30_000) {
+      lastActiveLicensePersistAt = now;
+      try {
+        localStorage.setItem('atsLastActiveLicenseUI', JSON.stringify({
+          at: now, plan: String(license.planLabel || license.plan || (ownerDev ? 'OWNER_DEV' : 'Acesso ativo'))
+        }));
+      } catch {}
+    }
+    return true;
+  }
+
+  const error = clean(license.error || state?.diagnostics?.access?.error).toLowerCase();
+  const authoritativeErrors = ['license_not_found','license_inactive','license_expired','device_limit_reached','device_locked'];
+  if (['expired','limit','device_locked','revoked'].includes(status)
+    || authoritativeErrors.includes(error)
+    || (license.expiresAt && !expiryValid)) return false;
+
+  try {
+    const saved = JSON.parse(localStorage.getItem('atsLastActiveLicenseUI') || 'null');
+    const at = Number(saved?.at || 0);
+    const age = Date.now() - at;
+    if (at > 0 && age >= 0 && age <= LICENSE_UI_GRACE_MS) lastActiveLicenseAt = at;
+  } catch {}
+  const age = Date.now() - Number(lastActiveLicenseAt || 0);
+  return age >= 0 && age <= LICENSE_UI_GRACE_MS;
 }
 
 function baseHandshake(state = {}) {
@@ -137,13 +178,16 @@ function exactClockReady(state = {}) {
   if (!baseHandshake(state)) return false;
   const focus = state.diagnostics?.focusedAsset || null;
   const clock = state.diagnostics?.marketClock || null;
-  if (!(clock?.verified === true && clock?.available !== false && clock?.role === 'candle-close')) return false;
+  if (!(clock?.verified === true && clock?.available === true && clock?.role === 'candle-close')) return false;
   if (!EXACT_CLOCK_SOURCES.has(clean(clock?.source))) return false;
   if (!sameMarket(clock?.asset, state.asset) || !clockBoundToFocus(clock, focus)) return false;
   const timeframe = clean(clock?.timeframe || state.analysisTimeframe || state.timeframe).toUpperCase();
-  const freshSample = Number(clock?.at || 0) > 0 && Date.now() - Number(clock.at) < CLOCK_FRESH_MS;
+  const duration = timeframe === 'M5' ? 300 : 60;
+  const remaining = Number(clock?.secondsRemaining);
+  if (!Number.isFinite(remaining) || remaining < 0 || remaining > duration + 2) return false;
+  const freshSample = Number(clock?.at || 0) > 0 && Date.now() - Number(clock.at) >= 0 && Date.now() - Number(clock.at) < CLOCK_FRESH_MS;
   const boundary = clockBoundaryCurrent(clock, Date.now(), timeframe);
-  return (freshSample || boundary) && (Number.isFinite(Number(clock?.secondsRemaining)) || boundary);
+  return freshSample || boundary;
 }
 
 function operationRequirement(state = {}) {
@@ -424,13 +468,14 @@ function renderShell(state = {}) {
     && (!declaredAt || realExpirationAt >= declaredAt)
     && realExpirationSource !== 'user-declared';
   const expirationSource = realExpirationFresh ? realExpirationSource : (declaredExpiration ? 'user-declared' : clean(expirationGuard.source || state.platformControls?.expirationSource || ''));
-  const expirationDivergence = expirationGuard.divergence === true;
-  const expiration = realExpirationFresh ? clean(state.platformControls?.realExpiration || '') : clean(declaredExpiration || expirationGuard.actual || '');
+  const manualModeMatches = !!declaredExpiration && normExp(declaredExpiration) === operation.expiration;
+  const expirationDivergence = expirationGuard.divergence === true && !manualModeMatches;
+  const expiration = manualModeMatches ? operation.expiration : realExpirationFresh ? clean(state.platformControls?.realExpiration || '') : clean(declaredExpiration || expirationGuard.actual || '');
   const expirationVerified = realExpirationFresh && expirationGuard.verified === true;
   const manualExpirationAccepted = !!declaredExpiration
     && normExp(declaredExpiration) === operation.expiration
     && !expirationDivergence;
-  const expirationWrong = dataConnected && ((expirationVerified && !!expiration && expiration !== operation.expiration)
+  const expirationWrong = !manualModeMatches && dataConnected && ((expirationVerified && !!expiration && expiration !== operation.expiration)
     || (!expirationVerified && !!declaredExpiration && !manualExpirationAccepted));
   const sessionStartedAt = Number(session.startedAt || state.diagnostics?.target?.connectedAt || 0);
   const sessionAge = sessionStartedAt > 0 ? Date.now() - sessionStartedAt : 0;
